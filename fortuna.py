@@ -278,26 +278,97 @@ class Race(FortunaBaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     qualification_score: Optional[float] = None
     is_error_placeholder: bool = False
+    top_five_numbers: Optional[str] = None
     error_message: Optional[str] = None
 
 # --- UTILITIES ---
+def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
+    """Helper to get a field from either an object or a dictionary."""
+    if isinstance(obj, dict):
+        return obj.get(field_name, default)
+    return getattr(obj, field_name, default)
+
+
 def clean_text(text: Optional[str]) -> Optional[str]:
-    if not text: return None
-    return " ".join(text.strip().split())
+    """Strips leading/trailing whitespace and collapses internal whitespace."""
+    if not text:
+        return ""
+    return " ".join(str(text).strip().split())
 
 
-def normalize_venue_name(name: Optional[str]) -> Optional[str]:
-    if not name: return name
-    name = re.sub(r"\s*\([^)]*\)\s*$", "", name)
+def normalize_venue_name(name: Optional[str]) -> str:
+    """
+    Normalizes a racecourse name to a standard format.
+    Handles common abbreviations, variations, and trims country suffixes.
+    Always returns a string, defaulting to "Unknown".
+    """
+    if not name:
+        return "Unknown"
+
+    # Trim parenthetical info like (USA), (IRE), (GB), etc. and extra whitespace
+    name = re.sub(r'\s*\([^)]*\)\s*$', '', str(name))
     name = re.sub(r"\s+(IRE|USA|UK|FR|AUS|NZ|GB)$", "", name, flags=re.I)
+
+    # Use a temporary variable for matching, but return the properly cased name
     cleaned = clean_text(name)
-    return cleaned.title() if cleaned else None
+    if not cleaned:
+        return "Unknown"
+
+    cleaned_upper = cleaned.upper()
+
+    VENUE_MAP = {
+        "ASCOT": "Ascot",
+        "AQUEDUCT": "Aqueduct",
+        "AYR": "Ayr",
+        "BANGOR-ON-DEE": "Bangor-on-Dee",
+        "CATTERICK BRIDGE": "Catterick",
+        "CHELMSFORD CITY": "Chelmsford",
+        "EPSOM DOWNS": "Epsom",
+        "FONTWELL": "Fontwell Park",
+        "GULFSTREAM": "Gulfstream Park",
+        "GULFSTREAM PARK": "Gulfstream Park",
+        "HAYDOCK": "Haydock Park",
+        "KEMPTON": "Kempton Park",
+        "LINGFIELD": "Lingfield Park",
+        "LINGFIELD PARK": "Lingfield Park",
+        "NEWMARKET (ROWLEY)": "Newmarket",
+        "NEWMARKET (JULY)": "Newmarket",
+        "SAM HOUSTON": "Sam Houston",
+        "SAM HOUSTON RACE PARK": "Sam Houston",
+        "SANDOWN": "Sandown Park",
+        "SANDOWN PARK": "Sandown Park",
+        "SANTA ANITA": "Santa Anita",
+        "STRATFORD": "Stratford-on-Avon",
+        "YARMOUTH": "Great Yarmouth",
+        "CURRAGH": "Curragh",
+        "DOWN ROYAL": "Down Royal",
+        "DELTA DOWNS": "Delta Downs",
+        "FAIR GROUNDS": "Fair Grounds",
+        "LAUREL PARK": "Laurel Park",
+        "LOS ALAMITOS": "Los Alamitos",
+        "MUSSELBURGH": "Musselburgh",
+        "NEWCASTLE": "Newcastle",
+        "SUNLAND PARK": "Sunland Park",
+        "TAMPA BAY DOWNS": "Tampa Bay Downs",
+        "TURF PARADISE": "Turf Paradise",
+        "VINCENNES": "Vincennes",
+        "WETHERBY": "Wetherby",
+    }
+
+    if cleaned_upper in VENUE_MAP:
+        return VENUE_MAP[cleaned_upper]
+
+    title_cased = cleaned.title()
+    if title_cased in VENUE_MAP.values():
+        return title_cased
+
+    return title_cased
 
 
 def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
     """
     Parses various odds formats (fractional, decimal) into a float decimal.
-    Uses 'deep dark sorcery' to extract odds from noisy strings.
+    Uses advanced heuristics to extract odds from noisy strings.
     """
     if odds_str is None: return None
     s = str(odds_str).strip().upper()
@@ -367,7 +438,7 @@ def detect_discipline(html_content: str) -> str:
 
 class SmartOddsExtractor:
     """
-    Deep dark sorcery for extracting odds from noisy HTML or text.
+    Advanced heuristics for extracting odds from noisy HTML or text.
     Scans for various patterns and returns the first plausible odds found.
     """
     @staticmethod
@@ -423,7 +494,7 @@ class RaceValidator(BaseModel):
     venue: str = Field(..., min_length=1)
     race_number: int = Field(..., ge=1, le=100)
     start_time: datetime
-    runners: List[Any] = Field(..., min_length=2)
+    runners: List[Runner] = Field(..., min_length=2)
 
 
 class DataValidationPipeline:
@@ -441,7 +512,9 @@ class DataValidationPipeline:
                 RaceValidator(**data)
                 valid_races.append(race)
             except Exception as e:
-                warnings.append(f"Race {i} validation failed: {str(e)}")
+                err_msg = f"Race {i} ({getattr(race, 'venue', 'Unknown')} R{getattr(race, 'race_number', '?')}) validation failed: {str(e)}"
+                warnings.append(err_msg)
+                structlog.get_logger().error("race_validation_failed", error=str(e), race_index=i, venue=getattr(race, 'venue', 'Unknown'))
         return valid_races, warnings
 
 
@@ -529,6 +602,8 @@ class SmartFetcher:
                 self._engine_health[engine] = max(0.0, self._engine_health[engine] - 0.2)
                 last_error = e
                 continue
+        err_msg = str(last_error) if last_error else "All fetch engines failed"
+        self.logger.error("all_engines_failed", url=url, error=err_msg)
         raise last_error or FetchError("All fetch engines failed")
 
     
@@ -567,11 +642,6 @@ class SmartFetcher:
             raise ImportError("scrapling not available")
             
         # For other engines, we use AsyncFetcher from scrapling
-        # But we need to use it correctly.
-        fetcher = AsyncFetcher()
-        # In scrapling 0.3.x, AsyncFetcher has get(), post() etc.
-        # If we want JS/Stealth, we should use AsyncStealthySession or AsyncDynamicSession
-        
         if engine == BrowserEngine.CAMOUFOX:
             async with AsyncStealthySession(headless=True) as s:
                 return await s.fetch(url, method=method, **kwargs)
@@ -580,10 +650,11 @@ class SmartFetcher:
                 return await s.fetch(url, method=method, **kwargs)
         else:
             # Fallback to simple fetcher
-            if method.upper() == "GET":
-                return await fetcher.get(url, **kwargs)
-            else:
-                return await fetcher.post(url, **kwargs)
+            async with AsyncFetcher() as fetcher:
+                if method.upper() == "GET":
+                    return await fetcher.get(url, **kwargs)
+                else:
+                    return await fetcher.post(url, **kwargs)
 
 
     async def close(self) -> None:
@@ -655,11 +726,50 @@ class AdapterMetrics:
         self.total_requests += 1
         self.failed_requests += 1
         self.consecutive_failures += 1
+        self.last_failure_reason = error
     def snapshot(self) -> Dict[str, Any]:
         return {"total_requests": self.total_requests, "success_rate": self.success_rate}
 
 
 # --- MIXINS ---
+class JSONParsingMixin:
+    """Mixin for safe JSON extraction from HTML and scripts."""
+    def _parse_json_from_script(self, parser: HTMLParser, selector: str, context: str = "script") -> Optional[Any]:
+        script = parser.css_first(selector)
+        if not script:
+            return None
+        try:
+            return json.loads(script.text())
+        except json.JSONDecodeError as e:
+            if hasattr(self, 'logger'):
+                self.logger.error("failed_parsing_json", context=context, selector=selector, error=str(e))
+            return None
+
+    def _parse_json_from_attribute(self, parser: HTMLParser, selector: str, attribute: str, context: str = "attribute") -> Optional[Any]:
+        el = parser.css_first(selector)
+        if not el:
+            return None
+        raw = el.attributes.get(attribute)
+        if not raw:
+            return None
+        try:
+            return json.loads(html.unescape(raw))
+        except json.JSONDecodeError as e:
+            if hasattr(self, 'logger'):
+                self.logger.error("failed_parsing_json", context=context, selector=selector, attribute=attribute, error=str(e))
+            return None
+
+    def _parse_all_jsons_from_scripts(self, parser: HTMLParser, selector: str, context: str = "scripts") -> List[Any]:
+        results = []
+        for script in parser.css(selector):
+            try:
+                results.append(json.loads(script.text()))
+            except json.JSONDecodeError as e:
+                if hasattr(self, 'logger'):
+                    self.logger.error("failed_parsing_json_in_list", context=context, selector=selector, error=str(e))
+        return results
+
+
 class BrowserHeadersMixin:
     def _get_browser_headers(self, host: Optional[str] = None, referer: Optional[str] = None, **extra: str) -> Dict[str, str]:
         h = {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT, "sec-ch-ua": CHROME_SEC_CH_UA, "sec-ch-ua-mobile": "0", "sec-ch-ua-platform": '"Windows"'}
@@ -695,9 +805,16 @@ class RacePageFetcherMixin:
                 async with local_sem:
                     await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
                     try:
+                        if hasattr(self, 'logger'):
+                            self.logger.debug("fetching_race_page", url=url)
                         resp = await self.make_request("GET", url, headers=headers)
-                        if resp and hasattr(resp, "text") and resp.text: return {**item, "html": resp.text}
-                    except Exception: pass
+                        if resp and hasattr(resp, "text") and resp.text:
+                            if hasattr(self, 'logger'):
+                                self.logger.debug("fetched_race_page", url=url, status=getattr(resp, 'status', 'unknown'))
+                            return {**item, "html": resp.text}
+                    except Exception as e:
+                        if hasattr(self, 'logger'):
+                            self.logger.error("failed_fetching_race_page", url=url, error=str(e))
                     return None
         tasks = [fetch_single(m) for m in metadata]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -706,12 +823,22 @@ class RacePageFetcherMixin:
 
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
-    def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, **kwargs: Any) -> None:
+    def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
         self.source_name = source_name
         self.base_url = base_url.rstrip("/")
+        self.config = config or {}
+        # Merge kwargs into config
+        self.config.update(kwargs)
+
+        # Override rate_limit from config if present
+        actual_rate_limit = float(self.config.get("rate_limit", rate_limit))
+
         self.logger = structlog.get_logger(adapter_name=self.source_name)
-        self.circuit_breaker = CircuitBreaker()
-        self.rate_limiter = RateLimiter(requests_per_second=rate_limit)
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=int(self.config.get("failure_threshold", 5)),
+            recovery_timeout=float(self.config.get("recovery_timeout", 60.0))
+        )
+        self.rate_limiter = RateLimiter(requests_per_second=actual_rate_limit)
         self.metrics = AdapterMetrics()
         self.smart_fetcher = SmartFetcher(strategy=self._configure_fetch_strategy())
         self.last_race_count = 0
@@ -756,7 +883,15 @@ class BaseAdapterV3(ABC):
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
-        return await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
+        self.logger.debug("Requesting", method=method, url=full_url)
+        try:
+            resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
+            status = getattr(resp, 'status', 'unknown')
+            self.logger.debug("Response received", method=method, url=full_url, status=status)
+            return resp
+        except Exception as e:
+            self.logger.error("Request failed", method=method, url=full_url, error=str(e))
+            raise
 
     async def close(self) -> None: await self.smart_fetcher.close()
     async def shutdown(self) -> None: await self.close()
@@ -912,7 +1047,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                 if odds_node := row.css_first(".horse-in-racecard__odds"):
                     win_odds = parse_odds_to_decimal(clean_text(odds_node.text()))
 
-            # Deep dark sorcery fallback
+            # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
 
@@ -924,7 +1059,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 # ----------------------------------------
 # AtTheRacesGreyhoundAdapter
 # ----------------------------------------
-class AtTheRacesGreyhoundAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "AtTheRacesGreyhound"
     BASE_URL: ClassVar[str] = "https://greyhounds.attheraces.com"
 
@@ -946,19 +1081,17 @@ class AtTheRacesGreyhoundAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetche
         metadata = self._extract_race_metadata(parser)
         if not metadata:
             links = []
-            for script in parser.css('script[type="application/ld+json"]'):
-                try:
-                    d = json.loads(script.text())
-                    items = d.get("@graph", [d]) if isinstance(d, dict) else []
-                    for item in items:
-                        if item.get("@type") == "SportsEvent":
-                            loc = item.get("location")
-                            if isinstance(loc, list):
-                                for l in loc:
-                                    if u := l.get("url"): links.append(u)
-                            elif isinstance(loc, dict):
-                                if u := loc.get("url"): links.append(u)
-                except: continue
+            scripts = self._parse_all_jsons_from_scripts(parser, 'script[type="application/ld+json"]', context="ATR Greyhound Index")
+            for d in scripts:
+                items = d.get("@graph", [d]) if isinstance(d, dict) else []
+                for item in items:
+                    if item.get("@type") == "SportsEvent":
+                        loc = item.get("location")
+                        if isinstance(loc, list):
+                            for l in loc:
+                                if u := l.get("url"): links.append(u)
+                        elif isinstance(loc, dict):
+                            if u := loc.get("url"): links.append(u)
             metadata = [{"url": l, "race_number": 0} for l in set(links)]
         if not metadata: return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
@@ -1007,7 +1140,7 @@ class AtTheRacesGreyhoundAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetche
         for module in modules:
             m_type, m_data = module.get("type"), module.get("data", {})
             if m_type == "RacecardHero":
-                venue = normalize_venue_name(m_data.get("track", "")) or ""
+                venue = normalize_venue_name(m_data.get("track", ""))
                 race_time_str = m_data.get("time", "")
                 distance = m_data.get("distance", "")
                 if not race_number: race_number = m_data.get("raceNumber") or m_data.get("number")
@@ -1032,7 +1165,7 @@ class AtTheRacesGreyhoundAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetche
                     g_id = g_id_match.group(1) if g_id_match else None
                     win_odds = odds_map.get(str(g_id)) if g_id else None
 
-                    # Deep dark sorcery fallback
+                    # Advanced heuristic fallback
                     if win_odds is None:
                         win_odds = SmartOddsExtractor.extract_from_text(str(t))
 
@@ -1042,7 +1175,7 @@ class AtTheRacesGreyhoundAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetche
         if not venue or not runners:
             url_parts = url_path.split("/")
             if len(url_parts) >= 5:
-                venue = normalize_venue_name(url_parts[3]) or ""
+                venue = normalize_venue_name(url_parts[3])
                 race_time_str = url_parts[-1]
         if not venue or not runners: return None
         try:
@@ -1115,7 +1248,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # ----------------------------------------
 # SportingLifeAdapter
 # ----------------------------------------
-class SportingLifeAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SportingLife"
     BASE_URL: ClassVar[str] = "https://www.sportinglife.com"
 
@@ -1141,14 +1274,11 @@ class SportingLifeAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin,
 
     def _extract_race_metadata(self, parser: HTMLParser) -> List[Dict[str, Any]]:
         meta: List[Dict[str, Any]] = []
-        script = parser.css_first("script#__NEXT_DATA__")
-        if script:
-            try:
-                data = json.loads(script.text())
-                for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
-                    for i, race in enumerate(meeting.get("races", [])):
-                        if url := race.get("racecard_url"): meta.append({"url": url, "race_number": i + 1})
-            except: pass
+        data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Index")
+        if data:
+            for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
+                for i, race in enumerate(meeting.get("races", [])):
+                    if url := race.get("racecard_url"): meta.append({"url": url, "race_number": i + 1})
         if not meta:
             meetings = parser.css('section[class^="MeetingSummary"]') or parser.css(".meeting-summary")
             for meeting in meetings:
@@ -1173,41 +1303,38 @@ class SportingLifeAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin,
         return races
 
     def _parse_from_next_data(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
-        script = parser.css_first("script#__NEXT_DATA__")
-        if not script: return None
-        try:
-            data = json.loads(script.text())
-            race_info = data.get("props", {}).get("pageProps", {}).get("race")
-            if not race_info: return None
-            summary = race_info.get("race_summary") or {}
-            track_name = normalize_venue_name(race_info.get("meeting_name") or summary.get("course_name") or "Unknown")
-            rt = race_info.get("time") or summary.get("time") or race_info.get("off_time") or race_info.get("start_time")
-            if not rt:
-                def f(o):
-                    if isinstance(o, str) and re.match(r"^\d{1,2}:\d{2}$", o): return o
-                    if isinstance(o, dict):
-                        for v in o.values():
-                            if t := f(v): return t
-                    if isinstance(o, list):
-                        for v in o:
-                            if t := f(v): return t
-                    return None
-                rt = f(race_info)
-            if not rt: return None
-            try: start_time = datetime.combine(race_date, datetime.strptime(rt, "%H:%M").time())
-            except: return None
-            runners = []
-            for rd in (race_info.get("runners") or race_info.get("rides") or []):
-                name = clean_text(rd.get("horse_name") or rd.get("horse", {}).get("name", ""))
-                if not name: continue
-                num = rd.get("saddle_cloth_number") or rd.get("cloth_number") or 0
-                wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
-                odds_data = {}
-                if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
-                runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
-            if not runners: return None
-            return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+        data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Race")
+        if not data: return None
+        race_info = data.get("props", {}).get("pageProps", {}).get("race")
+        if not race_info: return None
+        summary = race_info.get("race_summary") or {}
+        track_name = normalize_venue_name(race_info.get("meeting_name") or summary.get("course_name") or "Unknown")
+        rt = race_info.get("time") or summary.get("time") or race_info.get("off_time") or race_info.get("start_time")
+        if not rt:
+            def f(o):
+                if isinstance(o, str) and re.match(r"^\d{1,2}:\d{2}$", o): return o
+                if isinstance(o, dict):
+                    for v in o.values():
+                        if t := f(v): return t
+                if isinstance(o, list):
+                    for v in o:
+                        if t := f(v): return t
+                return None
+            rt = f(race_info)
+        if not rt: return None
+        try: start_time = datetime.combine(race_date, datetime.strptime(rt, "%H:%M").time())
         except: return None
+        runners = []
+        for rd in (race_info.get("runners") or race_info.get("rides") or []):
+            name = clean_text(rd.get("horse_name") or rd.get("horse", {}).get("name", ""))
+            if not name: continue
+            num = rd.get("saddle_cloth_number") or rd.get("cloth_number") or 0
+            wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
+            odds_data = {}
+            if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
+            runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
+        if not runners: return None
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -1230,7 +1357,7 @@ class SportingLifeAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin,
                 on = row.css_first('span[class*="Odds__Price"]')
                 wo = parse_odds_to_decimal(clean_text(on.text()) if on else "")
 
-                # Deep dark sorcery fallback
+                # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(row)
 
@@ -1245,7 +1372,7 @@ class SportingLifeAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin,
 # ----------------------------------------
 # SkySportsAdapter
 # ----------------------------------------
-class SkySportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkySports"
     BASE_URL: ClassVar[str] = "https://www.skysports.com"
 
@@ -1320,7 +1447,7 @@ class SkySportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Ba
                 onode = node.css_first(".sdc-site-racing-card__betting-odds")
                 wo = parse_odds_to_decimal(clean_text(onode.text()) if onode else "")
 
-                # Deep dark sorcery fallback
+                # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(node)
 
@@ -1376,7 +1503,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         try: st = datetime.fromisoformat(dts.replace("Z", "+00:00"))
         except: return None
         runners = [Runner(number=i + 1, name=f"Runner {i + 1}", scratched=False, odds={}) for i in range(nr)]
-        return Race(discipline="Thoroughbred", id=f"rpb2b_{rid.replace('-', '')[:16]}", venue=normalize_venue_name(vn) or vn, race_number=rnum, start_time=st, runners=runners, source=self.source_name, metadata={"original_race_id": rid, "country_code": cc, "num_runners": nr})
+        return Race(discipline="Thoroughbred", id=f"rpb2b_{rid.replace('-', '')[:16]}", venue=normalize_venue_name(vn), race_number=rnum, start_time=st, runners=runners, source=self.source_name, metadata={"original_race_id": rid, "country_code": cc, "num_runners": nr})
 
 
 # ----------------------------------------
@@ -1447,7 +1574,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         for item in raw_data["pages"]:
             html_content = item.get("html")
             if not html_content or ("Final Changes Made" not in html_content and not item.get("finalized")): continue
-            track_name = normalize_venue_name(item["venue"]) or item["venue"]
+            track_name = normalize_venue_name(item["venue"])
             for pre in HTMLParser(html_content).css("pre"):
                 text = pre.text()
                 race_chunks = re.split(r"(\d+)\s+--\s+", text)
@@ -1514,7 +1641,7 @@ class TabAdapter(BaseAdapterV3):
         if not raw_data or "meetings" not in raw_data: return []
         races: List[Race] = []
         for m in raw_data["meetings"]:
-            vn = normalize_venue_name(m.get("meetingName")) or "Unknown"
+            vn = normalize_venue_name(m.get("meetingName"))
             mt = m.get("meetingType", "R")
             disc = {"R": "Thoroughbred", "H": "Harness", "G": "Greyhound"}.get(mt, "Thoroughbred")
             for rd in m.get("races", []):
@@ -1528,7 +1655,7 @@ class TabAdapter(BaseAdapterV3):
 # ----------------------------------------
 # BetfairDataScientistAdapter
 # ----------------------------------------
-class BetfairDataScientistAdapter(BaseAdapterV3):
+class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
     ADAPTER_NAME: ClassVar[str] = "BetfairDataScientist"
 
     def __init__(self, model_name: str = "Ratings", url: str = "https://www.betfair.com.au/hub/ratings/model/horse-racing/", config: Optional[Dict[str, Any]] = None) -> None:
@@ -1558,7 +1685,7 @@ class BetfairDataScientistAdapter(BaseAdapterV3):
                     if pd.notna(rp):
                         if ov := create_odds_data(self.source_name, float(rp)): od[self.source_name] = ov
                     runners.append(Runner(name=str(row.get("runner_name", "Unknown")), number=int(row.get("saddle_cloth", 0)), odds=od))
-                vn = normalize_venue_name(str(ri.get("meeting_name", ""))) or "Unknown"
+                vn = normalize_venue_name(str(ri.get("meeting_name", "")))
                 races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(timezone.utc), runners=runners, source=self.source_name, discipline="Thoroughbred"))
             return races
         except: return []
@@ -1648,7 +1775,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 # ----------------------------------------
 # TwinSpiresAdapter
 # ----------------------------------------
-class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
+class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TwinSpires"
     BASE_URL: ClassVar[str] = "https://www.twinspires.com"
 
@@ -1695,7 +1822,7 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
                     relems, used = el, s
                     break
             except: continue
-        if not relems: return [{"html": resp.text, "track": "Unknown", "race_number": 0, "date": date, "full_page": True}]
+        if not relems: return [{"html": resp.text, "selector": page, "track": "Unknown", "race_number": 0, "date": date, "full_page": True}]
         for i, relem in enumerate(relems, 1):
             try:
                 html_str = str(relem.html) if hasattr(relem, 'html') else str(relem)
@@ -1705,7 +1832,17 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
                 if rn_txt:
                     digits = "".join(filter(str.isdigit, rn_txt))
                     if digits: rnum = int(digits)
-                rd.append({"html": html_str, "track": tn.strip(), "race_number": rnum, "post_time_text": self._find_with_selectors(relem, self.POST_TIME_SELECTORS), "distance": self._find_with_selectors(relem, ['[class*="distance"]', '[class*="Distance"]', '[data-distance]', ".race-distance"]), "date": date, "full_page": False, "available_bets": scrape_available_bets(html_str)})
+                rd.append({
+                    "html": html_str,
+                    "selector": relem,
+                    "track": tn.strip(),
+                    "race_number": rnum,
+                    "post_time_text": self._find_with_selectors(relem, self.POST_TIME_SELECTORS),
+                    "distance": self._find_with_selectors(relem, ['[class*="distance"]', '[class*="Distance"]', '[data-distance]', ".race-distance"]),
+                    "date": date,
+                    "full_page": False,
+                    "available_bets": scrape_available_bets(html_str)
+                })
             except: continue
         return rd
 
@@ -1730,9 +1867,11 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
         return parsed
 
     def _parse_single_race(self, rd: dict, ds: str) -> Optional[Race]:
+        page = rd.get("selector")
         hc = rd.get("html", "")
-        if not hc: return None
-        page = Selector(hc)
+        if not page:
+            if not hc: return None
+            page = Selector(hc)
         tn, rnum = rd.get("track", "Unknown"), rd.get("race_number", 1)
         st = self._parse_post_time(rd.get("post_time_text"), page, ds)
         runners = self._parse_runners(page)
@@ -1816,7 +1955,7 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
                             if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
                 except: continue
 
-            # Deep dark sorcery fallback
+            # Advanced heuristic fallback
             if wo is None:
                 wo = SmartOddsExtractor.extract_from_node(e)
                 if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
@@ -2113,9 +2252,16 @@ class RaceNotifier:
         self.toaster = ToastNotifier("Fortuna") if ToastNotifier else None
         self.audio_system = AudioAlertSystem()
         self.notified_races = set()
+        self.notifications_enabled = self.toaster is not None
+        if not self.notifications_enabled:
+            log.warning("Notifications disabled: ToastNotifier not available")
 
     def notify_qualified_race(self, race):
-        if not self.toaster or race.id in self.notified_races:
+        if race.id in self.notified_races:
+            return
+
+        if not self.notifications_enabled:
+            log.debug("Skipping notification: disabled", race_id=race.id)
             return
 
         title = "🐎 High-Value Opportunity!"
@@ -2135,99 +2281,6 @@ Post Time: {race.start_time.strftime("%I:%M %p")}"""
 
 
 # ----------------------------------------
-# TEXT UTILITIES
-# ----------------------------------------
-# python_service/utils/text.py
-# Centralized text and name normalization utilities
-import re
-import os
-from typing import Optional, Any, List, Union
-from collections import defaultdict
-from datetime import datetime, timezone
-
-
-def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
-    """Helper to get a field from either an object or a dictionary."""
-    if isinstance(obj, dict):
-        return obj.get(field_name, default)
-    return getattr(obj, field_name, default)
-
-
-def clean_text(text: Optional[str]) -> Optional[str]:
-    """Strips leading/trailing whitespace and collapses internal whitespace."""
-    if not text:
-        return None
-    return " ".join(text.strip().split())
-
-
-def normalize_venue_name(name: Optional[str]) -> Optional[str]:
-    """
-    Normalizes a racecourse name to a standard format.
-    Handles common abbreviations, variations, and trims country suffixes.
-    """
-    if not name:
-        return None
-
-    # Trim parenthetical info like (USA), (IRE), (GB), etc. and extra whitespace
-    name = re.sub(r'\s*\([^)]*\)\s*$', '', name)
-
-    # Use a temporary variable for matching, but return the properly cased name
-    cleaned_name_upper = clean_text(name).upper()
-
-    VENUE_MAP = {
-        "ASCOT": "Ascot",
-        "AQUEDUCT": "Aqueduct",
-        "AYR": "Ayr",
-        "BANGOR-ON-DEE": "Bangor-on-Dee",
-        "CATTERICK BRIDGE": "Catterick",
-        "CHELMSFORD CITY": "Chelmsford",
-        "EPSOM DOWNS": "Epsom",
-        "FONTWELL": "Fontwell Park",
-        "GULFSTREAM": "Gulfstream Park",
-        "GULFSTREAM PARK": "Gulfstream Park",
-        "HAYDOCK": "Haydock Park",
-        "KEMPTON": "Kempton Park",
-        "LINGFIELD": "Lingfield Park",
-        "LINGFIELD PARK": "Lingfield Park",
-        "NEWMARKET (ROWLEY)": "Newmarket",
-        "NEWMARKET (JULY)": "Newmarket",
-        "SAM HOUSTON": "Sam Houston",
-        "SAM HOUSTON RACE PARK": "Sam Houston",
-        "SANDOWN": "Sandown Park",
-        "SANDOWN PARK": "Sandown Park",
-        "SANTA ANITA": "Santa Anita",
-        "STRATFORD": "Stratford-on-Avon",
-        "YARMOUTH": "Great Yarmouth",
-        "CURRAGH": "Curragh",
-        "DOWN ROYAL": "Down Royal",
-        "DELTA DOWNS": "Delta Downs",
-        "FAIR GROUNDS": "Fair Grounds",
-        "LAUREL PARK": "Laurel Park",
-        "LOS ALAMITOS": "Los Alamitos",
-        "MUSSELBURGH": "Musselburgh",
-        "NEWCASTLE": "Newcastle",
-        "SUNLAND PARK": "Sunland Park",
-        "TAMPA BAY DOWNS": "Tampa Bay Downs",
-        "TURF PARADISE": "Turf Paradise",
-        "VINCENNES": "Vincennes",
-        "WETHERBY": "Wetherby",
-    }
-
-    # Check primary map first
-    if cleaned_name_upper in VENUE_MAP:
-        return VENUE_MAP[cleaned_name_upper]
-
-    # Handle cases where the key is the desired output but needs to be mapped from a variation
-    # e.g. CHELMSFORD maps to Chelmsford
-    # Title case the cleaned name for a sensible default
-    title_cased_name = clean_text(name).title()
-    if title_cased_name in VENUE_MAP.values():
-        return title_cased_name
-
-    # Return the title-cased cleaned name as a fallback
-    return title_cased_name
-
-
 def get_track_category(races_at_track: List[Any]) -> str:
     """Categorize the track as T (Thoroughbred), H (Harness), or G (Greyhounds)."""
     if not races_at_track:
@@ -2444,7 +2497,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
         else:
             remaining_gold.append(r)
 
-    report_lines = ["GOLDMINE RACE INTELLIGENCE REPORT", "================================", ""]
+    report_lines = ["LIST OF BEST BETS - GOLDMINE REPORT", "===================================", ""]
 
     def render_races(races_to_render, label):
         if not races_to_render:
@@ -2463,10 +2516,23 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             else:
                 time_str = str(start_time)
 
+            # Identify Top 5
+            runners = get_field(r, 'runners', [])
+            active_with_odds = []
+            for run in runners:
+                if get_field(run, 'scratched'): continue
+                wo = _get_best_win_odds(run)
+                if wo: active_with_odds.append((run, float(wo)))
+
+            sorted_by_odds = sorted(active_with_odds, key=lambda x: x[1])
+            top_5_nums = ", ".join([str(get_field(run[0], 'number') or '?') for run in sorted_by_odds[:5]])
+            if hasattr(r, 'top_five_numbers'):
+                r.top_five_numbers = top_5_nums
+
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
+            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}]")
             report_lines.append("-" * 40)
 
-            runners = get_field(r, 'runners', [])
             # Sort runners by number
             sorted_runners = sorted(runners, key=lambda x: get_field(x, 'number') or 0)
 
@@ -2751,6 +2817,7 @@ Usage:
     python favorite_to_place_monitor.py [--date YYYY-MM-DD] [--refresh-interval 30]
 """
 
+@dataclass
 class RaceSummary:
     """Summary of a single race for display."""
     discipline: str  # T/H/G
@@ -2765,6 +2832,7 @@ class RaceSummary:
     second_fav_name: Optional[str] = None
     favorite_odds: Optional[float] = None
     favorite_name: Optional[str] = None
+    top_five_numbers: Optional[str] = None
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -2781,6 +2849,7 @@ class RaceSummary:
             "second_fav_name": self.second_fav_name,
             "favorite_odds": self.favorite_odds,
             "favorite_name": self.favorite_name,
+            "top_five_numbers": self.top_five_numbers,
         }
 
 
@@ -2878,12 +2947,20 @@ class FavoriteToPlaceMonitor:
     def _get_favorite_and_second(self, race: Race) -> Tuple[Optional[Runner], Optional[Runner]]:
         """Get favorite and second favorite by odds."""
         # Get active runners with valid odds
-        r_with_odds = [r for r in race.runners if not r.scratched and r.win_odds and r.win_odds > 1.0]
-        if len(r_with_odds) < 2: return None, None
+        r_with_odds = []
+        for r in race.runners:
+            if r.scratched:
+                continue
+            wo = _get_best_win_odds(r)
+            if wo is not None and wo > 1.0:
+                r_with_odds.append((r, float(wo)))
+
+        if len(r_with_odds) < 2:
+            return None, None
 
         # Sort by odds (lowest first)
-        sorted_r = sorted(r_with_odds, key=lambda r: r.win_odds)
-        return sorted_r[0], sorted_r[1]
+        sorted_r = sorted(r_with_odds, key=lambda x: x[1])
+        return sorted_r[0][0], sorted_r[1][0]
 
     def _calculate_mtp(self, start_time: datetime) -> Optional[int]:
         """Calculate minutes to post."""
@@ -2894,12 +2971,29 @@ class FavoriteToPlaceMonitor:
         delta = start_time - now
         return int(delta.total_seconds() / 60)
 
+    def _get_top_n_runners(self, race: Race, n: int = 5) -> str:
+        """Get top N runners by win odds."""
+        active_with_odds = []
+        for r in race.runners:
+            if r.scratched:
+                continue
+            wo = _get_best_win_odds(r)
+            if wo is not None and wo > 1.0:
+                active_with_odds.append((r, float(wo)))
+
+        if not active_with_odds:
+            return ""
+
+        sorted_r = sorted(active_with_odds, key=lambda x: x[1])
+        top_n = sorted_r[:n]
+        return ", ".join([str(r[0].number) if r[0].number is not None else "?" for r in top_n])
+
     def _create_race_summary(self, race: Race, adapter_name: str) -> RaceSummary:
         """Create a RaceSummary from a Race object."""
         favorite, second_fav = self._get_favorite_and_second(race)
         return RaceSummary(
             discipline=self._get_discipline_code(race),
-            track=race.venue,
+            track=normalize_venue_name(race.venue),
             race_number=race.race_number,
             field_size=self._calculate_field_size(race),
             superfecta_offered=self._has_superfecta(race),
@@ -2910,6 +3004,7 @@ class FavoriteToPlaceMonitor:
             second_fav_name=second_fav.name if second_fav else None,
             favorite_odds=favorite.win_odds if favorite else None,
             favorite_name=favorite.name if favorite else None,
+            top_five_numbers=self._get_top_n_runners(race, 5),
         )
 
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]]):
@@ -2918,8 +3013,8 @@ class FavoriteToPlaceMonitor:
         for race, adapter_name in races_with_adapters:
             try:
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Venue + Race Number
-                key = f"{summary.track.lower().strip()}|{summary.race_number}"
+                # Stable key: Normalized Venue + Race Number
+                key = f"{summary.track.lower()}|{summary.race_number}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -2994,27 +3089,29 @@ class FavoriteToPlaceMonitor:
 
             yml = self.get_you_might_like_races()
             if yml:
-                print("=" * 140)
-                print("🌟 YOU MIGHT LIKE - NEAR-MISS OPPORTUNITIES".center(140))
-                print("=" * 140)
-                print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20}")
-                print("-" * 140)
+                print("=" * 160)
+                print("🌟 YOU MIGHT LIKE - NEAR-MISS OPPORTUNITIES".center(160))
+                print("=" * 160)
+                print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}")
+                print("-" * 160)
                 for r in yml:
                     sup = "✅" if r.superfecta_offered else "❌"
                     fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
                     so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
-                    print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so}")
-                print("-" * 140)
+                    top5 = r.top_five_numbers or "N/A"
+                    print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
+                print("-" * 160)
             return
 
-        print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'ADAPTER':<20}")
-        print("-" * 140)
+        print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}")
+        print("-" * 160)
         for r in bet_now:
             sup = "✅" if r.superfecta_offered else "❌"
             fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
             so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
-            print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} {r.adapter[:19]:<20}")
-        print("-" * 140)
+            top5 = r.top_five_numbers or "N/A"
+            print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
+        print("-" * 160)
         print(f"Total opportunities: {len(bet_now)}\n")
 
     def save_to_json(self, filename: str = "race_data.json"):
@@ -3033,6 +3130,23 @@ class FavoriteToPlaceMonitor:
         }
         with open(filename, 'w') as f:
             json.dump(data, f, indent=2)
+
+        # Persistent history log
+        self._append_to_history(bn + yml)
+
+    def _append_to_history(self, races: List[RaceSummary]):
+        """Append races to persistent history for future result matching."""
+        if not races: return
+        history_file = "prediction_history.jsonl"
+        timestamp = datetime.now(timezone.utc).isoformat()
+        try:
+            with open(history_file, 'a') as f:
+                for r in races:
+                    record = r.to_dict()
+                    record["logged_at"] = timestamp
+                    f.write(json.dumps(record) + "\n")
+        except Exception as e:
+            print(f"Error logging to history: {e}")
 
     async def run_once(self):
         try:
@@ -3298,16 +3412,14 @@ class TimeformAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 # Extract via JSON-LD if possible
                 venue = ""
                 start_time = None
-                for script in parser.css('script[type="application/ld+json"]'):
-                    try:
-                        data = json.loads(script.text())
-                        if data.get("@type") == "Event":
-                            venue = normalize_venue_name(data.get("location", {}).get("name", ""))
-                            if sd := data.get("startDate"):
-                                # 2026-01-28T14:32:00
-                                start_time = datetime.fromisoformat(sd.split('+')[0])
-                            break
-                    except: continue
+                scripts = self._parse_all_jsons_from_scripts(parser, 'script[type="application/ld+json"]', context="Betfair Index")
+                for data in scripts:
+                    if data.get("@type") == "Event":
+                        venue = normalize_venue_name(data.get("location", {}).get("name", ""))
+                        if sd := data.get("startDate"):
+                            # 2026-01-28T14:32:00
+                            start_time = datetime.fromisoformat(sd.split('+')[0])
+                        break
 
                 if not venue:
                     # Fallback to title
@@ -3616,7 +3728,15 @@ async def run_discovery(target_date: str):
     for race in all_races_raw:
         venue = normalize_venue_name(race.venue)
         # Use Venue + Race Number + Date as stable key
-        key = f"{venue.lower()}|{race.race_number}|{race.start_time.strftime('%Y%m%d')}"
+        st = race.start_time
+        if isinstance(st, str):
+            try:
+                st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            except (ValueError, TypeError):
+                pass
+
+        date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
+        key = f"{venue.lower()}|{race.race_number}|{date_str}"
         
         if key not in race_map:
             race_map[key] = race
