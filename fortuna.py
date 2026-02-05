@@ -2497,7 +2497,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
         else:
             remaining_gold.append(r)
 
-    report_lines = ["GOLDMINE RACE INTELLIGENCE REPORT", "================================", ""]
+    report_lines = ["LIST OF BEST BETS - GOLDMINE REPORT", "===================================", ""]
 
     def render_races(races_to_render, label):
         if not races_to_render:
