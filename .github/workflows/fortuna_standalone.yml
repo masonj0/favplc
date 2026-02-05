@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - jules205b
   # schedule:
   #   - cron: '*/30 * * * *' # Every 30 minutes
   workflow_dispatch:
@@ -75,8 +76,43 @@ jobs:
         run: |
           if [ -f race_data.json ]; then
             echo "### 🎯 Favorite-to-Place Monitor" >> $GITHUB_STEP_SUMMARY
-            # We can use python to extract some highlights for the summary
-            python3 -c "import json; d=json.load(open('race_data.json')); print(f'Total Races: {d[\"total_races\"]}'); print(f'BET NOW: {d[\"bet_now_count\"]}'); print(f'You Might Like: {d[\"you_might_like_count\"]}')" >> $GITHUB_STEP_SUMMARY
+            python3 -c "
+          import json
+          try:
+              with open('race_data.json') as f:
+                  d = json.load(f)
+              print(f'**Total Races:** {d[\"total_races\"]}')
+              print(f'**BET NOW:** {d[\"bet_now_count\"]}')
+              print(f'**You Might Like:** {d[\"you_might_like_count\"]}')
+              print('')
+
+              if d.get('bet_now_races'):
+                  print('#### 🎯 BET NOW OPPORTUNITIES')
+                  print('| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |')
+                  print('|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|')
+                  for r in d['bet_now_races']:
+                      sup = '✅' if r['superfecta_offered'] else '❌'
+                      fav = f\"{r['favorite_odds']:.2f}\" if r['favorite_odds'] else 'N/A'
+                      sec = f\"{r['second_fav_odds']:.2f}\" if r['second_fav_odds'] else 'N/A'
+                      odds = f\"{fav}, {sec}\"
+                      top5 = f\"\`{r['top_five_numbers']}\`\" if r['top_five_numbers'] else 'N/A'
+                      print(f'| {sup} | {r[\"mtp\"]} | {r[\"discipline\"]} | {r[\"track\"]} | {r[\"race_number\"]} | {r[\"field_size\"]} | {odds} | {top5} |')
+                  print('')
+
+              if d.get('you_might_like_races'):
+                  print('#### 🌟 YOU MIGHT LIKE')
+                  print('| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |')
+                  print('|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|')
+                  for r in d['you_might_like_races']:
+                      sup = '✅' if r['superfecta_offered'] else '❌'
+                      fav = f\"{r['favorite_odds']:.2f}\" if r['favorite_odds'] else 'N/A'
+                      sec = f\"{r['second_fav_odds']:.2f}\" if r['second_fav_odds'] else 'N/A'
+                      odds = f\"{fav}, {sec}\"
+                      top5 = f\"\`{r['top_five_numbers']}\`\" if r['top_five_numbers'] else 'N/A'
+                      print(f'| {sup} | {r[\"mtp\"]} | {r[\"discipline\"]} | {r[\"track\"]} | {r[\"race_number\"]} | {r[\"field_size\"]} | {odds} | {top5} |')
+          except Exception as e:
+              print(f'Error generating summary: {e}')
+          " >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload Artifacts
