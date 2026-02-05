@@ -2463,10 +2463,14 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             else:
                 time_str = str(start_time)
 
-            report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
-            report_lines.append("-" * 40)
-
             runners = get_field(r, 'runners', [])
+            active_runners = [run for run in runners if not get_field(run, 'scratched')]
+            active_runners.sort(key=lambda x: get_field(x, 'win_odds') or 999.0)
+            top_five = "|".join([str(get_field(run, 'number')) for run in active_runners[:5]])
+
+            report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
+            report_lines.append(f"TOP 5: {top_five}")
+            report_lines.append("-" * 40)
             # Sort runners by number
             sorted_runners = sorted(runners, key=lambda x: get_field(x, 'number') or 0)
 
@@ -2649,7 +2653,12 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
 
                 diff = (start_time - now).total_seconds() / 60
                 if 0 <= diff <= 20:
-                    entry = f"{cat}~{track} R{get_field(race, 'race_number')} in {int(diff)}m"
+                    # Calculate top 5 for the snippet
+                    active_runners = [run for run in runners if not get_field(run, 'scratched')]
+                    active_runners.sort(key=lambda x: get_field(x, 'win_odds') or 999.0)
+                    top_five = "|".join([str(get_field(run, 'number')) for run in active_runners[:5]])
+
+                    entry = f"{cat}~{track} R{get_field(race, 'race_number')} in {int(diff)}m [{top_five}]"
                     if is_super:
                         immediate_gold_super_snippet.append(entry)
                     else:
@@ -2765,6 +2774,7 @@ class RaceSummary:
     second_fav_name: Optional[str] = None
     favorite_odds: Optional[float] = None
     favorite_name: Optional[str] = None
+    top_five_numbers: str = ""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -2781,6 +2791,7 @@ class RaceSummary:
             "second_fav_name": self.second_fav_name,
             "favorite_odds": self.favorite_odds,
             "favorite_name": self.favorite_name,
+            "top_five_numbers": self.top_five_numbers,
         }
 
 
@@ -2875,15 +2886,12 @@ class FavoriteToPlaceMonitor:
             ab = race.metadata.get('available_bets', [])
         return "Superfecta" in ab
 
-    def _get_favorite_and_second(self, race: Race) -> Tuple[Optional[Runner], Optional[Runner]]:
-        """Get favorite and second favorite by odds."""
+    def _get_top_runners(self, race: Race, limit: int = 5) -> List[Runner]:
+        """Get top runners by odds, sorted lowest first."""
         # Get active runners with valid odds
         r_with_odds = [r for r in race.runners if not r.scratched and r.win_odds and r.win_odds > 1.0]
-        if len(r_with_odds) < 2: return None, None
-
         # Sort by odds (lowest first)
-        sorted_r = sorted(r_with_odds, key=lambda r: r.win_odds)
-        return sorted_r[0], sorted_r[1]
+        return sorted(r_with_odds, key=lambda r: r.win_odds)[:limit]
 
     def _calculate_mtp(self, start_time: datetime) -> Optional[int]:
         """Calculate minutes to post."""
@@ -2896,7 +2904,11 @@ class FavoriteToPlaceMonitor:
 
     def _create_race_summary(self, race: Race, adapter_name: str) -> RaceSummary:
         """Create a RaceSummary from a Race object."""
-        favorite, second_fav = self._get_favorite_and_second(race)
+        top_runners = self._get_top_runners(race, limit=5)
+        favorite = top_runners[0] if len(top_runners) >= 1 else None
+        second_fav = top_runners[1] if len(top_runners) >= 2 else None
+        top_five_str = "|".join([str(r.number) for r in top_runners])
+
         return RaceSummary(
             discipline=self._get_discipline_code(race),
             track=race.venue,
@@ -2910,6 +2922,7 @@ class FavoriteToPlaceMonitor:
             second_fav_name=second_fav.name if second_fav else None,
             favorite_odds=favorite.win_odds if favorite else None,
             favorite_name=favorite.name if favorite else None,
+            top_five_numbers=top_five_str,
         )
 
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]]):
@@ -3007,13 +3020,13 @@ class FavoriteToPlaceMonitor:
                 print("-" * 140)
             return
 
-        print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'ADAPTER':<20}")
+        print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<15} {'ADAPTER':<20}")
         print("-" * 140)
         for r in bet_now:
             sup = "✅" if r.superfecta_offered else "❌"
             fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
             so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
-            print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} {r.adapter[:19]:<20}")
+            print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} {r.top_five_numbers:<15} {r.adapter[:19]:<20}")
         print("-" * 140)
         print(f"Total opportunities: {len(bet_now)}\n")
 
