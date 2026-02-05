@@ -10,13 +10,12 @@ This module provides a unified collection of adapters for fetching racecard data
 from various racing websites. It serves as a high-reliability fallback system.
 """
 import argparse
-
-
 import asyncio
 import hashlib
 import html
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -24,6 +23,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from enum import Enum
 from io import StringIO
 from pathlib import Path
@@ -82,6 +82,16 @@ except ImportError:
     class StealthMode:  # type: ignore
         FAST = "fast"
         CAMOUFLAGE = "camouflage"
+
+try:
+    import winsound
+except (ImportError, RuntimeError):
+    winsound = None
+
+try:
+    from win10toast_py3 import ToastNotifier
+except (ImportError, RuntimeError):
+    ToastNotifier = None
 
 
 # --- TYPE VARIABLES ---
@@ -216,7 +226,7 @@ class OddsData(FortunaBaseModel):
     win: Optional[JsonDecimal] = None
     place: Optional[JsonDecimal] = None
     source: str
-    last_updated: datetime = Field(default_factory=datetime.now)
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class Runner(FortunaBaseModel):
@@ -253,6 +263,13 @@ class Race(FortunaBaseModel):
     race_number: int = Field(..., alias="raceNumber", ge=1, le=100)
     start_time: datetime = Field(..., alias="startTime")
     runners: List[Runner] = Field(default_factory=list)
+
+    @field_validator("start_time", mode="after")
+    @classmethod
+    def ensure_utc(cls, v: datetime) -> datetime:
+        if v.tzinfo is None:
+            return v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc)
     source: str
     discipline: Optional[str] = None
     distance: Optional[str] = None
@@ -429,6 +446,38 @@ class DataValidationPipeline:
 
 
 # --- CORE INFRASTRUCTURE ---
+class GlobalResourceManager:
+    """Manages shared resources like HTTP clients and semaphores."""
+    _httpx_client: Optional[httpx.AsyncClient] = None
+    _lock: asyncio.Lock = asyncio.Lock()
+    _global_semaphore: Optional[asyncio.Semaphore] = None
+
+    @classmethod
+    async def get_httpx_client(cls) -> httpx.AsyncClient:
+        if cls._httpx_client is None:
+            async with cls._lock:
+                if cls._httpx_client is None:
+                    cls._httpx_client = httpx.AsyncClient(
+                        follow_redirects=True,
+                        timeout=httpx.Timeout(DEFAULT_REQUEST_TIMEOUT),
+                        headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
+                        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+                    )
+        return cls._httpx_client
+
+    @classmethod
+    def get_global_semaphore(cls) -> asyncio.Semaphore:
+        if cls._global_semaphore is None:
+            cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+        return cls._global_semaphore
+
+    @classmethod
+    async def cleanup(cls):
+        if cls._httpx_client:
+            await cls._httpx_client.aclose()
+            cls._httpx_client = None
+
+
 class BrowserEngine(Enum):
     CAMOUFOX = "camoufox"
     PLAYWRIGHT = "playwright"
@@ -437,14 +486,13 @@ class BrowserEngine(Enum):
     HTTPX = "httpx"
 
 
-@dataclass
-class FetchStrategy:
+class FetchStrategy(FortunaBaseModel):
     primary_engine: BrowserEngine = BrowserEngine.PLAYWRIGHT
     enable_js: bool = True
     stealth_mode: str = "fast"
     block_resources: bool = True
-    max_retries: int = 3
-    timeout: int = DEFAULT_REQUEST_TIMEOUT
+    max_retries: int = Field(3, ge=0, le=10)
+    timeout: int = Field(DEFAULT_REQUEST_TIMEOUT, ge=1, le=300)
     page_load_strategy: str = "domcontentloaded"
     wait_for_selector: Optional[str] = None
 
@@ -454,9 +502,6 @@ class SmartFetcher:
     def __init__(self, strategy: Optional[FetchStrategy] = None):
         self.strategy = strategy or FetchStrategy()
         self.logger = structlog.get_logger(self.__class__.__name__)
-        self._httpx_client: Optional[httpx.AsyncClient] = None
-        self._curl_session: Optional[Any] = None
-        self._lock = asyncio.Lock()
         self._engine_health = {
             BrowserEngine.CAMOUFOX: 0.9,
             BrowserEngine.CURL_CFFI: 0.8,
@@ -464,17 +509,6 @@ class SmartFetcher:
             BrowserEngine.HTTPX: 0.5
         }
         self.last_engine: str = "unknown"
-
-    async def _get_httpx_client(self) -> httpx.AsyncClient:
-        if self._httpx_client is None:
-            async with self._lock:
-                if self._httpx_client is None:
-                    self._httpx_client = httpx.AsyncClient(
-                        follow_redirects=True,
-                        timeout=httpx.Timeout(self.strategy.timeout),
-                        headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
-                    )
-        return self._httpx_client
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
@@ -500,7 +534,7 @@ class SmartFetcher:
     
     async def _fetch_with_engine(self, engine: BrowserEngine, url: str, method: str, **kwargs: Any) -> Any:
         if engine == BrowserEngine.HTTPX:
-            client = await self._get_httpx_client()
+            client = await GlobalResourceManager.get_httpx_client()
             resp = await client.request(method, url, **kwargs)
             resp.status = resp.status_code
             return resp
@@ -553,9 +587,11 @@ class SmartFetcher:
 
 
     async def close(self) -> None:
-        if self._httpx_client:
-            await self._httpx_client.aclose()
-            self._httpx_client = None
+        """
+        Shared resources are managed by GlobalResourceManager.
+        This remains for API compatibility.
+        """
+        pass
 
 
 @dataclass
@@ -639,7 +675,7 @@ class DebugMixin:
         try:
             d = Path("debug_snapshots")
             d.mkdir(parents=True, exist_ok=True)
-            f = d / f"{context}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+            f = d / f"{context}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.html"
             with open(f, "w", encoding="utf-8") as out:
                 if url: out.write(f"<!-- URL: {url} -->\n")
                 out.write(content)
@@ -650,17 +686,19 @@ class DebugMixin:
 
 class RacePageFetcherMixin:
     async def _fetch_race_pages_concurrent(self, metadata: List[Dict[str, Any]], headers: Dict[str, str], semaphore_limit: int = 5, delay_range: tuple[float, float] = (0.5, 1.5)) -> List[Dict[str, Any]]:
-        sem = asyncio.Semaphore(semaphore_limit)
+        global_sem = GlobalResourceManager.get_global_semaphore()
+        local_sem = asyncio.Semaphore(semaphore_limit)
         async def fetch_single(item):
             url = item.get("url")
             if not url: return None
-            async with sem:
-                await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
-                try:
-                    resp = await self.make_request("GET", url, headers=headers)
-                    if resp and hasattr(resp, "text") and resp.text: return {**item, "html": resp.text}
-                except: pass
-                return None
+            async with global_sem:
+                async with local_sem:
+                    await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
+                    try:
+                        resp = await self.make_request("GET", url, headers=headers)
+                        if resp and hasattr(resp, "text") and resp.text: return {**item, "html": resp.text}
+                    except Exception: pass
+                    return None
         tasks = [fetch_single(m) for m in metadata]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         return [r for r in results if not isinstance(r, Exception) and r is not None]
@@ -947,7 +985,7 @@ class AtTheRacesGreyhoundAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetche
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now().date()
+        except: race_date = datetime.now(timezone.utc).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             if not item or not item.get("html"): continue
@@ -1039,7 +1077,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except: race_date = datetime.now().date()
+        except: race_date = datetime.now(timezone.utc).date()
         item = raw_data["pages"][0]
         parser = HTMLParser(item.get("html", ""))
         races: List[Race] = []
@@ -1243,7 +1281,7 @@ class SkySportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Ba
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now().date()
+        except: race_date = datetime.now(timezone.utc).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1318,7 +1356,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         try: data = resp.json()
         except: return None
         if not isinstance(data, list): return None
-        return {"venues": data, "date": date, "fetched_at": datetime.now().isoformat()}
+        return {"venues": data, "date": date, "fetched_at": datetime.now(timezone.utc).isoformat()}
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
@@ -1404,7 +1442,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now().date()
+        except: race_date = datetime.now(timezone.utc).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1521,7 +1559,7 @@ class BetfairDataScientistAdapter(BaseAdapterV3):
                         if ov := create_odds_data(self.source_name, float(rp)): od[self.source_name] = ov
                     runners.append(Runner(name=str(row.get("runner_name", "Unknown")), number=int(row.get("saddle_cloth", 0)), odds=od))
                 vn = normalize_venue_name(str(ri.get("meeting_name", ""))) or "Unknown"
-                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(), runners=runners, source=self.source_name, discipline="Thoroughbred"))
+                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(timezone.utc), runners=runners, source=self.source_name, discipline="Thoroughbred"))
             return races
         except: return []
 
@@ -1683,7 +1721,7 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or "races" not in raw_data: return []
-        rl, ds, parsed = raw_data["races"], raw_data.get("date", datetime.now().strftime("%Y-%m-%d")), []
+        rl, ds, parsed = raw_data["races"], raw_data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")), []
         for rd in rl:
             try:
                 r = self._parse_single_race(rd, ds)
@@ -1718,13 +1756,13 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
                     p = self._parse_time_string(e.text.strip() if hasattr(e, 'text') else str(e).strip(), bd)
                     if p: return p
             except: continue
-        return datetime.combine(bd, datetime.now().time()) + timedelta(hours=1)
+        return datetime.combine(bd, datetime.now(timezone.utc).time()) + timedelta(hours=1)
 
     def _parse_time_string(self, ts: str, bd) -> Optional[datetime]:
         if not ts: return None
         tc = re.sub(r"\s+(EST|EDT|CST|CDT|MST|MDT|PST|PDT|ET|PT|CT|MT)$", "", ts, flags=re.I).strip()
         m = re.search(r"(\d+)\s*(?:min|mtp)", tc, re.I)
-        if m: return datetime.now() + timedelta(minutes=int(m.group(1)))
+        if m: return datetime.now(timezone.utc) + timedelta(minutes=int(m.group(1)))
         for f in ['%I:%M %p', '%I:%M%p', '%H:%M', '%I:%M:%S %p']:
             try: return datetime.combine(bd, datetime.strptime(tc, f).time())
             except: continue
@@ -1793,32 +1831,6 @@ class TwinSpiresAdapter(DebugMixin, BaseAdapterV3):
 # ----------------------------------------
 # ANALYZER LOGIC
 # ----------------------------------------
-from abc import ABC
-from abc import abstractmethod
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
-from pathlib import Path
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import Optional
-from typing import Type
-
-import structlog
-
-
-
-
-try:
-    # winsound is a built-in Windows library
-    import winsound
-except ImportError:
-    winsound = None
-try:
-    from win10toast_py3 import ToastNotifier
-except (ImportError, RuntimeError):
-    # Fails gracefully on non-Windows systems
-    ToastNotifier = None
 
 log = structlog.get_logger(__name__)
 
@@ -2798,7 +2810,7 @@ class FavoriteToPlaceMonitor:
             target_date: Date to fetch races for (YYYY-MM-DD), defaults to today
             refresh_interval: Seconds between refreshes for BET NOW list
         """
-        self.target_date = target_date or datetime.now().strftime("%Y-%m-%d")
+        self.target_date = target_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.refresh_interval = refresh_interval
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
@@ -2974,7 +2986,7 @@ class FavoriteToPlaceMonitor:
         print("=" * 140)
         print("🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140))
         print("=" * 140)
-        print(f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Criteria: MTP <= 20 minutes AND 2nd Favorite Odds >= 5.0")
         print("-" * 140)
         if not bet_now:
@@ -3010,7 +3022,7 @@ class FavoriteToPlaceMonitor:
         bn = self.get_bet_now_races()
         yml = self.get_you_might_like_races()
         data = {
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "target_date": self.target_date,
             "total_races": len(self.all_races),
             "bet_now_count": len(bn),
@@ -3023,13 +3035,16 @@ class FavoriteToPlaceMonitor:
             json.dump(data, f, indent=2)
 
     async def run_once(self):
-        await self.initialize_adapters()
-        raw = await self.fetch_all_races()
-        await self.build_race_summaries(raw)
-        self.print_full_list()
-        self.print_bet_now_list()
-        self.save_to_json()
-        for a in self.adapters: await a.shutdown()
+        try:
+            await self.initialize_adapters()
+            raw = await self.fetch_all_races()
+            await self.build_race_summaries(raw)
+            self.print_full_list()
+            self.print_bet_now_list()
+            self.save_to_json()
+        finally:
+            for a in self.adapters: await a.shutdown()
+            await GlobalResourceManager.cleanup()
 
     async def run_continuous(self):
         await self.initialize_adapters()
@@ -3046,6 +3061,7 @@ class FavoriteToPlaceMonitor:
             print("\nStopped.")
         finally:
             for a in self.adapters: await a.shutdown()
+            await GlobalResourceManager.cleanup()
 
 
 
@@ -3648,6 +3664,7 @@ async def run_discovery(target_date: str):
 
     # Shutdown
     for a in adapters: await a.close()
+    await GlobalResourceManager.cleanup()
 
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
@@ -3656,7 +3673,7 @@ async def main_all_in_one():
     parser.add_argument("--once", action="store_true", help="Run monitor once")
     args = parser.parse_args()
 
-    target_date = args.date or datetime.now().strftime("%Y-%m-%d")
+    target_date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     if args.monitor:
         monitor = FavoriteToPlaceMonitor(target_date=target_date)
