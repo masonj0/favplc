@@ -2715,7 +2715,12 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
 
                 diff = (start_time - now).total_seconds() / 60
                 if 0 <= diff <= 20:
-                    entry = f"{cat}~{track} R{get_field(race, 'race_number')} in {int(diff)}m"
+                    # Calculate top 5 for the snippet
+                    active_runners = [run for run in runners if not get_field(run, 'scratched')]
+                    active_runners.sort(key=lambda x: get_field(x, 'win_odds') or 999.0)
+                    top_five = "|".join([str(get_field(run, 'number')) for run in active_runners[:5]])
+
+                    entry = f"{cat}~{track} R{get_field(race, 'race_number')} in {int(diff)}m [{top_five}]"
                     if is_super:
                         immediate_gold_super_snippet.append(entry)
                     else:
@@ -2944,8 +2949,8 @@ class FavoriteToPlaceMonitor:
             ab = race.metadata.get('available_bets', [])
         return "Superfecta" in ab
 
-    def _get_favorite_and_second(self, race: Race) -> Tuple[Optional[Runner], Optional[Runner]]:
-        """Get favorite and second favorite by odds."""
+    def _get_top_runners(self, race: Race, limit: int = 5) -> List[Runner]:
+        """Get top runners by odds, sorted lowest first."""
         # Get active runners with valid odds
         r_with_odds = []
         for r in race.runners:
@@ -2990,7 +2995,11 @@ class FavoriteToPlaceMonitor:
 
     def _create_race_summary(self, race: Race, adapter_name: str) -> RaceSummary:
         """Create a RaceSummary from a Race object."""
-        favorite, second_fav = self._get_favorite_and_second(race)
+        top_runners = self._get_top_runners(race, limit=5)
+        favorite = top_runners[0] if len(top_runners) >= 1 else None
+        second_fav = top_runners[1] if len(top_runners) >= 2 else None
+        top_five_str = "|".join([str(r.number) for r in top_runners])
+
         return RaceSummary(
             discipline=self._get_discipline_code(race),
             track=normalize_venue_name(race.venue),
