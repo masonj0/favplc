@@ -61,12 +61,12 @@ async def test_at_the_races_adapter_parsing():
         assert runner2.win_odds == 11.0
 
 @pytest.mark.asyncio
-async def test_simply_success_analyzer_closeness():
+async def test_simply_success_analyzer_1Gap2():
     from fortuna import SimplySuccessAnalyzer
 
     analyzer = SimplySuccessAnalyzer()
 
-    # 2.0 and 5.0 -> closeness should be 3.0
+    # 2.0 and 5.0 -> 1Gap2 should be 3.0
     # Must use odds dict because _get_best_win_odds uses it
     fav_odds = {"source1": OddsData(win=2.0, source="source1")}
     sec_odds = {"source1": OddsData(win=5.0, source="source1")}
@@ -86,7 +86,7 @@ async def test_simply_success_analyzer_closeness():
     result = analyzer.qualify_races([race])
     qualified = result["races"]
     assert len(qualified) == 1
-    assert qualified[0].metadata["closeness_score"] == 3.0
+    assert qualified[0].metadata["1Gap2"] == 3.0
     assert qualified[0].metadata["is_goldmine"] is True # 2nd fav 5.0 and field size 2 (<=8)
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_hot_tips_tracker(tmp_path):
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[],
-        metadata={"is_goldmine": True, "closeness_score": 1.5},
+        metadata={"is_goldmine": True, "1Gap2": 1.5},
         top_five_numbers="1, 2, 3"
     )
 
@@ -118,5 +118,5 @@ async def test_hot_tips_tracker(tmp_path):
     assert len(data) == 1
     assert data[0]["race_id"] == "tip_1"
     assert data[0]["is_goldmine"] is True
-    assert data[0]["closeness_score"] == 1.5
+    assert data[0]["1Gap2"] == 1.5
     assert "report_date" in data[0]

@@ -2218,7 +2218,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # A race cannot be a goldmine if field size is over 8
             is_goldmine = False
             active_runners = [r for r in race.runners if not r.scratched]
-            closeness = 0.0
+            gap12 = 0.0
             if active_runners:
                 all_odds = []
                 for runner in active_runners:
@@ -2228,12 +2228,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 if len(all_odds) >= 2:
                     all_odds.sort()
                     fav, sec = all_odds[0], all_odds[1]
-                    closeness = round(float(sec - fav), 2)
+                    gap12 = round(float(sec - fav), 2)
                     if len(active_runners) <= 8 and sec >= 5.0:
                         is_goldmine = True
 
             race.metadata['is_goldmine'] = is_goldmine
-            race.metadata['closeness_score'] = closeness
+            race.metadata['1Gap2'] = gap12
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -2581,9 +2581,9 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             if hasattr(r, 'top_five_numbers'):
                 r.top_five_numbers = top_5_nums
 
-            closeness = get_field(r, 'metadata', {}).get('closeness_score', 0.0)
+            gap12 = get_field(r, 'metadata', {}).get('1Gap2', 0.0)
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
-            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | Closeness: {closeness:.2f}")
+            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | 1Gap2: {gap12:.2f}")
             report_lines.append("-" * 40)
 
             # Sort runners by number
@@ -2879,7 +2879,7 @@ class HotTipsTracker:
                 "race_number": r.race_number,
                 "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
-                "closeness_score": r.metadata.get('closeness_score', 0.0),
+                "1Gap2": r.metadata.get('1Gap2', 0.0),
                 "top_five": r.top_five_numbers
             }
             tips.append(tip_data)
