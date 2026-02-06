@@ -2232,6 +2232,10 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     if len(active_runners) <= 8 and sec >= 5.0:
                         is_goldmine = True
 
+                # Calculate Top 5 for all races
+                r_with_odds = sorted([(r, _get_best_win_odds(r)) for r in active_runners if _get_best_win_odds(r) is not None], key=lambda x: x[1])
+                race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
+
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['1Gap2'] = gap12
             race.qualification_score = 100.0
@@ -2867,10 +2871,12 @@ class HotTipsTracker:
         if not races:
             return
 
-        report_date = datetime.now(timezone.utc).isoformat()
-        tips = []
+        now = datetime.now(timezone.utc)
+        report_date = now.isoformat()
+        new_tips = []
         for r in races:
             is_goldmine = r.metadata.get('is_goldmine', False)
+            gap12 = r.metadata.get('1Gap2', 0.0)
 
             tip_data = {
                 "report_date": report_date,
@@ -2879,10 +2885,10 @@ class HotTipsTracker:
                 "race_number": r.race_number,
                 "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
-                "1Gap2": r.metadata.get('1Gap2', 0.0),
+                "1Gap2": gap12,
                 "top_five": r.top_five_numbers
             }
-            tips.append(tip_data)
+            new_tips.append(tip_data)
 
         try:
             existing_data = []
@@ -2893,16 +2899,47 @@ class HotTipsTracker:
                     except (json.JSONDecodeError, IOError):
                         existing_data = []
 
-            # Append new tips
-            existing_data.extend(tips)
+            # Smart deduplication: only add if race hasn't been reported in the last 4 hours
+            # with the same parameters (goldmine status and 1Gap2)
+            tips_to_add = []
+            for nt in new_tips:
+                is_redundant = False
+                # Look back at existing data (from most recent)
+                for et in reversed(existing_data):
+                    # If same race
+                    if et.get("race_id") == nt["race_id"]:
+                        try:
+                            # Check time difference
+                            et_date = datetime.fromisoformat(et["report_date"])
+                            if (now - et_date).total_seconds() < 4 * 3600:
+                                # Check if parameters are same
+                                if (et.get("is_goldmine") == nt["is_goldmine"] and
+                                    abs(et.get("1Gap2", 0) - nt["1Gap2"]) < 0.05):
+                                    is_redundant = True
+                                    break
+                            else:
+                                # Older than 4 hours, stop looking for this race
+                                break
+                        except: pass
 
-            # Keep only unique race_id/report_date combinations if needed,
-            # but usually we want to see every report.
+                if not is_redundant:
+                    tips_to_add.append(nt)
+
+            if not tips_to_add:
+                self.logger.debug("No new unique hot tips to log")
+                return
+
+            # Append new tips
+            existing_data.extend(tips_to_add)
+
+            # Limit total database size to last 5000 entries to prevent infinite growth
+            if len(existing_data) > 5000:
+                existing_data = existing_data[-5000:]
 
             with open(self.db_path, "w") as f:
                 json.dump(existing_data, f, indent=4)
 
-            self.logger.info("Hot tips logged to database", count=len(tips), db=str(self.db_path))
+            self.logger.info("Hot tips logged to database", count=len(tips_to_add), db=str(self.db_path))
         except Exception as e:
             self.logger.error("Failed to log hot tips", error=str(e))
 
@@ -2979,15 +3016,21 @@ class FavoriteToPlaceMonitor:
         TwinSpiresAdapter,
     ]
 
-    def __init__(self, target_date: Optional[str] = None, refresh_interval: int = 30):
+    def __init__(self, target_dates: Optional[List[str]] = None, refresh_interval: int = 30):
         """
         Initialize monitor.
 
         Args:
-            target_date: Date to fetch races for (YYYY-MM-DD), defaults to today
+            target_dates: Dates to fetch races for (YYYY-MM-DD), defaults to today + tomorrow
             refresh_interval: Seconds between refreshes for BET NOW list
         """
-        self.target_date = target_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if target_dates:
+            self.target_dates = target_dates
+        else:
+            today = datetime.now(timezone.utc)
+            tomorrow = today + timedelta(days=1)
+            self.target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
+
         self.refresh_interval = refresh_interval
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
@@ -3009,22 +3052,27 @@ class FavoriteToPlaceMonitor:
 
     async def fetch_all_races(self) -> List[Tuple[Race, str]]:
         """Fetch races from all adapters."""
-        self.logger.info("Fetching races", date=self.target_date)
+        self.logger.info("Fetching races", dates=self.target_dates)
 
         all_races_with_adapters = []
 
         # Run fetches in parallel for speed
-        async def fetch_one(adapter):
+        async def fetch_one(adapter, date_str):
             name = adapter.__class__.__name__
             try:
-                races = await adapter.get_races(self.target_date)
-                self.logger.info("Fetch complete", adapter=name, count=len(races))
+                races = await adapter.get_races(date_str)
+                self.logger.info("Fetch complete", adapter=name, date=date_str, count=len(races))
                 return [(r, name) for r in races]
             except Exception as e:
-                self.logger.error("Fetch failed", adapter=name, error=str(e))
+                self.logger.error("Fetch failed", adapter=name, date=date_str, error=str(e))
                 return []
 
-        results = await asyncio.gather(*[fetch_one(a) for a in self.adapters])
+        fetch_tasks = []
+        for d in self.target_dates:
+            for a in self.adapters:
+                fetch_tasks.append(fetch_one(a, d))
+
+        results = await asyncio.gather(*fetch_tasks)
         for r_list in results:
             all_races_with_adapters.extend(r_list)
 
@@ -3064,12 +3112,12 @@ class FavoriteToPlaceMonitor:
             if wo is not None and wo > 1.0:
                 r_with_odds.append((r, float(wo)))
 
-        if len(r_with_odds) < 2:
-            return None, None
+        if not r_with_odds:
+            return []
 
         # Sort by odds (lowest first)
         sorted_r = sorted(r_with_odds, key=lambda x: x[1])
-        return sorted_r[0][0], sorted_r[1][0]
+        return [x[0] for x in sorted_r[:limit]]
 
     def _calculate_mtp(self, start_time: datetime) -> Optional[int]:
         """Calculate minutes to post."""
@@ -3082,27 +3130,15 @@ class FavoriteToPlaceMonitor:
 
     def _get_top_n_runners(self, race: Race, n: int = 5) -> str:
         """Get top N runners by win odds."""
-        active_with_odds = []
-        for r in race.runners:
-            if r.scratched:
-                continue
-            wo = _get_best_win_odds(r)
-            if wo is not None and wo > 1.0:
-                active_with_odds.append((r, float(wo)))
-
-        if not active_with_odds:
-            return ""
-
-        sorted_r = sorted(active_with_odds, key=lambda x: x[1])
-        top_n = sorted_r[:n]
-        return ", ".join([str(r[0].number) if r[0].number is not None else "?" for r in top_n])
+        top_runners = self._get_top_runners(race, limit=n)
+        return ", ".join([str(r.number) if r.number is not None else "?" for r in top_runners])
 
     def _create_race_summary(self, race: Race, adapter_name: str) -> RaceSummary:
         """Create a RaceSummary from a Race object."""
         top_runners = self._get_top_runners(race, limit=5)
         favorite = top_runners[0] if len(top_runners) >= 1 else None
         second_fav = top_runners[1] if len(top_runners) >= 2 else None
-        top_five_str = "|".join([str(r.number) for r in top_runners])
+        top_five_str = "|".join([str(r.number) for r in top_runners if r.number is not None])
 
         return RaceSummary(
             discipline=self._get_discipline_code(race),
@@ -3243,7 +3279,7 @@ class FavoriteToPlaceMonitor:
         yml = self.get_you_might_like_races()
         data = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "target_date": self.target_date,
+            "target_dates": self.target_dates,
             "total_races": len(self.all_races),
             "bet_now_count": len(bn),
             "you_might_like_count": len(yml),
@@ -3921,9 +3957,9 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
-async def run_discovery(target_date: str):
+async def run_discovery(target_dates: List[str]):
     logger = structlog.get_logger("run_discovery")
-    logger.info("Running Discovery", date=target_date)
+    logger.info("Running Discovery", dates=target_dates)
     
     # Initialize all adapters
     adapter_classes = [
@@ -3953,19 +3989,28 @@ async def run_discovery(target_date: str):
 
     all_races_raw = []
     
-    async def fetch_one(a):
+    async def fetch_one(a, date_str):
         try:
-            races = await a.get_races(target_date)
+            races = await a.get_races(date_str)
             return races
         except Exception as e:
-            print(f"Error fetching from {a.source_name}: {e}")
+            logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
             return []
 
-    results = await asyncio.gather(*[fetch_one(a) for a in adapters])
+    fetch_tasks = []
+    for d in target_dates:
+        for a in adapters:
+            fetch_tasks.append(fetch_one(a, d))
+
+    results = await asyncio.gather(*fetch_tasks)
     for r_list in results:
         all_races_raw.extend(r_list)
 
     logger.info("Fetched total races", count=len(all_races_raw))
+
+    if not all_races_raw:
+        logger.error("No races fetched from any adapter. Discovery aborted.")
+        return
     
     # Deduplicate
     race_map = {}
@@ -4048,14 +4093,19 @@ async def main_all_in_one():
     parser.add_argument("--once", action="store_true", help="Run monitor once")
     args = parser.parse_args()
 
-    target_date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if args.date:
+        target_dates = [args.date]
+    else:
+        today = datetime.now(timezone.utc)
+        tomorrow = today + timedelta(days=1)
+        target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
 
     if args.monitor:
-        monitor = FavoriteToPlaceMonitor(target_date=target_date)
+        monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         if args.once: await monitor.run_once()
         else: await monitor.run_continuous()
     else:
-        await run_discovery(target_date)
+        await run_discovery(target_dates)
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
