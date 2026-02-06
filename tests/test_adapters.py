@@ -92,10 +92,9 @@ async def test_simply_success_analyzer_1Gap2():
 @pytest.mark.asyncio
 async def test_hot_tips_tracker(tmp_path):
     from fortuna import HotTipsTracker, Race, Runner
-    import json
-    import os
+    import aiosqlite
 
-    db_file = tmp_path / "test_tips.json"
+    db_file = tmp_path / "test_fortuna.db"
     tracker = HotTipsTracker(db_path=str(db_file))
 
     race = Race(
@@ -109,17 +108,17 @@ async def test_hot_tips_tracker(tmp_path):
         top_five_numbers="1, 2, 3"
     )
 
-    tracker.log_tips([race])
+    await tracker.log_tips([race])
 
     assert db_file.exists()
-    with open(db_file, "r") as f:
-        data = json.load(f)
-
-    assert len(data) == 1
-    assert data[0]["race_id"] == "tip_1"
-    assert data[0]["is_goldmine"] is True
-    assert data[0]["1Gap2"] == 1.5
-    assert "report_date" in data[0]
+    async with aiosqlite.connect(str(db_file)) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM tips WHERE race_id = 'tip_1'") as cursor:
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row["venue"] == "Track A"
+            assert row["is_goldmine"] == 1
+            assert float(row["gap12"]) == 1.5
 
 @pytest.mark.asyncio
 async def test_runner_number_sanitization():
