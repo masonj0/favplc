@@ -310,11 +310,13 @@ def get_canonical_venue(name: Optional[str]) -> str:
     """Returns a sanitized canonical form for deduplication keys."""
     if not name:
         return "unknown"
-    # Remove everything in parentheses
-    name = re.sub(r"\(.*?\)", "", str(name))
+    # Call normalization first to strip race titles and ads
+    norm = normalize_venue_name(name)
+    # Remove everything in parentheses (extra safety)
+    norm = re.sub(r"[\(\[（].*?[\)\]）]", "", norm)
     # Remove special characters, lowercase, strip
-    name = re.sub(r"[^a-z0-9]", "", name.lower())
-    return name or "unknown"
+    res = re.sub(r"[^a-z0-9]", "", norm.lower())
+    return res or "unknown"
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -326,8 +328,9 @@ def normalize_venue_name(name: Optional[str]) -> str:
         return "Unknown"
 
     # 1. Initial Cleaning: Replace dashes and strip all parenthetical info
+    # Handle full-width parentheses and brackets often found in international data
     name = str(name).replace("-", " ")
-    name = re.sub(r"\(.*?\)", " ", name)
+    name = re.sub(r"[\(\[（].*?[\)\]）]", " ", name)
 
     cleaned = clean_text(name)
     if not cleaned:
@@ -344,12 +347,15 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
         "FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
         "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
-        "GET THE BEST", "CHELTENHAM TRIALS"
+        "GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
+        "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
+        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY"
     ]
 
     upper_name = cleaned.upper()
     earliest_idx = len(cleaned)
     for kw in RACING_KEYWORDS:
+        # Check for keyword with leading space
         idx = upper_name.find(" " + kw)
         if idx != -1:
             earliest_idx = min(earliest_idx, idx)
@@ -358,14 +364,22 @@ def normalize_venue_name(name: Optional[str]) -> str:
     if not track_part:
         track_part = cleaned
 
+    # Handle repetition check (e.g., "Bahrain Bahrain" -> "Bahrain")
+    words = track_part.split()
+    if len(words) > 1 and words[0].lower() == words[1].lower():
+        track_part = words[0]
+
     upper_track = track_part.upper()
 
     # 3. High-Confidence Mapping
     # Map raw/cleaned names to canonical display names.
     VENUE_MAP = {
+        "ABU DHABI": "Abu Dhabi",
         "AQUEDUCT": "Aqueduct",
+        "ARGENTAN": "Argentan",
         "ASCOT": "Ascot",
         "AYR": "Ayr",
+        "BAHRAIN": "Bahrain",
         "BANGOR ON DEE": "Bangor-on-Dee",
         "CATTERICK": "Catterick",
         "CATTERICK BRIDGE": "Catterick",
@@ -396,6 +410,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "LINGFIELD PARK": "Lingfield Park",
         "LOS ALAMITOS": "Los Alamitos",
         "MARONAS": "Maronas",
+        "MEYDAN": "Meydan",
         "MUSSELBURGH": "Musselburgh",
         "NAAS": "Naas",
         "NEWCASTLE": "Newcastle",
