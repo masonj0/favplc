@@ -310,11 +310,13 @@ def get_canonical_venue(name: Optional[str]) -> str:
     """Returns a sanitized canonical form for deduplication keys."""
     if not name:
         return "unknown"
-    # Remove everything in parentheses
-    name = re.sub(r"\(.*?\)", "", str(name))
+    # Call normalization first to strip race titles and ads
+    norm = normalize_venue_name(name)
+    # Remove everything in parentheses (extra safety)
+    norm = re.sub(r"[\(\[（].*?[\)\]）]", "", norm)
     # Remove special characters, lowercase, strip
-    name = re.sub(r"[^a-z0-9]", "", name.lower())
-    return name or "unknown"
+    res = re.sub(r"[^a-z0-9]", "", norm.lower())
+    return res or "unknown"
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -326,8 +328,9 @@ def normalize_venue_name(name: Optional[str]) -> str:
         return "Unknown"
 
     # 1. Initial Cleaning: Replace dashes and strip all parenthetical info
+    # Handle full-width parentheses and brackets often found in international data
     name = str(name).replace("-", " ")
-    name = re.sub(r"\(.*?\)", " ", name)
+    name = re.sub(r"[\(\[（].*?[\)\]）]", " ", name)
 
     cleaned = clean_text(name)
     if not cleaned:
@@ -344,12 +347,15 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
         "FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
         "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
-        "GET THE BEST", "CHELTENHAM TRIALS"
+        "GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
+        "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
+        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY"
     ]
 
     upper_name = cleaned.upper()
     earliest_idx = len(cleaned)
     for kw in RACING_KEYWORDS:
+        # Check for keyword with leading space
         idx = upper_name.find(" " + kw)
         if idx != -1:
             earliest_idx = min(earliest_idx, idx)
@@ -358,14 +364,22 @@ def normalize_venue_name(name: Optional[str]) -> str:
     if not track_part:
         track_part = cleaned
 
+    # Handle repetition check (e.g., "Bahrain Bahrain" -> "Bahrain")
+    words = track_part.split()
+    if len(words) > 1 and words[0].lower() == words[1].lower():
+        track_part = words[0]
+
     upper_track = track_part.upper()
 
     # 3. High-Confidence Mapping
     # Map raw/cleaned names to canonical display names.
     VENUE_MAP = {
+        "ABU DHABI": "Abu Dhabi",
         "AQUEDUCT": "Aqueduct",
+        "ARGENTAN": "Argentan",
         "ASCOT": "Ascot",
         "AYR": "Ayr",
+        "BAHRAIN": "Bahrain",
         "BANGOR ON DEE": "Bangor-on-Dee",
         "CATTERICK": "Catterick",
         "CATTERICK BRIDGE": "Catterick",
@@ -396,6 +410,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "LINGFIELD PARK": "Lingfield Park",
         "LOS ALAMITOS": "Los Alamitos",
         "MARONAS": "Maronas",
+        "MEYDAN": "Meydan",
         "MUSSELBURGH": "Musselburgh",
         "NAAS": "Naas",
         "NEWCASTLE": "Newcastle",
@@ -929,6 +944,8 @@ class RacePageFetcherMixin:
 
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
+    ADAPTER_TYPE: ClassVar[str] = "discovery"
+
     def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
         self.source_name = source_name
         self.base_url = base_url.rstrip("/")
@@ -1922,8 +1939,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         ard = []
-        last_err = None
-        for disc in ["thoroughbred", "harness", "greyhound"]:
+
+        async def fetch_disc(disc):
             url = f"{self.BASE_URL}/bet/todays-races/{disc}"
             try:
                 resp = await self.make_request("GET", url, network_idle=True, wait_selector='div[class*="race"], [class*="RaceCard"], [class*="track"]')
@@ -1931,8 +1948,16 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     self._save_debug_snapshot(resp.text, f"ts_{disc}_{date}")
                     dr = self._extract_races_from_page(resp, date)
                     for r in dr: r["assigned_discipline"] = disc.capitalize()
-                    ard.extend(dr)
-            except Exception as e: last_err = e
+                    return dr
+            except Exception as e:
+                self.logger.error("TwinSpires fetch failed", discipline=disc, error=str(e))
+            return []
+
+        tasks = [fetch_disc(d) for d in ["thoroughbred", "harness", "greyhound"]]
+        results = await asyncio.gather(*tasks)
+        for r_list in results:
+            ard.extend(r_list)
+
         if not ard:
             try:
                 resp = await self.make_request("GET", f"{self.BASE_URL}/bet/todays-races/time", network_idle=True)
@@ -2722,6 +2747,60 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     return "\n".join(report_lines)
 
 
+def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> str:
+    """Generate a report for recently audited Goldmine races."""
+    if not audited_tips:
+        return ""
+
+    lines = ["", "RECENT AUDITED GOLDMINES", "------------------------"]
+
+    # Calculate simple stats
+    total = len(audited_tips)
+    cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    sr = (cashed / total * 100) if total > 0 else 0
+
+    lines.append(f"Performance Summary (Last {total} Goldmines):")
+    lines.append(f"  Strike Rate: {sr:.1f}% | Total Net Profit: ${total_profit:+.2f}")
+    lines.append("")
+
+    for tip in audited_tips:
+        venue = tip.get("venue", "Unknown")
+        race_num = tip.get("race_number", "?")
+        verdict = tip.get("verdict", "?")
+        profit = tip.get("net_profit", 0.0)
+        start_time_raw = tip.get("start_time", "")
+
+        try:
+            st = datetime.fromisoformat(start_time_raw)
+            time_str = st.strftime("%Y-%m-%d %H:%M")
+        except:
+            time_str = str(start_time_raw)[:16]
+
+        emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+
+        line = f"{emoji} {time_str} | {venue} R{race_num} | {verdict:<6} | Profit: ${profit:+.2f}"
+
+        # Add top place payouts for proof
+        p1 = tip.get("top1_place_payout")
+        p2 = tip.get("top2_place_payout")
+        if p1 or p2:
+            line += f" | Place: {p1 or 0:.2f}/{p2 or 0:.2f}"
+
+        # Prioritize Superfecta info to "prove" with payouts
+        super_payout = tip.get("superfecta_payout")
+        tri_payout = tip.get("trifecta_payout")
+
+        if super_payout:
+            line += f" | Super: ${super_payout:.2f}"
+        elif tri_payout:
+            line += f" | Tri: ${tri_payout:.2f}"
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def generate_next_to_jump(races: List[Any]) -> str:
     """Generate the NEXT TO JUMP section."""
     lines = ["", "", "NEXT TO JUMP", "------------"]
@@ -3022,6 +3101,10 @@ class FortunaDB:
                         actual_2nd_fav_odds REAL,
                         trifecta_payout REAL,
                         trifecta_combination TEXT,
+                        superfecta_payout REAL,
+                        superfecta_combination TEXT,
+                        top1_place_payout REAL,
+                        top2_place_payout REAL,
                         audit_timestamp TEXT
                     )
                 """)
@@ -3030,6 +3113,18 @@ class FortunaDB:
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+
+                # Add missing columns for existing databases
+                cursor = conn.execute("PRAGMA table_info(tips)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if "superfecta_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_payout REAL")
+                if "superfecta_combination" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_combination TEXT")
+                if "top1_place_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top1_place_payout REAL")
+                if "top2_place_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top2_place_payout REAL")
 
         await self._run_in_executor(_init)
         self._initialized = True
@@ -3095,6 +3190,17 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def get_recent_tips(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Returns the most recent tips regardless of audit status."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips ORDER BY start_time DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
     async def update_audit_result(self, race_id: str, outcome: Dict[str, Any]):
         """Updates a single tip with its audit outcome."""
         if not self._initialized: await self.initialize()
@@ -3112,6 +3218,10 @@ class FortunaDB:
                         actual_2nd_fav_odds = ?,
                         trifecta_payout = ?,
                         trifecta_combination = ?,
+                        superfecta_payout = ?,
+                        superfecta_combination = ?,
+                        top1_place_payout = ?,
+                        top2_place_payout = ?,
                         audit_timestamp = ?
                     WHERE id = (
                         SELECT id FROM tips
@@ -3123,6 +3233,10 @@ class FortunaDB:
                     outcome.get("selection_position"), outcome.get("actual_top_5"),
                     outcome.get("actual_2nd_fav_odds"), outcome.get("trifecta_payout"),
                     outcome.get("trifecta_combination"),
+                    outcome.get("superfecta_payout"),
+                    outcome.get("superfecta_combination"),
+                    outcome.get("top1_place_payout"),
+                    outcome.get("top2_place_payout"),
                     datetime.now(timezone.utc).isoformat(),
                     race_id
                 ))
@@ -3134,6 +3248,17 @@ class FortunaDB:
         def _get():
             cursor = self._get_conn().execute(
                 "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def get_recent_audited_goldmines(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """Returns recent successfully audited goldmine tips."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips WHERE audit_completed = 1 AND is_goldmine = 1 ORDER BY start_time DESC LIMIT ?",
+                (limit,)
             )
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
@@ -3161,8 +3286,10 @@ class FortunaDB:
                                     is_goldmine, gap12, top_five, selection_number,
                                     audit_completed, verdict, net_profit, selection_position,
                                     actual_top_5, actual_2nd_fav_odds, trifecta_payout,
-                                    trifecta_combination, audit_timestamp
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    trifecta_combination, superfecta_payout,
+                                    superfecta_combination, top1_place_payout,
+                                    top2_place_payout, audit_timestamp
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (
                                 entry.get("race_id"), entry.get("venue"), entry.get("race_number"),
                                 entry.get("start_time"), entry.get("report_date"),
@@ -3172,6 +3299,8 @@ class FortunaDB:
                                 entry.get("net_profit"), entry.get("selection_position"),
                                 entry.get("actual_top_5"), entry.get("actual_2nd_fav_odds"),
                                 entry.get("trifecta_payout"), entry.get("trifecta_combination"),
+                                entry.get("superfecta_payout"), entry.get("superfecta_combination"),
+                                entry.get("top1_place_payout"), entry.get("top2_place_payout"),
                                 entry.get("audit_timestamp")
                             ))
                         success_count += 1
@@ -3283,23 +3412,22 @@ class RaceSummary:
         }
 
 
+def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
+    """Returns all non-abstract discovery adapter classes."""
+    def get_all_subclasses(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+        )
+
+    return [
+        c for c in get_all_subclasses(BaseAdapterV3)
+        if not getattr(c, "__abstractmethods__", None)
+        and getattr(c, "ADAPTER_TYPE", "discovery") == "discovery"
+    ]
+
+
 class FavoriteToPlaceMonitor:
     """Monitor for favorite-to-place betting opportunities."""
-
-    # Adapter configuration
-    ADAPTER_CLASSES = [
-        AtTheRacesAdapter,
-        AtTheRacesGreyhoundAdapter,
-        BoyleSportsAdapter,
-        SportingLifeAdapter,
-        SkySportsAdapter,
-        RacingPostB2BAdapter,
-        StandardbredCanadaAdapter,
-        TabAdapter,
-        BetfairDataScientistAdapter,
-        EquibaseAdapter,
-        TwinSpiresAdapter,
-    ]
 
     def __init__(self, target_dates: Optional[List[str]] = None, refresh_interval: int = 30):
         """
@@ -3320,12 +3448,19 @@ class FavoriteToPlaceMonitor:
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
         self.logger = structlog.get_logger(self.__class__.__name__)
+        self.tracker = HotTipsTracker()
 
-    async def initialize_adapters(self):
-        """Initialize all adapters."""
-        self.logger.info("Initializing adapters", count=len(self.ADAPTER_CLASSES))
+    async def initialize_adapters(self, adapter_names: Optional[List[str]] = None):
+        """Initialize all adapters, optionally filtered by name."""
+        all_discovery_classes = get_discovery_adapter_classes()
 
-        for adapter_class in self.ADAPTER_CLASSES:
+        classes_to_init = all_discovery_classes
+        if adapter_names:
+            classes_to_init = [c for c in all_discovery_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
+
+        self.logger.info("Initializing adapters", count=len(classes_to_init))
+
+        for adapter_class in classes_to_init:
             try:
                 adapter = adapter_class()
                 self.adapters.append(adapter)
@@ -3515,8 +3650,8 @@ class FavoriteToPlaceMonitor:
         yml.sort(key=lambda r: r.mtp)
         return yml[:5]  # Limit to top 5 recommendations
 
-    def print_bet_now_list(self):
-        """Log filtered BET NOW list."""
+    async def print_bet_now_list(self):
+        """Log filtered BET NOW list and recent audited goldmine results."""
         bet_now = self.get_bet_now_races()
         lines = [
             "=" * 140,
@@ -3560,6 +3695,12 @@ class FavoriteToPlaceMonitor:
         lines.extend(["-" * 160, f"Total opportunities: {len(bet_now)}"])
         self.logger.info("\n".join(lines))
 
+        # Include recent audited results to provide proof of system performance
+        history = await self.tracker.db.get_recent_audited_goldmines(limit=10)
+        if history:
+            historical_report = generate_historical_goldmine_report(history)
+            self.logger.info(historical_report)
+
     def save_to_json(self, filename: str = "race_data.json"):
         """Export to JSON."""
         bn = self.get_bet_now_races()
@@ -3594,13 +3735,19 @@ class FavoriteToPlaceMonitor:
         except Exception as e:
             self.logger.error("History logging failed", error=str(e))
 
-    async def run_once(self):
+    async def run_once(self, loaded_races: Optional[List[Race]] = None, adapter_names: Optional[List[str]] = None):
         try:
-            await self.initialize_adapters()
-            raw = await self.fetch_all_races()
+            if loaded_races is not None:
+                self.logger.info("Using loaded races", count=len(loaded_races))
+                # Map to (Race, AdapterName) tuple expected by build_race_summaries
+                raw = [(r, r.source) for r in loaded_races]
+            else:
+                await self.initialize_adapters(adapter_names=adapter_names)
+                raw = await self.fetch_all_races()
+
             await self.build_race_summaries(raw)
             self.print_full_list()
-            self.print_bet_now_list()
+            await self.print_bet_now_list()
             self.save_to_json()
         finally:
             for a in self.adapters: await a.shutdown()
@@ -3614,7 +3761,7 @@ class FavoriteToPlaceMonitor:
         try:
             while True:
                 for r in self.all_races: r.mtp = self._calculate_mtp(r.start_time)
-                self.print_bet_now_list()
+                await self.print_bet_now_list()
                 self.save_to_json()
                 await asyncio.sleep(self.refresh_interval)
         except KeyboardInterrupt:
@@ -4135,6 +4282,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """
     Adapter for fetching Tote dividends and results from Racing Post.
     """
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostTote"
     BASE_URL = "https://www.racingpost.com"
 
@@ -4292,52 +4440,64 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
-async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8):
+async def run_discovery(
+    target_dates: List[str],
+    window_hours: Optional[int] = 8,
+    loaded_races: Optional[List[Race]] = None,
+    adapter_names: Optional[List[str]] = None,
+    save_path: Optional[str] = None
+):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
 
-    now = datetime.now(timezone.utc)
-    cutoff = now + timedelta(hours=window_hours) if window_hours else None
-
-    # Auto-discover all adapter classes
-    def get_all_adapters(cls):
-        return set(cls.__subclasses__()).union(
-            [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
-        )
-    
-    adapter_classes = [
-        c for c in get_all_adapters(BaseAdapterV3)
-        if not getattr(c, "__abstractmethods__", None)
-    ]
-    
-    adapters = []
-    for cls in adapter_classes:
-        try:
-            adapters.append(cls())
-        except Exception as e:
-            logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
-
     try:
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(hours=window_hours) if window_hours else None
+
         all_races_raw = []
 
-        async def fetch_one(a, date_str):
+        if loaded_races is not None:
+            logger.info("Using loaded races", count=len(loaded_races))
+            all_races_raw = loaded_races
+            adapters = []
+        else:
+            # Auto-discover discovery adapter classes
+            adapter_classes = get_discovery_adapter_classes()
+
+            if adapter_names:
+                adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
+
+            adapters = []
+            for cls in adapter_classes:
+                try:
+                    adapters.append(cls())
+                except Exception as e:
+                    logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
+
             try:
-                races = await a.get_races(date_str)
-                return races
-            except Exception as e:
-                logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
-                return []
+                async def fetch_one(a, date_str):
+                    try:
+                        races = await a.get_races(date_str)
+                        return races
+                    except Exception as e:
+                        logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
+                        return []
 
-        fetch_tasks = []
-        for d in target_dates:
-            for a in adapters:
-                fetch_tasks.append(fetch_one(a, d))
+                fetch_tasks = []
+                for d in target_dates:
+                    for a in adapters:
+                        fetch_tasks.append(fetch_one(a, d))
 
-        results = await asyncio.gather(*fetch_tasks)
-        for r_list in results:
-            all_races_raw.extend(r_list)
+                results = await asyncio.gather(*fetch_tasks)
+                for r_list in results:
+                    all_races_raw.extend(r_list)
 
-        logger.info("Fetched total races", count=len(all_races_raw))
+                logger.info("Fetched total races", count=len(all_races_raw))
+            finally:
+                # Shutdown adapters
+                for a in adapters:
+                    try: await a.close()
+                    except: pass
 
         # Apply time window filter if requested to avoid overloading
         if cutoff:
@@ -4410,6 +4570,15 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
 
+        # Save raw fetched/merged races if requested
+        if save_path:
+            try:
+                with open(save_path, "w") as f:
+                    json.dump([r.model_dump(mode='json') for r in unique_races], f, indent=4)
+                logger.info("Saved races to file", path=save_path)
+            except Exception as e:
+                logger.error("Failed to save races", error=str(e))
+
         # Analyze
         analyzer = SimplySuccessAnalyzer()
         result = analyzer.qualify_races(unique_races)
@@ -4424,12 +4593,20 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
 
         with open("summary_grid.txt", "w") as f: f.write(grid)
 
-        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
-        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
-
-        # Log Hot Tips to SQLite DB
+        # Log Hot Tips & Fetch recent historical results for the report
         tracker = HotTipsTracker()
         await tracker.log_tips(qualified)
+
+        historical_goldmines = await tracker.db.get_recent_audited_goldmines(limit=15)
+        historical_report = generate_historical_goldmine_report(historical_goldmines)
+
+        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
+        if historical_report:
+            gm_report += "\n" + historical_report
+            # Also print historical report to console
+            print("\n" + historical_report + "\n")
+
+        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
         # Save qualified races to JSON
         report_data = {
@@ -4441,19 +4618,30 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
             json.dump(report_data, f, indent=4)
 
     finally:
-        # Shutdown
-        for a in adapters:
-            try: await a.close()
-            except: pass
         await GlobalResourceManager.cleanup()
-
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
+    parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
+    parser.add_argument("--save", type=str, help="Save races to JSON file")
+    parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
     args = parser.parse_args()
+
+    adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
+
+    loaded_races = None
+    if args.load:
+        loaded_races = []
+        for path in args.load.split(","):
+            try:
+                with open(path.strip(), "r") as f:
+                    data = json.load(f)
+                    loaded_races.extend([Race.model_validate(r) for r in data])
+            except Exception as e:
+                print(f"Error loading {path}: {e}")
 
     if args.date:
         target_dates = [args.date]
@@ -4467,10 +4655,16 @@ async def main_all_in_one():
 
     if args.monitor:
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
-        if args.once: await monitor.run_once()
-        else: await monitor.run_continuous()
+        if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
+        else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
-        await run_discovery(target_dates, window_hours=args.hours)
+        await run_discovery(
+            target_dates,
+            window_hours=args.hours,
+            loaded_races=loaded_races,
+            adapter_names=adapter_filter,
+            save_path=args.save
+        )
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
