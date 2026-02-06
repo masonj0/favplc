@@ -93,6 +93,13 @@ try:
 except (ImportError, RuntimeError):
     ToastNotifier = None
 
+try:
+    from browserforge.headers import HeaderGenerator
+    from browserforge.fingerprints import FingerprintGenerator
+    BROWSERFORGE_AVAILABLE = True
+except ImportError:
+    BROWSERFORGE_AVAILABLE = False
+
 
 # --- TYPE VARIABLES ---
 T = TypeVar("T")
@@ -236,6 +243,7 @@ class Runner(FortunaBaseModel):
     scratched: bool = False
     odds: Dict[str, OddsData] = Field(default_factory=dict)
     win_odds: Optional[float] = Field(None, alias="winOdds")
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -294,6 +302,17 @@ def clean_text(text: Optional[str]) -> Optional[str]:
     if not text:
         return ""
     return " ".join(str(text).strip().split())
+
+
+def get_canonical_venue(name: Optional[str]) -> str:
+    """Returns a sanitized canonical form for deduplication keys."""
+    if not name:
+        return "unknown"
+    # Remove everything in parentheses
+    name = re.sub(r"\(.*?\)", "", str(name))
+    # Remove special characters, lowercase, strip
+    name = re.sub(r"[^a-z0-9]", "", name.lower())
+    return name or "unknown"
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -503,7 +522,7 @@ class DataValidationPipeline:
         if raw_data is None: return False, "Null response"
         return True, "OK"
     @staticmethod
-    def validate_parsed_races(races: List[Race]) -> tuple[List[Race], List[str]]:
+    def validate_parsed_races(races: List[Race], adapter_name: str = "Unknown") -> tuple[List[Race], List[str]]:
         valid_races: List[Race] = []
         warnings: List[str] = []
         for i, race in enumerate(races):
@@ -512,9 +531,9 @@ class DataValidationPipeline:
                 RaceValidator(**data)
                 valid_races.append(race)
             except Exception as e:
-                err_msg = f"Race {i} ({getattr(race, 'venue', 'Unknown')} R{getattr(race, 'race_number', '?')}) validation failed: {str(e)}"
+                err_msg = f"[{adapter_name}] Race {i} ({getattr(race, 'venue', 'Unknown')} R{getattr(race, 'race_number', '?')}) validation failed: {str(e)}"
                 warnings.append(err_msg)
-                structlog.get_logger().error("race_validation_failed", error=str(e), race_index=i, venue=getattr(race, 'venue', 'Unknown'))
+                structlog.get_logger().error("race_validation_failed", adapter=adapter_name, error=str(e), race_index=i, venue=getattr(race, 'venue', 'Unknown'))
         return valid_races, warnings
 
 
@@ -582,6 +601,12 @@ class SmartFetcher:
             BrowserEngine.HTTPX: 0.5
         }
         self.last_engine: str = "unknown"
+        if BROWSERFORGE_AVAILABLE:
+            self.header_gen = HeaderGenerator()
+            self.fingerprint_gen = FingerprintGenerator()
+        else:
+            self.header_gen = None
+            self.fingerprint_gen = None
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
@@ -602,12 +627,25 @@ class SmartFetcher:
                 self._engine_health[engine] = max(0.0, self._engine_health[engine] - 0.2)
                 last_error = e
                 continue
-        err_msg = str(last_error) if last_error else "All fetch engines failed"
+        err_msg = repr(last_error) if last_error else "All fetch engines failed"
         self.logger.error("all_engines_failed", url=url, error=err_msg)
         raise last_error or FetchError("All fetch engines failed")
 
     
     async def _fetch_with_engine(self, engine: BrowserEngine, url: str, method: str, **kwargs: Any) -> Any:
+        # Generate browserforge headers if available and not explicitly provided
+        if BROWSERFORGE_AVAILABLE and "headers" not in kwargs:
+            try:
+                # Generate headers and a corresponding user agent
+                fingerprint = self.fingerprint_gen.generate()
+                headers = self.header_gen.generate()
+                # Ensure User-Agent is consistent between fingerprint and headers
+                headers['User-Agent'] = fingerprint.navigator.user_agent
+                kwargs["headers"] = headers
+                self.logger.debug("Generated browserforge headers", engine=engine.value)
+            except Exception as e:
+                self.logger.warning("Failed to generate browserforge headers", error=str(e))
+
         if engine == BrowserEngine.HTTPX:
             client = await GlobalResourceManager.get_httpx_client()
             resp = await client.request(method, url, **kwargs)
@@ -620,6 +658,8 @@ class SmartFetcher:
             
             self.logger.debug(f"Using curl_cffi for {url}")
             timeout = kwargs.get("timeout", self.strategy.timeout)
+
+            # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
             impersonate = kwargs.get("impersonate", "chrome110")
             
@@ -644,17 +684,20 @@ class SmartFetcher:
         # For other engines, we use AsyncFetcher from scrapling
         if engine == BrowserEngine.CAMOUFOX:
             async with AsyncStealthySession(headless=True) as s:
-                return await s.fetch(url, method=method, **kwargs)
+                resp = await s.fetch(url, method=method, **kwargs)
+            return resp
         elif engine == BrowserEngine.PLAYWRIGHT:
             async with AsyncDynamicSession(headless=True) as s:
-                return await s.fetch(url, method=method, **kwargs)
+                resp = await s.fetch(url, method=method, **kwargs)
+            return resp
         else:
             # Fallback to simple fetcher
             async with AsyncFetcher() as fetcher:
                 if method.upper() == "GET":
-                    return await fetcher.get(url, **kwargs)
+                    resp = await fetcher.get(url, **kwargs)
                 else:
-                    return await fetcher.post(url, **kwargs)
+                    resp = await fetcher.post(url, **kwargs)
+            return resp
 
 
     async def close(self) -> None:
@@ -728,7 +771,13 @@ class AdapterMetrics:
         self.consecutive_failures += 1
         self.last_failure_reason = error
     def snapshot(self) -> Dict[str, Any]:
-        return {"total_requests": self.total_requests, "success_rate": self.success_rate}
+        return {
+            "total_requests": self.total_requests,
+            "success_rate": self.success_rate,
+            "failed_requests": self.failed_requests,
+            "consecutive_failures": self.consecutive_failures,
+            "last_failure_reason": getattr(self, "last_failure_reason", None)
+        }
 
 
 # --- MIXINS ---
@@ -878,7 +927,7 @@ class BaseAdapterV3(ABC):
             for runner in r.runners:
                 if not runner.scratched and (runner.win_odds is None or runner.win_odds <= 0):
                     runner.win_odds = DEFAULT_ODDS_FALLBACK
-        valid, warnings = DataValidationPipeline.validate_parsed_races(races)
+        valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
         return valid
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
@@ -891,7 +940,7 @@ class BaseAdapterV3(ABC):
             return resp
         except Exception as e:
             self.logger.error("Request failed", method=method, url=full_url, error=str(e))
-            raise
+            return None
 
     async def close(self) -> None: await self.smart_fetcher.close()
     async def shutdown(self) -> None: await self.close()
@@ -2169,7 +2218,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # A race cannot be a goldmine if field size is over 8
             is_goldmine = False
             active_runners = [r for r in race.runners if not r.scratched]
-            if active_runners and len(active_runners) <= 8:
+            closeness = 0.0
+            if active_runners:
                 all_odds = []
                 for runner in active_runners:
                     odds = _get_best_win_odds(runner)
@@ -2177,10 +2227,13 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                         all_odds.append(odds)
                 if len(all_odds) >= 2:
                     all_odds.sort()
-                    if all_odds[1] >= 5.0:
+                    fav, sec = all_odds[0], all_odds[1]
+                    closeness = round(float(sec - fav), 2)
+                    if len(active_runners) <= 8 and sec >= 5.0:
                         is_goldmine = True
 
             race.metadata['is_goldmine'] = is_goldmine
+            race.metadata['closeness_score'] = closeness
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -2341,7 +2394,6 @@ def generate_fortuna_fives(races: List[Any], all_races: Optional[List[Any]] = No
     stats_races = all_races if all_races is not None else races
     for race in stats_races:
         v = get_field(race, 'venue')
-        if not v: continue
         track = normalize_venue_name(v)
         for runner in get_field(race, 'runners', []):
             win_odds = get_field(runner, 'win_odds')
@@ -2379,8 +2431,8 @@ def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) 
     races_by_track = defaultdict(list)
     for r in source_races_for_cat:
         v = get_field(r, 'venue')
-        if v:
-            races_by_track[normalize_venue_name(v)].append(r)
+        track = normalize_venue_name(v)
+        races_by_track[track].append(r)
     for track, tr_races in races_by_track.items():
         track_categories[track] = get_track_category(tr_races)
 
@@ -2437,8 +2489,8 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     races_by_track = defaultdict(list)
     for r in source_races_for_cat:
         v = get_field(r, 'venue')
-        if v:
-            races_by_track[normalize_venue_name(v)].append(r)
+        track = normalize_venue_name(v)
+        races_by_track[track].append(r)
     for track, tr_races in races_by_track.items():
         track_categories[track] = get_track_category(tr_races)
 
@@ -2529,8 +2581,9 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             if hasattr(r, 'top_five_numbers'):
                 r.top_five_numbers = top_5_nums
 
+            closeness = get_field(r, 'metadata', {}).get('closeness_score', 0.0)
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
-            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}]")
+            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | Closeness: {closeness:.2f}")
             report_lines.append("-" * 40)
 
             # Sort runners by number
@@ -2611,8 +2664,8 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     source_races = all_races if all_races is not None else races
     for r in source_races:
         venue = get_field(r, 'venue')
-        if venue:
-            races_by_track[normalize_venue_name(venue)].append(r)
+        track = normalize_venue_name(venue)
+        races_by_track[track].append(r)
 
     for track, tr_races in races_by_track.items():
         track_categories[track] = get_track_category(tr_races)
@@ -2804,6 +2857,56 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
+class HotTipsTracker:
+    """Logs reported opportunities to a pseudo-database JSON file."""
+    def __init__(self, db_path: str = "hot_tips_db.json"):
+        self.db_path = Path(db_path)
+        self.logger = structlog.get_logger(self.__class__.__name__)
+
+    def log_tips(self, races: List[Race]):
+        if not races:
+            return
+
+        report_date = datetime.now(timezone.utc).isoformat()
+        tips = []
+        for r in races:
+            is_goldmine = r.metadata.get('is_goldmine', False)
+
+            tip_data = {
+                "report_date": report_date,
+                "race_id": r.id,
+                "venue": r.venue,
+                "race_number": r.race_number,
+                "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
+                "is_goldmine": is_goldmine,
+                "closeness_score": r.metadata.get('closeness_score', 0.0),
+                "top_five": r.top_five_numbers
+            }
+            tips.append(tip_data)
+
+        try:
+            existing_data = []
+            if self.db_path.exists():
+                with open(self.db_path, "r") as f:
+                    try:
+                        existing_data = json.load(f)
+                    except (json.JSONDecodeError, IOError):
+                        existing_data = []
+
+            # Append new tips
+            existing_data.extend(tips)
+
+            # Keep only unique race_id/report_date combinations if needed,
+            # but usually we want to see every report.
+
+            with open(self.db_path, "w") as f:
+                json.dump(existing_data, f, indent=4)
+
+            self.logger.info("Hot tips logged to database", count=len(tips), db=str(self.db_path))
+        except Exception as e:
+            self.logger.error("Failed to log hot tips", error=str(e))
+
+
 # ----------------------------------------
 # MONITOR LOGIC
 # ----------------------------------------
@@ -2888,24 +2991,25 @@ class FavoriteToPlaceMonitor:
         self.refresh_interval = refresh_interval
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
+        self.logger = structlog.get_logger(self.__class__.__name__)
 
     async def initialize_adapters(self):
         """Initialize all adapters."""
-        print(f"🔧 Initializing {len(self.ADAPTER_CLASSES)} adapters...")
+        self.logger.info("Initializing adapters", count=len(self.ADAPTER_CLASSES))
 
         for adapter_class in self.ADAPTER_CLASSES:
             try:
                 adapter = adapter_class()
                 self.adapters.append(adapter)
-                print(f"  ✅ {adapter_class.__name__}")
+                self.logger.debug("Adapter initialized", adapter=adapter_class.__name__)
             except Exception as e:
-                print(f"  ❌ {adapter_class.__name__}: {e}")
+                self.logger.error("Adapter initialization failed", adapter=adapter_class.__name__, error=str(e))
 
-        print(f"✅ Initialized {len(self.adapters)} adapters\n")
+        self.logger.info("Adapters initialization complete", initialized=len(self.adapters))
 
     async def fetch_all_races(self) -> List[Tuple[Race, str]]:
         """Fetch races from all adapters."""
-        print(f"📡 Fetching races for {self.target_date}...\n")
+        self.logger.info("Fetching races", date=self.target_date)
 
         all_races_with_adapters = []
 
@@ -2914,17 +3018,17 @@ class FavoriteToPlaceMonitor:
             name = adapter.__class__.__name__
             try:
                 races = await adapter.get_races(self.target_date)
-                print(f"  ✅ {name}: {len(races)} races")
+                self.logger.info("Fetch complete", adapter=name, count=len(races))
                 return [(r, name) for r in races]
             except Exception as e:
-                print(f"  ❌ {name}: {e}")
+                self.logger.error("Fetch failed", adapter=name, error=str(e))
                 return []
 
         results = await asyncio.gather(*[fetch_one(a) for a in self.adapters])
         for r_list in results:
             all_races_with_adapters.extend(r_list)
 
-        print(f"\n📊 Total races fetched: {len(all_races_with_adapters)}\n")
+        self.logger.info("Total races fetched", total=len(all_races_with_adapters))
         return all_races_with_adapters
 
     def _get_discipline_code(self, race: Race) -> str:
@@ -3022,8 +3126,9 @@ class FavoriteToPlaceMonitor:
         for race, adapter_name in races_with_adapters:
             try:
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Normalized Venue + Race Number
-                key = f"{summary.track.lower()}|{summary.race_number}"
+                # Stable key: Canonical Venue + Race Number
+                canonical_venue = get_canonical_venue(summary.track)
+                key = f"{canonical_venue}|{summary.race_number}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -3040,18 +3145,21 @@ class FavoriteToPlaceMonitor:
         self.all_races = list(race_map.values())
 
     def print_full_list(self):
-        """Print all fetched races."""
-        print("=" * 120)
-        print("FULL RACE LIST".center(120))
-        print("=" * 120)
-        print(f"{'DISC':<5} {'TRACK':<25} {'R#':<4} {'FIELD':<6} {'SUPER':<6} {'ADAPTER':<25} {'START TIME':<20}")
-        print("-" * 120)
+        """Log all fetched races."""
+        lines = [
+            "=" * 120,
+            "FULL RACE LIST".center(120),
+            "=" * 120,
+            f"{'DISC':<5} {'TRACK':<25} {'R#':<4} {'FIELD':<6} {'SUPER':<6} {'ADAPTER':<25} {'START TIME':<20}",
+            "-" * 120
+        ]
         for r in sorted(self.all_races, key=lambda x: (x.discipline, x.track, x.race_number)):
             superfecta = "Yes" if r.superfecta_offered else "No"
             st = r.start_time.strftime("%Y-%m-%d %H:%M") if r.start_time else "Unknown"
-            print(f"{r.discipline:<5} {r.track[:24]:<25} {r.race_number:<4} {r.field_size:<6} {superfecta:<6} {r.adapter[:24]:<25} {st:<20}")
-        print("-" * 120)
-        print(f"Total races: {len(self.all_races)}\n")
+            lines.append(f"{r.discipline:<5} {r.track[:24]:<25} {r.race_number:<4} {r.field_size:<6} {superfecta:<6} {r.adapter[:24]:<25} {st:<20}")
+        lines.append("-" * 120)
+        lines.append(f"Total races: {len(self.all_races)}")
+        self.logger.info("\n".join(lines))
 
     def get_bet_now_races(self) -> List[RaceSummary]:
         """Get races meeting BET NOW criteria."""
@@ -3085,43 +3193,49 @@ class FavoriteToPlaceMonitor:
         return yml[:5]  # Limit to top 5 recommendations
 
     def print_bet_now_list(self):
-        """Print filtered BET NOW list."""
+        """Log filtered BET NOW list."""
         bet_now = self.get_bet_now_races()
-        print("=" * 140)
-        print("🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140))
-        print("=" * 140)
-        print(f"Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Criteria: MTP <= 20 minutes AND 2nd Favorite Odds >= 5.0")
-        print("-" * 140)
+        lines = [
+            "=" * 140,
+            "🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140),
+            "=" * 140,
+            f"Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}",
+            "Criteria: MTP <= 20 minutes AND 2nd Favorite Odds >= 5.0",
+            "-" * 140
+        ]
         if not bet_now:
-            print("\n⏳ No races currently meet BET NOW criteria.\n")
-
+            lines.append("⏳ No races currently meet BET NOW criteria.")
             yml = self.get_you_might_like_races()
             if yml:
-                print("=" * 160)
-                print("🌟 YOU MIGHT LIKE - NEAR-MISS OPPORTUNITIES".center(160))
-                print("=" * 160)
-                print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}")
-                print("-" * 160)
+                lines.extend([
+                    "=" * 160,
+                    "🌟 YOU MIGHT LIKE - NEAR-MISS OPPORTUNITIES".center(160),
+                    "=" * 160,
+                    f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}",
+                    "-" * 160
+                ])
                 for r in yml:
                     sup = "✅" if r.superfecta_offered else "❌"
                     fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
                     so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
                     top5 = r.top_five_numbers or "N/A"
-                    print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
-                print("-" * 160)
+                    lines.append(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
+                lines.append("-" * 160)
+            self.logger.info("\n".join(lines))
             return
 
-        print(f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}")
-        print("-" * 160)
+        lines.extend([
+            f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}",
+            "-" * 160
+        ])
         for r in bet_now:
             sup = "✅" if r.superfecta_offered else "❌"
             fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
             so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
             top5 = r.top_five_numbers or "N/A"
-            print(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
-        print("-" * 160)
-        print(f"Total opportunities: {len(bet_now)}\n")
+            lines.append(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
+        lines.extend(["-" * 160, f"Total opportunities: {len(bet_now)}"])
+        self.logger.info("\n".join(lines))
 
     def save_to_json(self, filename: str = "race_data.json"):
         """Export to JSON."""
@@ -3155,7 +3269,7 @@ class FavoriteToPlaceMonitor:
                     record["logged_at"] = timestamp
                     f.write(json.dumps(record) + "\n")
         except Exception as e:
-            print(f"Error logging to history: {e}")
+            self.logger.error("History logging failed", error=str(e))
 
     async def run_once(self):
         try:
@@ -3181,7 +3295,7 @@ class FavoriteToPlaceMonitor:
                 self.save_to_json()
                 await asyncio.sleep(self.refresh_interval)
         except KeyboardInterrupt:
-            print("\nStopped.")
+            self.logger.info("Stopped by user")
         finally:
             for a in self.adapters: await a.shutdown()
             await GlobalResourceManager.cleanup()
@@ -3684,12 +3798,132 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self.logger.warning("Could not parse RacingPost runner, skipping.", exc_info=True)
             return None
 
+
+class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
+    """
+    Adapter for fetching Tote dividends and results from Racing Post.
+    """
+    SOURCE_NAME = "RacingPostTote"
+    BASE_URL = "https://www.racingpost.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode=StealthMode.CAMOUFLAGE,
+            timeout=45
+        )
+
+    def _get_headers(self) -> dict:
+        return self._get_browser_headers(host="www.racingpost.com")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        url = f"/results/{date}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            return None
+
+        self._save_debug_snapshot(resp.text, f"rp_tote_results_{date}")
+        parser = HTMLParser(resp.text)
+
+        # Extract links to individual race results
+        links = [a.attributes.get("href") for a in parser.css('a[data-test-selector="RC-meetingItem__link_race"]') if a.attributes.get("href")]
+
+        async def fetch_result_page(link):
+            r = await self.make_request("GET", link, headers=self._get_headers())
+            return (link, r.text if r else "")
+
+        tasks = [fetch_result_page(link) for link in links]
+        pages = await asyncio.gather(*tasks)
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"):
+            return []
+
+        races = []
+        date_str = raw_data["date"]
+
+        for link, html_content in raw_data["pages"]:
+            if not html_content:
+                continue
+            try:
+                parser = HTMLParser(html_content)
+                race = self._parse_result_page(parser, date_str, link)
+                if race:
+                    races.append(race)
+            except Exception as e:
+                self.logger.warning("Failed to parse RP result page", link=link, error=str(e))
+
+        return races
+
+    def _parse_result_page(self, parser: HTMLParser, date_str: str, url: str) -> Optional[Race]:
+        venue_node = parser.css_first('a[data-test-selector="RC-course__name"]')
+        if not venue_node: return None
+        venue = normalize_venue_name(venue_node.text(strip=True))
+
+        time_node = parser.css_first('span[data-test-selector="RC-course__time"]')
+        if not time_node: return None
+        time_str = time_node.text(strip=True)
+
+        try:
+            start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        except:
+            return None
+
+        # Extract dividends
+        dividends = {}
+        tote_container = parser.css_first('div[data-test-selector="RC-toteReturns"]')
+        if not tote_container:
+             # Try alternate selector
+             tote_container = parser.css_first('.rp-toteReturns')
+
+        if tote_container:
+            for row in (tote_container.css('div.rp-toteReturns__row') or tote_container.css('.rp-toteReturns__row')):
+                label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
+                val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
+                if label_node and val_node:
+                    label = clean_text(label_node.text())
+                    value = clean_text(val_node.text())
+                    if label and value:
+                        dividends[label] = value
+
+        # Extract runners (finishers)
+        runners = []
+        for row in parser.css('div[data-test-selector="RC-resultRunner"]'):
+            name_node = row.css_first('a[data-test-selector="RC-resultRunnerName"]')
+            if not name_node: continue
+            name = clean_text(name_node.text())
+            pos_node = row.css_first('span.rp-resultRunner__position')
+            pos = clean_text(pos_node.text()) if pos_node else "?"
+
+            runners.append(Runner(
+                name=name,
+                number=0,
+                metadata={"position": pos}
+            ))
+
+        race = Race(
+            id=f"rp_tote_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            venue=venue,
+            race_number=1, # RP doesn't easily show race number on result page title
+            start_time=start_time,
+            runners=runners,
+            source=self.source_name,
+            metadata={"dividends": dividends, "url": url}
+        )
+        return race
+
 # ----------------------------------------
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
 async def run_discovery(target_date: str):
-    print(f"🚀 Running Discovery for {target_date}...")
+    logger = structlog.get_logger("run_discovery")
+    logger.info("Running Discovery", date=target_date)
     
     # Initialize all adapters
     adapter_classes = [
@@ -3707,6 +3941,7 @@ async def run_discovery(target_date: str):
             OddscheckerAdapter,
         TimeformAdapter,
         RacingPostAdapter,
+        RacingPostToteAdapter,
 ]
     
     adapters = []
@@ -3714,7 +3949,7 @@ async def run_discovery(target_date: str):
         try:
             adapters.append(cls())
         except Exception as e:
-            print(f"Failed to init {cls.__name__}: {e}")
+            logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
     all_races_raw = []
     
@@ -3730,13 +3965,13 @@ async def run_discovery(target_date: str):
     for r_list in results:
         all_races_raw.extend(r_list)
 
-    print(f"Fetched {len(all_races_raw)} total races.")
+    logger.info("Fetched total races", count=len(all_races_raw))
     
     # Deduplicate
     race_map = {}
     for race in all_races_raw:
-        venue = normalize_venue_name(race.venue)
-        # Use Venue + Race Number + Date as stable key
+        canonical_venue = get_canonical_venue(race.venue)
+        # Use Canonical Venue + Race Number + Date as stable key
         st = race.start_time
         if isinstance(st, str):
             try:
@@ -3745,7 +3980,7 @@ async def run_discovery(target_date: str):
                 pass
 
         date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-        key = f"{venue.lower()}|{race.race_number}|{date_str}"
+        key = f"{canonical_venue}|{race.race_number}|{date_str}"
         
         if key not in race_map:
             race_map[key] = race
@@ -3767,7 +4002,7 @@ async def run_discovery(target_date: str):
             existing.source = ", ".join(sorted(list(filter(None, sources))))
     
     unique_races = list(race_map.values())
-    print(f"Unique races: {len(unique_races)}")
+    logger.info("Unique races identified", count=len(unique_races))
 
     # Analyze
     analyzer = SimplySuccessAnalyzer()
@@ -3776,12 +4011,23 @@ async def run_discovery(target_date: str):
 
     # Generate Grid & Goldmine
     grid = generate_summary_grid(qualified, all_races=unique_races)
-    print(grid)
+    logger.info("Summary Grid Generated")
+    # For CI/CD summary, we still want it printed or at least available
+    # but the requirement was to avoid prints in production modules.
+    # However, run_discovery is likely the main entry point.
+    # I'll keep the print(grid) but maybe wrap it or use logger.
+    # Actually, structured logging for a grid is hard.
+    # I'll use logger.info with the grid.
+    logger.info("\n" + grid)
     with open("summary_grid.txt", "w") as f: f.write(grid)
     
     gm_report = generate_goldmine_report(qualified, all_races=unique_races)
     with open("goldmine_report.txt", "w") as f: f.write(gm_report)
     
+    # Log Hot Tips to pseudo-DB
+    tracker = HotTipsTracker()
+    tracker.log_tips(qualified)
+
     # Save qualified races to JSON
     report_data = {
         "races": [r.model_dump(mode='json') for r in qualified],
