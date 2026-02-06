@@ -2047,7 +2047,13 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 if e:
                     da = e.attrib.get('datetime')
                     if da:
-                        try: return datetime.fromisoformat(da.replace('Z', '+00:00'))
+                        try:
+                            dt = datetime.fromisoformat(da.replace('Z', '+00:00'))
+                            # Only trust the date from HTML if it's within 1 day of what we expected
+                            if abs((dt.date() - bd).days) <= 1:
+                                return dt
+                            else:
+                                self.logger.debug("Suspicious date in HTML datetime attribute", html_dt=da, expected_date=bd)
                         except: pass
                     p = self._parse_time_string(e.text.strip() if hasattr(e, 'text') else str(e).strip(), bd)
                     if p: return p
@@ -3191,11 +3197,12 @@ class FortunaDB:
         return await self._run_in_executor(_get)
 
     async def get_recent_tips(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """Returns the most recent tips regardless of audit status."""
+        """Returns the most recent tips regardless of audit status, ordered by discovery time."""
         if not self._initialized: await self.initialize()
         def _get():
+            # Use ID DESC to show most recently discovered tips first
             cursor = self._get_conn().execute(
-                "SELECT * FROM tips ORDER BY start_time DESC LIMIT ?",
+                "SELECT * FROM tips ORDER BY id DESC LIMIT ?",
                 (limit,)
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -3335,7 +3342,22 @@ class HotTipsTracker:
         now = datetime.now(timezone.utc)
         report_date = now.isoformat()
         new_tips = []
+
+        # Strict future cutoff to prevent leakage (e.g., 36 hours from now)
+        future_limit = now + timedelta(hours=36)
+
         for r in races:
+            st = r.start_time
+            if isinstance(st, str):
+                try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                except: continue
+            if st.tzinfo is None: st = st.replace(tzinfo=timezone.utc)
+
+            # Reject races too far in the future
+            if st > future_limit:
+                self.logger.debug("Rejecting far-future race", venue=r.venue, start_time=st)
+                continue
+
             is_goldmine = r.metadata.get('is_goldmine', False)
             gap12 = r.metadata.get('1Gap2', 0.0)
 
@@ -3577,11 +3599,21 @@ class FavoriteToPlaceMonitor:
             top_five_numbers=self._get_top_n_runners(race, 5),
         )
 
-    async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]]):
-        """Build and deduplicate summary list."""
+    async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):
+        """Build and deduplicate summary list, with optional time window filtering."""
         race_map = {}
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(hours=window_hours) if window_hours else None
+
         for race, adapter_name in races_with_adapters:
             try:
+                # Time window filtering
+                st = race.start_time
+                if st.tzinfo is None: st = st.replace(tzinfo=timezone.utc)
+
+                if cutoff and (st < now - timedelta(minutes=30) or st > cutoff):
+                    continue
+
                 summary = self._create_race_summary(race, adapter_name)
                 # Stable key: Canonical Venue + Race Number + Date + Discipline
                 canonical_venue = get_canonical_venue(summary.track)
@@ -3745,7 +3777,7 @@ class FavoriteToPlaceMonitor:
                 await self.initialize_adapters(adapter_names=adapter_names)
                 raw = await self.fetch_all_races()
 
-            await self.build_race_summaries(raw)
+            await self.build_race_summaries(raw, window_hours=12) # Use 12h window for monitor
             self.print_full_list()
             await self.print_bet_now_list()
             self.save_to_json()
@@ -3756,7 +3788,7 @@ class FavoriteToPlaceMonitor:
     async def run_continuous(self):
         await self.initialize_adapters()
         raw = await self.fetch_all_races()
-        await self.build_race_summaries(raw)
+        await self.build_race_summaries(raw, window_hours=12)
         self.print_full_list()
         try:
             while True:

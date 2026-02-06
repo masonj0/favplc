@@ -404,9 +404,10 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.HTTPX,
-            enable_js=False,
-            timeout=30,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=45,
         )
 
     def _get_headers(self) -> dict:
@@ -692,7 +693,12 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         )
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=45,
+        )
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.racingpost.com")
@@ -887,7 +893,12 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         )
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=45,
+        )
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.attheraces.com")
@@ -1043,46 +1054,391 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
 
 # Placeholder adapters - implement as needed
-class SportingLifeResultsAdapter(fortuna.BaseAdapterV3):
-    """Placeholder for Sporting Life results adapter."""
+class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
+    """Adapter for Sporting Life results."""
+
+    SOURCE_NAME = "SportingLifeResults"
+    BASE_URL = "https://www.sportinglife.com"
 
     def __init__(self, **kwargs):
         super().__init__(
-            source_name="SportingLifeResults",
-            base_url="https://www.sportinglife.com",
+            source_name=self.SOURCE_NAME,
+            base_url=self.BASE_URL,
             **kwargs
         )
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=45,
+        )
+
+    def _get_headers(self) -> dict:
+        return self._get_browser_headers(host="www.sportinglife.com")
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        # TODO: Implement
-        return {"pages": [], "date": date_str}
+        url = f"/racing/results/{date_str}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp:
+            return None
+
+        parser = HTMLParser(resp.text)
+        links = []
+        for a in parser.css("a[href*='/racing/results/']"):
+            href = a.attributes.get("href", "")
+            # Example: /racing/results/2026-02-04/ludlow/901676/racing-to-school-juvenile-hurdle-gbb-race
+            if re.search(r"/results/\d{4}-\d{2}-\d{2}/.+/\d+/", href):
+                links.append(href)
+
+        unique_links = list(set(links))
+        if not unique_links:
+            return None
+
+        self.logger.info("Found Sporting Life result links", count=len(unique_links))
+        metadata = [{"url": link, "race_number": 0} for link in unique_links]
+        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
+
+        return {"pages": pages, "date": date_str}
 
     def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        return []
+        if not raw_data:
+            return []
+
+        races = []
+        date_str = raw_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+
+        for item in raw_data.get("pages", []):
+            html_content = item.get("html")
+            if not html_content:
+                continue
+
+            try:
+                race = self._parse_race_page(html_content, date_str, item.get("url", ""))
+                if race:
+                    races.append(race)
+            except Exception as e:
+                self.logger.warning("Failed to parse Sporting Life result", error=str(e))
+
+        return races
+
+    def _parse_race_page(
+        self,
+        html_content: str,
+        date_str: str,
+        url: str
+    ) -> Optional[ResultRace]:
+        """Parse a Sporting Life result page using JSON data or HTML fallback."""
+        parser = HTMLParser(html_content)
+
+        # Try JSON extraction first (highly reliable for Next.js sites)
+        script = parser.css_first("script#__NEXT_DATA__")
+        if script:
+            try:
+                data = json.loads(script.text())
+                self.logger.debug("Parsing Sporting Life JSON", keys=list(data.keys()))
+                pp = data.get("props", {}).get("pageProps", {})
+                self.logger.debug("Sporting Life PageProps keys", keys=list(pp.keys()))
+                race_data = pp.get("race", {})
+                if race_data:
+                    self.logger.debug("Sporting Life Race data found", name=race_data.get("name"))
+                    race_summary = race_data.get("race_summary", {})
+                    venue = fortuna.normalize_venue_name(race_summary.get("course_name", "Unknown"))
+                    time_str = race_summary.get("time", "00:00")
+                    date_val = race_summary.get("date", date_str)
+
+                    runners = []
+                    # Try 'rides' first (typical for result pages)
+                    items = race_data.get("rides", [])
+                    if items:
+                        for r in items:
+                            horse = r.get("horse", {})
+                            runners.append(ResultRunner(
+                                name=horse.get("name") or r.get("name"),
+                                number=r.get("cloth_number") or r.get("saddle_cloth_number", 0),
+                                position=str(r.get("finish_position") or r.get("position", ""))
+                            ))
+                    else:
+                        # Fallback to 'runners'
+                        for r in race_data.get("runners", []):
+                            runners.append(ResultRunner(
+                                name=r.get("name"),
+                                number=r.get("saddle_cloth_number", 0),
+                                position=str(r.get("position")) if r.get("position") else None
+                            ))
+
+                    if runners:
+                        # Recursive search for payouts in JSON
+                        def find_payout(obj, key_part):
+                            if isinstance(obj, dict):
+                                for k, v in obj.items():
+                                    if key_part.lower() in k.lower() and (isinstance(v, (int, float, str))):
+                                        return parse_currency_value(str(v))
+                                    res = find_payout(v, key_part)
+                                    if res: return res
+                            elif isinstance(obj, list):
+                                for item in obj:
+                                    res = find_payout(item, key_part)
+                                    if res: return res
+                            return None
+
+                        trifecta_pay = find_payout(race_data, "trifecta")
+                        superfecta_pay = find_payout(race_data, "superfecta")
+
+                        # Extract place payouts if available (often as "place_win")
+                        place_wins = race_data.get("place_win", "")
+                        if place_wins and isinstance(place_wins, str):
+                            pays = [parse_currency_value(p) for p in place_wins.split(",")]
+                            # Map them to the runners based on position
+                            for r in runners:
+                                try:
+                                    pos = r.position_numeric
+                                    if pos and 1 <= pos <= len(pays):
+                                        r.place_payout = pays[pos-1]
+                                except: continue
+
+                        try:
+                            dt = datetime.strptime(date_val, "%Y-%m-%d")
+                            start_time = dt.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=timezone.utc)
+                        except:
+                            start_time = datetime.now(timezone.utc)
+
+                        return ResultRace(
+                            id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_val.replace('-', '')}_{time_str.replace(':', '')}",
+                            venue=venue,
+                            race_number=1,
+                            start_time=start_time,
+                            runners=runners,
+                            trifecta_payout=trifecta_pay,
+                            superfecta_payout=superfecta_pay,
+                            source=self.SOURCE_NAME,
+                        )
+            except Exception as e:
+                self.logger.warning("Failed to parse Sporting Life JSON", error=str(e))
+        else:
+            self.logger.debug("No __NEXT_DATA__ found in Sporting Life page", url=url)
+
+        # Fallback to HTML parsing
+        header = parser.css_first("h1")
+        if not header:
+            return None
+
+        header_text = fortuna.clean_text(header.text())
+        match = re.match(r"(\d{1,2}:\d{2})\s+(.+)\s+Result", header_text)
+        if not match:
+            return None
+
+        time_str = match.group(1)
+        venue = fortuna.normalize_venue_name(match.group(2))
+
+        runners = []
+        for row in parser.css('div[class*="ResultRunner__StyledResultRunnerWrapper"]'):
+            try:
+                name_node = row.css_first('a[class*="ResultRunner__StyledHorseName"]')
+                pos_node = row.css_first('div[class*="ResultRunner__StyledRunnerPositionContainer"]')
+
+                if not name_node:
+                    continue
+
+                name = fortuna.clean_text(name_node.text())
+                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
+
+                runners.append(ResultRunner(
+                    name=name,
+                    number=0,
+                    position=pos,
+                ))
+            except Exception:
+                continue
+
+        if not runners:
+            return None
+
+        try:
+            race_date = datetime.strptime(date_str, "%Y-%m-%d")
+            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=timezone.utc)
+        except:
+            start_time = datetime.now(timezone.utc)
+
+        return ResultRace(
+            id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            venue=venue,
+            race_number=1,
+            start_time=start_time,
+            runners=runners,
+            source=self.SOURCE_NAME,
+        )
 
 
-class SkySportsResultsAdapter(fortuna.BaseAdapterV3):
-    """Placeholder for Sky Sports results adapter."""
+class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
+    """Adapter for Sky Sports results."""
+
+    SOURCE_NAME = "SkySportsResults"
+    BASE_URL = "https://www.skysports.com"
 
     def __init__(self, **kwargs):
         super().__init__(
-            source_name="SkySportsResults",
-            base_url="https://www.skysports.com",
+            source_name=self.SOURCE_NAME,
+            base_url=self.BASE_URL,
             **kwargs
         )
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=45,
+        )
+
+    def _get_headers(self) -> dict:
+        return self._get_browser_headers(host="www.skysports.com")
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        # TODO: Implement
-        return {"pages": [], "date": date_str}
+        # Sky Sports uses DD-MM-YYYY in results URL
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            url_date = dt.strftime("%d-%m-%Y")
+        except:
+            url_date = date_str
+
+        url = f"/racing/results/{url_date}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp:
+            return None
+
+        parser = HTMLParser(resp.text)
+        links = []
+        for a in parser.css("a[href*='/racing/results/']"):
+            href = a.attributes.get("href", "")
+            # Example: /racing/results/full-result/1353673/kempton-park/04-02-2026/try-unibets-superboosts-apprentice-handicap
+            if re.search(r"/results/.+/\d+/", href):
+                links.append(href)
+
+        unique_links = list(set(links))
+        if not unique_links:
+            return None
+
+        self.logger.info("Found Sky Sports result links", count=len(unique_links))
+        metadata = [{"url": link, "race_number": 0} for link in unique_links]
+        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
+
+        return {"pages": pages, "date": date_str}
 
     def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        return []
+        if not raw_data:
+            return []
+
+        races = []
+        date_str = raw_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+
+        for item in raw_data.get("pages", []):
+            html_content = item.get("html")
+            if not html_content:
+                continue
+
+            try:
+                race = self._parse_race_page(html_content, date_str, item.get("url", ""))
+                if race:
+                    races.append(race)
+            except Exception as e:
+                self.logger.warning("Failed to parse Sky Sports result", error=str(e))
+
+        return races
+
+    def _parse_race_page(
+        self,
+        html_content: str,
+        date_str: str,
+        url: str
+    ) -> Optional[ResultRace]:
+        """Parse a Sky Sports result page."""
+        parser = HTMLParser(html_content)
+
+        # Get venue and time
+        header = parser.css_first(".sdc-site-racing-header__name")
+        if not header:
+            return None
+
+        header_text = fortuna.clean_text(header.text())
+        # Format: "13:30 Lingfield"
+        match = re.match(r"(\d{1,2}:\d{2})\s+(.+)", header_text)
+        if not match:
+            return None
+
+        time_str = match.group(1)
+        venue = fortuna.normalize_venue_name(match.group(2))
+
+        # Parse runners
+        runners = []
+        for row in parser.css(".sdc-site-racing-card__item"):
+            try:
+                name_node = row.css_first(".sdc-site-racing-card__name")
+                pos_node = row.css_first(".sdc-site-racing-card__position")
+
+                if not name_node:
+                    continue
+
+                name = fortuna.clean_text(name_node.text())
+                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
+
+                # Saddle number
+                number_node = row.css_first(".sdc-site-racing-card__number")
+                number = 0
+                if number_node:
+                    try:
+                        number = int(re.sub(r"\D", "", number_node.text()))
+                    except:
+                        pass
+
+                runners.append(ResultRunner(
+                    name=name,
+                    number=number,
+                    position=pos,
+                ))
+            except Exception:
+                continue
+
+        if not runners:
+            return None
+
+        # Exotic payouts
+        trifecta_pay = None
+        superfecta_pay = None
+
+        for table in parser.css("table"):
+            table_text = table.text().lower()
+            if "trifecta" in table_text or "tricast" in table_text:
+                for row in table.css("tr"):
+                    if "trifecta" in row.text().lower() or "tricast" in row.text().lower():
+                        cols = row.css("td")
+                        if len(cols) >= 2:
+                            trifecta_pay = parse_currency_value(cols[1].text())
+            elif "superfecta" in table_text or "first 4" in table_text:
+                for row in table.css("tr"):
+                    row_text = row.text().lower()
+                    if "superfecta" in row_text or "first 4" in row_text:
+                        cols = row.css("td")
+                        if len(cols) >= 2:
+                            superfecta_pay = parse_currency_value(cols[1].text())
+
+        try:
+            race_date = datetime.strptime(date_str, "%Y-%m-%d")
+            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=timezone.utc)
+        except:
+            start_time = datetime.now(timezone.utc)
+
+        return ResultRace(
+            id=f"sky_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            venue=venue,
+            race_number=1,
+            start_time=start_time,
+            runners=runners,
+            trifecta_payout=trifecta_pay,
+            superfecta_payout=superfecta_pay,
+            source=self.SOURCE_NAME,
+        )
 
 
 # --- REPORT GENERATION ---
