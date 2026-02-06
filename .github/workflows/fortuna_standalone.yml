@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - jules205c
   schedule:
     - cron: '0 * * * *' # Every hour
   workflow_dispatch:
@@ -26,6 +25,14 @@ jobs:
         with:
           python-version: '3.10'
           cache: 'pip'
+
+      - name: Restore Fortuna Database
+        uses: actions/cache@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-${{ github.run_id }}
+          restore-keys: |
+            fortuna-db-
 
       - name: Install dependencies
         run: |
@@ -115,6 +122,23 @@ jobs:
           " >> $GITHUB_STEP_SUMMARY
           fi
 
+      - name: Run Fortuna Analytics
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 fortuna_analytics.py --days 2
+
+      - name: Add Analytics to Job Summary
+        if: always()
+        run: |
+          if [ -f analytics_report.txt ]; then
+            echo "### 📊 Performance Analytics Audit" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat analytics_report.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Upload Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -125,5 +149,6 @@ jobs:
             goldmine_report.txt
             qualified_races.json
             race_data.json
-            hot_tips_db.json
+            analytics_report.txt
+            fortuna.db
           retention-days: 7

@@ -43,6 +43,8 @@ from typing import (
 
 import httpx
 import pandas as pd
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 import structlog
 from pydantic import (
     BaseModel,
@@ -2907,13 +2909,239 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
-class HotTipsTracker:
-    """Logs reported opportunities to a pseudo-database JSON file."""
-    def __init__(self, db_path: str = "hot_tips_db.json"):
-        self.db_path = Path(db_path)
+def get_db_path() -> str:
+    return os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
+
+
+class FortunaDB:
+    """
+    Thread-safe SQLite backend for Fortuna using the standard library.
+    Handles persistence for tips, predictions, and audit outcomes.
+    """
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or get_db_path()
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._conn = None
+        self._initialized = False
         self.logger = structlog.get_logger(self.__class__.__name__)
 
-    def log_tips(self, races: List[Race]):
+    def _get_conn(self):
+        if not self._conn:
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        return self._conn
+
+    async def _run_in_executor(self, func, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, func, *args)
+
+    async def initialize(self):
+        """Creates the database schema if it doesn't exist."""
+        if self._initialized: return
+
+        def _init():
+            conn = self._get_conn()
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS tips (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        race_id TEXT NOT NULL,
+                        venue TEXT NOT NULL,
+                        race_number INTEGER NOT NULL,
+                        start_time TEXT NOT NULL,
+                        report_date TEXT NOT NULL,
+                        is_goldmine INTEGER NOT NULL,
+                        gap12 TEXT,
+                        top_five TEXT,
+                        selection_number INTEGER,
+                        audit_completed INTEGER DEFAULT 0,
+                        verdict TEXT,
+                        net_profit REAL,
+                        selection_position INTEGER,
+                        actual_top_5 TEXT,
+                        actual_2nd_fav_odds REAL,
+                        trifecta_payout REAL,
+                        trifecta_combination TEXT,
+                        audit_timestamp TEXT
+                    )
+                """)
+                # Composite index for deduplication
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_report ON tips (race_id, report_date)")
+                # Composite index for audit performance
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+
+        await self._run_in_executor(_init)
+        self._initialized = True
+        self.logger.info("Database initialized", path=self.db_path)
+
+    async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 4):
+        """Logs new tips to the database with atomic deduplication."""
+        if not self._initialized: await self.initialize()
+
+        def _log():
+            conn = self._get_conn()
+            now = datetime.now(timezone.utc)
+            with conn:
+                for tip in tips:
+                    race_id = tip.get("race_id")
+                    report_date = tip.get("report_date", now.isoformat())
+
+                    # Deduplication check: same race_id in the window
+                    cursor = conn.execute(
+                        "SELECT report_date FROM tips WHERE race_id = ? ORDER BY id DESC LIMIT 1",
+                        (race_id,)
+                    )
+                    last_report = cursor.fetchone()
+                    if last_report:
+                        try:
+                            lr_str = last_report["report_date"]
+                            lr_dt = datetime.fromisoformat(lr_str)
+                            if lr_dt.tzinfo is None: lr_dt = lr_dt.replace(tzinfo=timezone.utc)
+                            if (now - lr_dt).total_seconds() < dedup_window_hours * 3600:
+                                continue
+                        except: pass
+
+                    conn.execute("""
+                        INSERT OR IGNORE INTO tips (
+                            race_id, venue, race_number, start_time, report_date,
+                            is_goldmine, gap12, top_five, selection_number
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        race_id, tip.get("venue"), tip.get("race_number"),
+                        tip.get("start_time"), report_date,
+                        1 if tip.get("is_goldmine") else 0,
+                        str(tip.get("1Gap2", 0.0)),
+                        tip.get("top_five"), tip.get("selection_number")
+                    ))
+        await self._run_in_executor(_log)
+
+    async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
+        """Returns tips that haven't been audited yet but have likely finished."""
+        if not self._initialized: await self.initialize()
+
+        def _get():
+            conn = self._get_conn()
+            now = datetime.now(timezone.utc)
+            cutoff = (now - timedelta(hours=lookback_hours)).isoformat()
+
+            cursor = conn.execute(
+                """SELECT * FROM tips
+                   WHERE audit_completed = 0
+                   AND report_date > ?
+                   AND start_time < ?""",
+                (cutoff, now.isoformat())
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def update_audit_result(self, race_id: str, outcome: Dict[str, Any]):
+        """Updates a single tip with its audit outcome."""
+        if not self._initialized: await self.initialize()
+
+        def _update():
+            conn = self._get_conn()
+            with conn:
+                conn.execute("""
+                    UPDATE tips SET
+                        audit_completed = 1,
+                        verdict = ?,
+                        net_profit = ?,
+                        selection_position = ?,
+                        actual_top_5 = ?,
+                        actual_2nd_fav_odds = ?,
+                        trifecta_payout = ?,
+                        trifecta_combination = ?,
+                        audit_timestamp = ?
+                    WHERE id = (
+                        SELECT id FROM tips
+                        WHERE race_id = ? AND audit_completed = 0
+                        LIMIT 1
+                    )
+                """, (
+                    outcome.get("verdict"), outcome.get("net_profit"),
+                    outcome.get("selection_position"), outcome.get("actual_top_5"),
+                    outcome.get("actual_2nd_fav_odds"), outcome.get("trifecta_payout"),
+                    outcome.get("trifecta_combination"),
+                    datetime.now(timezone.utc).isoformat(),
+                    race_id
+                ))
+        await self._run_in_executor(_update)
+
+    async def get_all_audited_tips(self) -> List[Dict[str, Any]]:
+        """Returns all audited tips for reporting."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
+        """Migrates data from existing JSON file to SQLite with detailed error logging."""
+        path = Path(json_path)
+        if not path.exists(): return
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            if not isinstance(data, list): return
+            self.logger.info("Migrating data from JSON", count=len(data))
+            if not self._initialized: await self.initialize()
+
+            def _migrate():
+                conn = self._get_conn()
+                success_count = 0
+                for entry in data:
+                    try:
+                        with conn:
+                            conn.execute("""
+                                INSERT OR IGNORE INTO tips (
+                                    race_id, venue, race_number, start_time, report_date,
+                                    is_goldmine, gap12, top_five, selection_number,
+                                    audit_completed, verdict, net_profit, selection_position,
+                                    actual_top_5, actual_2nd_fav_odds, trifecta_payout,
+                                    trifecta_combination, audit_timestamp
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                entry.get("race_id"), entry.get("venue"), entry.get("race_number"),
+                                entry.get("start_time"), entry.get("report_date"),
+                                1 if entry.get("is_goldmine") else 0, str(entry.get("1Gap2", 0.0)),
+                                entry.get("top_five"), entry.get("selection_number"),
+                                1 if entry.get("audit_completed") else 0, entry.get("verdict"),
+                                entry.get("net_profit"), entry.get("selection_position"),
+                                entry.get("actual_top_5"), entry.get("actual_2nd_fav_odds"),
+                                entry.get("trifecta_payout"), entry.get("trifecta_combination"),
+                                entry.get("audit_timestamp")
+                            ))
+                        success_count += 1
+                    except Exception as e:
+                        self.logger.error("Failed to migrate entry", race_id=entry.get("race_id"), error=str(e))
+                return success_count
+
+            count = await self._run_in_executor(_migrate)
+            self.logger.info("Migration complete", successful=count)
+        except Exception as e:
+            self.logger.error("Migration failed", error=str(e))
+
+    async def close(self):
+        def _close():
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+        await self._run_in_executor(_close)
+        self._executor.shutdown()
+
+
+class HotTipsTracker:
+    """Logs reported opportunities to a SQLite database."""
+    def __init__(self, db_path: Optional[str] = None):
+        self.db = FortunaDB(db_path) if db_path else FortunaDB()
+        self.logger = structlog.get_logger(self.__class__.__name__)
+
+    async def log_tips(self, races: List[Race]):
         if not races:
             return
 
@@ -2937,55 +3165,8 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
-            existing_data = []
-            if self.db_path.exists():
-                with open(self.db_path, "r") as f:
-                    try:
-                        existing_data = json.load(f)
-                    except (json.JSONDecodeError, IOError):
-                        existing_data = []
-
-            # Smart deduplication: only add if race hasn't been reported in the last 4 hours
-            # with the same parameters (goldmine status and 1Gap2)
-            tips_to_add = []
-            for nt in new_tips:
-                is_redundant = False
-                # Look back at existing data (from most recent)
-                for et in reversed(existing_data):
-                    # If same race
-                    if et.get("race_id") == nt["race_id"]:
-                        try:
-                            # Check time difference
-                            et_date = datetime.fromisoformat(et["report_date"])
-                            if (now - et_date).total_seconds() < 4 * 3600:
-                                # Check if parameters are same
-                                if (et.get("is_goldmine") == nt["is_goldmine"] and
-                                    abs(et.get("1Gap2", 0) - nt["1Gap2"]) < 0.05):
-                                    is_redundant = True
-                                    break
-                            else:
-                                # Older than 4 hours, stop looking for this race
-                                break
-                        except: pass
-
-                if not is_redundant:
-                    tips_to_add.append(nt)
-
-            if not tips_to_add:
-                self.logger.debug("No new unique hot tips to log")
-                return
-
-            # Append new tips
-            existing_data.extend(tips_to_add)
-
-            # Limit total database size to last 5000 entries to prevent infinite growth
-            if len(existing_data) > 5000:
-                existing_data = existing_data[-5000:]
-
-            with open(self.db_path, "w") as f:
-                json.dump(existing_data, f, indent=4)
-
-            self.logger.info("Hot tips logged to database", count=len(tips_to_add), db=str(self.db_path))
+            await self.db.log_tips(new_tips)
+            self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
             self.logger.error("Failed to log hot tips", error=str(e))
 
@@ -3992,16 +4173,41 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             pos_node = row.css_first('span.rp-resultRunner__position')
             pos = clean_text(pos_node.text()) if pos_node else "?"
 
+            # Try to find saddle number
+            number = 0
+            num_node = row.css_first(".rp-resultRunner__saddleClothNo")
+            if num_node:
+                try: number = int(clean_text(num_node.text()))
+                except: pass
+
             runners.append(Runner(
                 name=name,
-                number=0,
+                number=number,
                 metadata={"position": pos}
             ))
 
+        # Derive race number from header or navigation
+        race_num = 1
+        # Priority 1: Navigation bar active time (most reliable on RP)
+        time_links = parser.css('a[data-test-selector="RC-raceTime"]')
+        found_in_nav = False
+        for i, link in enumerate(time_links):
+            cls = link.attributes.get("class", "")
+            if "active" in cls or "rp-raceTimeCourseName__time" in cls:
+                race_num = i + 1
+                found_in_nav = True
+                break
+
+        if not found_in_nav:
+            # Priority 2: Text search for "Race X"
+            race_num_match = re.search(r'Race\s+(\d+)', parser.text())
+            if race_num_match:
+                race_num = int(race_num_match.group(1))
+
         race = Race(
-            id=f"rp_tote_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            id=f"rp_tote_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
-            race_number=1, # RP doesn't easily show race number on result page title
+            race_number=race_num,
             start_time=start_time,
             runners=runners,
             source=self.source_name,
@@ -4013,28 +4219,23 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
-async def run_discovery(target_dates: List[str]):
+async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8):
     logger = structlog.get_logger("run_discovery")
-    logger.info("Running Discovery", dates=target_dates)
+    logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=window_hours) if window_hours else None
+
+    # Auto-discover all adapter classes
+    def get_all_adapters(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
+        )
     
-    # Initialize all adapters
     adapter_classes = [
-        AtTheRacesAdapter,
-        AtTheRacesGreyhoundAdapter,
-        BoyleSportsAdapter,
-        SportingLifeAdapter,
-        SkySportsAdapter,
-        RacingPostB2BAdapter,
-        StandardbredCanadaAdapter,
-        TabAdapter,
-        BetfairDataScientistAdapter,
-        EquibaseAdapter,
-        TwinSpiresAdapter,
-            OddscheckerAdapter,
-        TimeformAdapter,
-        RacingPostAdapter,
-        RacingPostToteAdapter,
-]
+        c for c in get_all_adapters(BaseAdapterV3)
+        if not getattr(c, "__abstractmethods__", None)
+    ]
     
     adapters = []
     for cls in adapter_classes:
@@ -4064,6 +4265,32 @@ async def run_discovery(target_dates: List[str]):
             all_races_raw.extend(r_list)
 
         logger.info("Fetched total races", count=len(all_races_raw))
+
+        # Apply time window filter if requested to avoid overloading
+        if cutoff:
+            original_count = len(all_races_raw)
+            filtered_races = []
+            for r in all_races_raw:
+                st = r.start_time
+                if isinstance(st, str):
+                    try:
+                        st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        continue
+
+                if st.tzinfo is None:
+                    st = st.replace(tzinfo=timezone.utc)
+
+                if now <= st <= cutoff:
+                    filtered_races.append(r)
+
+            all_races_raw = filtered_races
+            logger.info(
+                "Filtered races by time window",
+                window_hours=window_hours,
+                before=original_count,
+                after=len(all_races_raw)
+            )
 
         if not all_races_raw:
             logger.error("No races fetched from any adapter. Discovery aborted.")
@@ -4126,9 +4353,9 @@ async def run_discovery(target_dates: List[str]):
         gm_report = generate_goldmine_report(qualified, all_races=unique_races)
         with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
-        # Log Hot Tips to pseudo-DB
+        # Log Hot Tips to SQLite DB
         tracker = HotTipsTracker()
-        tracker.log_tips(qualified)
+        await tracker.log_tips(qualified)
 
         # Save qualified races to JSON
         report_data = {
@@ -4149,6 +4376,7 @@ async def run_discovery(target_dates: List[str]):
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
+    parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
     args = parser.parse_args()
@@ -4156,16 +4384,19 @@ async def main_all_in_one():
     if args.date:
         target_dates = [args.date]
     else:
-        today = datetime.now(timezone.utc)
-        tomorrow = today + timedelta(days=1)
-        target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
+        now = datetime.now(timezone.utc)
+        future = now + timedelta(hours=args.hours)
+
+        target_dates = [now.strftime("%Y-%m-%d")]
+        if future.date() > now.date():
+            target_dates.append(future.strftime("%Y-%m-%d"))
 
     if args.monitor:
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         if args.once: await monitor.run_once()
         else: await monitor.run_continuous()
     else:
-        await run_discovery(target_dates)
+        await run_discovery(target_dates, window_hours=args.hours)
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
