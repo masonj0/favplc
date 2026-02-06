@@ -207,6 +207,12 @@ class AuditorEngine:
         """
         return await self.db.get_all_audited_tips()
 
+    async def get_recent_tips(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """
+        Returns the absolute latest tips recorded.
+        """
+        return await self.db.get_recent_tips(limit)
+
     async def close(self):
         """Cleanup resources."""
         await self.db.close()
@@ -1011,143 +1017,90 @@ class SkySportsResultsAdapter(fortuna.BaseAdapterV3):
 
 # --- REPORT GENERATION ---
 
-def generate_analytics_report(audited_tips: List[Dict[str, Any]]) -> str:
-    """Generate a human-readable analytics report."""
+def generate_analytics_report(
+    audited_tips: List[Dict[str, Any]],
+    recent_tips: List[Dict[str, Any]] = None,
+    harvest_summary: Dict[str, int] = None
+) -> str:
+    """Generate a high-impact human-readable performance audit report."""
+    now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
     lines = [
-        "=" * 60,
-        "FORTUNA PERFORMANCE ANALYTICS REPORT",
-        f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-        "=" * 60,
+        "=" * 80,
+        "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(80),
+        f"Generated: {now_str}".center(80),
+        "=" * 80,
         "",
     ]
 
-    if not audited_tips:
-        lines.append("No tips were audited in this run.")
-        return "\n".join(lines)
-
-    # Calculate summary statistics
-    total = len(audited_tips)
-    cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
-    burned = sum(1 for t in audited_tips if t.get("verdict") == "BURNED")
-    voided = sum(1 for t in audited_tips if t.get("verdict") == "VOID")
-    total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
-
-    strike_rate = (cashed / total * 100) if total > 0 else 0.0
-    roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0  # Based on $2 unit
-
-    lines.extend([
-        "SUMMARY STATISTICS",
-        "-" * 40,
-        f"Total Audited:    {total}",
-        f"  ✅ Cashed:      {cashed}",
-        f"  ❌ Burned:      {burned}",
-        f"  ⚪ Voided:      {voided}",
-        f"Strike Rate:      {strike_rate:.1f}%",
-        f"Net Profit:       ${total_profit:+.2f} (unit $2.00)",
-        f"ROI:              {roi:+.1f}%",
-        "",
-    ])
-
-    # Trifecta analysis
-    tri_races = [t for t in audited_tips if t.get("trifecta_payout")]
-    lines.extend([
-        "TRIFECTA TRACKING",
-        "-" * 40,
-        f"Races with trifecta data: {len(tri_races)}",
-    ])
-
-    if tri_races:
-        avg_tri = sum(t["trifecta_payout"] for t in tri_races) / len(tri_races)
-        max_tri = max(t["trifecta_payout"] for t in tri_races)
+    # --- 1. PROOF OF HARVESTING ---
+    if harvest_summary:
         lines.extend([
-            f"Average Payout:   ${avg_tri:.2f}",
-            f"Maximum Payout:   ${max_tri:.2f}",
+            "🔎 LIVE ADAPTER HARVEST PROOF",
+            "-" * 40,
         ])
-    lines.append("")
-
-    # Venue Performance
-    venue_stats = defaultdict(lambda: {"count": 0, "cashed": 0, "profit": 0.0})
-    for t in audited_tips:
-        v = t.get("venue", "Unknown")
-        venue_stats[v]["count"] += 1
-        if t.get("verdict") == "CASHED":
-            venue_stats[v]["cashed"] += 1
-        venue_stats[v]["profit"] += t.get("net_profit", 0.0)
-
-    lines.extend([
-        "PERFORMANCE BY VENUE (Sorted by Profit)",
-        "-" * 40,
-        f"{'Venue':<20} {'Count':<6} {'Strike':<8} {'Profit':<10}",
-    ])
-
-    sorted_venues = sorted(venue_stats.items(), key=lambda x: x[1]["profit"], reverse=True)
-    for venue, stats in sorted_venues:
-        strike = (stats["cashed"] / stats["count"] * 100) if stats["count"] > 0 else 0.0
-        lines.append(f"{venue[:19]:<20} {stats['count']:<6} {strike:>6.1f}% ${stats['profit']:>8.2f}")
-    lines.append("")
-
-    # Top 5 Accuracy Correlation
-    top5_hits = 0
-    valid_top5_count = 0
-    for t in audited_tips:
-        if t.get("verdict") == "VOID": continue
-
-        actual_top_5 = [x.strip() for x in str(t.get("actual_top_5", "")).split(",") if x.strip()]
-        if not actual_top_5: continue
-
-        winner = actual_top_5[0]
-        predicted_top_5_raw = t.get("top_five", "")
-        if not predicted_top_5_raw: continue
-
-        predicted_top_5 = [x.strip() for x in str(predicted_top_5_raw).split(",") if x.strip()]
-
-        if predicted_top_5:
-            valid_top5_count += 1
-            if winner in predicted_top_5:
-                top5_hits += 1
-
-    accuracy = (top5_hits / valid_top5_count * 100) if valid_top5_count > 0 else 0.0
-    lines.extend([
-        "PREDICTION ACCURACY",
-        "-" * 40,
-        f"Top 5 Accuracy (Actual Winner in Predicted Top 5): {accuracy:.1f}% ({top5_hits}/{valid_top5_count})",
-        "",
-    ])
-
-    # Detailed log
-    lines.extend([
-        "DETAILED AUDIT LOG (Last 20 Races)",
-        "-" * 40,
-    ])
-
-    # Sort once, newest first, take 20
-    recent_audits = sorted(
-        audited_tips,
-        key=lambda x: x.get("start_time", ""),
-        reverse=True
-    )[:20]
-
-    for tip in recent_audits:  # Already sorted newest-first
-        report_date = str(tip.get("report_date", "N/A"))[:10]
-        venue = tip.get("venue", "Unknown")
-        race_num = tip.get("race_number", "?")
-        verdict = tip.get("verdict", "?")
-        profit = tip.get("net_profit", 0.0)
-
-        # Emoji for verdict
-        emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
-
-        lines.extend([
-            f"{emoji} {report_date} | {venue} R{race_num}",
-            f"   Verdict: {verdict} | Profit: ${profit:+.2f}",
-            f"   Actual Top 5: [{tip.get('actual_top_5', 'N/A')}]",
-        ])
-
-        if tip.get("trifecta_payout"):
-            lines.append(
-                f"   Trifecta: {tip.get('trifecta_combination')} paid ${tip['trifecta_payout']:.2f}"
-            )
+        for adapter, count in harvest_summary.items():
+            status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
+            lines.append(f"{adapter:<25} | {status:<15} | Results Found: {count}")
         lines.append("")
+
+    # --- 2. PENDING VERIFICATION (THE "WATCH" LIST) ---
+    if recent_tips:
+        lines.extend([
+            "⏳ PENDING VERIFICATION - RECENT DISCOVERIES",
+            "-" * 40,
+            f"{'RACE TIME':<18} | {'VENUE':<20} | {'R#':<3} | {'GM?':<4} | {'STATUS'}",
+            "." * 80
+        ])
+        for tip in recent_tips[:15]:
+            st_str = str(tip.get("start_time", "N/A"))[:16].replace("T", " ")
+            venue = str(tip.get("venue", "Unknown"))[:20]
+            rnum = tip.get("race_number", "?")
+            gm = "GOLD" if tip.get("is_goldmine") else "----"
+            status = tip.get("verdict") if tip.get("audit_completed") else "WATCHING"
+            lines.append(f"{st_str:<18} | {venue:<20} | {rnum:<3} | {gm:<4} | {status}")
+        lines.append("")
+
+    # --- 3. RECENT PERFORMANCE PROOF ---
+    audited_recent = sorted(audited_tips, key=lambda x: x.get("start_time", ""), reverse=True)
+    if audited_recent:
+        lines.extend([
+            "💰 RECENT PERFORMANCE PROOF (MATCHED RESULTS)",
+            "-" * 40,
+            f"{'RESULT':<6} | {'RACE':<25} | {'PROFIT':<8} | {'PAYOUT/DETAILS'}",
+            "." * 80
+        ])
+        for tip in audited_recent[:15]:
+            verdict = tip.get("verdict", "?")
+            emoji = "✅ WIN " if verdict == "CASHED" else "❌ LOSS" if verdict == "BURNED" else "⚪ VOID"
+            venue = f"{tip.get('venue', 'Unknown')[:18]} R{tip.get('race_number', '?')}"
+            profit = f"${tip.get('net_profit', 0.0):+.2f}"
+
+            payout_info = ""
+            if tip.get("trifecta_payout"):
+                payout_info = f"Trifecta: ${tip['trifecta_payout']:.2f} [{tip.get('trifecta_combination', '')}]"
+            elif tip.get("actual_top_5"):
+                payout_info = f"Top 5: [{tip['actual_top_5']}]"
+
+            lines.append(f"{emoji:<6} | {venue:<25} | {profit:<8} | {payout_info}")
+        lines.append("")
+
+    # --- 4. SUMMARY STATISTICS ---
+    if audited_tips:
+        total = len(audited_tips)
+        cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+        total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+        strike_rate = (cashed / total * 100) if total > 0 else 0.0
+        roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0
+
+        lines.extend([
+            "📊 SUMMARY METRICS (LIFETIME)",
+            "-" * 40,
+            f"Total Verified Races: {total}",
+            f"Overall Strike Rate:   {strike_rate:.1f}%",
+            f"Total Net Profit:     ${total_profit:+.2f} (Using $2.00 Base Unit)",
+            f"Return on Investment:  {roi:+.1f}%",
+            ""
+        ])
 
     return "\n".join(lines)
 
@@ -1205,9 +1158,10 @@ async def run_analytics(target_dates: List[str]) -> None:
 
             all_results: List[ResultRace] = []
 
+            harvest_summary: Dict[str, int] = {}
             async with managed_adapters() as adapters:
                 # Create fetch tasks for all date/adapter combinations
-                async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> List[ResultRace]:
+                async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
                     try:
                         races = await adapter.get_races(date_str)
                         logger.debug(
@@ -1216,7 +1170,7 @@ async def run_analytics(target_dates: List[str]) -> None:
                             date=date_str,
                             count=len(races)
                         )
-                        return races
+                        return adapter.source_name, races
                     except Exception as e:
                         logger.warning(
                             "Adapter fetch failed",
@@ -1224,7 +1178,7 @@ async def run_analytics(target_dates: List[str]) -> None:
                             date=date_str,
                             error=str(e)
                         )
-                        return []
+                        return adapter.source_name, []
 
                 tasks = [
                     fetch_with_adapter(adapter, date_str)
@@ -1232,13 +1186,15 @@ async def run_analytics(target_dates: List[str]) -> None:
                     for adapter in adapters
                 ]
 
-                results_lists = await asyncio.gather(*tasks, return_exceptions=True)
+                fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for result in results_lists:
-                    if isinstance(result, Exception):
-                        logger.warning("Task raised exception", error=str(result))
-                    elif isinstance(result, list):
-                        all_results.extend(result)
+                for res in fetch_results:
+                    if isinstance(res, tuple):
+                        adapter_name, races = res
+                        all_results.extend(races)
+                        harvest_summary[adapter_name] = harvest_summary.get(adapter_name, 0) + len(races)
+                    elif isinstance(res, Exception):
+                        logger.warning("Task raised exception", error=str(res))
 
             logger.info("Total results harvested", count=len(all_results))
 
@@ -1251,7 +1207,13 @@ async def run_analytics(target_dates: List[str]) -> None:
 
         # Generate and save comprehensive report
         all_audited = await auditor.get_all_audited_tips()
-        report = generate_analytics_report(all_audited)
+        recent_tips = await auditor.get_recent_tips(limit=20)
+
+        report = generate_analytics_report(
+            audited_tips=all_audited,
+            recent_tips=recent_tips,
+            harvest_summary=harvest_summary if 'harvest_summary' in locals() else None
+        )
         print(report)
 
         report_path = Path("analytics_report.txt")
