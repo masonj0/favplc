@@ -924,6 +924,26 @@ class BaseAdapterV3(ABC):
     def _validate_and_parse_races(self, raw_data: Any) -> List[Race]:
         races = self._parse_races(raw_data)
         for r in races:
+            # Global heuristic for runner numbers (addressing "impossible" high numbers)
+            active_runners = [run for run in r.runners if not run.scratched]
+            field_size = len(active_runners)
+
+            # If any runner has a number > 20 and it's also > field_size + 10 (buffer)
+            # or if it's extremely high (> 100), re-index everything as it's likely a parsing error (horse IDs).
+            # Also re-index if all numbers are missing/zero.
+            suspicious = all(run.number == 0 or run.number is None for run in r.runners)
+            if not suspicious:
+                for run in r.runners:
+                    if run.number:
+                        if run.number > 100 or (run.number > 20 and run.number > field_size + 10):
+                            suspicious = True
+                            break
+
+            if suspicious:
+                self.logger.warning("suspicious_runner_numbers", venue=r.venue, field_size=field_size)
+                for i, run in enumerate(r.runners):
+                    run.number = i + 1
+
             for runner in r.runners:
                 if not runner.scratched and (runner.win_odds is None or runner.win_odds <= 0):
                     runner.win_odds = DEFAULT_ODDS_FALLBACK
@@ -1069,25 +1089,28 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         for selector in self.SELECTORS["runners"]:
             nodes = parser.css(selector)
             if nodes:
-                for node in nodes:
-                    runner = self._parse_runner(node, odds_map)
+                for i, node in enumerate(nodes):
+                    runner = self._parse_runner(node, odds_map, i + 1)
                     if runner: runners.append(runner)
                 break
         return runners
 
-    def _parse_runner(self, row: Node, odds_map: Dict[str, float]) -> Optional[Runner]:
+    def _parse_runner(self, row: Node, odds_map: Dict[str, float], fallback_number: int = 0) -> Optional[Runner]:
         try:
             name_node = row.css_first("h3") or row.css_first("a.horse__link") or row.css_first('a[href*="/form/horse/"]')
             if not name_node: return None
             name = clean_text(name_node.text())
             if not name: return None
-            num_node = row.css_first(".horse-in-racecard__saddle-cloth-number") or row.css_first(".odds-grid-horse__no") or row.css_first("span")
+            num_node = row.css_first(".horse-in-racecard__saddle-cloth-number") or row.css_first(".odds-grid-horse__no")
             number = 0
             if num_node:
                 ns = clean_text(num_node.text())
                 if ns:
                     digits = "".join(filter(str.isdigit, ns))
                     if digits: number = int(digits)
+
+            if number == 0 or number > 40:
+                number = fallback_number
             win_odds = None
             if horse_link := row.css_first('a[href*="/form/horse/"]'):
                 if m := re.search(r"/(\d+)(\?|$)", horse_link.attributes.get("href", "")):
@@ -1981,7 +2004,11 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 if ne:
                     nt = ne.text.strip() if hasattr(ne, 'text') else str(ne)
                     dig = "".join(filter(str.isdigit, nt))
-                    if dig: num = int(dig); break
+                    if dig:
+                        val = int(dig)
+                        if val <= 40:
+                            num = val
+                            break
             except: continue
         name = None
         for s in ['[class*="horse-name"]', '[class*="horseName"]', '[class*="runner-name"]', 'a[class*="name"]', '[data-horse-name]', 'td:nth-child(2)']:

@@ -120,3 +120,33 @@ async def test_hot_tips_tracker(tmp_path):
     assert data[0]["is_goldmine"] is True
     assert data[0]["1Gap2"] == 1.5
     assert "report_date" in data[0]
+
+@pytest.mark.asyncio
+async def test_runner_number_sanitization():
+    from fortuna import Race, Runner, AtTheRacesAdapter
+    from datetime import datetime, timezone
+
+    # Simulate a race where runner numbers are clearly IDs (> 100)
+    runners = [
+        Runner(name="Horse A", number=15234),
+        Runner(name="Horse B", number=15235),
+    ]
+    race = Race(
+        id="suspicious_race",
+        venue="Test Track",
+        race_number=1,
+        start_time=datetime.now(timezone.utc),
+        source="Test",
+        runners=runners
+    )
+
+    adapter = AtTheRacesAdapter()
+    # _validate_and_parse_races is where the heuristic lives
+    # We need to mock _parse_races to return our suspicious race
+    with patch.object(AtTheRacesAdapter, "_parse_races", return_value=[race]):
+        valid_races = adapter._validate_and_parse_races({"dummy": "data"})
+
+    assert len(valid_races) == 1
+    sanitized_runners = valid_races[0].runners
+    assert sanitized_runners[0].number == 1
+    assert sanitized_runners[1].number == 2
