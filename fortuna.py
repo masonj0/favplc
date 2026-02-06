@@ -944,6 +944,8 @@ class RacePageFetcherMixin:
 
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
+    ADAPTER_TYPE: ClassVar[str] = "discovery"
+
     def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
         self.source_name = source_name
         self.base_url = base_url.rstrip("/")
@@ -1937,8 +1939,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         ard = []
-        last_err = None
-        for disc in ["thoroughbred", "harness", "greyhound"]:
+
+        async def fetch_disc(disc):
             url = f"{self.BASE_URL}/bet/todays-races/{disc}"
             try:
                 resp = await self.make_request("GET", url, network_idle=True, wait_selector='div[class*="race"], [class*="RaceCard"], [class*="track"]')
@@ -1946,8 +1948,16 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     self._save_debug_snapshot(resp.text, f"ts_{disc}_{date}")
                     dr = self._extract_races_from_page(resp, date)
                     for r in dr: r["assigned_discipline"] = disc.capitalize()
-                    ard.extend(dr)
-            except Exception as e: last_err = e
+                    return dr
+            except Exception as e:
+                self.logger.error("TwinSpires fetch failed", discipline=disc, error=str(e))
+            return []
+
+        tasks = [fetch_disc(d) for d in ["thoroughbred", "harness", "greyhound"]]
+        results = await asyncio.gather(*tasks)
+        for r_list in results:
+            ard.extend(r_list)
+
         if not ard:
             try:
                 resp = await self.make_request("GET", f"{self.BASE_URL}/bet/todays-races/time", network_idle=True)
@@ -3402,23 +3412,22 @@ class RaceSummary:
         }
 
 
+def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
+    """Returns all non-abstract discovery adapter classes."""
+    def get_all_subclasses(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+        )
+
+    return [
+        c for c in get_all_subclasses(BaseAdapterV3)
+        if not getattr(c, "__abstractmethods__", None)
+        and getattr(c, "ADAPTER_TYPE", "discovery") == "discovery"
+    ]
+
+
 class FavoriteToPlaceMonitor:
     """Monitor for favorite-to-place betting opportunities."""
-
-    # Adapter configuration
-    ADAPTER_CLASSES = [
-        AtTheRacesAdapter,
-        AtTheRacesGreyhoundAdapter,
-        BoyleSportsAdapter,
-        SportingLifeAdapter,
-        SkySportsAdapter,
-        RacingPostB2BAdapter,
-        StandardbredCanadaAdapter,
-        TabAdapter,
-        BetfairDataScientistAdapter,
-        EquibaseAdapter,
-        TwinSpiresAdapter,
-    ]
 
     def __init__(self, target_dates: Optional[List[str]] = None, refresh_interval: int = 30):
         """
@@ -3441,11 +3450,17 @@ class FavoriteToPlaceMonitor:
         self.logger = structlog.get_logger(self.__class__.__name__)
         self.tracker = HotTipsTracker()
 
-    async def initialize_adapters(self):
-        """Initialize all adapters."""
-        self.logger.info("Initializing adapters", count=len(self.ADAPTER_CLASSES))
+    async def initialize_adapters(self, adapter_names: Optional[List[str]] = None):
+        """Initialize all adapters, optionally filtered by name."""
+        all_discovery_classes = get_discovery_adapter_classes()
 
-        for adapter_class in self.ADAPTER_CLASSES:
+        classes_to_init = all_discovery_classes
+        if adapter_names:
+            classes_to_init = [c for c in all_discovery_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
+
+        self.logger.info("Initializing adapters", count=len(classes_to_init))
+
+        for adapter_class in classes_to_init:
             try:
                 adapter = adapter_class()
                 self.adapters.append(adapter)
@@ -3720,10 +3735,16 @@ class FavoriteToPlaceMonitor:
         except Exception as e:
             self.logger.error("History logging failed", error=str(e))
 
-    async def run_once(self):
+    async def run_once(self, loaded_races: Optional[List[Race]] = None, adapter_names: Optional[List[str]] = None):
         try:
-            await self.initialize_adapters()
-            raw = await self.fetch_all_races()
+            if loaded_races is not None:
+                self.logger.info("Using loaded races", count=len(loaded_races))
+                # Map to (Race, AdapterName) tuple expected by build_race_summaries
+                raw = [(r, r.source) for r in loaded_races]
+            else:
+                await self.initialize_adapters(adapter_names=adapter_names)
+                raw = await self.fetch_all_races()
+
             await self.build_race_summaries(raw)
             self.print_full_list()
             await self.print_bet_now_list()
@@ -4261,6 +4282,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """
     Adapter for fetching Tote dividends and results from Racing Post.
     """
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostTote"
     BASE_URL = "https://www.racingpost.com"
 
@@ -4418,52 +4440,64 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
-async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8):
+async def run_discovery(
+    target_dates: List[str],
+    window_hours: Optional[int] = 8,
+    loaded_races: Optional[List[Race]] = None,
+    adapter_names: Optional[List[str]] = None,
+    save_path: Optional[str] = None
+):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
 
-    now = datetime.now(timezone.utc)
-    cutoff = now + timedelta(hours=window_hours) if window_hours else None
-
-    # Auto-discover all adapter classes
-    def get_all_adapters(cls):
-        return set(cls.__subclasses__()).union(
-            [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
-        )
-    
-    adapter_classes = [
-        c for c in get_all_adapters(BaseAdapterV3)
-        if not getattr(c, "__abstractmethods__", None)
-    ]
-    
-    adapters = []
-    for cls in adapter_classes:
-        try:
-            adapters.append(cls())
-        except Exception as e:
-            logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
-
     try:
+        now = datetime.now(timezone.utc)
+        cutoff = now + timedelta(hours=window_hours) if window_hours else None
+
         all_races_raw = []
 
-        async def fetch_one(a, date_str):
+        if loaded_races is not None:
+            logger.info("Using loaded races", count=len(loaded_races))
+            all_races_raw = loaded_races
+            adapters = []
+        else:
+            # Auto-discover discovery adapter classes
+            adapter_classes = get_discovery_adapter_classes()
+
+            if adapter_names:
+                adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
+
+            adapters = []
+            for cls in adapter_classes:
+                try:
+                    adapters.append(cls())
+                except Exception as e:
+                    logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
+
             try:
-                races = await a.get_races(date_str)
-                return races
-            except Exception as e:
-                logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
-                return []
+                async def fetch_one(a, date_str):
+                    try:
+                        races = await a.get_races(date_str)
+                        return races
+                    except Exception as e:
+                        logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
+                        return []
 
-        fetch_tasks = []
-        for d in target_dates:
-            for a in adapters:
-                fetch_tasks.append(fetch_one(a, d))
+                fetch_tasks = []
+                for d in target_dates:
+                    for a in adapters:
+                        fetch_tasks.append(fetch_one(a, d))
 
-        results = await asyncio.gather(*fetch_tasks)
-        for r_list in results:
-            all_races_raw.extend(r_list)
+                results = await asyncio.gather(*fetch_tasks)
+                for r_list in results:
+                    all_races_raw.extend(r_list)
 
-        logger.info("Fetched total races", count=len(all_races_raw))
+                logger.info("Fetched total races", count=len(all_races_raw))
+            finally:
+                # Shutdown adapters
+                for a in adapters:
+                    try: await a.close()
+                    except: pass
 
         # Apply time window filter if requested to avoid overloading
         if cutoff:
@@ -4536,6 +4570,15 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
 
+        # Save raw fetched/merged races if requested
+        if save_path:
+            try:
+                with open(save_path, "w") as f:
+                    json.dump([r.model_dump(mode='json') for r in unique_races], f, indent=4)
+                logger.info("Saved races to file", path=save_path)
+            except Exception as e:
+                logger.error("Failed to save races", error=str(e))
+
         # Analyze
         analyzer = SimplySuccessAnalyzer()
         result = analyzer.qualify_races(unique_races)
@@ -4575,19 +4618,30 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
             json.dump(report_data, f, indent=4)
 
     finally:
-        # Shutdown
-        for a in adapters:
-            try: await a.close()
-            except: pass
         await GlobalResourceManager.cleanup()
-
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
+    parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
+    parser.add_argument("--save", type=str, help="Save races to JSON file")
+    parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
     args = parser.parse_args()
+
+    adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
+
+    loaded_races = None
+    if args.load:
+        loaded_races = []
+        for path in args.load.split(","):
+            try:
+                with open(path.strip(), "r") as f:
+                    data = json.load(f)
+                    loaded_races.extend([Race.model_validate(r) for r in data])
+            except Exception as e:
+                print(f"Error loading {path}: {e}")
 
     if args.date:
         target_dates = [args.date]
@@ -4601,10 +4655,16 @@ async def main_all_in_one():
 
     if args.monitor:
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
-        if args.once: await monitor.run_once()
-        else: await monitor.run_continuous()
+        if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
+        else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
-        await run_discovery(target_dates, window_hours=args.hours)
+        await run_discovery(
+            target_dates,
+            window_hours=args.hours,
+            loaded_races=loaded_races,
+            adapter_names=adapter_filter,
+            save_path=args.save
+        )
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
