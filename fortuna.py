@@ -2052,7 +2052,16 @@ log = structlog.get_logger(__name__)
 
 def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
     """Gets the best win odds for a runner, filtering out invalid or placeholder values."""
+    # Check if we have already calculated and cached a valid best odds in metadata
+    if "best_win_odds_decimal" in runner.metadata:
+        return runner.metadata["best_win_odds_decimal"]
+
     if not runner.odds:
+        # Fallback to win_odds if available
+        if runner.win_odds and 0 < runner.win_odds < 999:
+            val = Decimal(str(runner.win_odds))
+            runner.metadata["best_win_odds_decimal"] = val
+            return val
         return None
 
     valid_odds = []
@@ -2066,9 +2075,12 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
             win = source_data
 
         if win is not None and 0 < win < 999:
-            valid_odds.append(win)
+            valid_odds.append(Decimal(str(win)))
 
-    return min(valid_odds) if valid_odds else None
+    res = min(valid_odds) if valid_odds else None
+    if res is not None:
+        runner.metadata["best_win_odds_decimal"] = res
+    return res
 
 
 class BaseAnalyzer(ABC):
@@ -2260,7 +2272,14 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                         is_goldmine = True
 
                 # Calculate Top 5 for all races
-                r_with_odds = sorted([(r, _get_best_win_odds(r)) for r in active_runners if _get_best_win_odds(r) is not None], key=lambda x: x[1])
+                # Collect valid odds once to avoid repetitive calculation/conversion
+                valid_r_with_odds = []
+                for r in active_runners:
+                    wo = _get_best_win_odds(r)
+                    if wo is not None:
+                        valid_r_with_odds.append((r, wo))
+
+                r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
                 race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
 
             race.metadata['is_goldmine'] = is_goldmine
@@ -2605,7 +2624,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             for run in runners:
                 if get_field(run, 'scratched'): continue
                 wo = _get_best_win_odds(run)
-                if wo: active_with_odds.append((run, float(wo)))
+                if wo: active_with_odds.append((run, wo))
 
             sorted_by_odds = sorted(active_with_odds, key=lambda x: x[1])
             top_5_nums = ", ".join([str(get_field(run[0], 'number') or '?') for run in sorted_by_odds[:5]])
@@ -3137,7 +3156,8 @@ class FavoriteToPlaceMonitor:
                 continue
             wo = _get_best_win_odds(r)
             if wo is not None and wo > 1.0:
-                r_with_odds.append((r, float(wo)))
+                # Store the Decimal odds directly for sorting to avoid conversion
+                r_with_odds.append((r, wo))
 
         if not r_with_odds:
             return []
@@ -3503,9 +3523,11 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             odds_str = odds_node.text(strip=True)
 
             number_node = row.css_first("td.runner-number")
-            if not number_node or not number_node.text(strip=True).isdigit():
-                return None
-            number = int(number_node.text(strip=True))
+            number = 0
+            if number_node:
+                num_txt = "".join(filter(str.isdigit, number_node.text(strip=True)))
+                if num_txt:
+                    number = int(num_txt)
 
             if not name or not odds_str:
                 return None
@@ -3685,7 +3707,8 @@ class TimeformAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             num_attr = row.attributes.get("data-entrynumber")
             if num_attr:
                 try:
-                    number = int(num_attr)
+                    val = int(num_attr)
+                    if val <= 40: number = val
                 except:
                     pass
 
@@ -3695,7 +3718,8 @@ class TimeformAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     num_text = clean_text(num_node.text()).strip("()")
                     num_match = re.search(r"\d+", num_text)
                     if num_match:
-                        number = int(num_match.group())
+                        val = int(num_match.group())
+                        if val <= 40: number = val
 
             win_odds = None
             if forecast_map and name.lower() in forecast_map:
@@ -3845,7 +3869,12 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 return None
 
             number_str = clean_text(number_node.text())
-            number = int(number_str) if number_str and number_str.isdigit() else 0
+            number = 0
+            if number_str:
+                num_txt = "".join(filter(str.isdigit, number_str))
+                if num_txt:
+                    val = int(num_txt)
+                    if val <= 40: number = val
             name = clean_text(name_node.text())
             odds_str = clean_text(odds_node.text())
             scratched = "NR" in odds_str.upper() or not odds_str
@@ -4014,104 +4043,108 @@ async def run_discovery(target_dates: List[str]):
         except Exception as e:
             logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
-    all_races_raw = []
-    
-    async def fetch_one(a, date_str):
-        try:
-            races = await a.get_races(date_str)
-            return races
-        except Exception as e:
-            logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
-            return []
+    try:
+        all_races_raw = []
 
-    fetch_tasks = []
-    for d in target_dates:
-        for a in adapters:
-            fetch_tasks.append(fetch_one(a, d))
-
-    results = await asyncio.gather(*fetch_tasks)
-    for r_list in results:
-        all_races_raw.extend(r_list)
-
-    logger.info("Fetched total races", count=len(all_races_raw))
-
-    if not all_races_raw:
-        logger.error("No races fetched from any adapter. Discovery aborted.")
-        return
-    
-    # Deduplicate
-    race_map = {}
-    for race in all_races_raw:
-        canonical_venue = get_canonical_venue(race.venue)
-        # Use Canonical Venue + Race Number + Date as stable key
-        st = race.start_time
-        if isinstance(st, str):
+        async def fetch_one(a, date_str):
             try:
-                st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-            except (ValueError, TypeError):
-                pass
+                races = await a.get_races(date_str)
+                return races
+            except Exception as e:
+                logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
+                return []
 
-        date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-        key = f"{canonical_venue}|{race.race_number}|{date_str}"
+        fetch_tasks = []
+        for d in target_dates:
+            for a in adapters:
+                fetch_tasks.append(fetch_one(a, d))
+
+        results = await asyncio.gather(*fetch_tasks)
+        for r_list in results:
+            all_races_raw.extend(r_list)
+
+        logger.info("Fetched total races", count=len(all_races_raw))
+
+        if not all_races_raw:
+            logger.error("No races fetched from any adapter. Discovery aborted.")
+            return
         
-        if key not in race_map:
-            race_map[key] = race
-        else:
-            existing = race_map[key]
-            # Merge runners/odds
-            for nr in race.runners:
-                er = next((r for r in existing.runners if r.number == nr.number), None)
-                if er:
-                    er.odds.update(nr.odds)
-                    if not er.win_odds and nr.win_odds:
-                        er.win_odds = nr.win_odds
-                else:
-                    existing.runners.append(nr)
+        # Deduplicate
+        race_map = {}
+        for race in all_races_raw:
+            canonical_venue = get_canonical_venue(race.venue)
+            # Use Canonical Venue + Race Number + Date as stable key
+            st = race.start_time
+            if isinstance(st, str):
+                try:
+                    st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    pass
+
+            date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
+            key = f"{canonical_venue}|{race.race_number}|{date_str}"
             
-            # Update source
-            sources = set((existing.source or "").split(", "))
-            sources.add(race.source or "Unknown")
-            existing.source = ", ".join(sorted(list(filter(None, sources))))
-    
-    unique_races = list(race_map.values())
-    logger.info("Unique races identified", count=len(unique_races))
+            if key not in race_map:
+                race_map[key] = race
+            else:
+                existing = race_map[key]
+                # Merge runners/odds
+                for nr in race.runners:
+                    er = next((r for r in existing.runners if r.number == nr.number), None)
+                    if er:
+                        er.odds.update(nr.odds)
+                        if not er.win_odds and nr.win_odds:
+                            er.win_odds = nr.win_odds
+                    else:
+                        existing.runners.append(nr)
 
-    # Analyze
-    analyzer = SimplySuccessAnalyzer()
-    result = analyzer.qualify_races(unique_races)
-    qualified = result.get("races", [])
+                # Update source
+                sources = set((existing.source or "").split(", "))
+                sources.add(race.source or "Unknown")
+                existing.source = ", ".join(sorted(list(filter(None, sources))))
 
-    # Generate Grid & Goldmine
-    grid = generate_summary_grid(qualified, all_races=unique_races)
-    logger.info("Summary Grid Generated")
-    # For CI/CD summary, we still want it printed or at least available
-    # but the requirement was to avoid prints in production modules.
-    # However, run_discovery is likely the main entry point.
-    # I'll keep the print(grid) but maybe wrap it or use logger.
-    # Actually, structured logging for a grid is hard.
-    # I'll use logger.info with the grid.
-    logger.info("\n" + grid)
-    with open("summary_grid.txt", "w") as f: f.write(grid)
-    
-    gm_report = generate_goldmine_report(qualified, all_races=unique_races)
-    with open("goldmine_report.txt", "w") as f: f.write(gm_report)
-    
-    # Log Hot Tips to pseudo-DB
-    tracker = HotTipsTracker()
-    tracker.log_tips(qualified)
+        unique_races = list(race_map.values())
+        logger.info("Unique races identified", count=len(unique_races))
 
-    # Save qualified races to JSON
-    report_data = {
-        "races": [r.model_dump(mode='json') for r in qualified],
-        "analysis_metadata": result.get("criteria", {}),
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    with open("qualified_races.json", "w") as f:
-        json.dump(report_data, f, indent=4)
+        # Analyze
+        analyzer = SimplySuccessAnalyzer()
+        result = analyzer.qualify_races(unique_races)
+        qualified = result.get("races", [])
 
-    # Shutdown
-    for a in adapters: await a.close()
-    await GlobalResourceManager.cleanup()
+        # Generate Grid & Goldmine
+        grid = generate_summary_grid(qualified, all_races=unique_races)
+        logger.info("Summary Grid Generated")
+        # For CI/CD summary, we still want it printed or at least available
+        # but the requirement was to avoid prints in production modules.
+        # However, run_discovery is likely the main entry point.
+        # I'll keep the print(grid) but maybe wrap it or use logger.
+        # Actually, structured logging for a grid is hard.
+        # I'll use logger.info with the grid.
+        logger.info("\n" + grid)
+        with open("summary_grid.txt", "w") as f: f.write(grid)
+
+        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
+        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
+
+        # Log Hot Tips to pseudo-DB
+        tracker = HotTipsTracker()
+        tracker.log_tips(qualified)
+
+        # Save qualified races to JSON
+        report_data = {
+            "races": [r.model_dump(mode='json') for r in qualified],
+            "analysis_metadata": result.get("criteria", {}),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        with open("qualified_races.json", "w") as f:
+            json.dump(report_data, f, indent=4)
+
+    finally:
+        # Shutdown
+        for a in adapters:
+            try: await a.close()
+            except: pass
+        await GlobalResourceManager.cleanup()
 
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
