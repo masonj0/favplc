@@ -43,6 +43,8 @@ from typing import (
 
 import httpx
 import pandas as pd
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 import structlog
 from pydantic import (
     BaseModel,
@@ -658,7 +660,15 @@ class SmartFetcher:
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
         kwargs.pop("url", None)
-        engines = sorted(self._engine_health.keys(), key=lambda e: self._engine_health[e], reverse=True)
+        # Check if engines are available before sorting
+        available_engines = [e for e in self._engine_health.keys()]
+        if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
+            available_engines.remove(BrowserEngine.CURL_CFFI)
+        if not ASYNC_SESSIONS_AVAILABLE:
+            for e in [BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT]:
+                if e in available_engines: available_engines.remove(e)
+
+        engines = sorted(available_engines, key=lambda e: self._engine_health[e], reverse=True)
         if self.strategy.primary_engine in engines:
             engines.remove(self.strategy.primary_engine)
             engines.insert(0, self.strategy.primary_engine)
@@ -1932,6 +1942,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return {"races": ard, "date": date, "source": self.source_name} if ard else None
 
     def _extract_races_from_page(self, resp, date: str) -> List[Dict[str, Any]]:
+        if Selector is None:
+            self.logger.error("Scrapling Selector not available")
+            return []
         rd, page = [], Selector(resp.text)
         relems, used = [], None
         for s in self.RACE_CONTAINER_SELECTORS:
@@ -1989,7 +2002,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         page = rd.get("selector")
         hc = rd.get("html", "")
         if not page:
-            if not hc: return None
+            if not hc or Selector is None: return None
             page = Selector(hc)
         tn, rnum = rd.get("track", "Unknown"), rd.get("race_number", 1)
         st = self._parse_post_time(rd.get("post_time_text"), page, ds)
@@ -2954,13 +2967,239 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
-class HotTipsTracker:
-    """Logs reported opportunities to a pseudo-database JSON file."""
-    def __init__(self, db_path: str = "hot_tips_db.json"):
-        self.db_path = Path(db_path)
+def get_db_path() -> str:
+    return os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
+
+
+class FortunaDB:
+    """
+    Thread-safe SQLite backend for Fortuna using the standard library.
+    Handles persistence for tips, predictions, and audit outcomes.
+    """
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or get_db_path()
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._conn = None
+        self._initialized = False
         self.logger = structlog.get_logger(self.__class__.__name__)
 
-    def log_tips(self, races: List[Race]):
+    def _get_conn(self):
+        if not self._conn:
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            # Enable WAL mode for better concurrency
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        return self._conn
+
+    async def _run_in_executor(self, func, *args):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, func, *args)
+
+    async def initialize(self):
+        """Creates the database schema if it doesn't exist."""
+        if self._initialized: return
+
+        def _init():
+            conn = self._get_conn()
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS tips (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        race_id TEXT NOT NULL,
+                        venue TEXT NOT NULL,
+                        race_number INTEGER NOT NULL,
+                        start_time TEXT NOT NULL,
+                        report_date TEXT NOT NULL,
+                        is_goldmine INTEGER NOT NULL,
+                        gap12 TEXT,
+                        top_five TEXT,
+                        selection_number INTEGER,
+                        audit_completed INTEGER DEFAULT 0,
+                        verdict TEXT,
+                        net_profit REAL,
+                        selection_position INTEGER,
+                        actual_top_5 TEXT,
+                        actual_2nd_fav_odds REAL,
+                        trifecta_payout REAL,
+                        trifecta_combination TEXT,
+                        audit_timestamp TEXT
+                    )
+                """)
+                # Composite index for deduplication
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_report ON tips (race_id, report_date)")
+                # Composite index for audit performance
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+
+        await self._run_in_executor(_init)
+        self._initialized = True
+        self.logger.info("Database initialized", path=self.db_path)
+
+    async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 4):
+        """Logs new tips to the database with atomic deduplication."""
+        if not self._initialized: await self.initialize()
+
+        def _log():
+            conn = self._get_conn()
+            now = datetime.now(timezone.utc)
+            with conn:
+                for tip in tips:
+                    race_id = tip.get("race_id")
+                    report_date = tip.get("report_date", now.isoformat())
+
+                    # Deduplication check: same race_id in the window
+                    cursor = conn.execute(
+                        "SELECT report_date FROM tips WHERE race_id = ? ORDER BY id DESC LIMIT 1",
+                        (race_id,)
+                    )
+                    last_report = cursor.fetchone()
+                    if last_report:
+                        try:
+                            lr_str = last_report["report_date"]
+                            lr_dt = datetime.fromisoformat(lr_str)
+                            if lr_dt.tzinfo is None: lr_dt = lr_dt.replace(tzinfo=timezone.utc)
+                            if (now - lr_dt).total_seconds() < dedup_window_hours * 3600:
+                                continue
+                        except: pass
+
+                    conn.execute("""
+                        INSERT OR IGNORE INTO tips (
+                            race_id, venue, race_number, start_time, report_date,
+                            is_goldmine, gap12, top_five, selection_number
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        race_id, tip.get("venue"), tip.get("race_number"),
+                        tip.get("start_time"), report_date,
+                        1 if tip.get("is_goldmine") else 0,
+                        str(tip.get("1Gap2", 0.0)),
+                        tip.get("top_five"), tip.get("selection_number")
+                    ))
+        await self._run_in_executor(_log)
+
+    async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
+        """Returns tips that haven't been audited yet but have likely finished."""
+        if not self._initialized: await self.initialize()
+
+        def _get():
+            conn = self._get_conn()
+            now = datetime.now(timezone.utc)
+            cutoff = (now - timedelta(hours=lookback_hours)).isoformat()
+
+            cursor = conn.execute(
+                """SELECT * FROM tips
+                   WHERE audit_completed = 0
+                   AND report_date > ?
+                   AND start_time < ?""",
+                (cutoff, now.isoformat())
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def update_audit_result(self, race_id: str, outcome: Dict[str, Any]):
+        """Updates a single tip with its audit outcome."""
+        if not self._initialized: await self.initialize()
+
+        def _update():
+            conn = self._get_conn()
+            with conn:
+                conn.execute("""
+                    UPDATE tips SET
+                        audit_completed = 1,
+                        verdict = ?,
+                        net_profit = ?,
+                        selection_position = ?,
+                        actual_top_5 = ?,
+                        actual_2nd_fav_odds = ?,
+                        trifecta_payout = ?,
+                        trifecta_combination = ?,
+                        audit_timestamp = ?
+                    WHERE id = (
+                        SELECT id FROM tips
+                        WHERE race_id = ? AND audit_completed = 0
+                        LIMIT 1
+                    )
+                """, (
+                    outcome.get("verdict"), outcome.get("net_profit"),
+                    outcome.get("selection_position"), outcome.get("actual_top_5"),
+                    outcome.get("actual_2nd_fav_odds"), outcome.get("trifecta_payout"),
+                    outcome.get("trifecta_combination"),
+                    datetime.now(timezone.utc).isoformat(),
+                    race_id
+                ))
+        await self._run_in_executor(_update)
+
+    async def get_all_audited_tips(self) -> List[Dict[str, Any]]:
+        """Returns all audited tips for reporting."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
+        """Migrates data from existing JSON file to SQLite with detailed error logging."""
+        path = Path(json_path)
+        if not path.exists(): return
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+            if not isinstance(data, list): return
+            self.logger.info("Migrating data from JSON", count=len(data))
+            if not self._initialized: await self.initialize()
+
+            def _migrate():
+                conn = self._get_conn()
+                success_count = 0
+                for entry in data:
+                    try:
+                        with conn:
+                            conn.execute("""
+                                INSERT OR IGNORE INTO tips (
+                                    race_id, venue, race_number, start_time, report_date,
+                                    is_goldmine, gap12, top_five, selection_number,
+                                    audit_completed, verdict, net_profit, selection_position,
+                                    actual_top_5, actual_2nd_fav_odds, trifecta_payout,
+                                    trifecta_combination, audit_timestamp
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """, (
+                                entry.get("race_id"), entry.get("venue"), entry.get("race_number"),
+                                entry.get("start_time"), entry.get("report_date"),
+                                1 if entry.get("is_goldmine") else 0, str(entry.get("1Gap2", 0.0)),
+                                entry.get("top_five"), entry.get("selection_number"),
+                                1 if entry.get("audit_completed") else 0, entry.get("verdict"),
+                                entry.get("net_profit"), entry.get("selection_position"),
+                                entry.get("actual_top_5"), entry.get("actual_2nd_fav_odds"),
+                                entry.get("trifecta_payout"), entry.get("trifecta_combination"),
+                                entry.get("audit_timestamp")
+                            ))
+                        success_count += 1
+                    except Exception as e:
+                        self.logger.error("Failed to migrate entry", race_id=entry.get("race_id"), error=str(e))
+                return success_count
+
+            count = await self._run_in_executor(_migrate)
+            self.logger.info("Migration complete", successful=count)
+        except Exception as e:
+            self.logger.error("Migration failed", error=str(e))
+
+    async def close(self):
+        def _close():
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+        await self._run_in_executor(_close)
+        self._executor.shutdown()
+
+
+class HotTipsTracker:
+    """Logs reported opportunities to a SQLite database."""
+    def __init__(self, db_path: Optional[str] = None):
+        self.db = FortunaDB(db_path) if db_path else FortunaDB()
+        self.logger = structlog.get_logger(self.__class__.__name__)
+
+    async def log_tips(self, races: List[Race]):
         if not races:
             return
 
@@ -2984,55 +3223,8 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
-            existing_data = []
-            if self.db_path.exists():
-                with open(self.db_path, "r") as f:
-                    try:
-                        existing_data = json.load(f)
-                    except (json.JSONDecodeError, IOError):
-                        existing_data = []
-
-            # Smart deduplication: only add if race hasn't been reported in the last 4 hours
-            # with the same parameters (goldmine status and 1Gap2)
-            tips_to_add = []
-            for nt in new_tips:
-                is_redundant = False
-                # Look back at existing data (from most recent)
-                for et in reversed(existing_data):
-                    # If same race
-                    if et.get("race_id") == nt["race_id"]:
-                        try:
-                            # Check time difference
-                            et_date = datetime.fromisoformat(et["report_date"])
-                            if (now - et_date).total_seconds() < 4 * 3600:
-                                # Check if parameters are same
-                                if (et.get("is_goldmine") == nt["is_goldmine"] and
-                                    abs(et.get("1Gap2", 0) - nt["1Gap2"]) < 0.05):
-                                    is_redundant = True
-                                    break
-                            else:
-                                # Older than 4 hours, stop looking for this race
-                                break
-                        except: pass
-
-                if not is_redundant:
-                    tips_to_add.append(nt)
-
-            if not tips_to_add:
-                self.logger.debug("No new unique hot tips to log")
-                return
-
-            # Append new tips
-            existing_data.extend(tips_to_add)
-
-            # Limit total database size to last 5000 entries to prevent infinite growth
-            if len(existing_data) > 5000:
-                existing_data = existing_data[-5000:]
-
-            with open(self.db_path, "w") as f:
-                json.dump(existing_data, f, indent=4)
-
-            self.logger.info("Hot tips logged to database", count=len(tips_to_add), db=str(self.db_path))
+            await self.db.log_tips(new_tips)
+            self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
             self.logger.error("Failed to log hot tips", error=str(e))
 
@@ -4030,6 +4222,20 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     if label and value:
                         dividends[label] = value
 
+        # Derive race number from header or navigation
+        race_num = 1
+        race_num_match = re.search(r'Race\s+(\d+)', parser.text())
+        if race_num_match:
+            race_num = int(race_num_match.group(1))
+        else:
+            # Fallback: find active time in navigation
+            time_links = parser.css('a[data-test-selector="RC-raceTime"]')
+            for i, link in enumerate(time_links):
+                cls = link.attributes.get("class", "")
+                if "active" in cls or "rp-raceTimeCourseName__time" in cls:
+                    race_num = i + 1
+                    break
+
         # Extract runners (finishers)
         runners = []
         for row in parser.css('div[data-test-selector="RC-resultRunner"]'):
@@ -4039,16 +4245,23 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             pos_node = row.css_first('span.rp-resultRunner__position')
             pos = clean_text(pos_node.text()) if pos_node else "?"
 
+            # Try to find saddle number
+            number = 0
+            num_node = row.css_first(".rp-resultRunner__saddleClothNo")
+            if num_node:
+                try: number = int(clean_text(num_node.text()))
+                except: pass
+
             runners.append(Runner(
                 name=name,
-                number=0,
+                number=number,
                 metadata={"position": pos}
             ))
 
         race = Race(
-            id=f"rp_tote_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            id=f"rp_tote_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
-            race_number=1, # RP doesn't easily show race number on result page title
+            race_number=race_num,
             start_time=start_time,
             runners=runners,
             source=self.source_name,
@@ -4064,24 +4277,16 @@ async def run_discovery(target_dates: List[str]):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates)
     
-    # Initialize all adapters
+    # Auto-discover all adapter classes
+    def get_all_adapters(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
+        )
+
     adapter_classes = [
-        AtTheRacesAdapter,
-        AtTheRacesGreyhoundAdapter,
-        BoyleSportsAdapter,
-        SportingLifeAdapter,
-        SkySportsAdapter,
-        RacingPostB2BAdapter,
-        StandardbredCanadaAdapter,
-        TabAdapter,
-        BetfairDataScientistAdapter,
-        EquibaseAdapter,
-        TwinSpiresAdapter,
-            OddscheckerAdapter,
-        TimeformAdapter,
-        RacingPostAdapter,
-        RacingPostToteAdapter,
-]
+        c for c in get_all_adapters(BaseAdapterV3)
+        if not getattr(c, "__abstractmethods__", None)
+    ]
     
     adapters = []
     for cls in adapter_classes:
@@ -4120,7 +4325,7 @@ async def run_discovery(target_dates: List[str]):
         race_map = {}
         for race in all_races_raw:
             canonical_venue = get_canonical_venue(race.venue)
-            # Use Canonical Venue + Race Number + Date as stable key
+            # Use Canonical Venue + Race Number + Date + Discipline as stable key
             st = race.start_time
             if isinstance(st, str):
                 try:
@@ -4129,7 +4334,8 @@ async def run_discovery(target_dates: List[str]):
                     pass
 
             date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            key = f"{canonical_venue}|{race.race_number}|{date_str}"
+            disc = (race.discipline or "T")[:1].upper()
+            key = f"{canonical_venue}|{race.race_number}|{date_str}|{disc}"
             
             if key not in race_map:
                 race_map[key] = race
@@ -4137,11 +4343,14 @@ async def run_discovery(target_dates: List[str]):
                 existing = race_map[key]
                 # Merge runners/odds
                 for nr in race.runners:
-                    er = next((r for r in existing.runners if r.number == nr.number), None)
+                    # Match by number OR name (if numbers are missing)
+                    er = next((r for r in existing.runners if (r.number != 0 and r.number == nr.number) or (r.name.lower() == nr.name.lower())), None)
                     if er:
                         er.odds.update(nr.odds)
                         if not er.win_odds and nr.win_odds:
                             er.win_odds = nr.win_odds
+                        if not er.number and nr.number:
+                            er.number = nr.number
                     else:
                         existing.runners.append(nr)
 
@@ -4161,21 +4370,18 @@ async def run_discovery(target_dates: List[str]):
         # Generate Grid & Goldmine
         grid = generate_summary_grid(qualified, all_races=unique_races)
         logger.info("Summary Grid Generated")
-        # For CI/CD summary, we still want it printed or at least available
-        # but the requirement was to avoid prints in production modules.
-        # However, run_discovery is likely the main entry point.
-        # I'll keep the print(grid) but maybe wrap it or use logger.
-        # Actually, structured logging for a grid is hard.
-        # I'll use logger.info with the grid.
-        logger.info("\n" + grid)
+
+        # Output the grid clearly without messing up structured logs
+        print("\n" + grid + "\n")
+
         with open("summary_grid.txt", "w") as f: f.write(grid)
 
         gm_report = generate_goldmine_report(qualified, all_races=unique_races)
         with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
-        # Log Hot Tips to pseudo-DB
+        # Log Hot Tips to SQLite DB
         tracker = HotTipsTracker()
-        tracker.log_tips(qualified)
+        await tracker.log_tips(qualified)
 
         # Save qualified races to JSON
         report_data = {
