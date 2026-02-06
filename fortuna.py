@@ -4292,16 +4292,19 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
-async def run_discovery(target_dates: List[str]):
+async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8):
     logger = structlog.get_logger("run_discovery")
-    logger.info("Running Discovery", dates=target_dates)
-    
+    logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
+
+    now = datetime.now(timezone.utc)
+    cutoff = now + timedelta(hours=window_hours) if window_hours else None
+
     # Auto-discover all adapter classes
     def get_all_adapters(cls):
         return set(cls.__subclasses__()).union(
             [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
         )
-
+    
     adapter_classes = [
         c for c in get_all_adapters(BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
@@ -4335,6 +4338,32 @@ async def run_discovery(target_dates: List[str]):
             all_races_raw.extend(r_list)
 
         logger.info("Fetched total races", count=len(all_races_raw))
+
+        # Apply time window filter if requested to avoid overloading
+        if cutoff:
+            original_count = len(all_races_raw)
+            filtered_races = []
+            for r in all_races_raw:
+                st = r.start_time
+                if isinstance(st, str):
+                    try:
+                        st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        continue
+
+                if st.tzinfo is None:
+                    st = st.replace(tzinfo=timezone.utc)
+
+                if now <= st <= cutoff:
+                    filtered_races.append(r)
+
+            all_races_raw = filtered_races
+            logger.info(
+                "Filtered races by time window",
+                window_hours=window_hours,
+                before=original_count,
+                after=len(all_races_raw)
+            )
 
         if not all_races_raw:
             logger.error("No races fetched from any adapter. Discovery aborted.")
@@ -4421,6 +4450,7 @@ async def run_discovery(target_dates: List[str]):
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
+    parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
     args = parser.parse_args()
@@ -4428,16 +4458,19 @@ async def main_all_in_one():
     if args.date:
         target_dates = [args.date]
     else:
-        today = datetime.now(timezone.utc)
-        tomorrow = today + timedelta(days=1)
-        target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
+        now = datetime.now(timezone.utc)
+        future = now + timedelta(hours=args.hours)
+
+        target_dates = [now.strftime("%Y-%m-%d")]
+        if future.date() > now.date():
+            target_dates.append(future.strftime("%Y-%m-%d"))
 
     if args.monitor:
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         if args.once: await monitor.run_once()
         else: await monitor.run_continuous()
     else:
-        await run_discovery(target_dates)
+        await run_discovery(target_dates, window_hours=args.hours)
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
