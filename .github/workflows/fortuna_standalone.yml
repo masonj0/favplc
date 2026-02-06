@@ -4,9 +4,9 @@ on:
   push:
     branches:
       - main
-      - jules205b
-  # schedule:
-  #   - cron: '*/30 * * * *' # Every 30 minutes
+      - jules205c
+  schedule:
+    - cron: '0 * * * *' # Every hour
   workflow_dispatch:
 
 concurrency:
@@ -125,4 +125,5 @@ jobs:
             goldmine_report.txt
             qualified_races.json
             race_data.json
-          retention-days: 1
+            hot_tips_db.json
+          retention-days: 7
