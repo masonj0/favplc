@@ -2722,6 +2722,50 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     return "\n".join(report_lines)
 
 
+def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> str:
+    """Generate a report for recently audited Goldmine races."""
+    if not audited_tips:
+        return ""
+
+    lines = ["", "RECENT AUDITED GOLDMINES", "------------------------"]
+
+    # Calculate simple stats
+    total = len(audited_tips)
+    cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    sr = (cashed / total * 100) if total > 0 else 0
+
+    lines.append(f"Performance Summary (Last {total} Goldmines):")
+    lines.append(f"  Strike Rate: {sr:.1f}% | Total Net Profit: ${total_profit:+.2f}")
+    lines.append("")
+
+    for tip in audited_tips:
+        venue = tip.get("venue", "Unknown")
+        race_num = tip.get("race_number", "?")
+        verdict = tip.get("verdict", "?")
+        profit = tip.get("net_profit", 0.0)
+        start_time_raw = tip.get("start_time", "")
+
+        try:
+            st = datetime.fromisoformat(start_time_raw)
+            time_str = st.strftime("%Y-%m-%d %H:%M")
+        except:
+            time_str = str(start_time_raw)[:16]
+
+        emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+
+        line = f"{emoji} {time_str} | {venue} R{race_num} | {verdict:<6} | Profit: ${profit:+.2f}"
+
+        # Add trifecta info if available to "prove" with payouts
+        tri_payout = tip.get("trifecta_payout")
+        if tri_payout:
+            line += f" | Trifecta: ${tri_payout:.2f}"
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def generate_next_to_jump(races: List[Any]) -> str:
     """Generate the NEXT TO JUMP section."""
     lines = ["", "", "NEXT TO JUMP", "------------"]
@@ -3138,6 +3182,17 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def get_recent_audited_goldmines(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """Returns recent successfully audited goldmine tips."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips WHERE audit_completed = 1 AND is_goldmine = 1 ORDER BY start_time DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
     async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
         """Migrates data from existing JSON file to SQLite with detailed error logging."""
         path = Path(json_path)
@@ -3320,6 +3375,7 @@ class FavoriteToPlaceMonitor:
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
         self.logger = structlog.get_logger(self.__class__.__name__)
+        self.tracker = HotTipsTracker()
 
     async def initialize_adapters(self):
         """Initialize all adapters."""
@@ -3515,8 +3571,8 @@ class FavoriteToPlaceMonitor:
         yml.sort(key=lambda r: r.mtp)
         return yml[:5]  # Limit to top 5 recommendations
 
-    def print_bet_now_list(self):
-        """Log filtered BET NOW list."""
+    async def print_bet_now_list(self):
+        """Log filtered BET NOW list and recent audited goldmine results."""
         bet_now = self.get_bet_now_races()
         lines = [
             "=" * 140,
@@ -3560,6 +3616,12 @@ class FavoriteToPlaceMonitor:
         lines.extend(["-" * 160, f"Total opportunities: {len(bet_now)}"])
         self.logger.info("\n".join(lines))
 
+        # Include recent audited results to provide proof of system performance
+        history = await self.tracker.db.get_recent_audited_goldmines(limit=10)
+        if history:
+            historical_report = generate_historical_goldmine_report(history)
+            self.logger.info(historical_report)
+
     def save_to_json(self, filename: str = "race_data.json"):
         """Export to JSON."""
         bn = self.get_bet_now_races()
@@ -3600,7 +3662,7 @@ class FavoriteToPlaceMonitor:
             raw = await self.fetch_all_races()
             await self.build_race_summaries(raw)
             self.print_full_list()
-            self.print_bet_now_list()
+            await self.print_bet_now_list()
             self.save_to_json()
         finally:
             for a in self.adapters: await a.shutdown()
@@ -3614,7 +3676,7 @@ class FavoriteToPlaceMonitor:
         try:
             while True:
                 for r in self.all_races: r.mtp = self._calculate_mtp(r.start_time)
-                self.print_bet_now_list()
+                await self.print_bet_now_list()
                 self.save_to_json()
                 await asyncio.sleep(self.refresh_interval)
         except KeyboardInterrupt:
@@ -4424,12 +4486,20 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
 
         with open("summary_grid.txt", "w") as f: f.write(grid)
 
-        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
-        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
-
-        # Log Hot Tips to SQLite DB
+        # Log Hot Tips & Fetch recent historical results for the report
         tracker = HotTipsTracker()
         await tracker.log_tips(qualified)
+
+        historical_goldmines = await tracker.db.get_recent_audited_goldmines(limit=15)
+        historical_report = generate_historical_goldmine_report(historical_goldmines)
+
+        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
+        if historical_report:
+            gm_report += "\n" + historical_report
+            # Also print historical report to console
+            print("\n" + historical_report + "\n")
+
+        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
         # Save qualified races to JSON
         report_data = {
