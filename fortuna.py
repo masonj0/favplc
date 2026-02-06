@@ -3154,6 +3154,17 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def get_recent_tips(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Returns the most recent tips regardless of audit status."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips ORDER BY start_time DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
     async def update_audit_result(self, race_id: str, outcome: Dict[str, Any]):
         """Updates a single tip with its audit outcome."""
         if not self._initialized: await self.initialize()
