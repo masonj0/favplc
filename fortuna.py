@@ -43,6 +43,7 @@ from typing import (
 
 import httpx
 import pandas as pd
+from fortuna_db import FortunaDB
 import structlog
 from pydantic import (
     BaseModel,
@@ -318,70 +319,117 @@ def get_canonical_venue(name: Optional[str]) -> str:
 def normalize_venue_name(name: Optional[str]) -> str:
     """
     Normalizes a racecourse name to a standard format.
-    Handles common abbreviations, variations, and trims country suffixes.
-    Always returns a string, defaulting to "Unknown".
+    Aggressively strips race names, sponsorships, and country noise.
     """
     if not name:
         return "Unknown"
 
-    # Trim parenthetical info like (USA), (IRE), (GB), etc. and extra whitespace
-    name = re.sub(r'\s*\([^)]*\)\s*$', '', str(name))
-    name = re.sub(r"\s+(IRE|USA|UK|FR|AUS|NZ|GB)$", "", name, flags=re.I)
+    # 1. Initial Cleaning: Replace dashes and strip all parenthetical info
+    name = str(name).replace("-", " ")
+    name = re.sub(r"\(.*?\)", " ", name)
 
-    # Use a temporary variable for matching, but return the properly cased name
     cleaned = clean_text(name)
     if not cleaned:
         return "Unknown"
 
-    cleaned_upper = cleaned.upper()
+    # 2. Aggressive Race/Meeting Name Stripping
+    # If these keywords are found, assume everything after is the race name.
+    RACING_KEYWORDS = [
+        "PRIX", "CHASE", "HURDLE", "HANDICAP", "STAKES", "CUP", "LISTED", "GBB",
+        "RACE", "MEETING", "NOVICE", "TRIAL", "PLATE", "TROPHY", "CHAMPIONSHIP",
+        "JOCKEY", "TRAINER", "BEST ODDS", "GUARANTEED", "PRO/AM", "AUCTION",
+        "HUNT", "MARES", "FILLIES", "COLTS", "GELDINGS", "JUVENILE", "SELLING",
+        "CLAIMING", "OPTIONAL", "ALLOWANCE", "MAIDEN", "OPEN", "INVITATIONAL",
+        "CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
+        "FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
+        "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
+        "GET THE BEST", "CHELTENHAM TRIALS"
+    ]
 
+    upper_name = cleaned.upper()
+    earliest_idx = len(cleaned)
+    for kw in RACING_KEYWORDS:
+        idx = upper_name.find(" " + kw)
+        if idx != -1:
+            earliest_idx = min(earliest_idx, idx)
+
+    track_part = cleaned[:earliest_idx].strip()
+    if not track_part:
+        track_part = cleaned
+
+    upper_track = track_part.upper()
+
+    # 3. High-Confidence Mapping
+    # Map raw/cleaned names to canonical display names.
     VENUE_MAP = {
-        "ASCOT": "Ascot",
         "AQUEDUCT": "Aqueduct",
+        "ASCOT": "Ascot",
         "AYR": "Ayr",
-        "BANGOR-ON-DEE": "Bangor-on-Dee",
+        "BANGOR ON DEE": "Bangor-on-Dee",
+        "CATTERICK": "Catterick",
         "CATTERICK BRIDGE": "Catterick",
+        "CENTRAL PARK": "Central Park",
+        "CHELMSFORD": "Chelmsford",
         "CHELMSFORD CITY": "Chelmsford",
+        "CURRAGH": "Curragh",
+        "DELTA DOWNS": "Delta Downs",
+        "DONCASTER": "Doncaster",
+        "DOWN ROYAL": "Down Royal",
+        "DUNDALK": "Dundalk",
+        "DUNSTALL PARK": "Wolverhampton",
+        "EPSOM": "Epsom",
         "EPSOM DOWNS": "Epsom",
+        "FAIR GROUNDS": "Fair Grounds",
         "FONTWELL": "Fontwell Park",
+        "FONTWELL PARK": "Fontwell Park",
+        "GREAT YARMOUTH": "Great Yarmouth",
         "GULFSTREAM": "Gulfstream Park",
         "GULFSTREAM PARK": "Gulfstream Park",
         "HAYDOCK": "Haydock Park",
+        "HAYDOCK PARK": "Haydock Park",
+        "HOVE": "Hove",
         "KEMPTON": "Kempton Park",
+        "KEMPTON PARK": "Kempton Park",
+        "LAUREL PARK": "Laurel Park",
         "LINGFIELD": "Lingfield Park",
         "LINGFIELD PARK": "Lingfield Park",
-        "NEWMARKET (ROWLEY)": "Newmarket",
-        "NEWMARKET (JULY)": "Newmarket",
+        "LOS ALAMITOS": "Los Alamitos",
+        "MARONAS": "Maronas",
+        "MUSSELBURGH": "Musselburgh",
+        "NAAS": "Naas",
+        "NEWCASTLE": "Newcastle",
+        "NEWMARKET": "Newmarket",
+        "OXFORD": "Oxford",
+        "PAU": "Pau",
         "SAM HOUSTON": "Sam Houston",
         "SAM HOUSTON RACE PARK": "Sam Houston",
         "SANDOWN": "Sandown Park",
         "SANDOWN PARK": "Sandown Park",
         "SANTA ANITA": "Santa Anita",
+        "SHEFFIELD": "Sheffield",
         "STRATFORD": "Stratford-on-Avon",
-        "YARMOUTH": "Great Yarmouth",
-        "CURRAGH": "Curragh",
-        "DOWN ROYAL": "Down Royal",
-        "DELTA DOWNS": "Delta Downs",
-        "FAIR GROUNDS": "Fair Grounds",
-        "LAUREL PARK": "Laurel Park",
-        "LOS ALAMITOS": "Los Alamitos",
-        "MUSSELBURGH": "Musselburgh",
-        "NEWCASTLE": "Newcastle",
         "SUNLAND PARK": "Sunland Park",
         "TAMPA BAY DOWNS": "Tampa Bay Downs",
+        "THURLES": "Thurles",
         "TURF PARADISE": "Turf Paradise",
+        "UTTOXETER": "Uttoxeter",
         "VINCENNES": "Vincennes",
+        "WARWICK": "Warwick",
         "WETHERBY": "Wetherby",
+        "WOLVERHAMPTON": "Wolverhampton",
+        "YARMOUTH": "Great Yarmouth",
     }
 
-    if cleaned_upper in VENUE_MAP:
-        return VENUE_MAP[cleaned_upper]
+    # Direct match
+    if upper_track in VENUE_MAP:
+        return VENUE_MAP[upper_track]
 
-    title_cased = cleaned.title()
-    if title_cased in VENUE_MAP.values():
-        return title_cased
+    # Prefix match (sort by length desc to avoid partial matches on shorter names)
+    for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
+        if upper_name.startswith(known_track):
+            return VENUE_MAP[known_track]
 
-    return title_cased
+    return track_part.title()
 
 
 def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
@@ -2908,12 +2956,12 @@ def format_grid_code(race_info_list, wrap_width=4):
 
 
 class HotTipsTracker:
-    """Logs reported opportunities to a pseudo-database JSON file."""
-    def __init__(self, db_path: str = "hot_tips_db.json"):
-        self.db_path = Path(db_path)
+    """Logs reported opportunities to a SQLite database."""
+    def __init__(self, db_path: Optional[str] = None):
+        self.db = FortunaDB(db_path) if db_path else FortunaDB()
         self.logger = structlog.get_logger(self.__class__.__name__)
 
-    def log_tips(self, races: List[Race]):
+    async def log_tips(self, races: List[Race]):
         if not races:
             return
 
@@ -2937,55 +2985,8 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
-            existing_data = []
-            if self.db_path.exists():
-                with open(self.db_path, "r") as f:
-                    try:
-                        existing_data = json.load(f)
-                    except (json.JSONDecodeError, IOError):
-                        existing_data = []
-
-            # Smart deduplication: only add if race hasn't been reported in the last 4 hours
-            # with the same parameters (goldmine status and 1Gap2)
-            tips_to_add = []
-            for nt in new_tips:
-                is_redundant = False
-                # Look back at existing data (from most recent)
-                for et in reversed(existing_data):
-                    # If same race
-                    if et.get("race_id") == nt["race_id"]:
-                        try:
-                            # Check time difference
-                            et_date = datetime.fromisoformat(et["report_date"])
-                            if (now - et_date).total_seconds() < 4 * 3600:
-                                # Check if parameters are same
-                                if (et.get("is_goldmine") == nt["is_goldmine"] and
-                                    abs(et.get("1Gap2", 0) - nt["1Gap2"]) < 0.05):
-                                    is_redundant = True
-                                    break
-                            else:
-                                # Older than 4 hours, stop looking for this race
-                                break
-                        except: pass
-
-                if not is_redundant:
-                    tips_to_add.append(nt)
-
-            if not tips_to_add:
-                self.logger.debug("No new unique hot tips to log")
-                return
-
-            # Append new tips
-            existing_data.extend(tips_to_add)
-
-            # Limit total database size to last 5000 entries to prevent infinite growth
-            if len(existing_data) > 5000:
-                existing_data = existing_data[-5000:]
-
-            with open(self.db_path, "w") as f:
-                json.dump(existing_data, f, indent=4)
-
-            self.logger.info("Hot tips logged to database", count=len(tips_to_add), db=str(self.db_path))
+            await self.db.log_tips(new_tips)
+            self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
             self.logger.error("Failed to log hot tips", error=str(e))
 
@@ -4126,9 +4127,9 @@ async def run_discovery(target_dates: List[str]):
         gm_report = generate_goldmine_report(qualified, all_races=unique_races)
         with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
-        # Log Hot Tips to pseudo-DB
+        # Log Hot Tips to SQLite DB
         tracker = HotTipsTracker()
-        tracker.log_tips(qualified)
+        await tracker.log_tips(qualified)
 
         # Save qualified races to JSON
         report_data = {
