@@ -2771,10 +2771,20 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
 
         line = f"{emoji} {time_str} | {venue} R{race_num} | {verdict:<6} | Profit: ${profit:+.2f}"
 
-        # Add trifecta info if available to "prove" with payouts
+        # Add top place payouts for proof
+        p1 = tip.get("top1_place_payout")
+        p2 = tip.get("top2_place_payout")
+        if p1 or p2:
+            line += f" | Place: {p1 or 0:.2f}/{p2 or 0:.2f}"
+
+        # Prioritize Superfecta info to "prove" with payouts
+        super_payout = tip.get("superfecta_payout")
         tri_payout = tip.get("trifecta_payout")
-        if tri_payout:
-            line += f" | Trifecta: ${tri_payout:.2f}"
+
+        if super_payout:
+            line += f" | Super: ${super_payout:.2f}"
+        elif tri_payout:
+            line += f" | Tri: ${tri_payout:.2f}"
 
         lines.append(line)
 
@@ -3081,6 +3091,10 @@ class FortunaDB:
                         actual_2nd_fav_odds REAL,
                         trifecta_payout REAL,
                         trifecta_combination TEXT,
+                        superfecta_payout REAL,
+                        superfecta_combination TEXT,
+                        top1_place_payout REAL,
+                        top2_place_payout REAL,
                         audit_timestamp TEXT
                     )
                 """)
@@ -3089,6 +3103,18 @@ class FortunaDB:
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+
+                # Add missing columns for existing databases
+                cursor = conn.execute("PRAGMA table_info(tips)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if "superfecta_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_payout REAL")
+                if "superfecta_combination" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_combination TEXT")
+                if "top1_place_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top1_place_payout REAL")
+                if "top2_place_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top2_place_payout REAL")
 
         await self._run_in_executor(_init)
         self._initialized = True
@@ -3182,6 +3208,10 @@ class FortunaDB:
                         actual_2nd_fav_odds = ?,
                         trifecta_payout = ?,
                         trifecta_combination = ?,
+                        superfecta_payout = ?,
+                        superfecta_combination = ?,
+                        top1_place_payout = ?,
+                        top2_place_payout = ?,
                         audit_timestamp = ?
                     WHERE id = (
                         SELECT id FROM tips
@@ -3193,6 +3223,10 @@ class FortunaDB:
                     outcome.get("selection_position"), outcome.get("actual_top_5"),
                     outcome.get("actual_2nd_fav_odds"), outcome.get("trifecta_payout"),
                     outcome.get("trifecta_combination"),
+                    outcome.get("superfecta_payout"),
+                    outcome.get("superfecta_combination"),
+                    outcome.get("top1_place_payout"),
+                    outcome.get("top2_place_payout"),
                     datetime.now(timezone.utc).isoformat(),
                     race_id
                 ))
@@ -3242,8 +3276,10 @@ class FortunaDB:
                                     is_goldmine, gap12, top_five, selection_number,
                                     audit_completed, verdict, net_profit, selection_position,
                                     actual_top_5, actual_2nd_fav_odds, trifecta_payout,
-                                    trifecta_combination, audit_timestamp
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    trifecta_combination, superfecta_payout,
+                                    superfecta_combination, top1_place_payout,
+                                    top2_place_payout, audit_timestamp
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (
                                 entry.get("race_id"), entry.get("venue"), entry.get("race_number"),
                                 entry.get("start_time"), entry.get("report_date"),
@@ -3253,6 +3289,8 @@ class FortunaDB:
                                 entry.get("net_profit"), entry.get("selection_position"),
                                 entry.get("actual_top_5"), entry.get("actual_2nd_fav_odds"),
                                 entry.get("trifecta_payout"), entry.get("trifecta_combination"),
+                                entry.get("superfecta_payout"), entry.get("superfecta_combination"),
+                                entry.get("top1_place_payout"), entry.get("top2_place_payout"),
                                 entry.get("audit_timestamp")
                             ))
                         success_count += 1
