@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      - jules205c
-      - jules206
   schedule:
     - cron: '0 * * * *' # Every hour
   workflow_dispatch:
