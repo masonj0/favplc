@@ -697,7 +697,7 @@ class SmartFetcher:
                 fingerprint = self.fingerprint_gen.generate()
                 headers = self.header_gen.generate()
                 # Ensure User-Agent is consistent between fingerprint and headers
-                headers['User-Agent'] = fingerprint.navigator.user_agent
+                headers['User-Agent'] = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
                 kwargs["headers"] = headers
                 self.logger.debug("Generated browserforge headers", engine=engine.value)
             except Exception as e:
@@ -3448,9 +3448,10 @@ class FavoriteToPlaceMonitor:
         for race, adapter_name in races_with_adapters:
             try:
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number
+                # Stable key: Canonical Venue + Race Number + Date + Discipline
                 canonical_venue = get_canonical_venue(summary.track)
-                key = f"{canonical_venue}|{summary.race_number}"
+                date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
+                key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -3787,7 +3788,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
 
 
-class TimeformAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
+class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """
     Adapter for timeform.com, migrated to BaseAdapterV3 and standardized on selectolax.
     """
