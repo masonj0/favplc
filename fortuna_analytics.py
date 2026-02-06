@@ -10,7 +10,6 @@ import os
 import re
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import (
@@ -43,7 +42,7 @@ except ImportError:
 import fortuna
 
 # --- CONSTANTS ---
-DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "hot_tips_db.json")
+DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
     4: 1,   # 4 or fewer runners: only win counts
     7: 2,   # 5-7 runners: top 2
@@ -185,27 +184,6 @@ class ResultRace(fortuna.FortunaBaseModel):
         return sorted_runners[:n]
 
 
-class AuditResult(fortuna.FortunaBaseModel):
-    """Result of auditing a tip against actual race results."""
-    tip_id: str
-    venue: str
-    race_number: int
-
-    verdict: str  # CASHED, BURNED, VOID, PENDING
-    net_profit: float = 0.0
-
-    selection_number: Optional[int] = None
-    selection_position: Optional[int] = None
-
-    actual_top_5: str = ""
-    actual_2nd_fav_odds: Optional[float] = None
-
-    trifecta_payout: Optional[float] = None
-    trifecta_combination: Optional[str] = None
-
-    audit_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
 # --- AUDITOR ENGINE ---
 
 class AuditorEngine:
@@ -228,6 +206,10 @@ class AuditorEngine:
         Returns all audited tips from the database.
         """
         return await self.db.get_all_audited_tips()
+
+    async def close(self):
+        """Cleanup resources."""
+        await self.db.close()
 
     async def audit_races(self, results: List[ResultRace]) -> List[Dict[str, Any]]:
         """
@@ -764,17 +746,21 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         # Extract race number from header or navigation
         race_num = 1
-        race_num_match = re.search(r'Race\s+(\d+)', parser.text())
-        if race_num_match:
-            race_num = int(race_num_match.group(1))
-        else:
-            # Fallback: find active time in navigation
-            time_links = parser.css('a[data-test-selector="RC-raceTime"]')
-            for i, link in enumerate(time_links):
-                cls = link.attributes.get("class", "")
-                if "active" in cls or "rp-raceTimeCourseName__time" in cls:
-                    race_num = i + 1
-                    break
+        # Priority 1: Navigation bar active time (most reliable on RP)
+        time_links = parser.css('a[data-test-selector="RC-raceTime"]')
+        found_in_nav = False
+        for i, link in enumerate(time_links):
+            cls = link.attributes.get("class", "")
+            if "active" in cls or "rp-raceTimeCourseName__time" in cls:
+                race_num = i + 1
+                found_in_nav = True
+                break
+
+        if not found_in_nav:
+            # Priority 2: Text search for "Race X"
+            race_num_match = re.search(r'Race\s+(\d+)', parser.text())
+            if race_num_match:
+                race_num = int(race_num_match.group(1))
 
         # Parse runners
         runners = []
@@ -1134,8 +1120,14 @@ def generate_analytics_report(audited_tips: List[Dict[str, Any]]) -> str:
         "-" * 40,
     ])
 
-    recent_audits = sorted(audited_tips, key=lambda x: x.get("start_time", ""), reverse=True)[:20]
-    for tip in sorted(recent_audits, key=lambda x: x.get("start_time", "")):
+    # Sort once, newest first, take 20
+    recent_audits = sorted(
+        audited_tips,
+        key=lambda x: x.get("start_time", ""),
+        reverse=True
+    )[:20]
+
+    for tip in recent_audits:  # Already sorted newest-first
         report_date = str(tip.get("report_date", "N/A"))[:10]
         venue = tip.get("venue", "Unknown")
         race_num = tip.get("race_number", "?")
@@ -1165,13 +1157,13 @@ def generate_analytics_report(audited_tips: List[Dict[str, Any]]) -> str:
 @asynccontextmanager
 async def managed_adapters():
     """Context manager for adapter lifecycle using auto-discovery."""
-    def get_all_adapters(cls):
+    def get_all_adapter_classes(cls):
         return set(cls.__subclasses__()).union(
-            [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
+            [s for c in cls.__subclasses__() for s in get_all_adapter_classes(c)]
         )
 
     adapter_classes = [
-        c for c in get_all_adapters(fortuna.BaseAdapterV3)
+        c for c in get_all_adapter_classes(fortuna.BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
         and c.__module__ == __name__ # Only local results adapters
     ]
@@ -1203,76 +1195,79 @@ async def run_analytics(target_dates: List[str]) -> None:
         return
 
     auditor = AuditorEngine()
-    unverified = await auditor.get_unverified_tips()
-
-    if not unverified:
-        logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
-    else:
-        logger.info("Tips to audit", count=len(unverified))
-
-        all_results: List[ResultRace] = []
-
-        async with managed_adapters() as adapters:
-            # Create fetch tasks for all date/adapter combinations
-            async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> List[ResultRace]:
-                try:
-                    races = await adapter.get_races(date_str)
-                    logger.debug(
-                        "Fetched results",
-                        adapter=adapter.source_name,
-                        date=date_str,
-                        count=len(races)
-                    )
-                    return races
-                except Exception as e:
-                    logger.warning(
-                        "Adapter fetch failed",
-                        adapter=adapter.source_name,
-                        date=date_str,
-                        error=str(e)
-                    )
-                    return []
-
-            tasks = [
-                fetch_with_adapter(adapter, date_str)
-                for date_str in valid_dates
-                for adapter in adapters
-            ]
-
-            results_lists = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for result in results_lists:
-                if isinstance(result, Exception):
-                    logger.warning("Task raised exception", error=str(result))
-                elif isinstance(result, list):
-                    all_results.extend(result)
-
-        logger.info("Total results harvested", count=len(all_results))
-
-        if not all_results:
-            logger.warning("No results harvested from any source")
-            # We continue to show report if we have previous audits
-        else:
-            # Perform audit
-            await auditor.audit_races(all_results)
-
-    # Generate and save comprehensive report
-    all_audited = await auditor.get_all_audited_tips()
-    report = generate_analytics_report(all_audited)
-    print(report)
-
-    report_path = Path("analytics_report.txt")
     try:
-        report_path.write_text(report, encoding="utf-8")
-        logger.info("Report saved", path=str(report_path))
-    except IOError as e:
-        logger.error("Failed to save report", error=str(e))
+        unverified = await auditor.get_unverified_tips()
 
-    # Summary
-    if all_audited:
-        logger.info("Analytics audit summary generated", total_audited=len(all_audited))
-    else:
-        logger.info("No audited tips found in history")
+        if not unverified:
+            logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
+        else:
+            logger.info("Tips to audit", count=len(unverified))
+
+            all_results: List[ResultRace] = []
+
+            async with managed_adapters() as adapters:
+                # Create fetch tasks for all date/adapter combinations
+                async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> List[ResultRace]:
+                    try:
+                        races = await adapter.get_races(date_str)
+                        logger.debug(
+                            "Fetched results",
+                            adapter=adapter.source_name,
+                            date=date_str,
+                            count=len(races)
+                        )
+                        return races
+                    except Exception as e:
+                        logger.warning(
+                            "Adapter fetch failed",
+                            adapter=adapter.source_name,
+                            date=date_str,
+                            error=str(e)
+                        )
+                        return []
+
+                tasks = [
+                    fetch_with_adapter(adapter, date_str)
+                    for date_str in valid_dates
+                    for adapter in adapters
+                ]
+
+                results_lists = await asyncio.gather(*tasks, return_exceptions=True)
+
+                for result in results_lists:
+                    if isinstance(result, Exception):
+                        logger.warning("Task raised exception", error=str(result))
+                    elif isinstance(result, list):
+                        all_results.extend(result)
+
+            logger.info("Total results harvested", count=len(all_results))
+
+            if not all_results:
+                logger.warning("No results harvested from any source")
+                # We continue to show report if we have previous audits
+            else:
+                # Perform audit
+                await auditor.audit_races(all_results)
+
+        # Generate and save comprehensive report
+        all_audited = await auditor.get_all_audited_tips()
+        report = generate_analytics_report(all_audited)
+        print(report)
+
+        report_path = Path("analytics_report.txt")
+        try:
+            report_path.write_text(report, encoding="utf-8")
+            logger.info("Report saved", path=str(report_path))
+        except IOError as e:
+            logger.error("Failed to save report", error=str(e))
+
+        # Summary
+        if all_audited:
+            logger.info("Analytics audit summary generated", total_audited=len(all_audited))
+        else:
+            logger.info("No audited tips found in history")
+    finally:
+        await auditor.close()
 
 
 def main() -> None:

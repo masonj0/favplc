@@ -4259,6 +4259,24 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 metadata={"position": pos}
             ))
 
+        # Derive race number from header or navigation
+        race_num = 1
+        # Priority 1: Navigation bar active time (most reliable on RP)
+        time_links = parser.css('a[data-test-selector="RC-raceTime"]')
+        found_in_nav = False
+        for i, link in enumerate(time_links):
+            cls = link.attributes.get("class", "")
+            if "active" in cls or "rp-raceTimeCourseName__time" in cls:
+                race_num = i + 1
+                found_in_nav = True
+                break
+
+        if not found_in_nav:
+            # Priority 2: Text search for "Race X"
+            race_num_match = re.search(r'Race\s+(\d+)', parser.text())
+            if race_num_match:
+                race_num = int(race_num_match.group(1))
+
         race = Race(
             id=f"rp_tote_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
