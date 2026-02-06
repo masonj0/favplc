@@ -39,25 +39,8 @@ try:
 except ImportError:
     ASYNC_SESSIONS_AVAILABLE = False
 
-# Reuse from fortuna.py (assuming these exist)
-from fortuna_db import FortunaDB
-from fortuna import (
-    DEFAULT_BROWSER_HEADERS,
-    FortunaBaseModel,
-    Runner,
-    Race,
-    BrowserEngine,
-    FetchStrategy,
-    SmartFetcher,
-    GlobalResourceManager,
-    BaseAdapterV3,
-    BrowserHeadersMixin,
-    DebugMixin,
-    RacePageFetcherMixin,
-    normalize_venue_name,
-    clean_text,
-    parse_odds_to_decimal,
-)
+# Import monolithic fortuna
+import fortuna
 
 # --- CONSTANTS ---
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "hot_tips_db.json")
@@ -69,16 +52,6 @@ PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
 
 
 # --- HELPER FUNCTIONS ---
-
-def get_canonical_venue(venue: str) -> str:
-    """Normalize venue name for matching. Override if imported from fortuna."""
-    if not venue:
-        return ""
-    # Remove parentheticals, normalize case, strip whitespace
-    canonical = re.sub(r'\s*\([^)]*\)\s*', '', venue)
-    canonical = re.sub(r'[^a-zA-Z0-9]', '', canonical).lower()
-    return canonical
-
 
 def parse_position(pos_str: Optional[str]) -> Optional[int]:
     """
@@ -142,7 +115,7 @@ def validate_date_format(date_str: str) -> bool:
 
 # --- MODELS FOR ANALYTICS ---
 
-class ResultRunner(FortunaBaseModel):
+class ResultRunner(fortuna.FortunaBaseModel):
     """
     Extended runner with result information.
 
@@ -169,7 +142,7 @@ class ResultRunner(FortunaBaseModel):
         return self
 
 
-class ResultRace(FortunaBaseModel):
+class ResultRace(fortuna.FortunaBaseModel):
     """
     Race with full result data.
     """
@@ -200,7 +173,7 @@ class ResultRace(FortunaBaseModel):
     def canonical_key(self) -> str:
         """Generate a canonical key for matching."""
         date_str = self.start_time.strftime('%Y%m%d')
-        return f"{get_canonical_venue(self.venue)}|{date_str}|{self.race_number}"
+        return f"{fortuna.get_canonical_venue(self.venue)}|{date_str}|{self.race_number}"
 
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
         """Get top N finishers sorted by position."""
@@ -212,7 +185,7 @@ class ResultRace(FortunaBaseModel):
         return sorted_runners[:n]
 
 
-class AuditResult(FortunaBaseModel):
+class AuditResult(fortuna.FortunaBaseModel):
     """Result of auditing a tip against actual race results."""
     tip_id: str
     venue: str
@@ -241,7 +214,7 @@ class AuditorEngine:
     """
 
     def __init__(self, db_path: Optional[str] = None):
-        self.db = FortunaDB(db_path) if db_path else FortunaDB()
+        self.db = fortuna.FortunaDB(db_path) if db_path else fortuna.FortunaDB()
         self.logger = structlog.get_logger(self.__class__.__name__)
 
     async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
@@ -272,6 +245,11 @@ class AuditorEngine:
 
         for tip in unverified:
             try:
+                race_id = tip.get("race_id")
+                if not race_id:
+                    self.logger.warning("Tip missing race_id", tip=tip)
+                    continue
+
                 tip_key = self._get_tip_canonical_key(tip)
                 if not tip_key or tip_key not in results_map:
                     continue
@@ -284,7 +262,7 @@ class AuditorEngine:
                 )
 
                 outcome = self._evaluate_tip(tip, result)
-                await self.db.update_audit_result(tip["race_id"], outcome)
+                await self.db.update_audit_result(race_id, outcome)
 
                 # Enrich tip with outcome for the return list
                 tip.update(outcome)
@@ -313,7 +291,7 @@ class AuditorEngine:
         try:
             st = datetime.fromisoformat(str(start_time_raw))
             date_str = st.strftime('%Y%m%d')
-            return f"{get_canonical_venue(venue)}|{date_str}|{race_number}"
+            return f"{fortuna.get_canonical_venue(venue)}|{date_str}|{race_number}"
         except (ValueError, TypeError):
             return None
 
@@ -411,7 +389,7 @@ class AuditorEngine:
 
 # --- RESULTS ADAPTERS ---
 
-class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
+class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.BaseAdapterV3):
     """
     Adapter for Equibase Results / Summary Charts.
     Primary source for US thoroughbred race results.
@@ -428,9 +406,9 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         )
         self._semaphore = asyncio.Semaphore(5)
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(
-            primary_engine=BrowserEngine.HTTPX,
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.HTTPX,
             enable_js=False,
             timeout=30,
         )
@@ -526,7 +504,7 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self.logger.debug("No track header found", url=source_url)
             return []
 
-        venue = normalize_venue_name(track_node.text(strip=True))
+        venue = fortuna.normalize_venue_name(track_node.text(strip=True))
         if not venue:
             return []
 
@@ -597,7 +575,7 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             start_time = datetime.now(timezone.utc)
 
         return ResultRace(
-            id=f"eqb_res_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=f"eqb_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
             race_number=race_num,
             start_time=start_time,
@@ -616,9 +594,9 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         if len(cols) < 3:
             return None
 
-        pos_text = clean_text(cols[0].text())
-        num_text = clean_text(cols[1].text())
-        name = clean_text(cols[2].text())
+        pos_text = fortuna.clean_text(cols[0].text())
+        num_text = fortuna.clean_text(cols[1].text())
+        name = fortuna.clean_text(cols[2].text())
 
         # Skip header-like rows
         if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
@@ -631,8 +609,8 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             number = 0
 
         # Parse odds
-        odds_text = clean_text(cols[3].text()) if len(cols) > 3 else ""
-        final_odds = parse_odds_to_decimal(odds_text)
+        odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
+        final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
         # Parse payouts (columns 4, 5, 6 typically)
         win_pay = place_pay = show_pay = 0.0
@@ -688,7 +666,7 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 if bet_type.lower() in row_text:
                     cols = row.css("td")
                     if len(cols) >= 2:
-                        combination = clean_text(cols[0].text())
+                        combination = fortuna.clean_text(cols[0].text())
                         payout = parse_currency_value(cols[1].text())
                         if payout > 0:
                             return payout, combination
@@ -699,7 +677,7 @@ class EquibaseResultsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         return None, None
 
 
-class RacingPostResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Racing Post UK/IRE results."""
 
     SOURCE_NAME = "RacingPostResults"
@@ -712,8 +690,8 @@ class RacingPostResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
             **kwargs
         )
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False)
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.racingpost.com")
@@ -782,7 +760,7 @@ class RacingPostResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
         venue_node = parser.css_first(".rp-raceTimeCourseName__course")
         if not venue_node:
             return None
-        venue = normalize_venue_name(venue_node.text(strip=True))
+        venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
 
         # Extract race number from URL or header
         race_num = 1
@@ -800,14 +778,14 @@ class RacingPostResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
                 if not name_node:
                     continue
 
-                name = clean_text(name_node.text())
-                pos = clean_text(pos_node.text()) if pos_node else None
+                name = fortuna.clean_text(name_node.text())
+                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
 
                 # Try to get saddle number
                 number_node = row.css_first(".rp-horseTable__saddleClothNo")
                 number = 0
                 if number_node:
-                    num_text = clean_text(number_node.text())
+                    num_text = fortuna.clean_text(number_node.text())
                     try:
                         number = int(num_text)
                     except ValueError:
@@ -831,7 +809,7 @@ class RacingPostResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
             start_time = datetime.now(timezone.utc)
 
         return ResultRace(
-            id=f"rp_res_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=f"rp_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
             race_number=race_num,
             start_time=start_time,
@@ -840,7 +818,7 @@ class RacingPostResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
         )
 
 
-class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for At The Races results (UK/IRE)."""
 
     SOURCE_NAME = "AtTheRacesResults"
@@ -853,8 +831,8 @@ class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
             **kwargs
         )
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False)
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.attheraces.com")
@@ -921,7 +899,7 @@ class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
         venue_node = header.css_first("h2")
         if not venue_node:
             return None
-        venue = normalize_venue_name(venue_node.text(strip=True))
+        venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
 
         # Extract race number from URL: /results/Venue/Date/R1 or just time
         race_num = 1
@@ -939,15 +917,15 @@ class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
                 if not name_node:
                     continue
 
-                name = clean_text(name_node.text())
-                pos = clean_text(pos_node.text()) if pos_node else None
+                name = fortuna.clean_text(name_node.text())
+                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
 
                 # Saddle number
                 num_node = row.css_first(".result-racecard__saddle-cloth")
                 number = 0
                 if num_node:
                     try:
-                        number = int(clean_text(num_node.text()))
+                        number = int(fortuna.clean_text(num_node.text()))
                     except ValueError:
                         pass
 
@@ -969,7 +947,7 @@ class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
                 if "trifecta" in row_text:
                     cols = row.css("td")
                     if len(cols) >= 2:
-                        trifecta_combo = clean_text(cols[0].text())
+                        trifecta_combo = fortuna.clean_text(cols[0].text())
                         trifecta_pay = parse_currency_value(cols[1].text())
                     break
 
@@ -983,7 +961,7 @@ class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
             start_time = datetime.now(timezone.utc)
 
         return ResultRace(
-            id=f"atr_res_{get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=f"atr_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
             race_number=race_num,
             start_time=start_time,
@@ -995,7 +973,7 @@ class AtTheRacesResultsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherM
 
 
 # Placeholder adapters - implement as needed
-class SportingLifeResultsAdapter(BaseAdapterV3):
+class SportingLifeResultsAdapter(fortuna.BaseAdapterV3):
     """Placeholder for Sporting Life results adapter."""
 
     def __init__(self, **kwargs):
@@ -1005,8 +983,8 @@ class SportingLifeResultsAdapter(BaseAdapterV3):
             **kwargs
         )
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False)
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # TODO: Implement
@@ -1016,7 +994,7 @@ class SportingLifeResultsAdapter(BaseAdapterV3):
         return []
 
 
-class SkySportsResultsAdapter(BaseAdapterV3):
+class SkySportsResultsAdapter(fortuna.BaseAdapterV3):
     """Placeholder for Sky Sports results adapter."""
 
     def __init__(self, **kwargs):
@@ -1026,8 +1004,8 @@ class SkySportsResultsAdapter(BaseAdapterV3):
             **kwargs
         )
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False)
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(primary_engine=fortuna.BrowserEngine.HTTPX, enable_js=False)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # TODO: Implement
@@ -1178,14 +1156,19 @@ def generate_analytics_report(audited_tips: List[Dict[str, Any]]) -> str:
 
 @asynccontextmanager
 async def managed_adapters():
-    """Context manager for adapter lifecycle."""
-    adapters = [
-        EquibaseResultsAdapter(),
-        RacingPostResultsAdapter(),
-        AtTheRacesResultsAdapter(),
-        SportingLifeResultsAdapter(),
-        SkySportsResultsAdapter(),
+    """Context manager for adapter lifecycle using auto-discovery."""
+    def get_all_adapters(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_adapters(c)]
+        )
+
+    adapter_classes = [
+        c for c in get_all_adapters(fortuna.BaseAdapterV3)
+        if not getattr(c, "__abstractmethods__", None)
+        and c.__module__ == __name__ # Only local results adapters
     ]
+
+    adapters = [cls() for cls in adapter_classes]
     try:
         yield adapters
     finally:
@@ -1195,7 +1178,7 @@ async def managed_adapters():
             except Exception:
                 pass
         try:
-            await GlobalResourceManager.cleanup()
+            await fortuna.GlobalResourceManager.cleanup()
         except Exception:
             pass
 
@@ -1223,7 +1206,7 @@ async def run_analytics(target_dates: List[str]) -> None:
 
         async with managed_adapters() as adapters:
             # Create fetch tasks for all date/adapter combinations
-            async def fetch_with_adapter(adapter: BaseAdapterV3, date_str: str) -> List[ResultRace]:
+            async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> List[ResultRace]:
                 try:
                     races = await adapter.get_races(date_str)
                     logger.debug(
@@ -1331,9 +1314,15 @@ def main() -> None:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
 
     if args.migrate:
-        db = FortunaDB(args.db_path)
-        asyncio.run(db.migrate_from_json())
-        print("Migration complete.")
+        async def do_migrate():
+            db = fortuna.FortunaDB(args.db_path)
+            try:
+                await db.migrate_from_json()
+                print("Migration complete.")
+            except Exception as e:
+                print(f"Migration failed: {e}")
+
+        asyncio.run(do_migrate())
         return
 
     # Build target dates list

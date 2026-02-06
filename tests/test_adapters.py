@@ -118,7 +118,7 @@ async def test_hot_tips_tracker(tmp_path):
             assert row is not None
             assert row["venue"] == "Track A"
             assert row["is_goldmine"] == 1
-            assert row["gap12"] == 1.5
+            assert float(row["gap12"]) == 1.5
 
 @pytest.mark.asyncio
 async def test_runner_number_sanitization():
