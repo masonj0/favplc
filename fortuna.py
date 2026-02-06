@@ -310,11 +310,13 @@ def get_canonical_venue(name: Optional[str]) -> str:
     """Returns a sanitized canonical form for deduplication keys."""
     if not name:
         return "unknown"
-    # Remove everything in parentheses
-    name = re.sub(r"\(.*?\)", "", str(name))
+    # Call normalization first to strip race titles and ads
+    norm = normalize_venue_name(name)
+    # Remove everything in parentheses (extra safety)
+    norm = re.sub(r"[\(\[（].*?[\)\]）]", "", norm)
     # Remove special characters, lowercase, strip
-    name = re.sub(r"[^a-z0-9]", "", name.lower())
-    return name or "unknown"
+    res = re.sub(r"[^a-z0-9]", "", norm.lower())
+    return res or "unknown"
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -326,8 +328,9 @@ def normalize_venue_name(name: Optional[str]) -> str:
         return "Unknown"
 
     # 1. Initial Cleaning: Replace dashes and strip all parenthetical info
+    # Handle full-width parentheses and brackets often found in international data
     name = str(name).replace("-", " ")
-    name = re.sub(r"\(.*?\)", " ", name)
+    name = re.sub(r"[\(\[（].*?[\)\]）]", " ", name)
 
     cleaned = clean_text(name)
     if not cleaned:
@@ -344,12 +347,15 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
         "FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
         "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
-        "GET THE BEST", "CHELTENHAM TRIALS"
+        "GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
+        "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
+        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY"
     ]
 
     upper_name = cleaned.upper()
     earliest_idx = len(cleaned)
     for kw in RACING_KEYWORDS:
+        # Check for keyword with leading space
         idx = upper_name.find(" " + kw)
         if idx != -1:
             earliest_idx = min(earliest_idx, idx)
@@ -358,14 +364,22 @@ def normalize_venue_name(name: Optional[str]) -> str:
     if not track_part:
         track_part = cleaned
 
+    # Handle repetition check (e.g., "Bahrain Bahrain" -> "Bahrain")
+    words = track_part.split()
+    if len(words) > 1 and words[0].lower() == words[1].lower():
+        track_part = words[0]
+
     upper_track = track_part.upper()
 
     # 3. High-Confidence Mapping
     # Map raw/cleaned names to canonical display names.
     VENUE_MAP = {
+        "ABU DHABI": "Abu Dhabi",
         "AQUEDUCT": "Aqueduct",
+        "ARGENTAN": "Argentan",
         "ASCOT": "Ascot",
         "AYR": "Ayr",
+        "BAHRAIN": "Bahrain",
         "BANGOR ON DEE": "Bangor-on-Dee",
         "CATTERICK": "Catterick",
         "CATTERICK BRIDGE": "Catterick",
@@ -396,6 +410,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "LINGFIELD PARK": "Lingfield Park",
         "LOS ALAMITOS": "Los Alamitos",
         "MARONAS": "Maronas",
+        "MEYDAN": "Meydan",
         "MUSSELBURGH": "Musselburgh",
         "NAAS": "Naas",
         "NEWCASTLE": "Newcastle",
@@ -2722,6 +2737,50 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     return "\n".join(report_lines)
 
 
+def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> str:
+    """Generate a report for recently audited Goldmine races."""
+    if not audited_tips:
+        return ""
+
+    lines = ["", "RECENT AUDITED GOLDMINES", "------------------------"]
+
+    # Calculate simple stats
+    total = len(audited_tips)
+    cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    sr = (cashed / total * 100) if total > 0 else 0
+
+    lines.append(f"Performance Summary (Last {total} Goldmines):")
+    lines.append(f"  Strike Rate: {sr:.1f}% | Total Net Profit: ${total_profit:+.2f}")
+    lines.append("")
+
+    for tip in audited_tips:
+        venue = tip.get("venue", "Unknown")
+        race_num = tip.get("race_number", "?")
+        verdict = tip.get("verdict", "?")
+        profit = tip.get("net_profit", 0.0)
+        start_time_raw = tip.get("start_time", "")
+
+        try:
+            st = datetime.fromisoformat(start_time_raw)
+            time_str = st.strftime("%Y-%m-%d %H:%M")
+        except:
+            time_str = str(start_time_raw)[:16]
+
+        emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+
+        line = f"{emoji} {time_str} | {venue} R{race_num} | {verdict:<6} | Profit: ${profit:+.2f}"
+
+        # Add trifecta info if available to "prove" with payouts
+        tri_payout = tip.get("trifecta_payout")
+        if tri_payout:
+            line += f" | Trifecta: ${tri_payout:.2f}"
+
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def generate_next_to_jump(races: List[Any]) -> str:
     """Generate the NEXT TO JUMP section."""
     lines = ["", "", "NEXT TO JUMP", "------------"]
@@ -3138,6 +3197,17 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def get_recent_audited_goldmines(self, limit: int = 15) -> List[Dict[str, Any]]:
+        """Returns recent successfully audited goldmine tips."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            cursor = self._get_conn().execute(
+                "SELECT * FROM tips WHERE audit_completed = 1 AND is_goldmine = 1 ORDER BY start_time DESC LIMIT ?",
+                (limit,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
     async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
         """Migrates data from existing JSON file to SQLite with detailed error logging."""
         path = Path(json_path)
@@ -3320,6 +3390,7 @@ class FavoriteToPlaceMonitor:
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
         self.logger = structlog.get_logger(self.__class__.__name__)
+        self.tracker = HotTipsTracker()
 
     async def initialize_adapters(self):
         """Initialize all adapters."""
@@ -3515,8 +3586,8 @@ class FavoriteToPlaceMonitor:
         yml.sort(key=lambda r: r.mtp)
         return yml[:5]  # Limit to top 5 recommendations
 
-    def print_bet_now_list(self):
-        """Log filtered BET NOW list."""
+    async def print_bet_now_list(self):
+        """Log filtered BET NOW list and recent audited goldmine results."""
         bet_now = self.get_bet_now_races()
         lines = [
             "=" * 140,
@@ -3560,6 +3631,12 @@ class FavoriteToPlaceMonitor:
         lines.extend(["-" * 160, f"Total opportunities: {len(bet_now)}"])
         self.logger.info("\n".join(lines))
 
+        # Include recent audited results to provide proof of system performance
+        history = await self.tracker.db.get_recent_audited_goldmines(limit=10)
+        if history:
+            historical_report = generate_historical_goldmine_report(history)
+            self.logger.info(historical_report)
+
     def save_to_json(self, filename: str = "race_data.json"):
         """Export to JSON."""
         bn = self.get_bet_now_races()
@@ -3600,7 +3677,7 @@ class FavoriteToPlaceMonitor:
             raw = await self.fetch_all_races()
             await self.build_race_summaries(raw)
             self.print_full_list()
-            self.print_bet_now_list()
+            await self.print_bet_now_list()
             self.save_to_json()
         finally:
             for a in self.adapters: await a.shutdown()
@@ -3614,7 +3691,7 @@ class FavoriteToPlaceMonitor:
         try:
             while True:
                 for r in self.all_races: r.mtp = self._calculate_mtp(r.start_time)
-                self.print_bet_now_list()
+                await self.print_bet_now_list()
                 self.save_to_json()
                 await asyncio.sleep(self.refresh_interval)
         except KeyboardInterrupt:
@@ -4424,12 +4501,20 @@ async def run_discovery(target_dates: List[str], window_hours: Optional[int] = 8
 
         with open("summary_grid.txt", "w") as f: f.write(grid)
 
-        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
-        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
-
-        # Log Hot Tips to SQLite DB
+        # Log Hot Tips & Fetch recent historical results for the report
         tracker = HotTipsTracker()
         await tracker.log_tips(qualified)
+
+        historical_goldmines = await tracker.db.get_recent_audited_goldmines(limit=15)
+        historical_report = generate_historical_goldmine_report(historical_goldmines)
+
+        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
+        if historical_report:
+            gm_report += "\n" + historical_report
+            # Also print historical report to console
+            print("\n" + historical_report + "\n")
+
+        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
         # Save qualified races to JSON
         report_data = {
