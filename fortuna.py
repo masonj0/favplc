@@ -320,70 +320,117 @@ def get_canonical_venue(name: Optional[str]) -> str:
 def normalize_venue_name(name: Optional[str]) -> str:
     """
     Normalizes a racecourse name to a standard format.
-    Handles common abbreviations, variations, and trims country suffixes.
-    Always returns a string, defaulting to "Unknown".
+    Aggressively strips race names, sponsorships, and country noise.
     """
     if not name:
         return "Unknown"
 
-    # Trim parenthetical info like (USA), (IRE), (GB), etc. and extra whitespace
-    name = re.sub(r'\s*\([^)]*\)\s*$', '', str(name))
-    name = re.sub(r"\s+(IRE|USA|UK|FR|AUS|NZ|GB)$", "", name, flags=re.I)
+    # 1. Initial Cleaning: Replace dashes and strip all parenthetical info
+    name = str(name).replace("-", " ")
+    name = re.sub(r"\(.*?\)", " ", name)
 
-    # Use a temporary variable for matching, but return the properly cased name
     cleaned = clean_text(name)
     if not cleaned:
         return "Unknown"
 
-    cleaned_upper = cleaned.upper()
+    # 2. Aggressive Race/Meeting Name Stripping
+    # If these keywords are found, assume everything after is the race name.
+    RACING_KEYWORDS = [
+        "PRIX", "CHASE", "HURDLE", "HANDICAP", "STAKES", "CUP", "LISTED", "GBB",
+        "RACE", "MEETING", "NOVICE", "TRIAL", "PLATE", "TROPHY", "CHAMPIONSHIP",
+        "JOCKEY", "TRAINER", "BEST ODDS", "GUARANTEED", "PRO/AM", "AUCTION",
+        "HUNT", "MARES", "FILLIES", "COLTS", "GELDINGS", "JUVENILE", "SELLING",
+        "CLAIMING", "OPTIONAL", "ALLOWANCE", "MAIDEN", "OPEN", "INVITATIONAL",
+        "CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
+        "FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
+        "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
+        "GET THE BEST", "CHELTENHAM TRIALS"
+    ]
 
+    upper_name = cleaned.upper()
+    earliest_idx = len(cleaned)
+    for kw in RACING_KEYWORDS:
+        idx = upper_name.find(" " + kw)
+        if idx != -1:
+            earliest_idx = min(earliest_idx, idx)
+
+    track_part = cleaned[:earliest_idx].strip()
+    if not track_part:
+        track_part = cleaned
+
+    upper_track = track_part.upper()
+
+    # 3. High-Confidence Mapping
+    # Map raw/cleaned names to canonical display names.
     VENUE_MAP = {
-        "ASCOT": "Ascot",
         "AQUEDUCT": "Aqueduct",
+        "ASCOT": "Ascot",
         "AYR": "Ayr",
-        "BANGOR-ON-DEE": "Bangor-on-Dee",
+        "BANGOR ON DEE": "Bangor-on-Dee",
+        "CATTERICK": "Catterick",
         "CATTERICK BRIDGE": "Catterick",
+        "CENTRAL PARK": "Central Park",
+        "CHELMSFORD": "Chelmsford",
         "CHELMSFORD CITY": "Chelmsford",
+        "CURRAGH": "Curragh",
+        "DELTA DOWNS": "Delta Downs",
+        "DONCASTER": "Doncaster",
+        "DOWN ROYAL": "Down Royal",
+        "DUNDALK": "Dundalk",
+        "DUNSTALL PARK": "Wolverhampton",
+        "EPSOM": "Epsom",
         "EPSOM DOWNS": "Epsom",
+        "FAIR GROUNDS": "Fair Grounds",
         "FONTWELL": "Fontwell Park",
+        "FONTWELL PARK": "Fontwell Park",
+        "GREAT YARMOUTH": "Great Yarmouth",
         "GULFSTREAM": "Gulfstream Park",
         "GULFSTREAM PARK": "Gulfstream Park",
         "HAYDOCK": "Haydock Park",
+        "HAYDOCK PARK": "Haydock Park",
+        "HOVE": "Hove",
         "KEMPTON": "Kempton Park",
+        "KEMPTON PARK": "Kempton Park",
+        "LAUREL PARK": "Laurel Park",
         "LINGFIELD": "Lingfield Park",
         "LINGFIELD PARK": "Lingfield Park",
-        "NEWMARKET (ROWLEY)": "Newmarket",
-        "NEWMARKET (JULY)": "Newmarket",
+        "LOS ALAMITOS": "Los Alamitos",
+        "MARONAS": "Maronas",
+        "MUSSELBURGH": "Musselburgh",
+        "NAAS": "Naas",
+        "NEWCASTLE": "Newcastle",
+        "NEWMARKET": "Newmarket",
+        "OXFORD": "Oxford",
+        "PAU": "Pau",
         "SAM HOUSTON": "Sam Houston",
         "SAM HOUSTON RACE PARK": "Sam Houston",
         "SANDOWN": "Sandown Park",
         "SANDOWN PARK": "Sandown Park",
         "SANTA ANITA": "Santa Anita",
+        "SHEFFIELD": "Sheffield",
         "STRATFORD": "Stratford-on-Avon",
-        "YARMOUTH": "Great Yarmouth",
-        "CURRAGH": "Curragh",
-        "DOWN ROYAL": "Down Royal",
-        "DELTA DOWNS": "Delta Downs",
-        "FAIR GROUNDS": "Fair Grounds",
-        "LAUREL PARK": "Laurel Park",
-        "LOS ALAMITOS": "Los Alamitos",
-        "MUSSELBURGH": "Musselburgh",
-        "NEWCASTLE": "Newcastle",
         "SUNLAND PARK": "Sunland Park",
         "TAMPA BAY DOWNS": "Tampa Bay Downs",
+        "THURLES": "Thurles",
         "TURF PARADISE": "Turf Paradise",
+        "UTTOXETER": "Uttoxeter",
         "VINCENNES": "Vincennes",
+        "WARWICK": "Warwick",
         "WETHERBY": "Wetherby",
+        "WOLVERHAMPTON": "Wolverhampton",
+        "YARMOUTH": "Great Yarmouth",
     }
 
-    if cleaned_upper in VENUE_MAP:
-        return VENUE_MAP[cleaned_upper]
+    # Direct match
+    if upper_track in VENUE_MAP:
+        return VENUE_MAP[upper_track]
 
-    title_cased = cleaned.title()
-    if title_cased in VENUE_MAP.values():
-        return title_cased
+    # Prefix match (sort by length desc to avoid partial matches on shorter names)
+    for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
+        if upper_name.startswith(known_track):
+            return VENUE_MAP[known_track]
 
-    return title_cased
+    return track_part.title()
 
 
 def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
@@ -613,7 +660,15 @@ class SmartFetcher:
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
         kwargs.pop("url", None)
-        engines = sorted(self._engine_health.keys(), key=lambda e: self._engine_health[e], reverse=True)
+        # Check if engines are available before sorting
+        available_engines = [e for e in self._engine_health.keys()]
+        if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
+            available_engines.remove(BrowserEngine.CURL_CFFI)
+        if not ASYNC_SESSIONS_AVAILABLE:
+            for e in [BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT]:
+                if e in available_engines: available_engines.remove(e)
+
+        engines = sorted(available_engines, key=lambda e: self._engine_health[e], reverse=True)
         if self.strategy.primary_engine in engines:
             engines.remove(self.strategy.primary_engine)
             engines.insert(0, self.strategy.primary_engine)
@@ -642,7 +697,7 @@ class SmartFetcher:
                 fingerprint = self.fingerprint_gen.generate()
                 headers = self.header_gen.generate()
                 # Ensure User-Agent is consistent between fingerprint and headers
-                headers['User-Agent'] = fingerprint.navigator.user_agent
+                headers['User-Agent'] = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
                 kwargs["headers"] = headers
                 self.logger.debug("Generated browserforge headers", engine=engine.value)
             except Exception as e:
@@ -1887,6 +1942,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return {"races": ard, "date": date, "source": self.source_name} if ard else None
 
     def _extract_races_from_page(self, resp, date: str) -> List[Dict[str, Any]]:
+        if Selector is None:
+            self.logger.error("Scrapling Selector not available")
+            return []
         rd, page = [], Selector(resp.text)
         relems, used = [], None
         for s in self.RACE_CONTAINER_SELECTORS:
@@ -1944,7 +2002,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         page = rd.get("selector")
         hc = rd.get("html", "")
         if not page:
-            if not hc: return None
+            if not hc or Selector is None: return None
             page = Selector(hc)
         tn, rnum = rd.get("track", "Unknown"), rd.get("race_number", 1)
         st = self._parse_post_time(rd.get("post_time_text"), page, ds)
@@ -3390,9 +3448,10 @@ class FavoriteToPlaceMonitor:
         for race, adapter_name in races_with_adapters:
             try:
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number
+                # Stable key: Canonical Venue + Race Number + Date + Discipline
                 canonical_venue = get_canonical_venue(summary.track)
-                key = f"{canonical_venue}|{summary.race_number}"
+                date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
+                key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -3729,7 +3788,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
 
 
-class TimeformAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
+class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """
     Adapter for timeform.com, migrated to BaseAdapterV3 and standardized on selectolax.
     """
@@ -4164,6 +4223,20 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     if label and value:
                         dividends[label] = value
 
+        # Derive race number from header or navigation
+        race_num = 1
+        race_num_match = re.search(r'Race\s+(\d+)', parser.text())
+        if race_num_match:
+            race_num = int(race_num_match.group(1))
+        else:
+            # Fallback: find active time in navigation
+            time_links = parser.css('a[data-test-selector="RC-raceTime"]')
+            for i, link in enumerate(time_links):
+                cls = link.attributes.get("class", "")
+                if "active" in cls or "rp-raceTimeCourseName__time" in cls:
+                    race_num = i + 1
+                    break
+
         # Extract runners (finishers)
         runners = []
         for row in parser.css('div[data-test-selector="RC-resultRunner"]'):
@@ -4271,7 +4344,7 @@ async def run_discovery(target_dates: List[str]):
         race_map = {}
         for race in all_races_raw:
             canonical_venue = get_canonical_venue(race.venue)
-            # Use Canonical Venue + Race Number + Date as stable key
+            # Use Canonical Venue + Race Number + Date + Discipline as stable key
             st = race.start_time
             if isinstance(st, str):
                 try:
@@ -4280,7 +4353,8 @@ async def run_discovery(target_dates: List[str]):
                     pass
 
             date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            key = f"{canonical_venue}|{race.race_number}|{date_str}"
+            disc = (race.discipline or "T")[:1].upper()
+            key = f"{canonical_venue}|{race.race_number}|{date_str}|{disc}"
             
             if key not in race_map:
                 race_map[key] = race
@@ -4288,11 +4362,14 @@ async def run_discovery(target_dates: List[str]):
                 existing = race_map[key]
                 # Merge runners/odds
                 for nr in race.runners:
-                    er = next((r for r in existing.runners if r.number == nr.number), None)
+                    # Match by number OR name (if numbers are missing)
+                    er = next((r for r in existing.runners if (r.number != 0 and r.number == nr.number) or (r.name.lower() == nr.name.lower())), None)
                     if er:
                         er.odds.update(nr.odds)
                         if not er.win_odds and nr.win_odds:
                             er.win_odds = nr.win_odds
+                        if not er.number and nr.number:
+                            er.number = nr.number
                     else:
                         existing.runners.append(nr)
 
@@ -4312,13 +4389,10 @@ async def run_discovery(target_dates: List[str]):
         # Generate Grid & Goldmine
         grid = generate_summary_grid(qualified, all_races=unique_races)
         logger.info("Summary Grid Generated")
-        # For CI/CD summary, we still want it printed or at least available
-        # but the requirement was to avoid prints in production modules.
-        # However, run_discovery is likely the main entry point.
-        # I'll keep the print(grid) but maybe wrap it or use logger.
-        # Actually, structured logging for a grid is hard.
-        # I'll use logger.info with the grid.
-        logger.info("\n" + grid)
+
+        # Output the grid clearly without messing up structured logs
+        print("\n" + grid + "\n")
+
         with open("summary_grid.txt", "w") as f: f.write(grid)
 
         gm_report = generate_goldmine_report(qualified, all_races=unique_races)
