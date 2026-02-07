@@ -181,8 +181,9 @@ class ResultRace(fortuna.Race):
     def canonical_key(self) -> str:
         """Generate a canonical key for matching, including discipline if available."""
         date_str = self.start_time.strftime('%Y%m%d')
+        time_str = self.start_time.strftime('%H%M')
         disc = (self.discipline or "T")[:1].upper()
-        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{disc}"
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{time_str}|{disc}"
 
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
         """Get top N finishers sorted by position."""
@@ -256,8 +257,9 @@ class AuditorEngine:
                 if not result:
                     # Lenient fallback: try matching without discipline if discipline was the only difference
                     key_parts = tip_key.split("|")
-                    if len(key_parts) >= 3:
-                        key_no_disc = "|".join(key_parts[:3])
+                    if len(key_parts) >= 4:
+                        # Match venue|race|date|time
+                        key_no_disc = "|".join(key_parts[:4])
                         for res_key, res_obj in results_map.items():
                             if res_key.startswith(key_no_disc):
                                 result = res_obj
@@ -302,8 +304,9 @@ class AuditorEngine:
         try:
             st = datetime.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
             date_str = st.strftime('%Y%m%d')
+            time_str = st.strftime('%H%M')
             disc = discipline[:1].upper()
-            return f"{fortuna.get_canonical_venue(venue)}|{race_number}|{date_str}|{disc}"
+            return f"{fortuna.get_canonical_venue(venue)}|{race_number}|{date_str}|{time_str}|{disc}"
         except (ValueError, TypeError):
             return None
 
