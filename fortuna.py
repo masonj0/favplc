@@ -366,7 +366,9 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
         "GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
         "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
-        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY"
+        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
+        "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
+        "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND "
     ]
 
     upper_name = cleaned.upper()
@@ -1077,6 +1079,130 @@ class BaseAdapterV3(ABC):
 # ============================================================================
 # ADAPTER IMPLEMENTATIONS
 # ============================================================================
+
+# ----------------------------------------
+# SkyRacingWorldAdapter
+# ----------------------------------------
+class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
+    BASE_URL: ClassVar[str] = "https://www.skyracingworld.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, timeout=45)
+
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.skyracingworld.com")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Index for the day
+        index_url = f"/form-guide/thoroughbred/{date}"
+        resp = await self.make_request("GET", index_url, headers=self._get_headers())
+        if not resp or not resp.text: return None
+        self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
+
+        parser = HTMLParser(resp.text)
+        metadata = []
+        for link in parser.css("a.fg-race-link"):
+            url = link.attributes.get("href")
+            if url:
+                if not url.startswith("http"):
+                    url = self.BASE_URL + url
+                metadata.append({"url": url})
+
+        if not metadata: return None
+        # Limit to first 50 to avoid hammering
+        pages = await self._fetch_race_pages_concurrent(metadata[:50], self._get_headers(), semaphore_limit=5)
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        except: return []
+        races: List[Race] = []
+        for item in raw_data["pages"]:
+            html_content = item.get("html")
+            if not html_content: continue
+            try:
+                race = self._parse_single_race(html_content, item.get("url", ""), race_date)
+                if race: races.append(race)
+            except: pass
+        return races
+
+    def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
+        parser = HTMLParser(html_content)
+
+        # Extract venue and time from header
+        # Format usually: "14:30 LINGFIELD" or similar
+        header = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
+        if not header: return None
+
+        header_text = clean_text(header.text())
+        match = re.search(r"(\d{1,2}:\d{2})\s+(.+)", header_text)
+        if match:
+            time_str = match.group(1)
+            venue = normalize_venue_name(match.group(2))
+        else:
+            venue = normalize_venue_name(header_text)
+            time_str = "12:00" # Fallback
+
+        try:
+            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
+        except:
+            start_time = datetime.combine(race_date, datetime.min.time())
+
+        # Race number from URL
+        race_num = 1
+        num_match = re.search(r'/R(\d+)$', url)
+        if num_match:
+            race_num = int(num_match.group(1))
+
+        runners = []
+        # Try different selectors for runners
+        for row in parser.css(".runner_row") or parser.css(".mobile-runner"):
+            try:
+                name_node = row.css_first(".horseName") or row.css_first("a[href*='/horse/']")
+                if not name_node: continue
+                name = clean_text(name_node.text())
+
+                num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]")
+                number = 0
+                if num_node:
+                    if num_node.attributes.get("data-tab-no"):
+                        number = int(num_node.attributes.get("data-tab-no"))
+                    else:
+                        digits = "".join(filter(str.isdigit, num_node.text()))
+                        if digits: number = int(digits)
+
+                scratched = "strikeout" in (row.attributes.get("class") or "").lower() or row.attributes.get("data-scratched") == "True"
+
+                win_odds = None
+                odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
+                if odds_node:
+                    win_odds = parse_odds_to_decimal(clean_text(odds_node.text()))
+
+                od = {}
+                if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                    od[self.SOURCE_NAME] = ov
+
+                runners.append(Runner(name=name, number=number, scratched=scratched, odds=od, win_odds=win_odds))
+            except: continue
+
+        if not runners: return None
+
+        disc = detect_discipline(html_content)
+        return Race(
+            id=generate_race_id("srw", venue, start_time, race_num, disc),
+            venue=venue,
+            race_number=race_num,
+            start_time=start_time,
+            runners=runners,
+            discipline=disc,
+            source=self.SOURCE_NAME,
+            available_bets=scrape_available_bets(html_content)
+        )
 
 # ----------------------------------------
 # AtTheRacesAdapter

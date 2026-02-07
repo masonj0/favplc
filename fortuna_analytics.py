@@ -1653,22 +1653,23 @@ def generate_analytics_report(
         lines.append("")
 
     # --- 5. SUMMARY STATISTICS ---
-    if audited_tips:
-        total = len(audited_tips)
-        cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
-        total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
-        strike_rate = (cashed / total * 100) if total > 0 else 0.0
-        roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0
+    # Disabled for fine-tuning fetching/matching accuracy
+    # if audited_tips:
+    #     total = len(audited_tips)
+    #     cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    #     total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    #     strike_rate = (cashed / total * 100) if total > 0 else 0.0
+    #     roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0
 
-        lines.extend([
-            "📊 SUMMARY METRICS (LIFETIME)",
-            "-" * 40,
-            f"Total Verified Races: {total}",
-            f"Overall Strike Rate:   {strike_rate:.1f}%",
-            f"Total Net Profit:     ${total_profit:+.2f} (Using $2.00 Base Unit)",
-            f"Return on Investment:  {roi:+.1f}%",
-            ""
-        ])
+    #     lines.extend([
+    #         "📊 SUMMARY METRICS (LIFETIME)",
+    #         "-" * 40,
+    #         f"Total Verified Races: {total}",
+    #         f"Overall Strike Rate:   {strike_rate:.1f}%",
+    #         f"Total Net Profit:     ${total_profit:+.2f} (Using $2.00 Base Unit)",
+    #         f"Return on Investment:  {roi:+.1f}%",
+    #         ""
+    #     ])
 
     return "\n".join(lines)
 
