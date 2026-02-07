@@ -380,7 +380,8 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
         "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
         "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
-        "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND "
+        "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
+        "NEXT"
     ]
 
     upper_name = cleaned.upper()
@@ -418,6 +419,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CHELMSFORD": "Chelmsford",
         "CHELMSFORD CITY": "Chelmsford",
         "CURRAGH": "Curragh",
+        "DEAUVILLE": "Deauville",
         "DELTA DOWNS": "Delta Downs",
         "DONCASTER": "Doncaster",
         "DOWN ROYAL": "Down Royal",
@@ -459,6 +461,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "TAMPA BAY DOWNS": "Tampa Bay Downs",
         "THURLES": "Thurles",
         "TURF PARADISE": "Turf Paradise",
+        "TURFFONTEIN": "Turffontein",
         "UTTOXETER": "Uttoxeter",
         "VINCENNES": "Vincennes",
         "WARWICK": "Warwick",
@@ -2840,14 +2843,14 @@ def get_track_category(races_at_track: List[Any]) -> str:
         if source in ["USTrotting", "StandardbredCanada", "Harness"] or any(kw in source_lower for kw in ['harness', 'standardbred', 'trot', 'pace']):
             return 'H'
 
-    # Distance consistency check (4 or more times at that venue)
-    dist_counts = defaultdict(int)
-    for r in races_at_track:
-        dist = get_field(r, 'distance')
-        if dist:
-            dist_counts[dist] += 1
-    if dist_counts and max(dist_counts.values()) >= 4:
-        return 'H'
+    # Distance consistency check (Disabled - was mis-identifying Thoroughbred tracks)
+    # dist_counts = defaultdict(int)
+    # for r in races_at_track:
+    #     dist = get_field(r, 'distance')
+    #     if dist:
+    #         dist_counts[dist] += 1
+    # if dist_counts and max(dist_counts.values()) >= 4:
+    #     return 'H'
 
     return 'T'
 
