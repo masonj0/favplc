@@ -960,11 +960,25 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                         place_payout = parse_currency_value(val)
                         break
 
+                # SP / Odds
+                sp_node = row.css_first(".rp-horseTable__horse__sp")
+                final_odds = 0.0
+                if sp_node:
+                    sp_text = fortuna.clean_text(sp_node.text())
+                    try:
+                        if "/" in sp_text:
+                            n, d = map(int, sp_text.split("/"))
+                            final_odds = (n / d) + 1.0
+                        else:
+                            final_odds = float(sp_text)
+                    except: pass
+
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
-                    place_payout=place_payout
+                    place_payout=place_payout,
+                    final_win_odds=final_odds
                 ))
             except Exception:
                 continue
@@ -1144,10 +1158,24 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                     except ValueError:
                         pass
 
+                # Odds / SP
+                odds_node = row.css_first(".result-racecard__odds")
+                final_odds = 0.0
+                if odds_node:
+                    sp = fortuna.clean_text(odds_node.text())
+                    try:
+                        if "/" in sp:
+                            n, d = map(int, sp.split("/"))
+                            final_odds = (n / d) + 1.0
+                        else:
+                            final_odds = float(sp)
+                    except: pass
+
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
+                    final_win_odds=final_odds
                 ))
             except Exception:
                 continue
@@ -1309,10 +1337,22 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
                     if items:
                         for r in items:
                             horse = r.get("horse", {})
+                            sp = r.get("starting_price") or r.get("sp")
+                            final_odds = 0.0
+                            if sp:
+                                try:
+                                    if "/" in str(sp):
+                                        num, den = map(int, str(sp).split("/"))
+                                        final_odds = (num / den) + 1.0
+                                    else:
+                                        final_odds = float(sp)
+                                except: pass
+
                             runners.append(ResultRunner(
                                 name=horse.get("name") or r.get("name"),
                                 number=r.get("cloth_number") or r.get("saddle_cloth_number", 0),
-                                position=str(r.get("finish_position") or r.get("position", ""))
+                                position=str(r.get("finish_position") or r.get("position", "")),
+                                final_win_odds=final_odds
                             ))
                     else:
                         # Fallback to 'runners'
@@ -1561,10 +1601,24 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
                     except:
                         pass
 
+                # Final Odds / SP
+                odds_node = row.css_first(".sdc-site-racing-card__odds")
+                final_odds = 0.0
+                if odds_node:
+                    sp = fortuna.clean_text(odds_node.text())
+                    try:
+                        if "/" in sp:
+                            num, den = map(int, sp.split("/"))
+                            final_odds = (num / den) + 1.0
+                        else:
+                            final_odds = float(sp)
+                    except: pass
+
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
+                    final_win_odds=final_odds
                 ))
             except Exception:
                 continue

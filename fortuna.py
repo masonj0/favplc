@@ -2768,6 +2768,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
+            if active_runners and len(all_odds) >= 2:
+                race.metadata['predicted_2nd_fav_odds'] = all_odds[1]
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -3533,11 +3535,13 @@ class FortunaDB:
                         superfecta_combination TEXT,
                         top1_place_payout REAL,
                         top2_place_payout REAL,
+                        predicted_2nd_fav_odds REAL,
                         audit_timestamp TEXT
                     )
                 """)
-                # Composite index for deduplication
-                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_report ON tips (race_id, report_date)")
+                # Composite index for deduplication - changed to race_id only for better deduplication
+                conn.execute("DROP INDEX IF EXISTS idx_race_report")
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
@@ -3556,6 +3560,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN top2_place_payout REAL")
                 if "discipline" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
+                if "predicted_2nd_fav_odds" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN predicted_2nd_fav_odds REAL")
 
         await self._run_in_executor(_init)
 
@@ -3629,11 +3635,11 @@ class FortunaDB:
             if not race_ids: return
 
             placeholders = ",".join(["?"] * len(race_ids))
-            cutoff = (now - timedelta(hours=dedup_window_hours)).isoformat()
 
+            # Use a more absolute check to ensure distinct races across all time
             cursor = conn.execute(
-                f"SELECT race_id FROM tips WHERE race_id IN ({placeholders}) AND report_date > ?",
-                (*race_ids, cutoff)
+                f"SELECT race_id FROM tips WHERE race_id IN ({placeholders})",
+                (*race_ids,)
             )
             already_logged = {row["race_id"] for row in cursor.fetchall()}
 
@@ -3647,7 +3653,8 @@ class FortunaDB:
                         tip.get("discipline"), tip.get("start_time"), report_date,
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
-                        tip.get("top_five"), tip.get("selection_number")
+                        tip.get("top_five"), tip.get("selection_number"),
+                        tip.get("predicted_2nd_fav_odds")
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -3656,8 +3663,8 @@ class FortunaDB:
                     conn.executemany("""
                         INSERT OR IGNORE INTO tips (
                             race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            is_goldmine, gap12, top_five, selection_number, predicted_2nd_fav_odds
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -3872,7 +3879,8 @@ class HotTipsTracker:
                 "is_goldmine": is_goldmine,
                 "1Gap2": gap12,
                 "discipline": r.discipline,
-                "top_five": r.top_five_numbers
+                "top_five": r.top_five_numbers,
+                "predicted_2nd_fav_odds": r.metadata.get('predicted_2nd_fav_odds')
             }
             new_tips.append(tip_data)
 
