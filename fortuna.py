@@ -44,6 +44,7 @@ from typing import (
 import httpx
 import pandas as pd
 import sqlite3
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 import structlog
 from pydantic import (
@@ -108,6 +109,8 @@ T = TypeVar("T")
 RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
+EASTERN = ZoneInfo("America/New_York")
+
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
@@ -235,7 +238,7 @@ class OddsData(FortunaBaseModel):
     win: Optional[JsonDecimal] = None
     place: Optional[JsonDecimal] = None
     source: str
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(EASTERN))
 
 
 class Runner(FortunaBaseModel):
@@ -276,10 +279,11 @@ class Race(FortunaBaseModel):
 
     @field_validator("start_time", mode="after")
     @classmethod
-    def ensure_utc(cls, v: datetime) -> datetime:
+    def ensure_eastern(cls, v: datetime) -> datetime:
+        """Ensures all race start times are in US Eastern Time."""
         if v.tzinfo is None:
-            return v.replace(tzinfo=timezone.utc)
-        return v.astimezone(timezone.utc)
+            return v.replace(tzinfo=EASTERN)
+        return v.astimezone(EASTERN)
     source: str
     discipline: Optional[str] = None
     distance: Optional[str] = None
@@ -317,6 +321,18 @@ def get_canonical_venue(name: Optional[str]) -> str:
     # Remove special characters, lowercase, strip
     res = re.sub(r"[^a-z0-9]", "", norm.lower())
     return res or "unknown"
+
+
+def now_eastern() -> datetime:
+    """Returns the current time in US Eastern Time."""
+    return datetime.now(EASTERN)
+
+
+def to_eastern(dt: datetime) -> datetime:
+    """Converts a datetime object to US Eastern Time."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=EASTERN)
+    return dt.astimezone(EASTERN)
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -906,7 +922,7 @@ class DebugMixin:
         try:
             d = Path("debug_snapshots")
             d.mkdir(parents=True, exist_ok=True)
-            f = d / f"{context}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.html"
+            f = d / f"{context}_{datetime.now(EASTERN).strftime('%Y%m%d_%H%M%S')}.html"
             with open(f, "w", encoding="utf-8") as out:
                 if url: out.write(f"<!-- URL: {url} -->\n")
                 out.write(content)
@@ -1264,7 +1280,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now(timezone.utc).date()
+        except: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             if not item or not item.get("html"): continue
@@ -1356,7 +1372,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except: race_date = datetime.now(timezone.utc).date()
+        except: race_date = datetime.now(EASTERN).date()
         item = raw_data["pages"][0]
         parser = HTMLParser(item.get("html", ""))
         races: List[Race] = []
@@ -1554,7 +1570,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now(timezone.utc).date()
+        except: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1629,7 +1645,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         try: data = resp.json()
         except: return None
         if not isinstance(data, list): return None
-        return {"venues": data, "date": date, "fetched_at": datetime.now(timezone.utc).isoformat()}
+        return {"venues": data, "date": date, "fetched_at": datetime.now(EASTERN).isoformat()}
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
@@ -1715,7 +1731,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now(timezone.utc).date()
+        except: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1832,7 +1848,7 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
                         if ov := create_odds_data(self.source_name, float(rp)): od[self.source_name] = ov
                     runners.append(Runner(name=str(row.get("runner_name", "Unknown")), number=int(row.get("saddle_cloth", 0)), odds=od))
                 vn = normalize_venue_name(str(ri.get("meeting_name", "")))
-                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(timezone.utc), runners=runners, source=self.source_name, discipline="Thoroughbred"))
+                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(EASTERN), runners=runners, source=self.source_name, discipline="Thoroughbred"))
             return races
         except: return []
 
@@ -1909,14 +1925,14 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             parts = ts.replace("Post Time:", "").strip().split()
             if len(parts) >= 2:
                 dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", "%Y-%m-%d %I:%M %p")
-                return dt.replace(tzinfo=timezone.utc)
+                return dt.replace(tzinfo=EASTERN)
         except: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
             dt = datetime.strptime(ds, "%Y-%m-%d")
-            return dt.replace(hour=12, minute=0, tzinfo=timezone.utc)
+            return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
         except:
-            return datetime.now(timezone.utc)
+            return datetime.now(EASTERN)
 
 # ----------------------------------------
 # TwinSpiresAdapter
@@ -1939,6 +1955,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         ard = []
+        last_err = None
 
         async def fetch_disc(disc):
             url = f"{self.BASE_URL}/bet/todays-races/{disc}"
@@ -1979,20 +1996,37 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     relems, used = el, s
                     break
             except: continue
-        if not relems: return [{"html": resp.text, "selector": page, "track": "Unknown", "race_number": 0, "date": date, "full_page": True}]
+
+        if not relems:
+            return [{"html": resp.text, "selector": page, "track": "Unknown", "race_number": 0, "date": date, "full_page": True}]
+
+        track_counters = defaultdict(int)
+        last_track = "Unknown"
+
         for i, relem in enumerate(relems, 1):
             try:
                 html_str = str(relem.html) if hasattr(relem, 'html') else str(relem)
-                tn = self._find_with_selectors(relem, self.TRACK_NAME_SELECTORS) or f"Track {i}"
+
+                # Try to find track name in the card, but fallback to the last seen track
+                # (addressing grouped race cards)
+                tn = self._find_with_selectors(relem, self.TRACK_NAME_SELECTORS)
+                if tn:
+                    last_track = tn.strip()
+
+                venue = last_track
+
+                track_counters[venue] += 1
+                rnum = track_counters[venue] # Track-specific index as default (Fixes Race 20 issue)
+
                 rn_txt = self._find_with_selectors(relem, self.RACE_NUMBER_SELECTORS)
-                rnum = i
                 if rn_txt:
                     digits = "".join(filter(str.isdigit, rn_txt))
                     if digits: rnum = int(digits)
+
                 rd.append({
                     "html": html_str,
                     "selector": relem,
-                    "track": tn.strip(),
+                    "track": venue,
                     "race_number": rnum,
                     "post_time_text": self._find_with_selectors(relem, self.POST_TIME_SELECTORS),
                     "distance": self._find_with_selectors(relem, ['[class*="distance"]', '[class*="Distance"]', '[data-distance]', ".race-distance"]),
@@ -2015,7 +2049,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or "races" not in raw_data: return []
-        rl, ds, parsed = raw_data["races"], raw_data.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d")), []
+        rl, ds, parsed = raw_data["races"], raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d")), []
         for rd in rl:
             try:
                 r = self._parse_single_race(rd, ds)
@@ -2058,15 +2092,25 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     p = self._parse_time_string(e.text.strip() if hasattr(e, 'text') else str(e).strip(), bd)
                     if p: return p
             except: continue
-        return datetime.combine(bd, datetime.now(timezone.utc).time()) + timedelta(hours=1)
+        return datetime.combine(bd, datetime.now(EASTERN).time()) + timedelta(hours=1)
 
     def _parse_time_string(self, ts: str, bd) -> Optional[datetime]:
         if not ts: return None
         tc = re.sub(r"\s+(EST|EDT|CST|CDT|MST|MDT|PST|PDT|ET|PT|CT|MT)$", "", ts, flags=re.I).strip()
         m = re.search(r"(\d+)\s*(?:min|mtp)", tc, re.I)
-        if m: return datetime.now(timezone.utc) + timedelta(minutes=int(m.group(1)))
+        if m: return now_eastern() + timedelta(minutes=int(m.group(1)))
+
         for f in ['%I:%M %p', '%I:%M%p', '%H:%M', '%I:%M:%S %p']:
-            try: return datetime.combine(bd, datetime.strptime(tc, f).time())
+            try:
+                t = datetime.strptime(tc, f).time()
+                # Heuristic: If time is between 1:00 and 7:00 and no AM/PM was explicitly in the format
+                # (or even if it was, but we are suspicious), for US night tracks like Turfway,
+                # it's likely PM. But %I requires %p. If %H was used and gave < 12, check if it should be PM.
+                if f == '%H:%M' and 1 <= t.hour <= 7:
+                    # In US horse racing, 1-7 AM is rare, 1-7 PM is common.
+                    t = t.replace(hour=t.hour + 12)
+
+                return datetime.combine(bd, t)
             except: continue
         return None
 
@@ -2210,11 +2254,11 @@ class TrifectaAnalyzer(BaseAnalyzer):
             return False
 
         # Apply global timing cutoff (30m ago)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         cutoff = now - timedelta(minutes=30)
         st = race.start_time
         if st.tzinfo is None:
-            st = st.replace(tzinfo=timezone.utc)
+            st = st.replace(tzinfo=EASTERN)
         if st < cutoff:
             return False
 
@@ -2326,14 +2370,14 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
     def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
         """Returns races with a perfect score, applying global timing and chalk filters."""
         qualified = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         cutoff = now - timedelta(minutes=30)
 
         for race in races:
             # 1. Timing Filter: Ignore races more than 30 minutes in the past
             st = race.start_time
             if st.tzinfo is None:
-                st = st.replace(tzinfo=timezone.utc)
+                st = st.replace(tzinfo=EASTERN)
 
             if st < cutoff:
                 log.debug("Excluding past race", venue=race.venue, start_time=st)
@@ -2661,7 +2705,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
 
     goldmines.sort(key=goldmine_sort_key)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(EASTERN)
     immediate_gold_superfecta = []
     immediate_gold = []
     remaining_gold = []
@@ -2677,7 +2721,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
 
         if start_time:
             if start_time.tzinfo is None:
-                start_time = start_time.replace(tzinfo=timezone.utc)
+                start_time = start_time.replace(tzinfo=EASTERN)
 
             diff = (start_time - now).total_seconds() / 60
             if 0 <= diff <= 20:
@@ -2778,8 +2822,8 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
         start_time_raw = tip.get("start_time", "")
 
         try:
-            st = datetime.fromisoformat(start_time_raw)
-            time_str = st.strftime("%Y-%m-%d %H:%M")
+            st = datetime.fromisoformat(start_time_raw.replace('Z', '+00:00'))
+            time_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
         except:
             time_str = str(start_time_raw)[:16]
 
@@ -2810,7 +2854,7 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
 def generate_next_to_jump(races: List[Any]) -> str:
     """Generate the NEXT TO JUMP section."""
     lines = ["", "", "NEXT TO JUMP", "------------"]
-    now = datetime.now(timezone.utc)
+    now = datetime.now(EASTERN)
     upcoming = []
     for r in races:
         r_time = get_field(r, 'start_time')
@@ -2822,7 +2866,7 @@ def generate_next_to_jump(races: List[Any]) -> str:
 
         if r_time:
             if r_time.tzinfo is None:
-                r_time = r_time.replace(tzinfo=timezone.utc)
+                r_time = r_time.replace(tzinfo=EASTERN)
             if r_time > now:
                 upcoming.append((r, r_time))
 
@@ -2843,7 +2887,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     Primary section: Races with Superfectas (Explicit or T-tracks with field > 6).
     Secondary section: All remaining races.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(EASTERN)
 
     def is_superfecta_explicit(r):
         available_bets = get_field(r, 'available_bets', [])
@@ -2959,7 +3003,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
 
             if start_time:
                 if start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=timezone.utc)
+                    start_time = start_time.replace(tzinfo=EASTERN)
 
                 diff = (start_time - now).total_seconds() / 60
                 if 0 <= diff <= 20:
@@ -3093,6 +3137,7 @@ class FortunaDB:
                         race_id TEXT NOT NULL,
                         venue TEXT NOT NULL,
                         race_number INTEGER NOT NULL,
+                        discipline TEXT,
                         start_time TEXT NOT NULL,
                         report_date TEXT NOT NULL,
                         is_goldmine INTEGER NOT NULL,
@@ -3131,10 +3176,38 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN top1_place_payout REAL")
                 if "top2_place_payout" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN top2_place_payout REAL")
+                if "discipline" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
 
         await self._run_in_executor(_init)
+        await self.migrate_utc_to_eastern()
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path)
+        self.logger.info("Database initialized and migrated to Eastern Time", path=self.db_path)
+
+    async def migrate_utc_to_eastern(self) -> None:
+        """Migrates existing database records from UTC to US Eastern Time."""
+        def _migrate():
+            conn = self._get_conn()
+            cursor = conn.execute("SELECT id, start_time, report_date, audit_timestamp FROM tips WHERE start_time LIKE '%+00:00' OR report_date LIKE '%+00:00'")
+            rows = cursor.fetchall()
+            if not rows: return
+
+            self.logger.info("Migrating legacy UTC timestamps to Eastern", count=len(rows))
+            with conn:
+                for row in rows:
+                    updates = {}
+                    for col in ["start_time", "report_date", "audit_timestamp"]:
+                        val = row[col]
+                        if val and ("+00:00" in val or val.endswith("Z")):
+                            try:
+                                dt_utc = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                                dt_eastern = dt_utc.astimezone(EASTERN)
+                                updates[col] = dt_eastern.isoformat()
+                            except: pass
+                    if updates:
+                        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+                        conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+        await self._run_in_executor(_migrate)
 
     async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 4):
         """Logs new tips to the database with atomic deduplication."""
@@ -3142,7 +3215,7 @@ class FortunaDB:
 
         def _log():
             conn = self._get_conn()
-            now = datetime.now(timezone.utc)
+            now = datetime.now(EASTERN)
             with conn:
                 for tip in tips:
                     race_id = tip.get("race_id")
@@ -3158,19 +3231,19 @@ class FortunaDB:
                         try:
                             lr_str = last_report["report_date"]
                             lr_dt = datetime.fromisoformat(lr_str)
-                            if lr_dt.tzinfo is None: lr_dt = lr_dt.replace(tzinfo=timezone.utc)
+                            if lr_dt.tzinfo is None: lr_dt = lr_dt.replace(tzinfo=EASTERN)
                             if (now - lr_dt).total_seconds() < dedup_window_hours * 3600:
                                 continue
                         except: pass
 
                     conn.execute("""
                         INSERT OR IGNORE INTO tips (
-                            race_id, venue, race_number, start_time, report_date,
+                            race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         race_id, tip.get("venue"), tip.get("race_number"),
-                        tip.get("start_time"), report_date,
+                        tip.get("discipline"), tip.get("start_time"), report_date,
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number")
@@ -3183,7 +3256,7 @@ class FortunaDB:
 
         def _get():
             conn = self._get_conn()
-            now = datetime.now(timezone.utc)
+            now = datetime.now(EASTERN)
             cutoff = (now - timedelta(hours=lookback_hours)).isoformat()
 
             cursor = conn.execute(
@@ -3244,7 +3317,7 @@ class FortunaDB:
                     outcome.get("superfecta_combination"),
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
-                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(EASTERN).isoformat(),
                     race_id
                 ))
         await self._run_in_executor(_update)
@@ -3339,7 +3412,7 @@ class HotTipsTracker:
         if not races:
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         report_date = now.isoformat()
         new_tips = []
 
@@ -3351,7 +3424,7 @@ class HotTipsTracker:
             if isinstance(st, str):
                 try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
                 except: continue
-            if st.tzinfo is None: st = st.replace(tzinfo=timezone.utc)
+            if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
             # Reject races too far in the future
             if st > future_limit:
@@ -3369,6 +3442,7 @@ class HotTipsTracker:
                 "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
                 "1Gap2": gap12,
+                "discipline": r.discipline,
                 "top_five": r.top_five_numbers
             }
             new_tips.append(tip_data)
@@ -3462,7 +3536,7 @@ class FavoriteToPlaceMonitor:
         if target_dates:
             self.target_dates = target_dates
         else:
-            today = datetime.now(timezone.utc)
+            today = datetime.now(EASTERN)
             tomorrow = today + timedelta(days=1)
             self.target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
 
@@ -3565,9 +3639,9 @@ class FavoriteToPlaceMonitor:
     def _calculate_mtp(self, start_time: datetime) -> Optional[int]:
         """Calculate minutes to post."""
         if not start_time: return None
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=timezone.utc)
+            start_time = start_time.replace(tzinfo=EASTERN)
         delta = start_time - now
         return int(delta.total_seconds() / 60)
 
@@ -3602,14 +3676,14 @@ class FavoriteToPlaceMonitor:
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):
         """Build and deduplicate summary list, with optional time window filtering."""
         race_map = {}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
 
         for race, adapter_name in races_with_adapters:
             try:
                 # Time window filtering
                 st = race.start_time
-                if st.tzinfo is None: st = st.replace(tzinfo=timezone.utc)
+                if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
                 if cutoff and (st < now - timedelta(minutes=30) or st > cutoff):
                     continue
@@ -3645,7 +3719,8 @@ class FavoriteToPlaceMonitor:
         ]
         for r in sorted(self.all_races, key=lambda x: (x.discipline, x.track, x.race_number)):
             superfecta = "Yes" if r.superfecta_offered else "No"
-            st = r.start_time.strftime("%Y-%m-%d %H:%M") if r.start_time else "Unknown"
+            # Display time in Eastern with ET suffix
+            st = r.start_time.strftime("%Y-%m-%d %H:%M ET") if r.start_time else "Unknown"
             lines.append(f"{r.discipline:<5} {r.track[:24]:<25} {r.race_number:<4} {r.field_size:<6} {superfecta:<6} {r.adapter[:24]:<25} {st:<20}")
         lines.append("-" * 120)
         lines.append(f"Total races: {len(self.all_races)}")
@@ -3689,7 +3764,7 @@ class FavoriteToPlaceMonitor:
             "=" * 140,
             "🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140),
             "=" * 140,
-            f"Updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Updated: {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')} ET",
             "Criteria: MTP <= 20 minutes AND 2nd Favorite Odds >= 5.0",
             "-" * 140
         ]
@@ -3738,7 +3813,7 @@ class FavoriteToPlaceMonitor:
         bn = self.get_bet_now_races()
         yml = self.get_you_might_like_races()
         data = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(EASTERN).isoformat(),
             "target_dates": self.target_dates,
             "total_races": len(self.all_races),
             "bet_now_count": len(bn),
@@ -3757,7 +3832,7 @@ class FavoriteToPlaceMonitor:
         """Append races to persistent history for future result matching."""
         if not races: return
         history_file = "prediction_history.jsonl"
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(EASTERN).isoformat()
         try:
             with open(history_file, 'a') as f:
                 for r in races:
@@ -4382,7 +4457,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         time_str = time_node.text(strip=True)
 
         try:
-            start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
         except:
             return None
 
@@ -4483,7 +4558,7 @@ async def run_discovery(
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
 
     try:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
 
         all_races_raw = []
@@ -4544,7 +4619,7 @@ async def run_discovery(
                         continue
 
                 if st.tzinfo is None:
-                    st = st.replace(tzinfo=timezone.utc)
+                    st = st.replace(tzinfo=EASTERN)
 
                 if now <= st <= cutoff:
                     filtered_races.append(r)
@@ -4644,7 +4719,7 @@ async def run_discovery(
         report_data = {
             "races": [r.model_dump(mode='json') for r in qualified],
             "analysis_metadata": result.get("criteria", {}),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(EASTERN).isoformat(),
         }
         with open("qualified_races.json", "w") as f:
             json.dump(report_data, f, indent=4)
@@ -4678,7 +4753,7 @@ async def main_all_in_one():
     if args.date:
         target_dates = [args.date]
     else:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         future = now + timedelta(hours=args.hours)
 
         target_dates = [now.strftime("%Y-%m-%d")]
