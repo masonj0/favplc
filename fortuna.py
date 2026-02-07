@@ -1105,11 +1105,22 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         index_url = f"/racecards/{date}"
+        intl_url = f"/racecards/international/{date}"
+
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not resp or not resp.text: raise AdapterHttpError(self.source_name, 500, index_url)
-        self._save_debug_snapshot(resp.text, f"atr_index_{date}")
-        parser = HTMLParser(resp.text)
-        metadata = self._extract_race_metadata(parser)
+        intl_resp = await self.make_request("GET", intl_url, headers=self._get_headers())
+
+        metadata = []
+        if resp and resp.text:
+            self._save_debug_snapshot(resp.text, f"atr_index_{date}")
+            parser = HTMLParser(resp.text)
+            metadata.extend(self._extract_race_metadata(parser))
+
+        if intl_resp and intl_resp.text:
+            self._save_debug_snapshot(intl_resp.text, f"atr_intl_index_{date}")
+            intl_parser = HTMLParser(intl_resp.text)
+            metadata.extend(self._extract_race_metadata(intl_parser))
+
         if not metadata: return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
@@ -1816,7 +1827,31 @@ class TabAdapter(BaseAdapterV3):
         try: data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
         except: return None
         if not data or "meetings" not in data: return None
-        return {"meetings": data["meetings"], "date": date}
+
+        # TAB meetings often only have race headers. We need to fetch each meeting's details
+        # to get runners and odds.
+        all_meetings = []
+        for m in data["meetings"]:
+            try:
+                vn = m.get("meetingName")
+                mt = m.get("meetingType")
+                if vn and mt:
+                    # Endpoint for meeting details (includes races and runners)
+                    m_url = f"{self.base_url}/dates/{date}/meetings/{mt}/{vn}?jurisdiction=VIC"
+                    m_resp = await self.make_request("GET", m_url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
+                    if m_resp:
+                        try:
+                            m_data = m_resp.json() if hasattr(m_resp, "json") else json.loads(m_resp.text)
+                            if m_data:
+                                all_meetings.append(m_data)
+                                continue
+                        except: pass
+                # Fallback to the summary data if detail fetch fails
+                all_meetings.append(m)
+            except:
+                all_meetings.append(m)
+
+        return {"meetings": all_meetings, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or "meetings" not in raw_data: return []
@@ -1825,12 +1860,50 @@ class TabAdapter(BaseAdapterV3):
             vn = normalize_venue_name(m.get("meetingName"))
             mt = m.get("meetingType", "R")
             disc = {"R": "Thoroughbred", "H": "Harness", "G": "Greyhound"}.get(mt, "Thoroughbred")
+
             for rd in m.get("races", []):
-                rn, rst = rd.get("raceNumber"), rd.get("raceStartTime")
-                if not rst: continue
+                rn = rd.get("raceNumber")
+                rst = rd.get("raceStartTime")
+                if not rst or not rn: continue
+
                 try: st = datetime.fromisoformat(rst.replace("Z", "+00:00"))
                 except: continue
-                races.append(Race(id=generate_race_id("tab", vn, st, rn, disc), venue=vn, race_number=rn, start_time=st, runners=[], discipline=disc, source=self.source_name, available_bets=[]))
+
+                runners = []
+                # If detail data was fetched, extract runners
+                for runner_data in rd.get("runners", []):
+                    name = runner_data.get("runnerName", "Unknown")
+                    num = runner_data.get("runnerNumber")
+
+                    # Try to get win odds
+                    win_odds = None
+                    fixed_odds = runner_data.get("fixedOdds", {})
+                    if fixed_odds:
+                        win_odds = fixed_odds.get("returnWin") or fixed_odds.get("win")
+
+                    odds_dict = {}
+                    if win_odds:
+                        if ov := create_odds_data(self.source_name, win_odds):
+                            odds_dict[self.source_name] = ov
+
+                    runners.append(Runner(
+                        name=name,
+                        number=num,
+                        win_odds=win_odds,
+                        odds=odds_dict,
+                        scratched=runner_data.get("scratched", False)
+                    ))
+
+                races.append(Race(
+                    id=generate_race_id("tab", vn, st, rn, disc),
+                    venue=vn,
+                    race_number=rn,
+                    start_time=st,
+                    runners=runners,
+                    discipline=disc,
+                    source=self.source_name,
+                    available_bets=scrape_available_bets(str(rd))
+                ))
         return races
 
 # ----------------------------------------
@@ -1866,8 +1939,22 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
                     if pd.notna(rp):
                         if ov := create_odds_data(self.source_name, float(rp)): od[self.source_name] = ov
                     runners.append(Runner(name=str(row.get("runner_name", "Unknown")), number=int(row.get("saddle_cloth", 0)), odds=od))
+
                 vn = normalize_venue_name(str(ri.get("meeting_name", "")))
-                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(EASTERN), runners=runners, source=self.source_name, discipline="Thoroughbred"))
+
+                # Try to find a start time in the CSV
+                start_time = datetime.now(EASTERN)
+                for col in ["meetings.races.startTime", "startTime", "start_time", "time"]:
+                    if col in ri and pd.notna(ri[col]):
+                        try:
+                            # Assume UTC and convert to Eastern if it looks like ISO
+                            st_val = str(ri[col])
+                            if "T" in st_val:
+                                start_time = to_eastern(datetime.fromisoformat(st_val.replace("Z", "+00:00")))
+                            break
+                        except: pass
+
+                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=start_time, runners=runners, source=self.source_name, discipline="Thoroughbred"))
             return races
         except: return []
 
@@ -2003,20 +2090,25 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         ard = []
         last_err = None
 
-        async def fetch_disc(disc):
-            url = f"{self.BASE_URL}/bet/todays-races/{disc}"
+        async def fetch_disc(disc, region="USA"):
+            suffix = "" if region == "USA" else "?region=INT"
+            url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
             try:
                 resp = await self.make_request("GET", url, network_idle=True, wait_selector='div[class*="race"], [class*="RaceCard"], [class*="track"]')
                 if resp and resp.status == 200:
-                    self._save_debug_snapshot(resp.text, f"ts_{disc}_{date}")
+                    self._save_debug_snapshot(resp.text, f"ts_{disc}_{region}_{date}")
                     dr = self._extract_races_from_page(resp, date)
                     for r in dr: r["assigned_discipline"] = disc.capitalize()
                     return dr
             except Exception as e:
-                self.logger.error("TwinSpires fetch failed", discipline=disc, error=str(e))
+                self.logger.error("TwinSpires fetch failed", discipline=disc, region=region, error=str(e))
             return []
 
-        tasks = [fetch_disc(d) for d in ["thoroughbred", "harness", "greyhound"]]
+        # Fetch both USA and International for all disciplines
+        tasks = []
+        for d in ["thoroughbred", "harness", "greyhound"]:
+            tasks.append(fetch_disc(d, "USA"))
+            tasks.append(fetch_disc(d, "INT"))
         results = await asyncio.gather(*tasks)
         for r_list in results:
             ard.extend(r_list)
@@ -2463,7 +2555,13 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
                 race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
 
+            # Best Bet Detection:
+            # Goldmine = 2nd Fav >= 5.0, Field <= 8
+            # You Might Like = 2nd Fav >= 4.0, Field <= 8
+            is_best_bet = (len(active_runners) <= 8 and active_runners and len(all_odds) >= 2 and all_odds[1] >= 4.0)
+
             race.metadata['is_goldmine'] = is_goldmine
+            race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
             race.qualification_score = 100.0
             qualified.append(race)
@@ -2802,7 +2900,9 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             race_num = get_field(r, 'race_number')
             start_time = get_field(r, 'start_time')
             if isinstance(start_time, datetime):
-                time_str = start_time.strftime("%H:%M UTC")
+                # Ensure it's in Eastern for the display
+                st_eastern = to_eastern(start_time)
+                time_str = st_eastern.strftime("%H:%M ET")
             else:
                 time_str = str(start_time)
 
@@ -3409,6 +3509,17 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def clear_all_tips(self):
+        """Wipes all records from the tips table."""
+        if not self._initialized: await self.initialize()
+        def _clear():
+            conn = self._get_conn()
+            with conn:
+                conn.execute("DELETE FROM tips")
+            conn.execute("VACUUM")
+            self.logger.info("Database cleared (all tips deleted)")
+        await self._run_in_executor(_clear)
+
     async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
         """Migrates data from existing JSON file to SQLite with detailed error logging."""
         path = Path(json_path)
@@ -3486,6 +3597,11 @@ class HotTipsTracker:
         future_limit = now + timedelta(hours=36)
 
         for r in races:
+            # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
+            # These are marked in metadata by the analyzer.
+            if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
+                continue
+
             st = r.start_time
             if isinstance(st, str):
                 try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
@@ -4334,19 +4450,31 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     async def _fetch_data(self, date: str) -> Any:
         """
-        Fetches the raw HTML content for all races on a given date.
+        Fetches the raw HTML content for all races on a given date, including international.
         """
         index_url = f"/racecards/{date}"
+        intl_url = f"/racecards/international/{date}"
+
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not index_response or not index_response.text:
-            self.logger.warning("Failed to fetch RacingPost index page", url=index_url)
+        intl_response = await self.make_request("GET", intl_url, headers=self._get_headers())
+
+        race_card_urls = []
+
+        if index_response and index_response.text:
+            self._save_debug_html(index_response.text, f"racingpost_index_{date}")
+            index_parser = HTMLParser(index_response.text)
+            links = index_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
+            race_card_urls.extend([link.attributes["href"] for link in links])
+
+        if intl_response and intl_response.text:
+            self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
+            intl_parser = HTMLParser(intl_response.text)
+            intl_links = intl_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
+            race_card_urls.extend([link.attributes["href"] for link in intl_links])
+
+        if not race_card_urls:
+            self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
             return None
-
-        self._save_debug_html(index_response.text, f"racingpost_index_{date}")
-
-        index_parser = HTMLParser(index_response.text)
-        links = index_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
-        race_card_urls = [link.attributes["href"] for link in links]
 
         async def fetch_single_html(url: str):
             response = await self.make_request("GET", url, headers=self._get_headers())
@@ -4803,7 +4931,15 @@ async def main_all_in_one():
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
+    parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     args = parser.parse_args()
+
+    if args.clear_db:
+        db = FortunaDB()
+        await db.clear_all_tips()
+        await db.close()
+        print("Database cleared successfully.")
+        return
 
     adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
 
