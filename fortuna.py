@@ -241,6 +241,11 @@ class OddsData(FortunaBaseModel):
     source: str
     last_updated: datetime = Field(default_factory=lambda: datetime.now(EASTERN))
 
+    @field_validator("last_updated", mode="after")
+    @classmethod
+    def validate_eastern(cls, v: datetime) -> datetime:
+        return ensure_eastern(v)
+
 
 class Runner(FortunaBaseModel):
     id: Optional[str] = None
@@ -280,11 +285,9 @@ class Race(FortunaBaseModel):
 
     @field_validator("start_time", mode="after")
     @classmethod
-    def ensure_eastern(cls, v: datetime) -> datetime:
+    def validate_eastern(cls, v: datetime) -> datetime:
         """Ensures all race start times are in US Eastern Time."""
-        if v.tzinfo is None:
-            return v.replace(tzinfo=EASTERN)
-        return v.astimezone(EASTERN)
+        return ensure_eastern(v)
     source: str
     discipline: Optional[str] = None
     distance: Optional[str] = None
@@ -336,6 +339,15 @@ def to_eastern(dt: datetime) -> datetime:
     return dt.astimezone(EASTERN)
 
 
+def ensure_eastern(dt: datetime) -> datetime:
+    """Ensures datetime is timezone-aware and in Eastern time. More strict than to_eastern."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=EASTERN)
+    if dt.tzinfo != EASTERN:
+        return dt.astimezone(EASTERN)
+    return dt
+
+
 def normalize_venue_name(name: Optional[str]) -> str:
     """
     Normalizes a racecourse name to a standard format.
@@ -366,7 +378,10 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
         "GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
         "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
-        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY"
+        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
+        "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
+        "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
+        "NEXT"
     ]
 
     upper_name = cleaned.upper()
@@ -404,6 +419,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "CHELMSFORD": "Chelmsford",
         "CHELMSFORD CITY": "Chelmsford",
         "CURRAGH": "Curragh",
+        "DEAUVILLE": "Deauville",
         "DELTA DOWNS": "Delta Downs",
         "DONCASTER": "Doncaster",
         "DOWN ROYAL": "Down Royal",
@@ -445,6 +461,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "TAMPA BAY DOWNS": "Tampa Bay Downs",
         "THURLES": "Thurles",
         "TURF PARADISE": "Turf Paradise",
+        "TURFFONTEIN": "Turffontein",
         "UTTOXETER": "Uttoxeter",
         "VINCENNES": "Vincennes",
         "WARWICK": "Warwick",
@@ -580,13 +597,16 @@ class SmartOddsExtractor:
 def generate_race_id(prefix: str, venue: str, start_time: datetime, race_number: int, discipline: Optional[str] = None) -> str:
     venue_slug = re.sub(r"[^a-z0-9]", "", venue.lower())
     date_str = start_time.strftime("%Y%m%d")
-    disc_suffix = ""
-    if discipline:
-        dl = discipline.lower()
-        if "harness" in dl: disc_suffix = "_h"
-        elif "greyhound" in dl: disc_suffix = "_g"
-        elif "quarter" in dl: disc_suffix = "_q"
-    return f"{prefix}_{venue_slug}_{date_str}_R{race_number}{disc_suffix}"
+    time_str = start_time.strftime("%H%M")
+
+    # Always include a discipline suffix for consistency and better matching
+    dl = (discipline or "Thoroughbred").lower()
+    if "harness" in dl: disc_suffix = "_h"
+    elif "greyhound" in dl: disc_suffix = "_g"
+    elif "quarter" in dl: disc_suffix = "_q"
+    else: disc_suffix = "_t"
+
+    return f"{prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}"
 
 
 # --- VALIDATORS ---
@@ -1079,6 +1099,130 @@ class BaseAdapterV3(ABC):
 # ============================================================================
 
 # ----------------------------------------
+# SkyRacingWorldAdapter
+# ----------------------------------------
+class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
+    BASE_URL: ClassVar[str] = "https://www.skyracingworld.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, timeout=45)
+
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.skyracingworld.com")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Index for the day
+        index_url = f"/form-guide/thoroughbred/{date}"
+        resp = await self.make_request("GET", index_url, headers=self._get_headers())
+        if not resp or not resp.text: return None
+        self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
+
+        parser = HTMLParser(resp.text)
+        metadata = []
+        for link in parser.css("a.fg-race-link"):
+            url = link.attributes.get("href")
+            if url:
+                if not url.startswith("http"):
+                    url = self.BASE_URL + url
+                metadata.append({"url": url})
+
+        if not metadata: return None
+        # Limit to first 50 to avoid hammering
+        pages = await self._fetch_race_pages_concurrent(metadata[:50], self._get_headers(), semaphore_limit=5)
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        except: return []
+        races: List[Race] = []
+        for item in raw_data["pages"]:
+            html_content = item.get("html")
+            if not html_content: continue
+            try:
+                race = self._parse_single_race(html_content, item.get("url", ""), race_date)
+                if race: races.append(race)
+            except: pass
+        return races
+
+    def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
+        parser = HTMLParser(html_content)
+
+        # Extract venue and time from header
+        # Format usually: "14:30 LINGFIELD" or similar
+        header = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
+        if not header: return None
+
+        header_text = clean_text(header.text())
+        match = re.search(r"(\d{1,2}:\d{2})\s+(.+)", header_text)
+        if match:
+            time_str = match.group(1)
+            venue = normalize_venue_name(match.group(2))
+        else:
+            venue = normalize_venue_name(header_text)
+            time_str = "12:00" # Fallback
+
+        try:
+            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
+        except:
+            start_time = datetime.combine(race_date, datetime.min.time())
+
+        # Race number from URL
+        race_num = 1
+        num_match = re.search(r'/R(\d+)$', url)
+        if num_match:
+            race_num = int(num_match.group(1))
+
+        runners = []
+        # Try different selectors for runners
+        for row in parser.css(".runner_row") or parser.css(".mobile-runner"):
+            try:
+                name_node = row.css_first(".horseName") or row.css_first("a[href*='/horse/']")
+                if not name_node: continue
+                name = clean_text(name_node.text())
+
+                num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]")
+                number = 0
+                if num_node:
+                    if num_node.attributes.get("data-tab-no"):
+                        number = int(num_node.attributes.get("data-tab-no"))
+                    else:
+                        digits = "".join(filter(str.isdigit, num_node.text()))
+                        if digits: number = int(digits)
+
+                scratched = "strikeout" in (row.attributes.get("class") or "").lower() or row.attributes.get("data-scratched") == "True"
+
+                win_odds = None
+                odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
+                if odds_node:
+                    win_odds = parse_odds_to_decimal(clean_text(odds_node.text()))
+
+                od = {}
+                if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                    od[self.SOURCE_NAME] = ov
+
+                runners.append(Runner(name=name, number=number, scratched=scratched, odds=od, win_odds=win_odds))
+            except: continue
+
+        if not runners: return None
+
+        disc = detect_discipline(html_content)
+        return Race(
+            id=generate_race_id("srw", venue, start_time, race_num, disc),
+            venue=venue,
+            race_number=race_num,
+            start_time=start_time,
+            runners=runners,
+            discipline=disc,
+            source=self.SOURCE_NAME,
+            available_bets=scrape_available_bets(html_content)
+        )
+
+# ----------------------------------------
 # AtTheRacesAdapter
 # ----------------------------------------
 class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
@@ -1105,11 +1249,22 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         index_url = f"/racecards/{date}"
+        intl_url = f"/racecards/international/{date}"
+
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not resp or not resp.text: raise AdapterHttpError(self.source_name, 500, index_url)
-        self._save_debug_snapshot(resp.text, f"atr_index_{date}")
-        parser = HTMLParser(resp.text)
-        metadata = self._extract_race_metadata(parser)
+        intl_resp = await self.make_request("GET", intl_url, headers=self._get_headers())
+
+        metadata = []
+        if resp and resp.text:
+            self._save_debug_snapshot(resp.text, f"atr_index_{date}")
+            parser = HTMLParser(resp.text)
+            metadata.extend(self._extract_race_metadata(parser))
+
+        if intl_resp and intl_resp.text:
+            self._save_debug_snapshot(intl_resp.text, f"atr_intl_index_{date}")
+            intl_parser = HTMLParser(intl_resp.text)
+            metadata.extend(self._extract_race_metadata(intl_parser))
+
         if not metadata: return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
@@ -1816,7 +1971,31 @@ class TabAdapter(BaseAdapterV3):
         try: data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
         except: return None
         if not data or "meetings" not in data: return None
-        return {"meetings": data["meetings"], "date": date}
+
+        # TAB meetings often only have race headers. We need to fetch each meeting's details
+        # to get runners and odds.
+        all_meetings = []
+        for m in data["meetings"]:
+            try:
+                vn = m.get("meetingName")
+                mt = m.get("meetingType")
+                if vn and mt:
+                    # Endpoint for meeting details (includes races and runners)
+                    m_url = f"{self.base_url}/dates/{date}/meetings/{mt}/{vn}?jurisdiction=VIC"
+                    m_resp = await self.make_request("GET", m_url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
+                    if m_resp:
+                        try:
+                            m_data = m_resp.json() if hasattr(m_resp, "json") else json.loads(m_resp.text)
+                            if m_data:
+                                all_meetings.append(m_data)
+                                continue
+                        except: pass
+                # Fallback to the summary data if detail fetch fails
+                all_meetings.append(m)
+            except:
+                all_meetings.append(m)
+
+        return {"meetings": all_meetings, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or "meetings" not in raw_data: return []
@@ -1825,12 +2004,50 @@ class TabAdapter(BaseAdapterV3):
             vn = normalize_venue_name(m.get("meetingName"))
             mt = m.get("meetingType", "R")
             disc = {"R": "Thoroughbred", "H": "Harness", "G": "Greyhound"}.get(mt, "Thoroughbred")
+
             for rd in m.get("races", []):
-                rn, rst = rd.get("raceNumber"), rd.get("raceStartTime")
-                if not rst: continue
+                rn = rd.get("raceNumber")
+                rst = rd.get("raceStartTime")
+                if not rst or not rn: continue
+
                 try: st = datetime.fromisoformat(rst.replace("Z", "+00:00"))
                 except: continue
-                races.append(Race(id=generate_race_id("tab", vn, st, rn, disc), venue=vn, race_number=rn, start_time=st, runners=[], discipline=disc, source=self.source_name, available_bets=[]))
+
+                runners = []
+                # If detail data was fetched, extract runners
+                for runner_data in rd.get("runners", []):
+                    name = runner_data.get("runnerName", "Unknown")
+                    num = runner_data.get("runnerNumber")
+
+                    # Try to get win odds
+                    win_odds = None
+                    fixed_odds = runner_data.get("fixedOdds", {})
+                    if fixed_odds:
+                        win_odds = fixed_odds.get("returnWin") or fixed_odds.get("win")
+
+                    odds_dict = {}
+                    if win_odds:
+                        if ov := create_odds_data(self.source_name, win_odds):
+                            odds_dict[self.source_name] = ov
+
+                    runners.append(Runner(
+                        name=name,
+                        number=num,
+                        win_odds=win_odds,
+                        odds=odds_dict,
+                        scratched=runner_data.get("scratched", False)
+                    ))
+
+                races.append(Race(
+                    id=generate_race_id("tab", vn, st, rn, disc),
+                    venue=vn,
+                    race_number=rn,
+                    start_time=st,
+                    runners=runners,
+                    discipline=disc,
+                    source=self.source_name,
+                    available_bets=scrape_available_bets(str(rd))
+                ))
         return races
 
 # ----------------------------------------
@@ -1866,8 +2083,22 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
                     if pd.notna(rp):
                         if ov := create_odds_data(self.source_name, float(rp)): od[self.source_name] = ov
                     runners.append(Runner(name=str(row.get("runner_name", "Unknown")), number=int(row.get("saddle_cloth", 0)), odds=od))
+
                 vn = normalize_venue_name(str(ri.get("meeting_name", "")))
-                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=datetime.now(EASTERN), runners=runners, source=self.source_name, discipline="Thoroughbred"))
+
+                # Try to find a start time in the CSV
+                start_time = datetime.now(EASTERN)
+                for col in ["meetings.races.startTime", "startTime", "start_time", "time"]:
+                    if col in ri and pd.notna(ri[col]):
+                        try:
+                            # Assume UTC and convert to Eastern if it looks like ISO
+                            st_val = str(ri[col])
+                            if "T" in st_val:
+                                start_time = to_eastern(datetime.fromisoformat(st_val.replace("Z", "+00:00")))
+                            break
+                        except: pass
+
+                races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=start_time, runners=runners, source=self.source_name, discipline="Thoroughbred"))
             return races
         except: return []
 
@@ -2003,20 +2234,25 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         ard = []
         last_err = None
 
-        async def fetch_disc(disc):
-            url = f"{self.BASE_URL}/bet/todays-races/{disc}"
+        async def fetch_disc(disc, region="USA"):
+            suffix = "" if region == "USA" else "?region=INT"
+            url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
             try:
                 resp = await self.make_request("GET", url, network_idle=True, wait_selector='div[class*="race"], [class*="RaceCard"], [class*="track"]')
                 if resp and resp.status == 200:
-                    self._save_debug_snapshot(resp.text, f"ts_{disc}_{date}")
+                    self._save_debug_snapshot(resp.text, f"ts_{disc}_{region}_{date}")
                     dr = self._extract_races_from_page(resp, date)
                     for r in dr: r["assigned_discipline"] = disc.capitalize()
                     return dr
             except Exception as e:
-                self.logger.error("TwinSpires fetch failed", discipline=disc, error=str(e))
+                self.logger.error("TwinSpires fetch failed", discipline=disc, region=region, error=str(e))
             return []
 
-        tasks = [fetch_disc(d) for d in ["thoroughbred", "harness", "greyhound"]]
+        # Fetch both USA and International for all disciplines
+        tasks = []
+        for d in ["thoroughbred", "harness", "greyhound"]:
+            tasks.append(fetch_disc(d, "USA"))
+            tasks.append(fetch_disc(d, "INT"))
         results = await asyncio.gather(*tasks)
         for r_list in results:
             ard.extend(r_list)
@@ -2463,7 +2699,13 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
                 race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
 
+            # Best Bet Detection:
+            # Goldmine = 2nd Fav >= 5.0, Field <= 8
+            # You Might Like = 2nd Fav >= 4.0, Field <= 8
+            is_best_bet = (len(active_runners) <= 8 and active_runners and len(all_odds) >= 2 and all_odds[1] >= 4.0)
+
             race.metadata['is_goldmine'] = is_goldmine
+            race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
             race.qualification_score = 100.0
             qualified.append(race)
@@ -2601,14 +2843,14 @@ def get_track_category(races_at_track: List[Any]) -> str:
         if source in ["USTrotting", "StandardbredCanada", "Harness"] or any(kw in source_lower for kw in ['harness', 'standardbred', 'trot', 'pace']):
             return 'H'
 
-    # Distance consistency check (4 or more times at that venue)
-    dist_counts = defaultdict(int)
-    for r in races_at_track:
-        dist = get_field(r, 'distance')
-        if dist:
-            dist_counts[dist] += 1
-    if dist_counts and max(dist_counts.values()) >= 4:
-        return 'H'
+    # Distance consistency check (Disabled - was mis-identifying Thoroughbred tracks)
+    # dist_counts = defaultdict(int)
+    # for r in races_at_track:
+    #     dist = get_field(r, 'distance')
+    #     if dist:
+    #         dist_counts[dist] += 1
+    # if dist_counts and max(dist_counts.values()) >= 4:
+    #     return 'H'
 
     return 'T'
 
@@ -2802,7 +3044,9 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             race_num = get_field(r, 'race_number')
             start_time = get_field(r, 'start_time')
             if isinstance(start_time, datetime):
-                time_str = start_time.strftime("%H:%M UTC")
+                # Ensure it's in Eastern for the display
+                st_eastern = to_eastern(start_time)
+                time_str = st_eastern.strftime("%H:%M ET")
             else:
                 time_str = str(start_time)
 
@@ -3198,6 +3442,12 @@ class FortunaDB:
             conn = self._get_conn()
             with conn:
                 conn.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_version (
+                        version INTEGER PRIMARY KEY,
+                        applied_at TEXT NOT NULL
+                    )
+                """)
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS tips (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         race_id TEXT NOT NULL,
@@ -3230,6 +3480,7 @@ class FortunaDB:
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
@@ -3246,19 +3497,42 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
 
         await self._run_in_executor(_init)
-        await self.migrate_utc_to_eastern()
+
+        # Track and execute migrations based on schema version
+        def _get_version():
+            cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
+            row = cursor.fetchone()
+            return row[0] if row and row[0] is not None else 0
+
+        current_version = await self._run_in_executor(_get_version)
+
+        if current_version < 2:
+            await self.migrate_utc_to_eastern()
+            def _update_version():
+                with self._get_conn() as conn:
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (2, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_update_version)
+            self.logger.info("Schema migrated to version 2")
+
         self._initialized = True
-        self.logger.info("Database initialized and migrated to Eastern Time", path=self.db_path)
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 2))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
         def _migrate():
             conn = self._get_conn()
-            cursor = conn.execute("SELECT id, start_time, report_date, audit_timestamp FROM tips WHERE start_time LIKE '%+00:00' OR report_date LIKE '%+00:00'")
+            cursor = conn.execute("""
+                SELECT id, start_time, report_date, audit_timestamp FROM tips
+                WHERE start_time LIKE '%+00:00' OR start_time LIKE '%Z'
+                OR report_date LIKE '%+00:00' OR report_date LIKE '%Z'
+                OR audit_timestamp LIKE '%+00:00' OR audit_timestamp LIKE '%Z'
+            """)
             rows = cursor.fetchall()
             if not rows: return
 
             self.logger.info("Migrating legacy UTC timestamps to Eastern", count=len(rows))
+            converted = 0
+            errors = 0
             with conn:
                 for row in rows:
                     updates = {}
@@ -3271,49 +3545,61 @@ class FortunaDB:
                                 updates[col] = dt_eastern.isoformat()
                             except: pass
                     if updates:
-                        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-                        conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+                        try:
+                            set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+                            conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+                            converted += 1
+                        except Exception as e:
+                            errors += 1
+                            self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
+            self.logger.info("Migration complete", total=len(rows), converted=converted, errors=errors)
         await self._run_in_executor(_migrate)
 
-    async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 4):
-        """Logs new tips to the database with atomic deduplication."""
+    async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 12):
+        """Logs new tips to the database with batch deduplication."""
         if not self._initialized: await self.initialize()
 
         def _log():
             conn = self._get_conn()
             now = datetime.now(EASTERN)
-            with conn:
-                for tip in tips:
-                    race_id = tip.get("race_id")
-                    report_date = tip.get("report_date", now.isoformat())
 
-                    # Deduplication check: same race_id in the window
-                    cursor = conn.execute(
-                        "SELECT report_date FROM tips WHERE race_id = ? ORDER BY id DESC LIMIT 1",
-                        (race_id,)
-                    )
-                    last_report = cursor.fetchone()
-                    if last_report:
-                        try:
-                            lr_str = last_report["report_date"]
-                            lr_dt = datetime.fromisoformat(lr_str)
-                            if lr_dt.tzinfo is None: lr_dt = lr_dt.replace(tzinfo=EASTERN)
-                            if (now - lr_dt).total_seconds() < dedup_window_hours * 3600:
-                                continue
-                        except: pass
+            # Batch check for recently logged tips to avoid redundant entries
+            race_ids = [t.get("race_id") for t in tips if t.get("race_id")]
+            if not race_ids: return
 
-                    conn.execute("""
-                        INSERT OR IGNORE INTO tips (
-                            race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        race_id, tip.get("venue"), tip.get("race_number"),
+            placeholders = ",".join(["?"] * len(race_ids))
+            cutoff = (now - timedelta(hours=dedup_window_hours)).isoformat()
+
+            cursor = conn.execute(
+                f"SELECT race_id FROM tips WHERE race_id IN ({placeholders}) AND report_date > ?",
+                (*race_ids, cutoff)
+            )
+            already_logged = {row["race_id"] for row in cursor.fetchall()}
+
+            to_insert = []
+            for tip in tips:
+                rid = tip.get("race_id")
+                if rid and rid not in already_logged:
+                    report_date = tip.get("report_date") or now.isoformat()
+                    to_insert.append((
+                        rid, tip.get("venue"), tip.get("race_number"),
                         tip.get("discipline"), tip.get("start_time"), report_date,
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number")
                     ))
+                    already_logged.add(rid) # Avoid duplicates within the same batch
+
+            if to_insert:
+                with conn:
+                    conn.executemany("""
+                        INSERT OR IGNORE INTO tips (
+                            race_id, venue, race_number, discipline, start_time, report_date,
+                            is_goldmine, gap12, top_five, selection_number
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, to_insert)
+                self.logger.info("Hot tips batch logged", count=len(to_insert))
+
         await self._run_in_executor(_log)
 
     async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
@@ -3409,6 +3695,17 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def clear_all_tips(self):
+        """Wipes all records from the tips table."""
+        if not self._initialized: await self.initialize()
+        def _clear():
+            conn = self._get_conn()
+            with conn:
+                conn.execute("DELETE FROM tips")
+            conn.execute("VACUUM")
+            self.logger.info("Database cleared (all tips deleted)")
+        await self._run_in_executor(_clear)
+
     async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
         """Migrates data from existing JSON file to SQLite with detailed error logging."""
         path = Path(json_path)
@@ -3465,7 +3762,7 @@ class FortunaDB:
                 self._conn.close()
                 self._conn = None
         await self._run_in_executor(_close)
-        self._executor.shutdown()
+        self._executor.shutdown(wait=True)
 
 
 class HotTipsTracker:
@@ -3486,6 +3783,11 @@ class HotTipsTracker:
         future_limit = now + timedelta(hours=36)
 
         for r in races:
+            # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
+            # These are marked in metadata by the analyzer.
+            if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
+                continue
+
             st = r.start_time
             if isinstance(st, str):
                 try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
@@ -4334,19 +4636,31 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     async def _fetch_data(self, date: str) -> Any:
         """
-        Fetches the raw HTML content for all races on a given date.
+        Fetches the raw HTML content for all races on a given date, including international.
         """
         index_url = f"/racecards/{date}"
+        intl_url = f"/racecards/international/{date}"
+
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not index_response or not index_response.text:
-            self.logger.warning("Failed to fetch RacingPost index page", url=index_url)
+        intl_response = await self.make_request("GET", intl_url, headers=self._get_headers())
+
+        race_card_urls = []
+
+        if index_response and index_response.text:
+            self._save_debug_html(index_response.text, f"racingpost_index_{date}")
+            index_parser = HTMLParser(index_response.text)
+            links = index_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
+            race_card_urls.extend([link.attributes["href"] for link in links])
+
+        if intl_response and intl_response.text:
+            self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
+            intl_parser = HTMLParser(intl_response.text)
+            intl_links = intl_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
+            race_card_urls.extend([link.attributes["href"] for link in intl_links])
+
+        if not race_card_urls:
+            self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
             return None
-
-        self._save_debug_html(index_response.text, f"racingpost_index_{date}")
-
-        index_parser = HTMLParser(index_response.text)
-        links = index_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
-        race_card_urls = [link.attributes["href"] for link in links]
 
         async def fetch_single_html(url: str):
             response = await self.make_request("GET", url, headers=self._get_headers())
@@ -4803,7 +5117,15 @@ async def main_all_in_one():
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
+    parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     args = parser.parse_args()
+
+    if args.clear_db:
+        db = FortunaDB()
+        await db.clear_all_tips()
+        await db.close()
+        print("Database cleared successfully.")
+        return
 
     adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
 
