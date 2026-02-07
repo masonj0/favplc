@@ -476,25 +476,51 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         parser = HTMLParser(resp.text)
 
         # Extract track-specific result page links
-        # Looking for links like: /static/chart/summary\RaceCardIndexTP020526USA-EQB.html
-        date_short = dt.strftime('%m%d%y')
+        # Try multiple patterns for robust detection
         links = set()
+        date_short = dt.strftime('%m%d%y')
+
+        # Pattern 1: Any link with /static/chart/summary/
+        for a in parser.css('a[href*="/static/chart/summary/"]'):
+            href = a.attributes.get("href", "").replace("\\", "/")
+            if "index.html" not in href:
+                links.add(href)
+
+        # Pattern 2: Discovery-style pattern
         for a in parser.css("a"):
             href = a.attributes.get("href") or ""
-            # Normalize backslashes just in case
             href = href.replace("\\", "/")
-            if (
-                date_short in href
-                and ("sum.html" in href.lower() or "racecardindex" in href.lower())
-                and "index.html" not in href
-            ):
-                links.add(href)
+            if (date_short in href or date_str.replace("-","") in href) and \
+               (".html" in href.lower() or "sum" in href.lower()):
+                if "index.html" not in href:
+                    links.add(href)
+
+        # Fallback: look for track names in text that might be clickable but not <a>
+        # (Though usually Equibase uses <a>)
 
         if not links:
             self.logger.warning("No track result links found", date=date_str)
             return None
 
         self.logger.info("Found track result pages", count=len(links))
+
+        # Filter and absolute-ize links
+        final_links = set()
+        for link in links:
+            if link.startswith("http"):
+                final_links.add(link)
+            else:
+                # Handle relative links
+                path = link.lstrip("/")
+                if not path.startswith("static/"):
+                    path = f"static/chart/summary/{path}"
+                final_links.add(f"{self.BASE_URL}/{path}")
+
+        if not final_links:
+            self.logger.warning("No track result links found after expansion", date=date_str)
+            return None
+
+        self.logger.info("Found track result pages", count=len(final_links))
 
         # Fetch all track pages concurrently
         async def fetch_track_page(link: str) -> Tuple[str, str]:
@@ -506,7 +532,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                     self.logger.warning("Failed to fetch track page", link=link, error=str(e))
                     return (link, "")
 
-        tasks = [fetch_track_page(link) for link in links]
+        tasks = [fetch_track_page(link) for link in final_links]
         pages = await asyncio.gather(*tasks)
 
         valid_pages = [(link, html) for link, html in pages if html]
@@ -775,19 +801,44 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         parser = HTMLParser(resp.text)
 
         # Find individual race result links
-        links = []
-        for a in parser.css("a[href*='/results/']"):
-            href = a.attributes.get("href", "")
-            # Match links with numeric race ID
-            if re.search(r"/results/\d+/", href):
-                links.append(href)
+        links = set()
+        # Fallback selectors from successful discovery code
+        selectors = [
+            'a[data-test-selector="RC-meetingItem__link_race"]',
+            'a[href*="/results/"]',
+            '.ui-link.rp-raceCourse__panel__race__time',
+            'a.rp-raceCourse__panel__race__time'
+        ]
+
+        for s in selectors:
+            for a in parser.css(s):
+                href = a.attributes.get("href", "")
+                if not href: continue
+                # Match links with numeric race ID or structured result path
+                if re.search(r"/results/\d+/", href) or re.search(r"/\d{4}-\d{2}-\d{2}/[^/]+/\d+/", href):
+                    links.add(href)
+                elif "/results/" in href and len(href.split("/")) >= 4:
+                    # Likely a meeting link that we can try to follow or parse
+                    links.add(href)
 
         if not links:
-            self.logger.warning("No result links found", date=date_str)
+            self.logger.warning("No result links found with standard selectors", date=date_str)
+            # Last ditch effort: any /results/ link
+            for a in parser.css('a[href*="/results/"]'):
+                href = a.attributes.get("href", "")
+                if len(href.split("/")) >= 3:
+                    links.add(href)
+
+        if not links:
+            self.logger.warning("Total failure finding result links", date=date_str)
             return None
 
-        # Deduplicate
-        unique_links = list(set(links))
+        # Deduplicate and normalize
+        unique_links = []
+        for l in links:
+            full_url = l if l.startswith("http") else f"{self.BASE_URL}{l}"
+            if full_url not in unique_links:
+                unique_links.append(full_url)
         self.logger.info("Found result links", count=len(unique_links))
 
         # Fetch race pages
@@ -972,31 +1023,45 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         return self._parse_races(raw_data)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        url = f"/results/{date_str}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+
+        # ATR uses multiple URL formats for results
+        # Format 1: YYYY-MM-DD
+        # Format 2: DD-Month-YYYY (e.g., 05-February-2026)
+        # Format 3: International results
+        urls = [
+            f"/results/{date_str}",
+            f"/results/{dt.strftime('%d-%B-%Y')}",
+            f"/results/international/{date_str}",
+            f"/results/international/{dt.strftime('%d-%B-%Y')}"
+        ]
+
+        links = set()
+        for url in urls:
+            try:
+                resp = await self.make_request("GET", url, headers=self._get_headers())
+                if not resp or not resp.text: continue
+
+                self._save_debug_snapshot(resp.text, f"atr_results_index_{date_str}_{url.replace('/','_')}")
+                parser = HTMLParser(resp.text)
+
+                # Find result page links with multiple selectors
+                for s in ["a[href*='/results/']", "a[data-test-selector*='result']", ".meeting-summary a"]:
+                    for a in parser.css(s):
+                        href = a.attributes.get("href") or ""
+                        # Format: /results/Venue/DD-Month-YYYY/HHMM or /results/DD-Month-YYYY/Venue/ID
+                        if re.search(r"/results/.+/\d{4}/\d{4}", href) or \
+                           re.search(r"/results/\d{2}-.+-\d{4}/.+/\d+", href):
+                            links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
+            except Exception as e:
+                self.logger.debug(f"ATR fetch failed for {url}: {e}")
+
+        if not links:
+            self.logger.warning("No result links found for ATR", date=date_str)
             return None
 
-        parser = HTMLParser(resp.text)
-
-        # Find result page links
-        links = []
-        # Try both the specific race formats and the daily meeting index pages
-        for a in parser.css("a[href*='/results/']"):
-            href = a.attributes.get("href") or ""
-            # Format: /results/Venue/DD-Month-YYYY/HHMM
-            if re.search(r"/results/[^/]+/.+-\d{4}/\d{4}", href):
-                links.append(href)
-            # Alternative: /results/DD-Month-YYYY (meeting list)
-            elif re.search(r"/results/\d{2}-[A-Za-z]+-\d{4}$", href):
-                # We could follow these but usually the index page already has the race links
-                # if we are lucky.
-                pass
-
-        unique_links = list(set(links))
-        if not unique_links:
-            return None
-
+        unique_links = list(links)
+        self.logger.info("Found ATR result links", count=len(unique_links))
         metadata = [{"url": link, "race_number": 0} for link in unique_links]
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
 
@@ -1032,11 +1097,13 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         """Parse an ATR result page."""
         parser = HTMLParser(html_content)
 
-        header = parser.css_first(".race-header__details--primary")
+        header = parser.css_first(".race-header__details--primary") or \
+                 parser.css_first(".racecard-header") or \
+                 parser.css_first(".race-header")
         if not header:
             return None
 
-        venue_node = header.css_first("h2")
+        venue_node = header.css_first("h2") or header.css_first("h1")
         if not venue_node:
             return None
         venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
@@ -1049,10 +1116,18 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         # Parse runners
         runners = []
-        for row in parser.css(".result-racecard__row"):
+        rows = parser.css(".result-racecard__row") or \
+               parser.css(".card-cell--horse") or \
+               parser.css("atr-result-horse")
+
+        for row in rows:
             try:
-                name_node = row.css_first(".result-racecard__horse-name a")
-                pos_node = row.css_first(".result-racecard__pos")
+                name_node = row.css_first(".result-racecard__horse-name a") or \
+                            row.css_first(".horse-name a") or \
+                            row.css_first("a[href*='/horse/']")
+                pos_node = row.css_first(".result-racecard__pos") or \
+                           row.css_first(".pos") or \
+                           row.css_first(".position")
 
                 if not name_node:
                     continue

@@ -4860,7 +4860,19 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         parser = HTMLParser(resp.text)
 
         # Extract links to individual race results
-        links = [a.attributes.get("href") for a in parser.css('a[data-test-selector="RC-meetingItem__link_race"]') if a.attributes.get("href")]
+        links = set()
+        selectors = [
+            'a[data-test-selector="RC-meetingItem__link_race"]',
+            'a[href*="/results/"]',
+            '.ui-link.rp-raceCourse__panel__race__time',
+            'a.rp-raceCourse__panel__race__time'
+        ]
+        for s in selectors:
+            for a in parser.css(s):
+                href = a.attributes.get("href")
+                if href:
+                    if re.search(r"/results/\d+/", href) or len(href.split("/")) >= 4:
+                        links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
 
         async def fetch_result_page(link):
             r = await self.make_request("GET", link, headers=self._get_headers())
