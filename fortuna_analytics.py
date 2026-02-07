@@ -21,6 +21,7 @@ from typing import (
     List,
     Optional,
     Tuple,
+    Type,
 )
 
 import structlog
@@ -180,8 +181,9 @@ class ResultRace(fortuna.Race):
     def canonical_key(self) -> str:
         """Generate a canonical key for matching, including discipline if available."""
         date_str = self.start_time.strftime('%Y%m%d')
+        time_str = self.start_time.strftime('%H%M')
         disc = (self.discipline or "T")[:1].upper()
-        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{disc}"
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{time_str}|{disc}"
 
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
         """Get top N finishers sorted by position."""
@@ -248,10 +250,24 @@ class AuditorEngine:
                     continue
 
                 tip_key = self._get_tip_canonical_key(tip)
-                if not tip_key or tip_key not in results_map:
+                if not tip_key:
                     continue
 
-                result = results_map[tip_key]
+                result = results_map.get(tip_key)
+                if not result:
+                    # Lenient fallback: try matching without discipline if discipline was the only difference
+                    key_parts = tip_key.split("|")
+                    if len(key_parts) >= 4:
+                        # Match venue|race|date|time
+                        key_no_disc = "|".join(key_parts[:4])
+                        for res_key, res_obj in results_map.items():
+                            if res_key.startswith(key_no_disc):
+                                result = res_obj
+                                self.logger.info("Matched tip with discipline fallback", race_id=race_id, tip_key=tip_key, match_key=res_key)
+                                break
+
+                if not result:
+                    continue
                 self.logger.info(
                     "Auditing tip",
                     venue=tip.get('venue'),
@@ -288,8 +304,9 @@ class AuditorEngine:
         try:
             st = datetime.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
             date_str = st.strftime('%Y%m%d')
+            time_str = st.strftime('%H%M')
             disc = discipline[:1].upper()
-            return f"{fortuna.get_canonical_venue(venue)}|{race_number}|{date_str}|{disc}"
+            return f"{fortuna.get_canonical_venue(venue)}|{race_number}|{date_str}|{time_str}|{disc}"
         except (ValueError, TypeError):
             return None
 
@@ -412,6 +429,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
     Primary source for US thoroughbred race results.
     """
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "EquibaseResults"
     BASE_URL = "https://www.equibase.com"
 
@@ -458,25 +476,51 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         parser = HTMLParser(resp.text)
 
         # Extract track-specific result page links
-        # Looking for links like: /static/chart/summary\RaceCardIndexTP020526USA-EQB.html
-        date_short = dt.strftime('%m%d%y')
+        # Try multiple patterns for robust detection
         links = set()
+        date_short = dt.strftime('%m%d%y')
+
+        # Pattern 1: Any link with /static/chart/summary/
+        for a in parser.css('a[href*="/static/chart/summary/"]'):
+            href = a.attributes.get("href", "").replace("\\", "/")
+            if "index.html" not in href:
+                links.add(href)
+
+        # Pattern 2: Discovery-style pattern
         for a in parser.css("a"):
             href = a.attributes.get("href") or ""
-            # Normalize backslashes just in case
             href = href.replace("\\", "/")
-            if (
-                date_short in href
-                and ("sum.html" in href.lower() or "racecardindex" in href.lower())
-                and "index.html" not in href
-            ):
-                links.add(href)
+            if (date_short in href or date_str.replace("-","") in href) and \
+               (".html" in href.lower() or "sum" in href.lower()):
+                if "index.html" not in href:
+                    links.add(href)
+
+        # Fallback: look for track names in text that might be clickable but not <a>
+        # (Though usually Equibase uses <a>)
 
         if not links:
             self.logger.warning("No track result links found", date=date_str)
             return None
 
         self.logger.info("Found track result pages", count=len(links))
+
+        # Filter and absolute-ize links
+        final_links = set()
+        for link in links:
+            if link.startswith("http"):
+                final_links.add(link)
+            else:
+                # Handle relative links
+                path = link.lstrip("/")
+                if not path.startswith("static/"):
+                    path = f"static/chart/summary/{path}"
+                final_links.add(f"{self.BASE_URL}/{path}")
+
+        if not final_links:
+            self.logger.warning("No track result links found after expansion", date=date_str)
+            return None
+
+        self.logger.info("Found track result pages", count=len(final_links))
 
         # Fetch all track pages concurrently
         async def fetch_track_page(link: str) -> Tuple[str, str]:
@@ -488,7 +532,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                     self.logger.warning("Failed to fetch track page", link=link, error=str(e))
                     return (link, "")
 
-        tasks = [fetch_track_page(link) for link in links]
+        tasks = [fetch_track_page(link) for link in final_links]
         pages = await asyncio.gather(*tasks)
 
         valid_pages = [(link, html) for link, html in pages if html]
@@ -722,6 +766,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Racing Post UK/IRE results."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostResults"
     BASE_URL = "https://www.racingpost.com"
 
@@ -756,19 +801,44 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         parser = HTMLParser(resp.text)
 
         # Find individual race result links
-        links = []
-        for a in parser.css("a[href*='/results/']"):
-            href = a.attributes.get("href", "")
-            # Match links with numeric race ID
-            if re.search(r"/results/\d+/", href):
-                links.append(href)
+        links = set()
+        # Fallback selectors from successful discovery code
+        selectors = [
+            'a[data-test-selector="RC-meetingItem__link_race"]',
+            'a[href*="/results/"]',
+            '.ui-link.rp-raceCourse__panel__race__time',
+            'a.rp-raceCourse__panel__race__time'
+        ]
+
+        for s in selectors:
+            for a in parser.css(s):
+                href = a.attributes.get("href", "")
+                if not href: continue
+                # Match links with numeric race ID or structured result path
+                if re.search(r"/results/\d+/", href) or re.search(r"/\d{4}-\d{2}-\d{2}/[^/]+/\d+/", href):
+                    links.add(href)
+                elif "/results/" in href and len(href.split("/")) >= 4:
+                    # Likely a meeting link that we can try to follow or parse
+                    links.add(href)
 
         if not links:
-            self.logger.warning("No result links found", date=date_str)
+            self.logger.warning("No result links found with standard selectors", date=date_str)
+            # Last ditch effort: any /results/ link
+            for a in parser.css('a[href*="/results/"]'):
+                href = a.attributes.get("href", "")
+                if len(href.split("/")) >= 3:
+                    links.add(href)
+
+        if not links:
+            self.logger.warning("Total failure finding result links", date=date_str)
             return None
 
-        # Deduplicate
-        unique_links = list(set(links))
+        # Deduplicate and normalize
+        unique_links = []
+        for l in links:
+            full_url = l if l.startswith("http") else f"{self.BASE_URL}{l}"
+            if full_url not in unique_links:
+                unique_links.append(full_url)
         self.logger.info("Found result links", count=len(unique_links))
 
         # Fetch race pages
@@ -782,7 +852,7 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             return []
 
         races = []
-        date_str = raw_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
 
         for item in raw_data.get("pages", []):
             html_content = item.get("html")
@@ -890,11 +960,25 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                         place_payout = parse_currency_value(val)
                         break
 
+                # SP / Odds
+                sp_node = row.css_first(".rp-horseTable__horse__sp")
+                final_odds = 0.0
+                if sp_node:
+                    sp_text = fortuna.clean_text(sp_node.text())
+                    try:
+                        if "/" in sp_text:
+                            n, d = map(int, sp_text.split("/"))
+                            final_odds = (n / d) + 1.0
+                        else:
+                            final_odds = float(sp_text)
+                    except: pass
+
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
-                    place_payout=place_payout
+                    place_payout=place_payout,
+                    final_win_odds=final_odds
                 ))
             except Exception:
                 continue
@@ -926,6 +1010,7 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for At The Races results (UK/IRE)."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "AtTheRacesResults"
     BASE_URL = "https://www.attheraces.com"
 
@@ -952,31 +1037,45 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         return self._parse_races(raw_data)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        url = f"/results/{date_str}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+
+        # ATR uses multiple URL formats for results
+        # Format 1: YYYY-MM-DD
+        # Format 2: DD-Month-YYYY (e.g., 05-February-2026)
+        # Format 3: International results
+        urls = [
+            f"/results/{date_str}",
+            f"/results/{dt.strftime('%d-%B-%Y')}",
+            f"/results/international/{date_str}",
+            f"/results/international/{dt.strftime('%d-%B-%Y')}"
+        ]
+
+        links = set()
+        for url in urls:
+            try:
+                resp = await self.make_request("GET", url, headers=self._get_headers())
+                if not resp or not resp.text: continue
+
+                self._save_debug_snapshot(resp.text, f"atr_results_index_{date_str}_{url.replace('/','_')}")
+                parser = HTMLParser(resp.text)
+
+                # Find result page links with multiple selectors
+                for s in ["a[href*='/results/']", "a[data-test-selector*='result']", ".meeting-summary a"]:
+                    for a in parser.css(s):
+                        href = a.attributes.get("href") or ""
+                        # Format: /results/Venue/DD-Month-YYYY/HHMM or /results/DD-Month-YYYY/Venue/ID
+                        if re.search(r"/results/.+/\d{4}/\d{4}", href) or \
+                           re.search(r"/results/\d{2}-.+-\d{4}/.+/\d+", href):
+                            links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
+            except Exception as e:
+                self.logger.debug(f"ATR fetch failed for {url}: {e}")
+
+        if not links:
+            self.logger.warning("No result links found for ATR", date=date_str)
             return None
 
-        parser = HTMLParser(resp.text)
-
-        # Find result page links
-        links = []
-        # Try both the specific race formats and the daily meeting index pages
-        for a in parser.css("a[href*='/results/']"):
-            href = a.attributes.get("href") or ""
-            # Format: /results/Venue/DD-Month-YYYY/HHMM
-            if re.search(r"/results/[^/]+/.+-\d{4}/\d{4}", href):
-                links.append(href)
-            # Alternative: /results/DD-Month-YYYY (meeting list)
-            elif re.search(r"/results/\d{2}-[A-Za-z]+-\d{4}$", href):
-                # We could follow these but usually the index page already has the race links
-                # if we are lucky.
-                pass
-
-        unique_links = list(set(links))
-        if not unique_links:
-            return None
-
+        unique_links = list(links)
+        self.logger.info("Found ATR result links", count=len(unique_links))
         metadata = [{"url": link, "race_number": 0} for link in unique_links]
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
 
@@ -987,7 +1086,7 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             return []
 
         races = []
-        date_str = raw_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
 
         for item in raw_data.get("pages", []):
             html_content = item.get("html")
@@ -1012,11 +1111,13 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         """Parse an ATR result page."""
         parser = HTMLParser(html_content)
 
-        header = parser.css_first(".race-header__details--primary")
+        header = parser.css_first(".race-header__details--primary") or \
+                 parser.css_first(".racecard-header") or \
+                 parser.css_first(".race-header")
         if not header:
             return None
 
-        venue_node = header.css_first("h2")
+        venue_node = header.css_first("h2") or header.css_first("h1")
         if not venue_node:
             return None
         venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
@@ -1029,10 +1130,18 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         # Parse runners
         runners = []
-        for row in parser.css(".result-racecard__row"):
+        rows = parser.css(".result-racecard__row") or \
+               parser.css(".card-cell--horse") or \
+               parser.css("atr-result-horse")
+
+        for row in rows:
             try:
-                name_node = row.css_first(".result-racecard__horse-name a")
-                pos_node = row.css_first(".result-racecard__pos")
+                name_node = row.css_first(".result-racecard__horse-name a") or \
+                            row.css_first(".horse-name a") or \
+                            row.css_first("a[href*='/horse/']")
+                pos_node = row.css_first(".result-racecard__pos") or \
+                           row.css_first(".pos") or \
+                           row.css_first(".position")
 
                 if not name_node:
                     continue
@@ -1049,10 +1158,24 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                     except ValueError:
                         pass
 
+                # Odds / SP
+                odds_node = row.css_first(".result-racecard__odds")
+                final_odds = 0.0
+                if odds_node:
+                    sp = fortuna.clean_text(odds_node.text())
+                    try:
+                        if "/" in sp:
+                            n, d = map(int, sp.split("/"))
+                            final_odds = (n / d) + 1.0
+                        else:
+                            final_odds = float(sp)
+                    except: pass
+
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
+                    final_win_odds=final_odds
                 ))
             except Exception:
                 continue
@@ -1111,6 +1234,7 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Sporting Life results."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL = "https://www.sportinglife.com"
 
@@ -1165,7 +1289,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
             return []
 
         races = []
-        date_str = raw_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
 
         for item in raw_data.get("pages", []):
             html_content = item.get("html")
@@ -1205,6 +1329,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
                     venue = fortuna.normalize_venue_name(race_summary.get("course_name", "Unknown"))
                     time_str = race_summary.get("time", "00:00")
                     date_val = race_summary.get("date", date_str)
+                    race_num = race_data.get("race_number") or race_summary.get("race_number") or 1
 
                     runners = []
                     # Try 'rides' first (typical for result pages)
@@ -1212,10 +1337,22 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
                     if items:
                         for r in items:
                             horse = r.get("horse", {})
+                            sp = r.get("starting_price") or r.get("sp")
+                            final_odds = 0.0
+                            if sp:
+                                try:
+                                    if "/" in str(sp):
+                                        num, den = map(int, str(sp).split("/"))
+                                        final_odds = (num / den) + 1.0
+                                    else:
+                                        final_odds = float(sp)
+                                except: pass
+
                             runners.append(ResultRunner(
                                 name=horse.get("name") or r.get("name"),
                                 number=r.get("cloth_number") or r.get("saddle_cloth_number", 0),
-                                position=str(r.get("finish_position") or r.get("position", ""))
+                                position=str(r.get("finish_position") or r.get("position", "")),
+                                final_win_odds=final_odds
                             ))
                     else:
                         # Fallback to 'runners'
@@ -1263,9 +1400,9 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
                             start_time = datetime.now(EASTERN)
 
                         return ResultRace(
-                            id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_val.replace('-', '')}_{time_str.replace(':', '')}",
+                            id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_val.replace('-', '')}_R{race_num}",
                             venue=venue,
-                            race_number=1,
+                            race_number=race_num,
                             start_time=start_time,
                             runners=runners,
                             trifecta_payout=trifecta_pay,
@@ -1332,6 +1469,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
 class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Sky Sports results."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "SkySportsResults"
     BASE_URL = "https://www.skysports.com"
 
@@ -1402,7 +1540,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
             return []
 
         races = []
-        date_str = raw_data.get("date", datetime.now().strftime("%Y-%m-%d"))
+        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
 
         for item in raw_data.get("pages", []):
             html_content = item.get("html")
@@ -1463,10 +1601,24 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
                     except:
                         pass
 
+                # Final Odds / SP
+                odds_node = row.css_first(".sdc-site-racing-card__odds")
+                final_odds = 0.0
+                if odds_node:
+                    sp = fortuna.clean_text(odds_node.text())
+                    try:
+                        if "/" in sp:
+                            num, den = map(int, sp.split("/"))
+                            final_odds = (num / den) + 1.0
+                        else:
+                            final_odds = float(sp)
+                    except: pass
+
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
+                    final_win_odds=final_odds
                 ))
             except Exception:
                 continue
@@ -1500,10 +1652,27 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
         except:
             start_time = datetime.now(EASTERN)
 
+        # Extract race number from URL or page
+        race_num = 1
+        url_match = re.search(r'/(\d+)/', url)
+        if url_match:
+            # Check if this ID appears in navigation to find its index
+            nav_links = parser.css("a[href*='/racing/results/']")
+            for i, link in enumerate(nav_links):
+                if url_match.group(0) in (link.attributes.get("href") or ""):
+                    race_num = i + 1
+                    break
+
+        # Fallback to searching text
+        if race_num == 1:
+            txt_match = re.search(r'Race\s+(\d+)', parser.text(), re.I)
+            if txt_match:
+                race_num = int(txt_match.group(1))
+
         return ResultRace(
-            id=f"sky_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            id=f"sky_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
             venue=venue,
-            race_number=1,
+            race_number=race_num,
             start_time=start_time,
             runners=runners,
             trifecta_payout=trifecta_pay,
@@ -1622,22 +1791,23 @@ def generate_analytics_report(
         lines.append("")
 
     # --- 5. SUMMARY STATISTICS ---
-    if audited_tips:
-        total = len(audited_tips)
-        cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
-        total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
-        strike_rate = (cashed / total * 100) if total > 0 else 0.0
-        roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0
+    # Disabled for fine-tuning fetching/matching accuracy
+    # if audited_tips:
+    #     total = len(audited_tips)
+    #     cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    #     total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    #     strike_rate = (cashed / total * 100) if total > 0 else 0.0
+    #     roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0
 
-        lines.extend([
-            "📊 SUMMARY METRICS (LIFETIME)",
-            "-" * 40,
-            f"Total Verified Races: {total}",
-            f"Overall Strike Rate:   {strike_rate:.1f}%",
-            f"Total Net Profit:     ${total_profit:+.2f} (Using $2.00 Base Unit)",
-            f"Return on Investment:  {roi:+.1f}%",
-            ""
-        ])
+    #     lines.extend([
+    #         "📊 SUMMARY METRICS (LIFETIME)",
+    #         "-" * 40,
+    #         f"Total Verified Races: {total}",
+    #         f"Overall Strike Rate:   {strike_rate:.1f}%",
+    #         f"Total Net Profit:     ${total_profit:+.2f} (Using $2.00 Base Unit)",
+    #         f"Return on Investment:  {roi:+.1f}%",
+    #         ""
+    #     ])
 
     return "\n".join(lines)
 
