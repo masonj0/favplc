@@ -192,3 +192,19 @@ async def test_sky_racing_world_adapter_parsing():
         assert len(race.runners) == 2
         assert race.runners[0].win_odds == 6.0
         assert race.runners[1].win_odds == 11.0
+
+def test_generate_race_id_new_format():
+    from fortuna import generate_race_id
+    from datetime import datetime, timezone
+
+    st = datetime(2026, 2, 7, 14, 30, tzinfo=timezone.utc)
+    # Prefix: srw, Venue: Randwick, R1, Thoroughbred
+    rid = generate_race_id("srw", "Randwick", st, 1, "Thoroughbred")
+
+    # Format: {prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}
+    # Expected: srw_randwick_20260207_1430_R1_t
+    assert rid == "srw_randwick_20260207_1430_R1_t"
+
+    # Harness
+    rid_h = generate_race_id("ts", "Meadowlands", st, 5, "Harness")
+    assert rid_h == "ts_meadowlands_20260207_1430_R5_h"

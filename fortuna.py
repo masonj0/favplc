@@ -241,6 +241,11 @@ class OddsData(FortunaBaseModel):
     source: str
     last_updated: datetime = Field(default_factory=lambda: datetime.now(EASTERN))
 
+    @field_validator("last_updated", mode="after")
+    @classmethod
+    def validate_eastern(cls, v: datetime) -> datetime:
+        return ensure_eastern(v)
+
 
 class Runner(FortunaBaseModel):
     id: Optional[str] = None
@@ -280,11 +285,9 @@ class Race(FortunaBaseModel):
 
     @field_validator("start_time", mode="after")
     @classmethod
-    def ensure_eastern(cls, v: datetime) -> datetime:
+    def validate_eastern(cls, v: datetime) -> datetime:
         """Ensures all race start times are in US Eastern Time."""
-        if v.tzinfo is None:
-            return v.replace(tzinfo=EASTERN)
-        return v.astimezone(EASTERN)
+        return ensure_eastern(v)
     source: str
     discipline: Optional[str] = None
     distance: Optional[str] = None
@@ -334,6 +337,15 @@ def to_eastern(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
     return dt.astimezone(EASTERN)
+
+
+def ensure_eastern(dt: datetime) -> datetime:
+    """Ensures datetime is timezone-aware and in Eastern time. More strict than to_eastern."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=EASTERN)
+    if dt.tzinfo != EASTERN:
+        return dt.astimezone(EASTERN)
+    return dt
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -582,13 +594,16 @@ class SmartOddsExtractor:
 def generate_race_id(prefix: str, venue: str, start_time: datetime, race_number: int, discipline: Optional[str] = None) -> str:
     venue_slug = re.sub(r"[^a-z0-9]", "", venue.lower())
     date_str = start_time.strftime("%Y%m%d")
-    disc_suffix = ""
-    if discipline:
-        dl = discipline.lower()
-        if "harness" in dl: disc_suffix = "_h"
-        elif "greyhound" in dl: disc_suffix = "_g"
-        elif "quarter" in dl: disc_suffix = "_q"
-    return f"{prefix}_{venue_slug}_{date_str}_R{race_number}{disc_suffix}"
+    time_str = start_time.strftime("%H%M")
+
+    # Always include a discipline suffix for consistency and better matching
+    dl = (discipline or "Thoroughbred").lower()
+    if "harness" in dl: disc_suffix = "_h"
+    elif "greyhound" in dl: disc_suffix = "_g"
+    elif "quarter" in dl: disc_suffix = "_q"
+    else: disc_suffix = "_t"
+
+    return f"{prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}"
 
 
 # --- VALIDATORS ---
@@ -3424,6 +3439,12 @@ class FortunaDB:
             conn = self._get_conn()
             with conn:
                 conn.execute("""
+                    CREATE TABLE IF NOT EXISTS schema_version (
+                        version INTEGER PRIMARY KEY,
+                        applied_at TEXT NOT NULL
+                    )
+                """)
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS tips (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         race_id TEXT NOT NULL,
@@ -3456,6 +3477,7 @@ class FortunaDB:
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
@@ -3472,19 +3494,42 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
 
         await self._run_in_executor(_init)
-        await self.migrate_utc_to_eastern()
+
+        # Track and execute migrations based on schema version
+        def _get_version():
+            cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
+            row = cursor.fetchone()
+            return row[0] if row and row[0] is not None else 0
+
+        current_version = await self._run_in_executor(_get_version)
+
+        if current_version < 2:
+            await self.migrate_utc_to_eastern()
+            def _update_version():
+                with self._get_conn() as conn:
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (2, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_update_version)
+            self.logger.info("Schema migrated to version 2")
+
         self._initialized = True
-        self.logger.info("Database initialized and migrated to Eastern Time", path=self.db_path)
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 2))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
         def _migrate():
             conn = self._get_conn()
-            cursor = conn.execute("SELECT id, start_time, report_date, audit_timestamp FROM tips WHERE start_time LIKE '%+00:00' OR report_date LIKE '%+00:00'")
+            cursor = conn.execute("""
+                SELECT id, start_time, report_date, audit_timestamp FROM tips
+                WHERE start_time LIKE '%+00:00' OR start_time LIKE '%Z'
+                OR report_date LIKE '%+00:00' OR report_date LIKE '%Z'
+                OR audit_timestamp LIKE '%+00:00' OR audit_timestamp LIKE '%Z'
+            """)
             rows = cursor.fetchall()
             if not rows: return
 
             self.logger.info("Migrating legacy UTC timestamps to Eastern", count=len(rows))
+            converted = 0
+            errors = 0
             with conn:
                 for row in rows:
                     updates = {}
@@ -3497,49 +3542,61 @@ class FortunaDB:
                                 updates[col] = dt_eastern.isoformat()
                             except: pass
                     if updates:
-                        set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-                        conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+                        try:
+                            set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+                            conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+                            converted += 1
+                        except Exception as e:
+                            errors += 1
+                            self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
+            self.logger.info("Migration complete", total=len(rows), converted=converted, errors=errors)
         await self._run_in_executor(_migrate)
 
-    async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 4):
-        """Logs new tips to the database with atomic deduplication."""
+    async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 12):
+        """Logs new tips to the database with batch deduplication."""
         if not self._initialized: await self.initialize()
 
         def _log():
             conn = self._get_conn()
             now = datetime.now(EASTERN)
-            with conn:
-                for tip in tips:
-                    race_id = tip.get("race_id")
-                    report_date = tip.get("report_date", now.isoformat())
 
-                    # Deduplication check: same race_id in the window
-                    cursor = conn.execute(
-                        "SELECT report_date FROM tips WHERE race_id = ? ORDER BY id DESC LIMIT 1",
-                        (race_id,)
-                    )
-                    last_report = cursor.fetchone()
-                    if last_report:
-                        try:
-                            lr_str = last_report["report_date"]
-                            lr_dt = datetime.fromisoformat(lr_str)
-                            if lr_dt.tzinfo is None: lr_dt = lr_dt.replace(tzinfo=EASTERN)
-                            if (now - lr_dt).total_seconds() < dedup_window_hours * 3600:
-                                continue
-                        except: pass
+            # Batch check for recently logged tips to avoid redundant entries
+            race_ids = [t.get("race_id") for t in tips if t.get("race_id")]
+            if not race_ids: return
 
-                    conn.execute("""
-                        INSERT OR IGNORE INTO tips (
-                            race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        race_id, tip.get("venue"), tip.get("race_number"),
+            placeholders = ",".join(["?"] * len(race_ids))
+            cutoff = (now - timedelta(hours=dedup_window_hours)).isoformat()
+
+            cursor = conn.execute(
+                f"SELECT race_id FROM tips WHERE race_id IN ({placeholders}) AND report_date > ?",
+                (*race_ids, cutoff)
+            )
+            already_logged = {row["race_id"] for row in cursor.fetchall()}
+
+            to_insert = []
+            for tip in tips:
+                rid = tip.get("race_id")
+                if rid and rid not in already_logged:
+                    report_date = tip.get("report_date") or now.isoformat()
+                    to_insert.append((
+                        rid, tip.get("venue"), tip.get("race_number"),
                         tip.get("discipline"), tip.get("start_time"), report_date,
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number")
                     ))
+                    already_logged.add(rid) # Avoid duplicates within the same batch
+
+            if to_insert:
+                with conn:
+                    conn.executemany("""
+                        INSERT OR IGNORE INTO tips (
+                            race_id, venue, race_number, discipline, start_time, report_date,
+                            is_goldmine, gap12, top_five, selection_number
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, to_insert)
+                self.logger.info("Hot tips batch logged", count=len(to_insert))
+
         await self._run_in_executor(_log)
 
     async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
@@ -3702,7 +3759,7 @@ class FortunaDB:
                 self._conn.close()
                 self._conn = None
         await self._run_in_executor(_close)
-        self._executor.shutdown()
+        self._executor.shutdown(wait=True)
 
 
 class HotTipsTracker:
