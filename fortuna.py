@@ -1101,6 +1101,67 @@ class BaseAdapterV3(ABC):
 # ----------------------------------------
 # SkyRacingWorldAdapter
 # ----------------------------------------
+class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for Racing & Sports (RAS).
+    Note: Highly protected by Cloudflare; requires advanced impersonation.
+    """
+    SOURCE_NAME: ClassVar[str] = "RacingAndSports"
+    BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
+
+    async def fetch_races(self, date_str: str) -> List[Race]:
+        url = f"{self.BASE_URL}/racing-index?date={date_str}"
+        headers = self.get_browser_headers()
+
+        try:
+            resp = await self.client.get(url, headers=headers)
+            if resp.status_code != 200:
+                self.logger.warning(f"RAS blocked with status {resp.status_code}")
+                return []
+
+            tree = HTMLParser(resp.text)
+            races = []
+            # RAS uses tables for different regions (Australia, UK, etc.)
+            tables = tree.css("table.table-index")
+            for table in tables:
+                for row in table.css("tbody tr"):
+                    venue_cell = row.css_first("td.venue-name")
+                    if not venue_cell: continue
+                    venue_name = venue_cell.text(strip=True)
+
+                    for link in row.css("td a.race-link"):
+                        race_url = self.BASE_URL + link.attributes.get("href", "")
+                        r_num_match = re.search(r"R(\d+)", link.text(strip=True))
+                        if not r_num_match: continue
+                        r_num = int(r_num_match.group(1))
+
+                        # We'll queue these for detail fetching
+                        # (In a real implementation, we'd use a pool)
+                        detail = await self._fetch_race_detail(race_url, venue_name, r_num, date_str)
+                        if detail: races.append(detail)
+            return races
+        except Exception as e:
+            self.logger.error(f"RAS Fetch Error: {e}")
+            return []
+
+    async def _fetch_race_detail(self, url: str, venue: str, num: int, date_str: str) -> Optional[Race]:
+        try:
+            resp = await self.client.get(url, headers=self.get_browser_headers())
+            if resp.status_code != 200: return None
+            tree = HTMLParser(resp.text)
+
+            runners = []
+            for row in tree.css("tr.runner-row"):
+                name = row.css_first(".runner-name").text(strip=True) if row.css_first(".runner-name") else "Unknown"
+                saddle = int(row.css_first(".runner-number").text(strip=True)) if row.css_first(".runner-number") else 0
+                odds_text = row.css_first(".odds-win").text(strip=True) if row.css_first(".odds-win") else "0"
+                odds = float(odds_text) if odds_text.replace(".","").isdigit() else 0.0
+                runners.append(Runner(name=name, selection_number=saddle, win_odds=odds))
+
+            if not runners: return None
+            return Race(venue=venue, race_number=num, start_time=datetime.now(EASTERN), runners=runners, source=self.SOURCE_NAME, url=url)
+        except: return None
+
 class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
     BASE_URL: ClassVar[str] = "https://www.skyracingworld.com"
@@ -5108,6 +5169,89 @@ async def run_discovery(
 
     finally:
         await GlobalResourceManager.cleanup()
+def start_desktop_app():
+    """Starts a FastAPI server and opens a webview window for the Fortuna Dashboard."""
+    try:
+        import uvicorn
+        from fastapi import FastAPI
+        from fastapi.responses import HTMLResponse
+        import webview
+        import threading
+        import time
+        import asyncio
+    except ImportError as e:
+        print(f"GUI dependencies missing: {e}. Install with 'pip install fastapi uvicorn pywebview'")
+        return
+
+    app = FastAPI(title="Fortuna Desktop Intelligence")
+
+    @app.get("/", response_class=HTMLResponse)
+    async def get_dashboard():
+        # Retrieve latest Goldmines from the database
+        db = FortunaDB()
+        conn = await db.get_connection()
+        # We try to get the most recent tips
+        try:
+            async with conn.execute("SELECT venue, race_number, selection_name, win_odds, discovered_at FROM tips ORDER BY id DESC LIMIT 50") as cursor:
+                tips = await cursor.fetchall()
+        except:
+            tips = []
+
+        tips_html = "".join([f"<tr><td>{t[4]}</td><td>{t[0]}</td><td>R{t[1]}</td><td>{t[2]}</td><td>{t[3]}</td></tr>" for t in tips])
+
+        return f"""
+        <html>
+            <head>
+                <title>Fortuna Intelligence Desktop</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; padding: 30px; }}
+                    .container {{ max-width: 1200px; margin: auto; }}
+                    h1 {{ color: #fbbf24; border-bottom: 2px solid #fbbf24; padding-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; }}
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; background: #1e293b; border-radius: 8px; overflow: hidden; }}
+                    th, td {{ padding: 15px; text-align: left; border-bottom: 1px solid #334155; }}
+                    th {{ background: #334155; color: #fbbf24; }}
+                    tr:hover {{ background: #475569; }}
+                    .footer {{ margin-top: 30px; font-size: 0.8em; color: #94a3b8; text-align: center; }}
+                    .btn {{ display: inline-block; background: #fbbf24; color: #0f172a; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold; margin-bottom: 20px; }}
+                </style>
+                <script>
+                    setTimeout(() => {{ location.reload(); }}, 30000);
+                </script>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Fortuna Intelligence Dashboard</h1>
+                    <p>Monitoring global racing markets for Goldmine opportunities...</p>
+                    <a href="/" class="btn">REFRESH NOW</a>
+                    <table>
+                        <thead>
+                            <tr><th>Time Discovered</th><th>Venue</th><th>Race</th><th>Selection</th><th>Odds</th></tr>
+                        </thead>
+                        <tbody>
+                            {tips_html or "<tr><td colspan='5'>No opportunities found yet. Run discovery to populate the database.</td></tr>"}
+                        </tbody>
+                    </table>
+                    <div class="footer">Fortuna Intelligence Monolith - Sci-Fi Future Edition - Auto-refreshing every 30s</div>
+                </div>
+            </body>
+        </html>
+        """
+
+    def run_server():
+        uvicorn.run(app, host="127.0.0.1", port=8013, log_level="error")
+
+    # Start FastAPI in a background thread
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+
+    # Wait a moment for server to initialize
+    time.sleep(1.5)
+
+    # Create and start the webview window
+    print("Launching Fortuna Desktop Window...")
+    webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
+    webview.start()
+
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
@@ -5118,7 +5262,13 @@ async def main_all_in_one():
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
+    parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
     args = parser.parse_args()
+
+    if args.gui:
+        # Start GUI. It runs its own event loop for the webview.
+        start_desktop_app()
+        return
 
     if args.clear_db:
         db = FortunaDB()
