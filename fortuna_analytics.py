@@ -429,6 +429,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
     Primary source for US thoroughbred race results.
     """
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "EquibaseResults"
     BASE_URL = "https://www.equibase.com"
 
@@ -739,6 +740,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Racing Post UK/IRE results."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostResults"
     BASE_URL = "https://www.racingpost.com"
 
@@ -943,6 +945,7 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for At The Races results (UK/IRE)."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "AtTheRacesResults"
     BASE_URL = "https://www.attheraces.com"
 
@@ -1128,6 +1131,7 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Sporting Life results."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL = "https://www.sportinglife.com"
 
@@ -1350,6 +1354,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
 class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
     """Adapter for Sky Sports results."""
 
+    ADAPTER_TYPE = "results"
     SOURCE_NAME = "SkySportsResults"
     BASE_URL = "https://www.skysports.com"
 
