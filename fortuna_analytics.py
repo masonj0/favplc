@@ -11,6 +11,7 @@ import re
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import (
     Any,
@@ -42,6 +43,8 @@ except ImportError:
 import fortuna
 
 # --- CONSTANTS ---
+EASTERN = ZoneInfo("America/New_York")
+
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
     4: 1,   # 4 or fewer runners: only win counts
@@ -51,6 +54,18 @@ PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
 
 
 # --- HELPER FUNCTIONS ---
+
+def now_eastern() -> datetime:
+    """Returns the current time in US Eastern Time."""
+    return datetime.now(EASTERN)
+
+
+def to_eastern(dt: datetime) -> datetime:
+    """Converts a datetime object to US Eastern Time."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=EASTERN)
+    return dt.astimezone(EASTERN)
+
 
 def parse_position(pos_str: Optional[str]) -> Optional[int]:
     """
@@ -170,9 +185,10 @@ class ResultRace(fortuna.FortunaBaseModel):
 
     @property
     def canonical_key(self) -> str:
-        """Generate a canonical key for matching."""
+        """Generate a canonical key for matching, including discipline if available."""
         date_str = self.start_time.strftime('%Y%m%d')
-        return f"{fortuna.get_canonical_venue(self.venue)}|{date_str}|{self.race_number}"
+        disc = (self.discipline or "T")[:1].upper()
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{disc}"
 
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
         """Get top N finishers sorted by position."""
@@ -268,18 +284,20 @@ class AuditorEngine:
         return audited_tips
 
     def _get_tip_canonical_key(self, tip: Dict[str, Any]) -> Optional[str]:
-        """Generate canonical key for a tip."""
+        """Generate canonical key for a tip, matching discovery format."""
         venue = tip.get("venue")
         race_number = tip.get("race_number")
         start_time_raw = tip.get("start_time")
+        discipline = tip.get("discipline") or "T"
 
         if not all([venue, race_number, start_time_raw]):
             return None
 
         try:
-            st = datetime.fromisoformat(str(start_time_raw))
+            st = datetime.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
             date_str = st.strftime('%Y%m%d')
-            return f"{fortuna.get_canonical_venue(venue)}|{date_str}|{race_number}"
+            disc = discipline[:1].upper()
+            return f"{fortuna.get_canonical_venue(venue)}|{race_number}|{date_str}|{disc}"
         except (ValueError, TypeError):
             return None
 
@@ -352,7 +370,7 @@ class AuditorEngine:
                 selection_result.position_numeric
                 if selection_result else None
             ),
-            "audit_timestamp": datetime.now(timezone.utc).isoformat(),
+            "audit_timestamp": datetime.now(EASTERN).isoformat(),
             "trifecta_payout": result.trifecta_payout,
             "trifecta_combination": result.trifecta_combination,
             "superfecta_payout": result.superfecta_payout,
@@ -403,15 +421,20 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         self._semaphore = asyncio.Semaphore(5)
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # Use CAMOUFOX if available as it's best for Equibase
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            primary_engine=fortuna.BrowserEngine.CAMOUFOX,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=45,
+            timeout=60,
         )
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.equibase.com")
+
+    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
+        """Skip the default RaceValidator as results use ResultRace model."""
+        return self._parse_races(raw_data)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         """Fetch results index and all track pages for a date."""
@@ -432,12 +455,16 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         parser = HTMLParser(resp.text)
 
         # Extract track-specific result page links
+        # Looking for links like: /static/chart/summary\RaceCardIndexTP020526USA-EQB.html
+        date_short = dt.strftime('%m%d%y')
         links = set()
         for a in parser.css("a"):
-            href = a.attributes.get("href", "")
+            href = a.attributes.get("href") or ""
+            # Normalize backslashes just in case
+            href = href.replace("\\", "/")
             if (
-                "/static/chart/summary/" in href
-                and href.endswith(".html")
+                date_short in href
+                and ("sum.html" in href.lower() or "racecardindex" in href.lower())
                 and "index.html" not in href
             ):
                 links.add(href)
@@ -569,10 +596,10 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
             start_time = race_date.replace(
                 hour=12, minute=0,
-                tzinfo=timezone.utc
+                tzinfo=EASTERN
             )
         except ValueError:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(EASTERN)
 
         return ResultRace(
             id=f"eqb_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
@@ -702,6 +729,10 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.racingpost.com")
+
+    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
+        """Skip the default RaceValidator as results use ResultRace model."""
+        return self._parse_races(raw_data)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         url = f"/results/{date_str}"
@@ -860,9 +891,9 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=12, minute=0, tzinfo=timezone.utc)
+            start_time = race_date.replace(hour=12, minute=0, tzinfo=EASTERN)
         except ValueError:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(EASTERN)
 
         return ResultRace(
             id=f"rp_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
@@ -903,6 +934,10 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.attheraces.com")
 
+    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
+        """Skip the default RaceValidator as results use ResultRace model."""
+        return self._parse_races(raw_data)
+
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         url = f"/results/{date_str}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
@@ -913,11 +948,17 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         # Find result page links
         links = []
+        # Try both the specific race formats and the daily meeting index pages
         for a in parser.css("a[href*='/results/']"):
-            href = a.attributes.get("href", "")
-            # ATR format: /results/Venue/DD-Mon-YYYY/HHMM
-            if re.search(r"/results/[^/]+/\d{2}-[A-Za-z]{3}-\d{4}/", href):
+            href = a.attributes.get("href") or ""
+            # Format: /results/Venue/DD-Month-YYYY/HHMM
+            if re.search(r"/results/[^/]+/.+-\d{4}/\d{4}", href):
                 links.append(href)
+            # Alternative: /results/DD-Month-YYYY (meeting list)
+            elif re.search(r"/results/\d{2}-[A-Za-z]+-\d{4}$", href):
+                # We could follow these but usually the index page already has the race links
+                # if we are lucky.
+                pass
 
         unique_links = list(set(links))
         if not unique_links:
@@ -1035,9 +1076,9 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=12, minute=0, tzinfo=timezone.utc)
+            start_time = race_date.replace(hour=12, minute=0, tzinfo=EASTERN)
         except ValueError:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(EASTERN)
 
         return ResultRace(
             id=f"atr_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
@@ -1077,6 +1118,10 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.sportinglife.com")
+
+    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
+        """Skip the default RaceValidator as results use ResultRace model."""
+        return self._parse_races(raw_data)
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         url = f"/racing/results/{date_str}"
@@ -1200,9 +1245,9 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
 
                         try:
                             dt = datetime.strptime(date_val, "%Y-%m-%d")
-                            start_time = dt.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=timezone.utc)
+                            start_time = dt.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
                         except:
-                            start_time = datetime.now(timezone.utc)
+                            start_time = datetime.now(EASTERN)
 
                         return ResultRace(
                             id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_val.replace('-', '')}_{time_str.replace(':', '')}",
@@ -1257,9 +1302,9 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
 
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=timezone.utc)
+            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
         except:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(EASTERN)
 
         return ResultRace(
             id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
@@ -1295,6 +1340,10 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.skysports.com")
 
+    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
+        """Skip the default RaceValidator as results use ResultRace model."""
+        return self._parse_races(raw_data)
+
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # Sky Sports uses DD-MM-YYYY in results URL
         try:
@@ -1305,18 +1354,27 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
 
         url = f"/racing/results/{url_date}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp:
+        if not resp or not resp.text:
             return None
 
         parser = HTMLParser(resp.text)
         links = []
+        # Sky Sports links can be full-result or have meeting IDs
         for a in parser.css("a[href*='/racing/results/']"):
-            href = a.attributes.get("href", "")
-            # Example: /racing/results/full-result/1353673/kempton-park/04-02-2026/try-unibets-superboosts-apprentice-handicap
-            if re.search(r"/results/.+/\d+/", href):
-                links.append(href)
+            href = a.attributes.get("href") or ""
+            if any(p in href for p in ["/full-result/", "/race-result/"]) or re.search(r"/\d+/", href):
+                if date_str in href or url_date in href:
+                    links.append(href)
 
         unique_links = list(set(links))
+        if not unique_links:
+            # Fallback: look for any link with a digit ID that isn't a date-only result
+            for a in parser.css("a[href*='/racing/results/']"):
+                href = a.attributes.get("href") or ""
+                if re.search(r"/\d{6,}/", href): # Likely a race ID
+                     links.append(href)
+            unique_links = list(set(links))
+
         if not unique_links:
             return None
 
@@ -1425,9 +1483,9 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
 
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=timezone.utc)
+            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
         except:
-            start_time = datetime.now(timezone.utc)
+            start_time = datetime.now(EASTERN)
 
         return ResultRace(
             id=f"sky_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
@@ -1449,7 +1507,7 @@ def generate_analytics_report(
     harvest_summary: Dict[str, int] = None
 ) -> str:
     """Generate a high-impact human-readable performance audit report."""
-    now_str = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET')
     lines = [
         "=" * 80,
         "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(80),
@@ -1478,7 +1536,13 @@ def generate_analytics_report(
             "." * 80
         ])
         for tip in recent_tips[:15]:
-            st_str = str(tip.get("start_time", "N/A"))[:16].replace("T", " ")
+            st_raw = tip.get("start_time", "N/A")
+            try:
+                st = datetime.fromisoformat(str(st_raw).replace('Z', '+00:00'))
+                st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
+            except:
+                st_str = str(st_raw)[:16].replace("T", " ")
+
             venue = str(tip.get("venue", "Unknown"))[:20]
             rnum = tip.get("race_number", "?")
             gm = "GOLD" if tip.get("is_goldmine") else "----"
@@ -1753,7 +1817,7 @@ def main() -> None:
             return
         target_dates = [args.date]
     else:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(EASTERN)
         for i in range(args.days):
             d = now - timedelta(days=i)
             target_dates.append(d.strftime("%Y-%m-%d"))
