@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -112,9 +113,14 @@ def parse_currency_value(value_str: str) -> float:
     if not value_str:
         return 0.0
     try:
-        cleaned = re.sub(r'[^\d.]', '', value_str)
+        # Check for unexpected characters (excluding common currency/formatting)
+        if re.search(r'[^\d.,$£€\s]', str(value_str)):
+            structlog.get_logger().debug("unexpected_currency_format", value=value_str)
+
+        cleaned = re.sub(r'[^\d.]', '', str(value_str).replace(',', ''))
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
+        structlog.get_logger().warning("failed_parsing_currency", value=value_str)
         return 0.0
 
 
@@ -129,18 +135,12 @@ def validate_date_format(date_str: str) -> bool:
 
 # --- MODELS FOR ANALYTICS ---
 
-class ResultRunner(fortuna.FortunaBaseModel):
+class ResultRunner(fortuna.Runner):
     """
-    Extended runner with result information.
-
-    Note: We don't inherit from Runner to avoid Pydantic type conflicts.
-    Instead, we include all relevant fields directly.
+    Extended runner with result information, inheriting from discovery Runner.
     """
-    name: str
-    number: int = 0
     position: Optional[str] = None
     position_numeric: Optional[int] = None
-    scratched: bool = False
 
     # Result-specific fields
     final_win_odds: Optional[float] = None
@@ -156,17 +156,10 @@ class ResultRunner(fortuna.FortunaBaseModel):
         return self
 
 
-class ResultRace(fortuna.FortunaBaseModel):
+class ResultRace(fortuna.Race):
     """
-    Race with full result data.
+    Race with full result data, inheriting from discovery Race.
     """
-    id: str
-    venue: str
-    race_number: int
-    start_time: datetime
-    source: str
-    discipline: Optional[str] = None
-
     runners: List[ResultRunner] = Field(default_factory=list)
     official_dividends: Dict[str, float] = Field(default_factory=dict)
     chart_url: Optional[str] = None
@@ -268,10 +261,9 @@ class AuditorEngine:
                 outcome = self._evaluate_tip(tip, result)
                 await self.db.update_audit_result(race_id, outcome)
 
-                # Enrich tip with outcome for the return list
-                tip.update(outcome)
-                tip["audit_completed"] = True
-                audited_tips.append(tip)
+                # Create a copy to avoid mutating the original tip object
+                audited_tip = {**tip, **outcome, "audit_completed": True}
+                audited_tips.append(audited_tip)
 
             except Exception as e:
                 self.logger.error(
@@ -307,8 +299,9 @@ class AuditorEngine:
 
         Returns dict with audit outcome fields.
         """
-        # Determine selection number
+        # Determine selection number and name
         selection_num = self._extract_selection_number(tip)
+        selection_name = tip.get("selection_name") # May not be present in all tip sources
 
         # Get sorted finishers
         top_finishers = result.get_top_finishers(5)
@@ -334,11 +327,19 @@ class AuditorEngine:
         verdict = "BURNED"
         profit = -2.00  # Standard 1 unit loss ($2.00)
 
-        # Find our selection in results
-        selection_result = next(
-            (r for r in result.runners if r.number == selection_num),
-            None
-        )
+        # Find our selection in results - try number first, then name
+        selection_result = None
+        if selection_num:
+            selection_result = next(
+                (r for r in result.runners if r.number == selection_num),
+                None
+            )
+
+        if selection_result is None and selection_name:
+            selection_result = next(
+                (r for r in result.runners if r.name.lower() == selection_name.lower()),
+                None
+            )
 
         if selection_result is None:
             # Selection not found (likely scratched)
@@ -357,9 +358,11 @@ class AuditorEngine:
                     # Use official payout (usually for $2 bet)
                     profit = selection_result.place_payout - 2.00
                 else:
-                    # Heuristic: ~1/5 of win odds for place
-                    odds = selection_result.final_win_odds or 2.0
-                    profit = ((odds - 1.0) / 5.0) * 2.0
+                    # Heuristic: ~1/5 of win odds for place (capped at reasonable ROI)
+                    # Configurable fallback if needed, but 1/5 is standard for EW
+                    odds = selection_result.final_win_odds or 2.75 # Default fallback odds
+                    place_roi = max(0.1, (odds - 1.0) / 5.0)
+                    profit = place_roi * 2.0
 
         return {
             "actual_top_5": ", ".join(actual_top_5),
@@ -563,11 +566,31 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         if not header:
             return None
 
-        race_num_match = re.search(r"Race\s+(\d+)", header.text())
+        header_text = header.text()
+        race_num_match = re.search(r"Race\s+(\d+)", header_text)
         if not race_num_match:
             return None
 
         race_num = int(race_num_match.group(1))
+
+        # Build start time - try to extract from header or chart
+        start_time = None
+        # Heuristic: Often "Post Time: 1:30 PM" is in the header or nearby
+        time_match = re.search(r'(\d{1,2}:\d{2})\s*([APM]{2})', header_text, re.I)
+        if time_match:
+            try:
+                time_val = f"{time_match.group(1)} {time_match.group(2).upper()}"
+                dt_part = datetime.strptime(time_val, "%I:%M %p").time()
+                race_date = datetime.strptime(date_str, "%Y-%m-%d")
+                start_time = datetime.combine(race_date, dt_part).replace(tzinfo=EASTERN)
+            except: pass
+
+        if not start_time:
+            try:
+                race_date = datetime.strptime(date_str, "%Y-%m-%d")
+                start_time = race_date.replace(hour=12, minute=0, tzinfo=EASTERN)
+            except ValueError:
+                start_time = datetime.now(EASTERN)
 
         # Parse runners
         runners = []
@@ -590,16 +613,6 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         superfecta_payout, superfecta_combo = self._find_exotic_payout(
             race_table, page_parser, "superfecta"
         )
-
-        # Build start time
-        try:
-            race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(
-                hour=12, minute=0,
-                tzinfo=EASTERN
-            )
-        except ValueError:
-            start_time = datetime.now(EASTERN)
 
         return ResultRace(
             id=f"eqb_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
@@ -1541,7 +1554,12 @@ def generate_analytics_report(
                 st = datetime.fromisoformat(str(st_raw).replace('Z', '+00:00'))
                 st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
             except:
-                st_str = str(st_raw)[:16].replace("T", " ")
+                try:
+                    import dateutil.parser
+                    st = dateutil.parser.parse(str(st_raw))
+                    st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
+                except:
+                    st_str = str(st_raw)[:16].replace("T", " ")
 
             venue = str(tip.get("venue", "Unknown"))[:20]
             rnum = tip.get("race_number", "?")
@@ -1626,20 +1644,25 @@ def generate_analytics_report(
 
 # --- MAIN ORCHESTRATOR ---
 
+@functools.lru_cache(None)
+def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
+    """Returns all non-abstract results adapter classes."""
+    def get_all_subclasses(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+        )
+
+    return [
+        c for c in get_all_subclasses(fortuna.BaseAdapterV3)
+        if not getattr(c, "__abstractmethods__", None)
+        and getattr(c, "ADAPTER_TYPE", "discovery") == "results"
+    ]
+
+
 @asynccontextmanager
 async def managed_adapters():
     """Context manager for adapter lifecycle using auto-discovery."""
-    def get_all_adapter_classes(cls):
-        return set(cls.__subclasses__()).union(
-            [s for c in cls.__subclasses__() for s in get_all_adapter_classes(c)]
-        )
-
-    adapter_classes = [
-        c for c in get_all_adapter_classes(fortuna.BaseAdapterV3)
-        if not getattr(c, "__abstractmethods__", None)
-        and c.__module__ == __name__ # Only local results adapters
-    ]
-
+    adapter_classes = get_results_adapter_classes()
     adapters = [cls() for cls in adapter_classes]
     try:
         yield adapters

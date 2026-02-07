@@ -11,6 +11,7 @@ from various racing websites. It serves as a high-reliability fallback system.
 """
 import argparse
 import asyncio
+import functools
 import hashlib
 import html
 import json
@@ -625,16 +626,25 @@ class GlobalResourceManager:
     _global_semaphore: Optional[asyncio.Semaphore] = None
 
     @classmethod
-    async def get_httpx_client(cls) -> httpx.AsyncClient:
-        if cls._httpx_client is None:
-            async with cls._lock:
-                if cls._httpx_client is None:
-                    cls._httpx_client = httpx.AsyncClient(
-                        follow_redirects=True,
-                        timeout=httpx.Timeout(DEFAULT_REQUEST_TIMEOUT),
-                        headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
-                        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
-                    )
+    async def get_httpx_client(cls, timeout: Optional[int] = None) -> httpx.AsyncClient:
+        """
+        Returns a shared httpx client.
+        If timeout is provided and differs from current client, the client is recreated.
+        """
+        async with cls._lock:
+            if cls._httpx_client is not None:
+                if timeout is not None and cls._httpx_client.timeout.read != timeout:
+                    await cls._httpx_client.aclose()
+                    cls._httpx_client = None
+
+            if cls._httpx_client is None:
+                use_timeout = timeout or DEFAULT_REQUEST_TIMEOUT
+                cls._httpx_client = httpx.AsyncClient(
+                    follow_redirects=True,
+                    timeout=httpx.Timeout(use_timeout),
+                    headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+                )
         return cls._httpx_client
 
     @classmethod
@@ -699,6 +709,10 @@ class SmartFetcher:
             for e in [BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT]:
                 if e in available_engines: available_engines.remove(e)
 
+        if not available_engines:
+            self.logger.error("no_fetch_engines_available", url=url)
+            raise FetchError("No fetch engines available (install curl_cffi or scrapling)")
+
         engines = sorted(available_engines, key=lambda e: self._engine_health[e], reverse=True)
         if self.strategy.primary_engine in engines:
             engines.remove(self.strategy.primary_engine)
@@ -735,8 +749,13 @@ class SmartFetcher:
                 self.logger.warning("Failed to generate browserforge headers", error=str(e))
 
         if engine == BrowserEngine.HTTPX:
-            client = await GlobalResourceManager.get_httpx_client()
-            resp = await client.request(method, url, **kwargs)
+            # Pass strategy timeout if present in kwargs or use default
+            timeout = kwargs.get("timeout", self.strategy.timeout)
+            client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
+
+            # Remove timeout from kwargs to avoid double-passing to request
+            req_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
+            resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             resp.status = resp.status_code
             return resp
         
@@ -1907,18 +1926,45 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
     def _parse_runner(self, node: Node) -> Optional[Runner]:
         try:
-            nn, nmn, on = node.css_first("td:nth-child(1)"), node.css_first("td:nth-child(3)"), node.css_first("td:nth-child(10)")
-            if not nn or not nn.text(strip=True).isdigit() or not nmn: return None
-            number, name = int(nn.text(strip=True)), clean_text(nmn.text())
+            cols = node.css("td")
+            if len(cols) < 3: return None
+
+            # P1: Try to find number in first col
+            number = 0
+            num_text = clean_text(cols[0].text())
+            if num_text.isdigit():
+                number = int(num_text)
+
+            # P2: Horse name usually in 3rd col, but can vary
+            name = None
+            for idx in [2, 1, 3]:
+                if len(cols) > idx:
+                    n_text = clean_text(cols[idx].text())
+                    if n_text and not n_text.isdigit() and len(n_text) > 2:
+                        name = n_text
+                        break
+
             if not name: return None
+
             sc = "scratched" in node.attributes.get("class", "").lower() or "SCR" in (clean_text(node.text()) or "")
+
             odds, wo = {}, None
             if not sc:
-                wo = parse_odds_to_decimal(clean_text(on.text()) if on else "")
+                # Odds column can be 9 or 10 (blind indexing fallback)
+                for idx in [9, 8, 10]:
+                    if len(cols) > idx:
+                        o_text = clean_text(cols[idx].text())
+                        if o_text:
+                            wo = parse_odds_to_decimal(o_text)
+                            if wo: break
+
                 if wo is None: wo = SmartOddsExtractor.extract_from_node(node)
                 if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
+
             return Runner(number=number, name=name, odds=odds, win_odds=wo, scratched=sc)
-        except: return None
+        except Exception as e:
+            self.logger.debug("equibase_runner_parse_failed", error=str(e))
+            return None
 
     def _parse_post_time(self, ds: str, ts: str) -> datetime:
         try:
@@ -2185,10 +2231,10 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 log = structlog.get_logger(__name__)
 
 
-def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
+def _get_best_win_odds(runner: Runner, refresh: bool = False) -> Optional[Decimal]:
     """Gets the best win odds for a runner, filtering out invalid or placeholder values."""
     # Check if we have already calculated and cached a valid best odds in metadata
-    if "best_win_odds_decimal" in runner.metadata:
+    if not refresh and "best_win_odds_decimal" in runner.metadata:
         return runner.metadata["best_win_odds_decimal"]
 
     if not runner.odds:
@@ -2484,7 +2530,7 @@ class AudioAlertSystem:
 
 
 class RaceNotifier:
-    """Handles sending native Windows notifications and audio alerts for high-value races."""
+    """Handles sending native notifications and audio alerts for high-value races."""
 
     def __init__(self):
         self.toaster = ToastNotifier("Fortuna") if ToastNotifier else None
@@ -2492,14 +2538,21 @@ class RaceNotifier:
         self.notified_races = set()
         self.notifications_enabled = self.toaster is not None
         if not self.notifications_enabled:
-            log.warning("Notifications disabled: ToastNotifier not available")
+            log.debug("Native notifications disabled (platform not supported or library missing)")
 
     def notify_qualified_race(self, race):
         if race.id in self.notified_races:
             return
 
-        if not self.notifications_enabled:
-            log.debug("Skipping notification: disabled", race_id=race.id)
+        # Always log the high-value opportunity regardless of notification setting
+        log.info(
+            "High-value opportunity identified",
+            venue=race.venue,
+            race=race.race_number,
+            score=race.qualification_score
+        )
+
+        if not self.notifications_enabled or self.toaster is None:
             return
 
         title = "🐎 High-Value Opportunity!"
@@ -2515,7 +2568,7 @@ Post Time: {race.start_time.strftime("%I:%M %p")}"""
             log.info("Notification and audio alert sent for high-value race", race_id=race.id)
         except Exception as e:
             # Catch potential exceptions from the notification library itself
-            log.error("Failed to send notification", error=str(e), exc_info=True)
+            log.error("Failed to send notification", error=str(e))
 
 
 # ----------------------------------------
@@ -3044,8 +3097,15 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     next_to_jump = generate_next_to_jump(races)
 
     # Unified spacing management (Memory Directive Fix)
-    # Ensure each appendix part is appended without doubling the newlines from the list join
-    full_report = "\n".join(final_grid_lines) + appendix + goldmines + next_to_jump
+    # Ensure each appendix part is appended with proper spacing and separators
+    # Use explicit newlines between major sections to ensure readability
+    full_report = "\n".join(final_grid_lines)
+    if appendix:
+        full_report += "\n" + appendix
+    if goldmines:
+        full_report += "\n" + goldmines
+    if next_to_jump:
+        full_report += "\n" + next_to_jump
 
     return full_report
 
@@ -3121,7 +3181,13 @@ class FortunaDB:
         return self._conn
 
     async def _run_in_executor(self, func, *args):
-        loop = asyncio.get_running_loop()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Fallback for sync contexts if ever used
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         return await loop.run_in_executor(self._executor, func, *args)
 
     async def initialize(self):
@@ -3508,6 +3574,7 @@ class RaceSummary:
         }
 
 
+@functools.lru_cache(None)
 def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
     """Returns all non-abstract discovery adapter classes."""
     def get_all_subclasses(cls):
@@ -3624,7 +3691,8 @@ class FavoriteToPlaceMonitor:
         for r in race.runners:
             if r.scratched:
                 continue
-            wo = _get_best_win_odds(r)
+            # Refresh odds to avoid stale metadata in continuous monitor mode
+            wo = _get_best_win_odds(r, refresh=True)
             if wo is not None and wo > 1.0:
                 # Store the Decimal odds directly for sorting to avoid conversion
                 r_with_odds.append((r, wo))
