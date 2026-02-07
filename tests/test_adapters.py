@@ -43,9 +43,10 @@ async def test_at_the_races_adapter_parsing():
             return json.loads(self.text)
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # First call for index, second for race page
+        # 1. Main index, 2. International index, 3. Race page
         mock_fetch.side_effect = [
             MockResponse(index_html, 200),
+            MockResponse("", 200),
             MockResponse(race_html, 200)
         ]
 
@@ -149,3 +150,45 @@ async def test_runner_number_sanitization():
     sanitized_runners = valid_races[0].runners
     assert sanitized_runners[0].number == 1
     assert sanitized_runners[1].number == 2
+
+@pytest.mark.asyncio
+async def test_sky_racing_world_adapter_parsing():
+    from fortuna import SkyRacingWorldAdapter
+    adapter = SkyRacingWorldAdapter()
+
+    index_html = '<html><a class="fg-race-link" href="/form-guide/thoroughbred/australia/randwick/2026-02-07/R1">R1</a></html>'
+    race_html = """
+    <html>
+        <body>
+            <h1 class="sdc-site-racing-header__name">14:30 RANDWICK</h1>
+            <div class="runner_row" data-tab-no="1" data-name="HORSE ONE">
+                <span class="horseName">HORSE ONE</span>
+                <span class="pa_odds">5/1</span>
+            </div>
+            <div class="runner_row" data-tab-no="2" data-name="HORSE TWO">
+                <span class="horseName">HORSE TWO</span>
+                <span class="pa_odds">10/1</span>
+            </div>
+        </body>
+    </html>
+    """
+
+    class MockResponse:
+        def __init__(self, text, status):
+            self.text = text
+            self.status = status
+
+    with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.side_effect = [
+            MockResponse(index_html, 200),
+            MockResponse(race_html, 200)
+        ]
+
+        races = await adapter.get_races("2026-02-07")
+
+        assert len(races) > 0
+        race = races[0]
+        assert "Randwick" in race.venue
+        assert len(race.runners) == 2
+        assert race.runners[0].win_odds == 6.0
+        assert race.runners[1].win_odds == 11.0
