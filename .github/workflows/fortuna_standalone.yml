@@ -51,7 +51,7 @@ jobs:
           PYTHONPATH: .
           DEBUG_MODE: "true"
         run: |
-          python3 fortuna.py --include "${{ matrix.adapters }}" --save "races_${{ matrix.group }}.json"
+          python3 fortuna.py --include "${{ matrix.adapters }}" --save "races_${{ matrix.group }}.json" --fetch-only
 
       - name: Upload Raw Data
         uses: actions/upload-artifact@v4
@@ -208,4 +208,5 @@ jobs:
             race_data.json
             analytics_report.txt
             fortuna.db
+            prediction_history.jsonl
           retention-days: 7

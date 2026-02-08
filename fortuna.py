@@ -3541,6 +3541,16 @@ class FortunaDB:
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
+
+                # Cleanup potential duplicates before creating unique index (Memory Directive Fix)
+                conn.execute("""
+                    DELETE FROM tips
+                    WHERE id NOT IN (
+                        SELECT MAX(id)
+                        FROM tips
+                        GROUP BY race_id
+                    )
+                """)
                 conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
@@ -5015,7 +5025,8 @@ async def run_discovery(
     window_hours: Optional[int] = 8,
     loaded_races: Optional[List[Race]] = None,
     adapter_names: Optional[List[str]] = None,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    fetch_only: bool = False
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -5149,6 +5160,10 @@ async def run_discovery(
             except Exception as e:
                 logger.error("Failed to save races", error=str(e))
 
+        if fetch_only:
+            logger.info("Fetch-only mode active. Skipping analysis and reporting.")
+            return
+
         # Analyze
         analyzer = SimplySuccessAnalyzer()
         result = analyzer.qualify_races(unique_races)
@@ -5281,6 +5296,7 @@ async def main_all_in_one():
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
+    parser.add_argument("--fetch-only", action="store_true", help="Only fetch and save data, skip analysis and reporting")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
     args = parser.parse_args()
@@ -5330,7 +5346,8 @@ async def main_all_in_one():
             window_hours=args.hours,
             loaded_races=loaded_races,
             adapter_names=adapter_filter,
-            save_path=args.save
+            save_path=args.save,
+            fetch_only=args.fetch_only
         )
 
 if __name__ == "__main__":
