@@ -1,0 +1,41 @@
+name: Build Windows Monolith EXE
+
+on:
+  push:
+    branches:
+      - main
+      - jules208
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r python_service/requirements.txt
+          pip install pyinstaller httpx structlog pydantic==2.5.0 pandas selectolax tenacity scrapling pydantic-settings curl_cffi msgspec browserforge camoufox aiosqlite fastapi uvicorn pywebview rich win10toast-py3
+          python -m browserforge update
+          pip install playwright
+          playwright install chromium
+
+      - name: Build EXE
+        run: |
+          python build_monolith.py
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: FortunaMonolith-Windows
+          path: dist/FortunaMonolith.exe
+          retention-days: 7

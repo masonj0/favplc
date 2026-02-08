@@ -185,6 +185,13 @@ class ResultRace(fortuna.Race):
         disc = (self.discipline or "T")[:1].upper()
         return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{time_str}|{disc}"
 
+    @property
+    def relaxed_key(self) -> str:
+        """Generate a time-relaxed key for matching."""
+        date_str = self.start_time.strftime('%Y%m%d')
+        disc = (self.discipline or "T")[:1].upper()
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{disc}"
+
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
         """Get top N finishers sorted by position."""
         with_position = [
@@ -232,10 +239,12 @@ class AuditorEngine:
         """
         Match results to history and update audit status.
         """
-        # Build lookup map: canonical_key -> ResultRace
+        # Build lookup maps: full key and relaxed key (Memory Directive Fix)
         results_map: Dict[str, ResultRace] = {}
+        relaxed_results_map: Dict[str, ResultRace] = {}
         for r in results:
             results_map[r.canonical_key] = r
+            relaxed_results_map[r.relaxed_key] = r
 
         self.logger.debug("Built results map", count=len(results_map))
 
@@ -255,7 +264,17 @@ class AuditorEngine:
 
                 result = results_map.get(tip_key)
                 if not result:
-                    # Lenient fallback: try matching without discipline if discipline was the only difference
+                    # Lenient fallback 1: try matching without time (relaxed key)
+                    key_parts = tip_key.split("|")
+                    if len(key_parts) >= 5:
+                        # tip_key is venue|race|date|time|disc
+                        relaxed_tip_key = f"{key_parts[0]}|{key_parts[1]}|{key_parts[2]}|{key_parts[4]}"
+                        result = relaxed_results_map.get(relaxed_tip_key)
+                        if result:
+                            self.logger.info("Matched tip with time-relaxed fallback", race_id=race_id, tip_key=tip_key, match_key=result.canonical_key)
+
+                if not result:
+                    # Lenient fallback 2: try matching without discipline
                     key_parts = tip_key.split("|")
                     if len(key_parts) >= 4:
                         # Match venue|race|date|time
@@ -442,9 +461,9 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         self._semaphore = asyncio.Semaphore(5)
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # Use CAMOUFOX if available as it's best for Equibase
+        # Use CURL_CFFI for better reliability in GHA environments
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CAMOUFOX,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=60,
@@ -510,11 +529,14 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
             if link.startswith("http"):
                 final_links.add(link)
             else:
-                # Handle relative links
+                # Handle relative links more robustly (Memory Directive Fix)
                 path = link.lstrip("/")
-                if not path.startswith("static/"):
-                    path = f"static/chart/summary/{path}"
-                final_links.add(f"{self.BASE_URL}/{path}")
+                if "static/chart/summary/" not in path:
+                    if path.startswith("../"):
+                        path = "static/chart/" + path.replace("../", "")
+                    elif not path.startswith("static/"):
+                        path = f"static/chart/summary/{path}"
+                final_links.add(f"{self.BASE_URL}/{path.replace('//', '/')}")
 
         if not final_links:
             self.logger.warning("No track result links found after expansion", date=date_str)
@@ -782,7 +804,7 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=45,
+            timeout=60, # Increased timeout for ATR
         )
 
     def _get_headers(self) -> dict:
@@ -814,11 +836,15 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             for a in parser.css(s):
                 href = a.attributes.get("href", "")
                 if not href: continue
-                # Match links with numeric race ID or structured result path
-                if re.search(r"/results/\d+/", href) or re.search(r"/\d{4}-\d{2}-\d{2}/[^/]+/\d+/", href):
+
+                # Broaden regex to match various RP result link patterns (Memory Directive Fix)
+                # Matches: /results/393/lingfield-aw/2026-02-07/4803548
+                # Matches: /results/2026-02-07/ascot/901234
+                if re.search(r"/results/.*?\d{5,}", href) or \
+                   re.search(r"/results/\d+/", href) or \
+                   re.search(r"/\d{4}-\d{2}-\d{2}/", href):
                     links.add(href)
                 elif "/results/" in href and len(href.split("/")) >= 4:
-                    # Likely a meeting link that we can try to follow or parse
                     links.add(href)
 
         if not links:
@@ -891,13 +917,16 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         if tote_container:
             for row in (tote_container.css('div.rp-toteReturns__row') or tote_container.css('.rp-toteReturns__row')):
-                label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
-                val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
-                if label_node and val_node:
-                    label = fortuna.clean_text(label_node.text())
-                    value = fortuna.clean_text(val_node.text())
-                    if label and value:
-                        dividends[label] = value
+                try:
+                    label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
+                    val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
+                    if label_node and val_node:
+                        label = fortuna.clean_text(label_node.text())
+                        value = fortuna.clean_text(val_node.text())
+                        if label and value:
+                            dividends[label] = value
+                except Exception as e:
+                    self.logger.debug("Failed parsing RP tote row", error=str(e))
 
         # Extract exotic payouts
         trifecta_pay = trifecta_combo = None
@@ -1027,7 +1056,7 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=45,
+            timeout=60,
         )
 
     def _get_headers(self) -> dict:
@@ -1065,8 +1094,9 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                     for a in parser.css(s):
                         href = a.attributes.get("href") or ""
                         # Format: /results/Venue/DD-Month-YYYY/HHMM or /results/DD-Month-YYYY/Venue/ID
-                        if re.search(r"/results/.+/\d{4}/\d{4}", href) or \
-                           re.search(r"/results/\d{2}-.+-\d{4}/.+/\d+", href):
+                        if re.search(r"/results/.*?/\d{4}", href) or \
+                           re.search(r"/results/\d{2}-.*?-\d{4}/", href) or \
+                           "/results/" in href and len(href.split("/")) >= 4:
                             links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
             except Exception as e:
                 self.logger.debug(f"ATR fetch failed for {url}: {e}")
@@ -1116,10 +1146,12 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                  parser.css_first(".racecard-header") or \
                  parser.css_first(".race-header")
         if not header:
+            self.logger.debug("No header found on ATR result page")
             return None
 
-        venue_node = header.css_first("h2") or header.css_first("h1")
+        venue_node = header.css_first("h2") or header.css_first("h1") or header.css_first(".track-name")
         if not venue_node:
+            self.logger.debug("No venue name found on ATR result page")
             return None
         venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
 
@@ -1190,24 +1222,27 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         div_table = parser.css_first(".result-racecard__dividends-table")
         if div_table:
             for row in div_table.css("tr"):
-                row_text = row.text().lower()
-                cols = row.css("td")
-                if len(cols) < 2: continue
+                try:
+                    row_text = row.text().lower()
+                    cols = row.css("td")
+                    if len(cols) < 2: continue
 
-                # Prioritize Superfecta
-                if "superfecta" in row_text or "first 4" in row_text:
-                    superfecta_combo = fortuna.clean_text(cols[0].text())
-                    superfecta_pay = parse_currency_value(cols[1].text())
-                elif "trifecta" in row_text:
-                    trifecta_combo = fortuna.clean_text(cols[0].text())
-                    trifecta_pay = parse_currency_value(cols[1].text())
-                elif "place" in row_text:
-                    # Map place dividends to runners if possible
-                    p_name = fortuna.clean_text(cols[0].text().replace("Place", "").strip())
-                    p_val = parse_currency_value(cols[1].text())
-                    for r in runners:
-                        if r.name.lower() in p_name.lower() or p_name.lower() in r.name.lower():
-                            r.place_payout = p_val
+                    # Prioritize Superfecta
+                    if "superfecta" in row_text or "first 4" in row_text:
+                        superfecta_combo = fortuna.clean_text(cols[0].text())
+                        superfecta_pay = parse_currency_value(cols[1].text())
+                    elif "trifecta" in row_text:
+                        trifecta_combo = fortuna.clean_text(cols[0].text())
+                        trifecta_pay = parse_currency_value(cols[1].text())
+                    elif "place" in row_text:
+                        # Map place dividends to runners if possible
+                        p_name = fortuna.clean_text(cols[0].text().replace("Place", "").strip())
+                        p_val = parse_currency_value(cols[1].text())
+                        for r in runners:
+                            if r.name.lower() in p_name.lower() or p_name.lower() in r.name.lower():
+                                r.place_payout = p_val
+                except Exception as e:
+                    self.logger.debug("Failed parsing dividend row", error=str(e))
 
         if not runners:
             return None
