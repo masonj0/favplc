@@ -905,12 +905,13 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         for label, val in dividends.items():
             l_lower = label.lower()
-            if "trifecta" in l_lower or "tricast" in l_lower:
-                trifecta_pay = parse_currency_value(val)
-                trifecta_combo = val.split("£")[-1].strip() if "£" in val else None
-            elif "superfecta" in l_lower or "first 4" in l_lower:
+            # Prioritize Superfecta
+            if "superfecta" in l_lower or "first 4" in l_lower:
                 superfecta_pay = parse_currency_value(val)
                 superfecta_combo = val.split("£")[-1].strip() if "£" in val else None
+            elif "trifecta" in l_lower or "tricast" in l_lower:
+                trifecta_pay = parse_currency_value(val)
+                trifecta_combo = val.split("£")[-1].strip() if "£" in val else None
 
         # Extract race number from header or navigation
         race_num = 1
@@ -1193,12 +1194,13 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                 cols = row.css("td")
                 if len(cols) < 2: continue
 
-                if "trifecta" in row_text:
-                    trifecta_combo = fortuna.clean_text(cols[0].text())
-                    trifecta_pay = parse_currency_value(cols[1].text())
-                elif "superfecta" in row_text or "first 4" in row_text:
+                # Prioritize Superfecta
+                if "superfecta" in row_text or "first 4" in row_text:
                     superfecta_combo = fortuna.clean_text(cols[0].text())
                     superfecta_pay = parse_currency_value(cols[1].text())
+                elif "trifecta" in row_text:
+                    trifecta_combo = fortuna.clean_text(cols[0].text())
+                    trifecta_pay = parse_currency_value(cols[1].text())
                 elif "place" in row_text:
                     # Map place dividends to runners if possible
                     p_name = fortuna.clean_text(cols[0].text().replace("Place", "").strip())
@@ -1632,19 +1634,22 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
 
         for table in parser.css("table"):
             table_text = table.text().lower()
-            if "trifecta" in table_text or "tricast" in table_text:
-                for row in table.css("tr"):
-                    if "trifecta" in row.text().lower() or "tricast" in row.text().lower():
-                        cols = row.css("td")
-                        if len(cols) >= 2:
-                            trifecta_pay = parse_currency_value(cols[1].text())
-            elif "superfecta" in table_text or "first 4" in table_text:
+            # Prioritize Superfecta check
+            if "superfecta" in table_text or "first 4" in table_text:
                 for row in table.css("tr"):
                     row_text = row.text().lower()
                     if "superfecta" in row_text or "first 4" in row_text:
                         cols = row.css("td")
                         if len(cols) >= 2:
                             superfecta_pay = parse_currency_value(cols[1].text())
+
+            # Secondary Trifecta check
+            if "trifecta" in table_text or "tricast" in table_text:
+                for row in table.css("tr"):
+                    if "trifecta" in row.text().lower() or "tricast" in row.text().lower():
+                        cols = row.css("td")
+                        if len(cols) >= 2:
+                            trifecta_pay = parse_currency_value(cols[1].text())
 
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
@@ -1768,26 +1773,31 @@ def generate_analytics_report(
             lines.append(f"{emoji:<6} | {venue:<25} | {profit:<8} | {payout_info}")
         lines.append("")
 
-    # --- 4. SUPERFECTA & TRIFECTA TRACKING ---
+    # --- 4. SUPERFECTA PERFORMANCE TRACKING ---
     super_races = [t for t in audited_tips if t.get("superfecta_payout")]
     tri_races = [t for t in audited_tips if t.get("trifecta_payout")]
 
-    if super_races or tri_races:
+    if super_races:
         lines.extend([
-            "🎯 EXOTIC PAYOUT TRACKING",
+            "🎯 SUPERFECTA PERFORMANCE PROOF",
             "-" * 40,
         ])
-        if super_races:
-            avg_super = sum(t["superfecta_payout"] for t in super_races) / len(super_races)
-            max_super = max(t["superfecta_payout"] for t in super_races)
-            lines.extend([
-                f"Superfecta Matches: {len(super_races)}",
-                f"  Average Payout:   ${avg_super:.2f}",
-                f"  Maximum Payout:   ${max_super:.2f}",
-            ])
-        if tri_races:
-            avg_tri = sum(t["trifecta_payout"] for t in tri_races) / len(tri_races)
-            lines.append(f"Trifecta Matches:   {len(tri_races)} (Avg: ${avg_tri:.2f})")
+        avg_super = sum(t["superfecta_payout"] for t in super_races) / len(super_races)
+        max_super = max(t["superfecta_payout"] for t in super_races)
+        lines.extend([
+            f"Superfecta Matches: {len(super_races)}",
+            f"  Average Payout:   ${avg_super:.2f}",
+            f"  Maximum Payout:   ${max_super:.2f}",
+        ])
+        lines.append("")
+    elif tri_races:
+        # Secondary fallback if no Superfectas found yet
+        lines.extend([
+            "🎯 SECONDARY EXOTIC TRACKING (TRIFECTA)",
+            "-" * 40,
+        ])
+        avg_tri = sum(t["trifecta_payout"] for t in tri_races) / len(tri_races)
+        lines.append(f"Trifecta Matches:   {len(tri_races)} (Avg: ${avg_tri:.2f})")
         lines.append("")
 
     # --- 5. SUMMARY STATISTICS ---
