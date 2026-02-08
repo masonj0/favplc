@@ -25,11 +25,31 @@ jobs:
         with:
           python-version: '3.10'
 
+      # Cache pip packages for faster installs
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      # Cache Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-v1
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      # Restore database with proper key strategy
       - name: Restore Fortuna Database
         uses: actions/cache@v4
         with:
           path: fortuna.db
-          key: fortuna-db-${{ github.run_id }}
+          # Use run_number so database persists and grows during workflow runs
+          key: fortuna-db-${{ github.run_number }}
           restore-keys: |
             fortuna-db-
 
@@ -37,8 +57,9 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install setuptools wheel
-          python3 -m pip install -r python_service/requirements.txt
-          python3 -m pip install httpx structlog pydantic==2.5.0 pandas selectolax tenacity scrapling pydantic-settings redis curl_cffi msgspec browserforge camoufox rich aiosqlite fastapi uvicorn pywebview
+          # Install from single requirements file
+          python3 -m pip install -r requirements.txt
+          # Install browser dependencies
           python3 -m browserforge update
           playwright install --with-deps chromium
 
@@ -47,12 +68,10 @@ jobs:
           PYTHONPATH: .
           DEBUG_MODE: "true"
         run: |
-          # Running discovery without --include runs all adapters in parallel
           python3 fortuna.py --save "raw_races.json"
 
       - name: Run Monitor Report
         run: |
-          # Use the saved races to run the monitor report
           python3 fortuna.py --load "raw_races.json" --monitor --once
 
       - name: Add Monitor to Job Summary
@@ -61,46 +80,74 @@ jobs:
           echo "## 🎯 List of Best Bets - Intelligence Report" >> $GITHUB_STEP_SUMMARY
           echo "**Run Date:** $(TZ='America/New_York' date)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f race_data.json ]; then
-            echo "### 🎯 Favorite-to-Place Monitor" >> $GITHUB_STEP_SUMMARY
-            python3 -c "
-          import json
-          try:
-              with open('race_data.json') as f:
-                  d = json.load(f)
-              print(f'**Total Races:** {d[\"total_races\"]}')
-              print(f'**BET NOW:** {d[\"bet_now_count\"]}')
-              print(f'**You Might Like:** {d[\"you_might_like_count\"]}')
-              print('')
 
-              if d.get('bet_now_races'):
-                  print('#### 🎯 BET NOW OPPORTUNITIES')
-                  print('| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |')
-                  print('|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|')
-                  for r in d['bet_now_races']:
-                      sup = '✅' if r['superfecta_offered'] else '❌'
-                      fav = f\"{r['favorite_odds']:.2f}\" if r['favorite_odds'] else 'N/A'
-                      sec = f\"{r['second_fav_odds']:.2f}\" if r['second_fav_odds'] else 'N/A'
-                      odds = f\"{fav}, {sec}\"
-                      top5 = f\"\`{r['top_five_numbers']}\`\" if r['top_five_numbers'] else 'N/A'
-                      print(f'| {sup} | {r[\"mtp\"]} | {r[\"discipline\"]} | {r[\"track\"]} | {r[\"race_number\"]} | {r[\"field_size\"]} | {odds} | {top5} |')
-                  print('')
-
-              if d.get('you_might_like_races'):
-                  print('#### 🌟 YOU MIGHT LIKE')
-                  print('| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |')
-                  print('|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|')
-                  for r in d['you_might_like_races']:
-                      sup = '✅' if r['superfecta_offered'] else '❌'
-                      fav = f\"{r['favorite_odds']:.2f}\" if r['favorite_odds'] else 'N/A'
-                      sec = f\"{r['second_fav_odds']:.2f}\" if r['second_fav_odds'] else 'N/A'
-                      odds = f\"{fav}, {sec}\"
-                      top5 = f\"\`{r['top_five_numbers']}\`\" if r['top_five_numbers'] else 'N/A'
-                      print(f'| {sup} | {r[\"mtp\"]} | {r[\"discipline\"]} | {r[\"track\"]} | {r[\"race_number\"]} | {r[\"field_size\"]} | {odds} | {top5} |')
-          except Exception as e:
-              print(f'Error generating summary: {e}')
-          " >> $GITHUB_STEP_SUMMARY
+          if [ ! -f race_data.json ]; then
+            echo "⚠️ **No race data found** - Discovery may have failed" >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
+
+          echo "### 🎯 Favorite-to-Place Monitor" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+import json
+import sys
+
+try:
+    with open('race_data.json') as f:
+        d = json.load(f)
+
+    total = d.get('total_races', 0)
+    bet_now = d.get('bet_now_count', 0)
+    might_like = d.get('you_might_like_count', 0)
+
+    print(f'**Total Races:** {total}')
+    print(f'**BET NOW:** {bet_now}')
+    print(f'**You Might Like:** {might_like}')
+    print('')
+
+    if d.get('bet_now_races'):
+        print('#### 🎯 BET NOW OPPORTUNITIES')
+        print('| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |')
+        print('|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|')
+        for r in d['bet_now_races']:
+            sup = '✅' if r.get('superfecta_offered') else '❌'
+            mtp = r.get('mtp', 'N/A')
+            disc = r.get('discipline', 'N/A')
+            track = r.get('track', 'N/A')
+            race_num = r.get('race_number', 'N/A')
+            field = r.get('field_size', 'N/A')
+            fav = f\"{r['favorite_odds']:.2f}\" if r.get('favorite_odds') else 'N/A'
+            sec = f\"{r['second_fav_odds']:.2f}\" if r.get('second_fav_odds') else 'N/A'
+            odds = f\"{fav}, {sec}\"
+            top5 = f\"\`{r['top_five_numbers']}\`\" if r.get('top_five_numbers') else 'N/A'
+            print(f'| {sup} | {mtp} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |')
+        print('')
+
+    if d.get('you_might_like_races'):
+        print('#### 🌟 YOU MIGHT LIKE')
+        print('| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |')
+        print('|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|')
+        for r in d['you_might_like_races']:
+            sup = '✅' if r.get('superfecta_offered') else '❌'
+            mtp = r.get('mtp', 'N/A')
+            disc = r.get('discipline', 'N/A')
+            track = r.get('track', 'N/A')
+            race_num = r.get('race_number', 'N/A')
+            field = r.get('field_size', 'N/A')
+            fav = f\"{r['favorite_odds']:.2f}\" if r.get('favorite_odds') else 'N/A'
+            sec = f\"{r['second_fav_odds']:.2f}\" if r.get('second_fav_odds') else 'N/A'
+            odds = f\"{fav}, {sec}\"
+            top5 = f\"\`{r['top_five_numbers']}\`\" if r.get('top_five_numbers') else 'N/A'
+            print(f'| {sup} | {mtp} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |')
+
+except FileNotFoundError:
+    print('⚠️ race_data.json not found')
+    sys.exit(0)
+except Exception as e:
+    print(f'❌ Error: {e}')
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
+" >> $GITHUB_STEP_SUMMARY
 
       - name: Add Grid to Job Summary
         if: always()
@@ -142,15 +189,32 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
+      # Save database back to cache after all operations
+      - name: Save Fortuna Database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-${{ github.run_number }}
+
       - name: Upload Final Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: best-bet-reports
+          name: best-bet-reports-${{ github.run_number }}
           path: |
             summary_grid.txt
             goldmine_report.txt
             analytics_report.txt
+            race_data.json
+            raw_races.json
+            qualified_races.json
             fortuna.db
             prediction_history.jsonl
-          retention-days: 7
+          retention-days: 30
+
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "❌ Workflow failed at $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "Check the logs above for details" >> $GITHUB_STEP_SUMMARY
