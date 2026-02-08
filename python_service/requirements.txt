@@ -58,6 +58,7 @@ pytokens==0.3.0
 pytz==2023.3.post1
 pywebview[cef]==5.2
 pyyaml==6.0.1
+rich==13.7.0
 redis==5.0.1
 requests==2.31.0
 secretstorage==3.3.3
