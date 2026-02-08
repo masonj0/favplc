@@ -3575,12 +3575,11 @@ class FortunaDB:
 
         if current_version < 3:
             def _declutter():
-                # Delete every record that got loaded before 04h00 on 20260208 USA EST
-                # Using ISO format comparison which works for these sortable strings
-                cutoff = "2026-02-08T04:00:00"
+                # Delete old records to keep database lean (30-day retention cleanup)
+                cutoff = (datetime.now(EASTERN) - timedelta(days=30)).isoformat()
                 with self._get_conn() as conn:
                     cursor = conn.execute("DELETE FROM tips WHERE report_date < ?", (cutoff,))
-                    self.logger.info("Database decluttered (pre-04h00 cleanup)", deleted_count=cursor.rowcount)
+                    self.logger.info("Database decluttered (30-day retention cleanup)", deleted_count=cursor.rowcount)
                     conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, ?)", (datetime.now(EASTERN).isoformat(),))
             await self._run_in_executor(_declutter)
             self.logger.info("Schema migrated to version 3")

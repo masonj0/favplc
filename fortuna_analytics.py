@@ -1809,7 +1809,7 @@ def generate_analytics_report(
             elif tip.get("actual_top_5"):
                 payout_info += f"Top 5: [{tip['actual_top_5']}]"
 
-            lines.append(f"{emoji:<6} | {venue:<25} | {profit:<8} | {payout_info}")
+            lines.append(f"{emoji:<6} | {venue:<25} | {profit:>8} | {payout_info}")
         lines.append("")
 
     # --- 4. SUPERFECTA PERFORMANCE TRACKING ---

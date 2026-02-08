@@ -5,13 +5,16 @@ anyio==3.7.1
 beautifulsoup4==4.12.2
 black==23.12.0
 bottle==0.13.4
+browserforge>=1.0.0
 build==1.0.3
+camoufox>=0.3.0
 cefpython3==66.0
 certifi==2023.7.22
 cffi==1.16.0
 charset-normalizer==3.3.2
 click==8.1.7
 cryptography==41.0.7
+curl_cffi>=0.6.0
 deprecated==1.2.14
 fastapi==0.104.1
 greenlet==3.0.2
@@ -31,6 +34,7 @@ jeepney==0.9.0
 keyring==24.3.0
 limits==3.7.0
 more-itertools==10.1.0
+msgspec>=0.18.0
 mypy-extensions==1.0.0
 numpy==1.24.3
 packaging==23.2
@@ -61,6 +65,7 @@ pyyaml==6.0.1
 rich==13.7.0
 redis==5.0.1
 requests==2.31.0
+scrapling>=0.2.0
 secretstorage==3.3.3
 selectolax==0.3.20
 six==1.16.0
