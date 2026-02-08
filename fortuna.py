@@ -768,13 +768,22 @@ class SmartFetcher:
             except Exception as e:
                 self.logger.warning("Failed to generate browserforge headers", error=str(e))
 
+        # Define browser-specific arguments to strip for non-browser engines
+        BROWSER_SPECIFIC_KWARGS = [
+            "network_idle", "wait_selector", "wait_until", "impersonate",
+            "stealth", "block_resources", "wait_for_selector", "stealth_mode"
+        ]
+
         if engine == BrowserEngine.HTTPX:
             # Pass strategy timeout if present in kwargs or use default
             timeout = kwargs.get("timeout", self.strategy.timeout)
             client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
 
-            # Remove timeout from kwargs to avoid double-passing to request
-            req_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
+            # Remove timeout and browser-specific keys from kwargs
+            req_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
+            }
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             resp.status = resp.status_code
             return resp
@@ -788,10 +797,14 @@ class SmartFetcher:
 
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
+            # Respect impersonate if provided, otherwise default
             impersonate = kwargs.get("impersonate", "chrome110")
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
-            clean_kwargs = {k: v for k, v in kwargs.items() if k not in ["timeout", "headers", "impersonate", "network_idle", "wait_selector", "wait_until"]}
+            clean_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
+            }
             
             async with curl_requests.AsyncSession() as s:
                 resp = await s.request(
@@ -3541,7 +3554,24 @@ class FortunaDB:
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
-                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+
+                # Cleanup potential duplicates before creating unique index (Memory Directive Fix)
+                try:
+                    self.logger.info("Cleaning up duplicate race_ids before indexing")
+                    conn.execute("""
+                        DELETE FROM tips
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM tips
+                            GROUP BY race_id
+                        )
+                    """)
+                    self.logger.info("Duplicates removed, creating unique index")
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                except Exception as e:
+                    self.logger.error("Failed to cleanup or create unique index", error=str(e))
+                    # If index exists but table has duplicates, we might get IntegrityError
+                    # Just log it and continue - better than crashing the whole app
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
@@ -4879,7 +4909,11 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             for a in parser.css(s):
                 href = a.attributes.get("href")
                 if href:
-                    if re.search(r"/results/\d+/", href) or len(href.split("/")) >= 4:
+                    # Broaden regex to match various RP result link patterns (Memory Directive Fix)
+                    if re.search(r"/results/.*?\d{5,}", href) or \
+                       re.search(r"/results/\d+/", href) or \
+                       re.search(r"/\d{4}-\d{2}-\d{2}/", href) or \
+                       len(href.split("/")) >= 4:
                         links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
 
         async def fetch_result_page(link):
@@ -4933,13 +4967,16 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if tote_container:
             for row in (tote_container.css('div.rp-toteReturns__row') or tote_container.css('.rp-toteReturns__row')):
-                label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
-                val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
-                if label_node and val_node:
-                    label = clean_text(label_node.text())
-                    value = clean_text(val_node.text())
-                    if label and value:
-                        dividends[label] = value
+                try:
+                    label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
+                    val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
+                    if label_node and val_node:
+                        label = clean_text(label_node.text())
+                        value = clean_text(val_node.text())
+                        if label and value:
+                            dividends[label] = value
+                except Exception as e:
+                    self.logger.debug("Failed parsing RP tote row", error=str(e))
 
         # Derive race number from header or navigation
         race_num = 1
@@ -5015,7 +5052,8 @@ async def run_discovery(
     window_hours: Optional[int] = 8,
     loaded_races: Optional[List[Race]] = None,
     adapter_names: Optional[List[str]] = None,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    fetch_only: bool = False
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -5149,6 +5187,10 @@ async def run_discovery(
             except Exception as e:
                 logger.error("Failed to save races", error=str(e))
 
+        if fetch_only:
+            logger.info("Fetch-only mode active. Skipping analysis and reporting.")
+            return
+
         # Analyze
         analyzer = SimplySuccessAnalyzer()
         result = analyzer.qualify_races(unique_races)
@@ -5281,6 +5323,7 @@ async def main_all_in_one():
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
+    parser.add_argument("--fetch-only", action="store_true", help="Only fetch and save data, skip analysis and reporting")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
     args = parser.parse_args()
@@ -5330,7 +5373,8 @@ async def main_all_in_one():
             window_hours=args.hours,
             loaded_races=loaded_races,
             adapter_names=adapter_filter,
-            save_path=args.save
+            save_path=args.save,
+            fetch_only=args.fetch_only
         )
 
 if __name__ == "__main__":
