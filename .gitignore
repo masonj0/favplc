@@ -1,12 +1,78 @@
+# Node.js
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Python
 __pycache__/
 *.pyc
-debug_snapshots/
-*.json
-*.txt
-.pytest_cache/
-.coverage
-htmlcov/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-selfcheck.json
+.eggs/
 dist/
 build/
 *.egg-info/
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Jules's temporary files (prevent clutter in root)
+/test_*.py
+/check_*.py
+/crack_*.py
+/tmp_*.py
+/debug_*.py
+/new_logs*.txt
+
+# Pipeline Debug and Test Data
+canary_result.json
+canary_output.log
+*_debug.html
+debug-snapshots/
+debug_snapshots/
+adapter_stats.json
+qualified_races.json
+raw_race_data.json
+raw_races.json
+race_data.json
+link_healing_report.json
+adapter_success_spotlight.json
+adapter_success_spotlight.md
+adapter_success_summary.json
+metrics.json
+errors.json
+report-metadata.json
+smartfetcher_health.json
+integration_check_report.md
+engine_health.log
+reporter_output.log
+browser_verify.log
+browser_verification.json
+anomaly_history.json
+integration_check.log
+browser_selector_state.json
+validation_errors.json
+validation_warnings.json
+summary_grid.txt
+goldmine_report.txt
+analytics_report.txt
+
+# Database
 fortuna.db
+prediction_history.jsonl
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
