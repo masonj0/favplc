@@ -3326,7 +3326,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
             'field': field_size,
             'top5': top5,
             'gap': gap12,
-            'gold': '💰' if is_gold else ''
+            'gold': '[G]' if is_gold else ''
         })
 
     # Sort by MTP
@@ -3605,7 +3605,7 @@ class FortunaDB:
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number"),
-                        tip.get("predicted_2nd_fav_odds")
+                        float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5153,22 +5153,34 @@ async def run_discovery(
         }
 
         if live_dashboard:
-            from dashboard import FortunaDashboard
-            dash = FortunaDashboard()
-            dash.update(goldmines, stats)
+            try:
+                from dashboard import FortunaDashboard
+                dash = FortunaDashboard()
+                dash.update(goldmines, stats)
 
-            # Start odds tracker if requested
-            if track_odds:
-                from odds_tracker import LiveOddsTracker
-                adapter_classes = get_discovery_adapter_classes()
-                odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
-                asyncio.create_task(odds_tracker.start_tracking())
+                # Start odds tracker if requested
+                if track_odds:
+                    from odds_tracker import LiveOddsTracker
+                    adapter_classes = get_discovery_adapter_classes()
+                    odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
+                    asyncio.create_task(odds_tracker.start_tracking())
 
-            await dash.run_live()
+                await dash.run_live()
+            except Exception as e:
+                logger.error("Failed to load live dashboard", error=str(e))
+                print(f"\n[DASHBOARD ERROR] {e}\n")
+                # Fallback to simple info
+                print(f"Total Goldmines found: {len(goldmines)}")
         else:
             # Fallback to static print
-            from dashboard import print_dashboard
-            print_dashboard(goldmines, stats)
+            try:
+                from dashboard import print_dashboard
+                print_dashboard(goldmines, stats)
+            except Exception as e:
+                logger.error("Failed to load static dashboard", error=str(e))
+                print(f"\n[DASHBOARD ERROR] {e}\n")
+                print(f"Total Goldmines found: {len(goldmines)}")
+
             print("\n" + grid + "\n")
             if historical_report:
                 print("\n" + historical_report + "\n")

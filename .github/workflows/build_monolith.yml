@@ -23,7 +23,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller httpx structlog pydantic==2.5.0 pandas selectolax tenacity scrapling pydantic-settings curl_cffi msgspec browserforge camoufox aiosqlite fastapi uvicorn pywebview
+          python -m pip install -r python_service/requirements.txt
+          pip install pyinstaller httpx structlog pydantic==2.5.0 pandas selectolax tenacity scrapling pydantic-settings curl_cffi msgspec browserforge camoufox aiosqlite fastapi uvicorn pywebview rich win10toast-py3
           python -m browserforge update
           pip install playwright
           playwright install chromium

@@ -111,6 +111,8 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "msgspec",
         "pydantic",
         "starlette",
+        "rich",
+        "win10toast_py3",
     ]
 
     for pkg in collect_all_packages:
@@ -211,15 +213,15 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         if os.path.exists(exe_path):
             size_mb = os.path.getsize(exe_path) / (1024 * 1024)
             print("\n" + "=" * 60)
-            print(f"✅ Build complete!")
+            print(f"[SUCCESS] Build complete!")
             print(f"   Output: {exe_path}")
             print(f"   Size: {size_mb:.1f} MB")
             print("=" * 60)
         else:
-            print("\n⚠️ Build completed but EXE not found at expected path")
+            print("\n[WARNING] Build completed but EXE not found at expected path")
 
     except Exception as e:
-        print(f"\n❌ Build failed: {e}")
+        print(f"\n[ERROR] Build failed: {e}")
         sys.exit(1)
 
 
