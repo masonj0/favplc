@@ -47,6 +47,7 @@ import pandas as pd
 import sqlite3
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 import structlog
 import subprocess
 import sys
@@ -96,6 +97,11 @@ try:
     import winsound
 except (ImportError, RuntimeError):
     winsound = None
+
+
+def is_frozen() -> bool:
+    """Check if running as a frozen executable (PyInstaller, cx_Freeze, etc.)"""
+    return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
 
 try:
     from win10toast_py3 import ToastNotifier
@@ -3366,7 +3372,10 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|"
     ]
     for tr in table_races:
-        lines.append(f"| {tr['mtp']}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
+        # Better alignment: leading zero for single digits (Memory Directive Fix)
+        mtp_val = tr['mtp']
+        mtp_str = f"{mtp_val:02d}" if 0 <= mtp_val < 10 else str(mtp_val)
+        lines.append(f"| {mtp_str}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
 
     return "\n".join(lines)
 
@@ -3453,6 +3462,14 @@ class FortunaDB:
             # Enable WAL mode for better concurrency
             self._conn.execute("PRAGMA journal_mode=WAL")
         return self._conn
+
+    @asynccontextmanager
+    async def get_connection(self):
+        """Returns an async context manager for a database connection."""
+        import aiosqlite
+        async with aiosqlite.connect(self.db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            yield conn
 
     async def _run_in_executor(self, func, *args):
         loop = asyncio.get_running_loop()
@@ -3561,12 +3578,11 @@ class FortunaDB:
 
         if current_version < 3:
             def _declutter():
-                # Delete every record that got loaded before 04h00 on 20260208 USA EST
-                # Using ISO format comparison which works for these sortable strings
-                cutoff = "2026-02-08T04:00:00"
+                # Delete old records to keep database lean (30-day retention cleanup)
+                cutoff = (datetime.now(EASTERN) - timedelta(days=30)).isoformat()
                 with self._get_conn() as conn:
                     cursor = conn.execute("DELETE FROM tips WHERE report_date < ?", (cutoff,))
-                    self.logger.info("Database decluttered (pre-04h00 cleanup)", deleted_count=cursor.rowcount)
+                    self.logger.info("Database decluttered (30-day retention cleanup)", deleted_count=cursor.rowcount)
                     conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, ?)", (datetime.now(EASTERN).isoformat(),))
             await self._run_in_executor(_declutter)
             self.logger.info("Schema migrated to version 3")
@@ -5045,13 +5061,15 @@ async def run_discovery(
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
             try:
+                harvest_summary = {}
+
                 async def fetch_one(a, date_str):
                     try:
                         races = await a.get_races(date_str)
-                        return races
+                        return a.source_name, races
                     except Exception as e:
                         logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
-                        return []
+                        return a.source_name, []
 
                 fetch_tasks = []
                 for d in target_dates:
@@ -5059,10 +5077,18 @@ async def run_discovery(
                         fetch_tasks.append(fetch_one(a, d))
 
                 results = await asyncio.gather(*fetch_tasks)
-                for r_list in results:
+                for adapter_name, r_list in results:
                     all_races_raw.extend(r_list)
+                    harvest_summary[adapter_name] = harvest_summary.get(adapter_name, 0) + len(r_list)
 
                 logger.info("Fetched total races", count=len(all_races_raw))
+
+                # Save discovery harvest summary for GHA reporting
+                try:
+                    with open("discovery_harvest.json", "w") as f:
+                        json.dump(harvest_summary, f)
+                except: pass
+
             finally:
                 # Shutdown adapters
                 for a in adapters:
@@ -5193,32 +5219,41 @@ async def run_discovery(
 
         if live_dashboard:
             try:
-                from dashboard import FortunaDashboard
-                dash = FortunaDashboard()
-                dash.update(goldmines, stats)
+                from rich.live import Live
+                from rich.console import Console
+                # Check if our custom dashboard exists
+                try:
+                    from dashboard import FortunaDashboard
+                    dash = FortunaDashboard()
+                    dash.update(goldmines, stats)
 
-                # Start odds tracker if requested
-                if track_odds:
-                    from odds_tracker import LiveOddsTracker
-                    adapter_classes = get_discovery_adapter_classes()
-                    odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
-                    asyncio.create_task(odds_tracker.start_tracking())
+                    # Start odds tracker if requested
+                    if track_odds:
+                        try:
+                            from odds_tracker import LiveOddsTracker
+                            adapter_classes = get_discovery_adapter_classes()
+                            odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
+                            asyncio.create_task(odds_tracker.start_tracking())
+                        except ImportError:
+                            logger.warning("LiveOddsTracker not available")
 
-                await dash.run_live()
-            except Exception as e:
-                logger.error("Failed to load live dashboard", error=str(e))
-                print(f"\n[DASHBOARD ERROR] {e}\n")
-                # Fallback to simple info
-                print(f"Total Goldmines found: {len(goldmines)}")
+                    await dash.run_live()
+                except (ImportError, Exception) as e:
+                    logger.warning(f"Rich dashboard component missing or failed: {e}")
+                    # Fallback to simple rich display if possible
+                    console = Console()
+                    console.print("\n" + grid + "\n")
+            except ImportError:
+                logger.warning("Rich library not available, falling back to static display")
+                print("\n" + grid + "\n")
         else:
             # Fallback to static print
             try:
                 from dashboard import print_dashboard
                 print_dashboard(goldmines, stats)
             except Exception as e:
-                logger.error("Failed to load static dashboard", error=str(e))
-                print(f"\n[DASHBOARD ERROR] {e}\n")
-                print(f"Total Goldmines found: {len(goldmines)}")
+                # Silently fallback to standard print if dashboard fails
+                pass
 
             print("\n" + grid + "\n")
             if historical_report:
@@ -5239,7 +5274,7 @@ async def run_discovery(
 
     finally:
         await GlobalResourceManager.cleanup()
-def start_desktop_app():
+async def start_desktop_app():
     """Starts a FastAPI server and opens a webview window for the Fortuna Dashboard."""
     try:
         import uvicorn
@@ -5248,7 +5283,6 @@ def start_desktop_app():
         import webview
         import threading
         import time
-        import asyncio
     except ImportError as e:
         print(f"GUI dependencies missing: {e}. Install with 'pip install fastapi uvicorn pywebview'")
         return
@@ -5259,15 +5293,21 @@ def start_desktop_app():
     async def get_dashboard():
         # Retrieve latest Goldmines from the database
         db = FortunaDB()
-        conn = await db.get_connection()
-        # We try to get the most recent tips
-        try:
-            async with conn.execute("SELECT venue, race_number, selection_name, win_odds, discovered_at FROM tips ORDER BY id DESC LIMIT 50") as cursor:
-                tips = await cursor.fetchall()
-        except:
-            tips = []
+        async with db.get_connection() as conn:  # ✅ Fixed Council's syntax (removed await)
+            try:
+                async with conn.execute(
+                    "SELECT venue, race_number, selection_name, win_odds, discovered_at "
+                    "FROM tips ORDER BY id DESC LIMIT 50"
+                ) as cursor:
+                    tips = await cursor.fetchall()
+            except Exception as e:
+                print(f"DB query failed: {e}")
+                tips = []
 
-        tips_html = "".join([f"<tr><td>{t[4]}</td><td>{t[0]}</td><td>R{t[1]}</td><td>{t[2]}</td><td>{t[3]}</td></tr>" for t in tips])
+        tips_html = "".join([
+            f"<tr><td>{t[4]}</td><td>{t[0]}</td><td>R{t[1]}</td><td>{t[2]}</td><td>{t[3]}</td></tr>"
+            for t in tips
+        ])
 
         return f"""
         <html>
@@ -5377,7 +5417,7 @@ async def main_all_in_one():
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.
         await ensure_browsers()
-        start_desktop_app()
+        await start_desktop_app()
         return
 
     if args.clear_db:
@@ -5399,6 +5439,7 @@ async def main_all_in_one():
                     loaded_races.extend([Race.model_validate(r) for r in data])
             except Exception as e:
                 print(f"Error loading {path}: {e}")
+                logger.error("Failed to load race data", path=path, error=str(e), exc_info=True)
 
     if args.date:
         target_dates = [args.date]

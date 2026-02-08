@@ -109,6 +109,9 @@ def get_places_paid(field_size: int) -> int:
     return 3  # Default
 
 
+_currency_logger = structlog.get_logger("currency_parser")
+
+
 def parse_currency_value(value_str: str) -> float:
     """Parse currency strings like '$123.45', '£50.00', '1,234.56'."""
     if not value_str:
@@ -116,12 +119,12 @@ def parse_currency_value(value_str: str) -> float:
     try:
         # Check for unexpected characters (excluding common currency/formatting)
         if re.search(r'[^\d.,$£€\s]', str(value_str)):
-            structlog.get_logger().debug("unexpected_currency_format", value=value_str)
+            _currency_logger.debug("unexpected_currency_format", value=value_str)
 
         cleaned = re.sub(r'[^\d.]', '', str(value_str).replace(',', ''))
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
-        structlog.get_logger().warning("failed_parsing_currency", value=value_str)
+        _currency_logger.warning("failed_parsing_currency", value=value_str)
         return 0.0
 
 
@@ -239,12 +242,13 @@ class AuditorEngine:
         """
         Match results to history and update audit status.
         """
-        # Build lookup maps: full key and relaxed key (Memory Directive Fix)
+        # Build single lookup map with both keys pointing to same object
         results_map: Dict[str, ResultRace] = {}
-        relaxed_results_map: Dict[str, ResultRace] = {}
         for r in results:
             results_map[r.canonical_key] = r
-            relaxed_results_map[r.relaxed_key] = r
+            # Store relaxed key only if different from canonical
+            if r.relaxed_key != r.canonical_key:
+                results_map[r.relaxed_key] = r
 
         self.logger.debug("Built results map", count=len(results_map))
 
@@ -269,7 +273,7 @@ class AuditorEngine:
                     if len(key_parts) >= 5:
                         # tip_key is venue|race|date|time|disc
                         relaxed_tip_key = f"{key_parts[0]}|{key_parts[1]}|{key_parts[2]}|{key_parts[4]}"
-                        result = relaxed_results_map.get(relaxed_tip_key)
+                        result = results_map.get(relaxed_tip_key)
                         if result:
                             self.logger.info("Matched tip with time-relaxed fallback", race_id=race_id, tip_key=tip_key, match_key=result.canonical_key)
 
@@ -1805,7 +1809,7 @@ def generate_analytics_report(
             elif tip.get("actual_top_5"):
                 payout_info += f"Top 5: [{tip['actual_top_5']}]"
 
-            lines.append(f"{emoji:<6} | {venue:<25} | {profit:<8} | {payout_info}")
+            lines.append(f"{emoji:<6} | {venue:<25} | {profit:>8} | {payout_info}")
         lines.append("")
 
     # --- 4. SUPERFECTA PERFORMANCE TRACKING ---
@@ -1904,6 +1908,7 @@ async def run_analytics(target_dates: List[str]) -> None:
         logger.error("No valid dates provided", input_dates=target_dates)
         return
 
+    harvest_summary: Dict[str, int] = {}
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
@@ -1914,8 +1919,6 @@ async def run_analytics(target_dates: List[str]) -> None:
             logger.info("Tips to audit", count=len(unverified))
 
             all_results: List[ResultRace] = []
-
-            harvest_summary: Dict[str, int] = {}
             async with managed_adapters() as adapters:
                 # Create fetch tasks for all date/adapter combinations
                 async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
@@ -1962,6 +1965,12 @@ async def run_analytics(target_dates: List[str]) -> None:
                 # Perform audit
                 await auditor.audit_races(all_results)
 
+            # Save results harvest summary for GHA reporting
+            try:
+                with open("results_harvest.json", "w") as f:
+                    json.dump(harvest_summary, f)
+            except: pass
+
         # Generate and save comprehensive report
         all_audited = await auditor.get_all_audited_tips()
         recent_tips = await auditor.get_recent_tips(limit=20)
@@ -1969,7 +1978,7 @@ async def run_analytics(target_dates: List[str]) -> None:
         report = generate_analytics_report(
             audited_tips=all_audited,
             recent_tips=recent_tips,
-            harvest_summary=harvest_summary if 'harvest_summary' in locals() else None
+            harvest_summary=harvest_summary
         )
         print(report)
 
