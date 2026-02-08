@@ -74,13 +74,16 @@ except ImportError:
 
 try:
     from scrapling import AsyncFetcher, Fetcher
-    from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
     from scrapling.parser import Selector
-
     ASYNC_SESSIONS_AVAILABLE = True
 except ImportError:
     ASYNC_SESSIONS_AVAILABLE = False
     Selector = None  # type: ignore
+
+try:
+    from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
+except ImportError:
+    ASYNC_SESSIONS_AVAILABLE = False
 
 try:
     from scrapling.core.custom_types import StealthMode
@@ -1065,6 +1068,12 @@ class BaseAdapterV3(ABC):
     async def get_races(self, date: str) -> List[Race]:
         start = time.time()
         try:
+            # Check for browser requirement in monolith mode
+            strategy = self.smart_fetcher.strategy
+            if is_frozen() and strategy.primary_engine in [BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX]:
+                self.logger.info("Skipping browser-dependent adapter in monolith mode")
+                return []
+
             if not await self.circuit_breaker.allow_request(): return []
             await self.rate_limiter.acquire()
             raw = await self._fetch_data(date)
@@ -3213,7 +3222,7 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
     # Calculate simple stats
     total = len(audited_tips)
     cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
-    total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    total_profit = sum((t.get("net_profit") or 0.0) for t in audited_tips)
     sr = (cashed / total * 100) if total > 0 else 0
 
     lines.append(f"Performance Summary (Last {total} Goldmines):")
@@ -3408,7 +3417,20 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
+def is_frozen() -> bool:
+    """Check if the script is running as a bundled PyInstaller executable."""
+    return getattr(sys, 'frozen', False)
+
+
 def get_db_path() -> str:
+    """Returns the path to the SQLite database, using AppData in frozen mode."""
+    if is_frozen() and sys.platform == "win32":
+        appdata = os.getenv('APPDATA')
+        if appdata:
+            db_dir = Path(appdata) / "Fortuna"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            return str(db_dir / "fortuna.db")
+
     return os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 
 
@@ -5161,7 +5183,7 @@ async def run_discovery(
 
         cashed = sum(1 for t in today_tips if t.get("verdict") == "CASHED")
         total_tips = len(today_tips)
-        profit = sum(t.get("net_profit", 0) for t in today_tips)
+        profit = sum((t.get("net_profit") or 0.0) for t in today_tips)
 
         stats = {
             "tips": total_tips,
@@ -5316,10 +5338,18 @@ async def ensure_browsers():
     except ImportError:
         pass
 
+    if is_frozen():
+        print("━" * 60)
+        print("⚠️  PLAYWRIGHT NOT DETECTED IN MONOLITH")
+        print("━" * 60)
+        print("Playwright is required for some adapters but cannot be auto-installed in EXE mode.")
+        print("\nStandard HTTP-based adapters will still function.")
+        print("━" * 60)
+        return False
+
     print("Installing browser dependencies (Playwright Chromium)...")
     try:
         # Run installation in a separate process to avoid blocking the loop too much
-        # though it's still a synchronous call here, it's better than nothing.
         subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True)
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         print("Browser dependencies installed successfully.")

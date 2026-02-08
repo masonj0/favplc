@@ -64,6 +64,25 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         debug: If True, add debug flags for troubleshooting.
     """
     print("Preparing to build Fortuna Intelligence Monolith EXE...")
+    print("=" * 60)
+
+    # Pre-flight checks
+    required_packages = ["PyInstaller", "pydantic", "httpx", "structlog"]
+    missing = []
+
+    for pkg in required_packages:
+        try:
+            if pkg == "PyInstaller":
+                import PyInstaller
+            else:
+                __import__(pkg.lower())
+        except ImportError:
+            missing.append(pkg)
+
+    if missing:
+        print(f"Error: Missing required packages: {', '.join(missing)}")
+        print(f"\nPlease install with: pip install {' '.join(missing)}")
+        sys.exit(1)
 
     script_path = "fortuna.py"
 
@@ -198,6 +217,16 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "setuptools",
         "wheel",
         "pip",
+        "IPython",
+        "jupyter",
+        "notebook",
+        "pandas.tests",
+        "numpy.tests",
+        "tornado",
+        "sphinx",
+        "docutils",
+        "jedi",
+        "parso",
     ]
 
     for exc in excludes:
