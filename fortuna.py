@@ -48,6 +48,8 @@ import sqlite3
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 import structlog
+import subprocess
+import sys
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -381,7 +383,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
         "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
         "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-        "NEXT"
+        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY"
     ]
 
     upper_name = cleaned.upper()
@@ -768,13 +770,22 @@ class SmartFetcher:
             except Exception as e:
                 self.logger.warning("Failed to generate browserforge headers", error=str(e))
 
+        # Define browser-specific arguments to strip for non-browser engines
+        BROWSER_SPECIFIC_KWARGS = [
+            "network_idle", "wait_selector", "wait_until", "impersonate",
+            "stealth", "block_resources", "wait_for_selector", "stealth_mode"
+        ]
+
         if engine == BrowserEngine.HTTPX:
             # Pass strategy timeout if present in kwargs or use default
             timeout = kwargs.get("timeout", self.strategy.timeout)
             client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
 
-            # Remove timeout from kwargs to avoid double-passing to request
-            req_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
+            # Remove timeout and browser-specific keys from kwargs
+            req_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
+            }
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             resp.status = resp.status_code
             return resp
@@ -788,10 +799,14 @@ class SmartFetcher:
 
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
+            # Respect impersonate if provided, otherwise default
             impersonate = kwargs.get("impersonate", "chrome110")
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
-            clean_kwargs = {k: v for k, v in kwargs.items() if k not in ["timeout", "headers", "impersonate", "network_idle", "wait_selector", "wait_until"]}
+            clean_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
+            }
             
             async with curl_requests.AsyncSession() as s:
                 resp = await s.request(
@@ -3049,7 +3064,21 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
         return cat == 'T' and field_size >= 6
 
     # Include all goldmines (2nd fav >= 5.0)
-    goldmines = [r for r in races if get_field(r, 'metadata', {}).get('is_goldmine')]
+    # Deduplicate to prevent double-reporting (e.g. from multiple sources)
+    goldmines = []
+    seen_gold = set()
+    for r in races:
+        if get_field(r, 'metadata', {}).get('is_goldmine'):
+            rid = getattr(r, 'id', None)
+            track = normalize_venue_name(get_field(r, 'venue'))
+            num = get_field(r, 'race_number')
+            st = get_field(r, 'start_time')
+            st_str = st.strftime('%Y%m%d') if isinstance(st, datetime) else str(st)
+            # Prioritize stable ID, fallback to track/num/date
+            key = rid if rid else (track, num, st_str)
+            if key not in seen_gold:
+                seen_gold.add(key)
+                goldmines.append(r)
 
     if not goldmines:
         return "No Goldmine races found."
@@ -3243,24 +3272,16 @@ def generate_next_to_jump(races: List[Any]) -> str:
 
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """
-    Generates a tiered summary grid.
-    Primary section: Races with Superfectas (Explicit or T-tracks with field > 6).
-    Secondary section: All remaining races.
+    Generates a Markdown table summary of upcoming races.
+    Sorted by MTP, ceiling of 4 hours from now.
     """
     now = datetime.now(EASTERN)
-
-    def is_superfecta_explicit(r):
-        available_bets = get_field(r, 'available_bets', [])
-        metadata_bets = get_field(r, 'metadata', {}).get('available_bets', [])
-        return 'Superfecta' in available_bets or 'Superfecta' in metadata_bets
-
-    track_categories = {}
-    all_field_sizes = set()
-    WRAP_WIDTH = 4
+    cutoff = now + timedelta(hours=4)
 
     # 1. Pre-calculate track categories
-    races_by_track = defaultdict(list)
+    track_categories = {}
     source_races = all_races if all_races is not None else races
+    races_by_track = defaultdict(list)
     for r in source_races:
         venue = get_field(r, 'venue')
         track = normalize_venue_name(venue)
@@ -3269,152 +3290,59 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     for track, tr_races in races_by_track.items():
         track_categories[track] = get_track_category(tr_races)
 
-    # 2. Partition races based on explicit Superfecta OR T-track field size rule
-    primary_stats = defaultdict(lambda: defaultdict(list))
-    secondary_stats = defaultdict(lambda: defaultdict(list))
-
+    table_races = []
+    seen = set()
     for race in races:
+        st = get_field(race, 'start_time')
+        if isinstance(st, str):
+            try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            except: continue
+        if st and st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
+
+        # Ceiling of 4 hours, ignore races more than 10 mins past
+        if not st or st < now - timedelta(minutes=10) or st > cutoff:
+            continue
+
+        rid = getattr(race, 'id', None)
         track = normalize_venue_name(get_field(race, 'venue'))
+        num = get_field(race, 'race_number')
+        # Deduplication key: Use stable ID or track/num/date
+        key = rid if rid else (track, num, st.strftime('%Y%m%d'))
+        if key in seen: continue
+        seen.add(key)
+
+        mtp = int((st - now).total_seconds() / 60)
         runners = get_field(race, 'runners', [])
-        field_size = len([r for r in runners if not get_field(r, 'scratched', False)])
-        race_num = get_field(race, 'race_number') or 0
-        is_goldmine = get_field(race, 'metadata', {}).get('is_goldmine', False)
+        field_size = len([run for run in runners if not get_field(run, 'scratched', False)])
+        top5 = getattr(race, 'top_five_numbers', 'N/A')
+        gap12 = get_field(race, 'metadata', {}).get('1Gap2', 0.0)
+        is_gold = get_field(race, 'metadata', {}).get('is_goldmine', False)
 
-        all_field_sizes.add(field_size)
-        cat = track_categories.get(track, 'T')
+        table_races.append({
+            'mtp': mtp,
+            'cat': track_categories.get(track, 'T'),
+            'track': track,
+            'num': num,
+            'field': field_size,
+            'top5': top5,
+            'gap': gap12,
+            'gold': '💰' if is_gold else ''
+        })
 
-        is_primary = is_superfecta_explicit(race) or (cat == 'T' and field_size >= 6)
+    # Sort by MTP
+    table_races.sort(key=lambda x: x['mtp'])
 
-        if is_primary:
-            primary_stats[track][field_size].append((race_num, is_goldmine))
-        else:
-            secondary_stats[track][field_size].append((race_num, is_goldmine))
+    if not table_races:
+        return "No upcoming races in the next 4 hours."
 
-    if not all_field_sizes:
-        return "\nNo races found to display in grid."
+    lines = [
+        "| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | |",
+        "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|"
+    ]
+    for tr in table_races:
+        lines.append(f"| {tr['mtp']}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
 
-    sorted_field_sizes = sorted(list(all_field_sizes))
-    cat_map = {'T': 3, 'H': 2, 'G': 1}
-    col_widths = {fs: max(len(str(fs)), WRAP_WIDTH) for fs in sorted_field_sizes}
-
-    header_parts = [f"{'CATEG':<5}", f"{'Track':<25}"]
-    for fs in sorted_field_sizes:
-        header_parts.append(f"{str(fs):^{col_widths[fs]}}")
-
-    header = " | ".join(header_parts)
-    grid_lines = ["\n" + header, "-" * len(header)]
-
-    def render_stats(stats_dict, label=None):
-        if not stats_dict:
-            return
-        if label:
-            label_row = f"--- {label.upper()} ---"
-            grid_lines.append(f"{label_row:^{len(header)}}")
-            grid_lines.append("-" * len(header))
-
-        sorted_tracks = sorted(stats_dict.keys(), key=lambda t: (-cat_map.get(track_categories.get(t, 'T'), 0), t))
-        for track in sorted_tracks:
-            wrapped_stats = {}
-            max_lines = 1
-            for fs in sorted_field_sizes:
-                wrapped = format_grid_code(stats_dict[track].get(fs, []), WRAP_WIDTH)
-                wrapped_stats[fs] = wrapped
-                max_lines = max(max_lines, len(wrapped))
-
-            for line_idx in range(max_lines):
-                if line_idx == 0:
-                    row_prefix = f"{track_categories.get(track, 'T'):<5} | {track[:25]:<25} | "
-                else:
-                    row_prefix = f"{' ':<5} | {' ':<25} | "
-
-                row_vals = []
-                for fs in sorted_field_sizes:
-                    wrapped = wrapped_stats[fs]
-                    val = wrapped[line_idx] if line_idx < len(wrapped) else ""
-                    row_vals.append(f"{val:^{col_widths[fs]}}")
-
-                grid_lines.append(row_prefix + " | ".join(row_vals))
-            grid_lines.append("-" * len(header))
-
-    # 3. Identify Immediate Goldmine races for prime display
-    immediate_gold_super_snippet = []
-    immediate_gold_snippet = []
-
-    # We need track categories for the goldmine partitioning check
-    for race in races:
-        if get_field(race, 'metadata', {}).get('is_goldmine'):
-            track = normalize_venue_name(get_field(race, 'venue'))
-            cat = track_categories.get(track, 'T')
-
-            # Use same Superfecta filter as generate_goldmine_report
-            available_bets = get_field(race, 'available_bets', [])
-            metadata_bets = get_field(race, 'metadata', {}).get('available_bets', [])
-            runners = get_field(race, 'runners', [])
-            field_size = len([run for run in runners if not get_field(run, 'scratched', False)])
-
-            is_super = 'Superfecta' in available_bets or 'Superfecta' in metadata_bets or (cat == 'T' and field_size >= 6)
-
-            start_time = get_field(race, 'start_time')
-            if isinstance(start_time, str):
-                try:
-                    start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                except ValueError:
-                    start_time = None
-
-            if start_time:
-                if start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=EASTERN)
-
-                diff = (start_time - now).total_seconds() / 60
-                if 0 <= diff <= 20:
-                    # Calculate top 5 for the snippet
-                    active_runners = [run for run in runners if not get_field(run, 'scratched')]
-                    active_runners.sort(key=lambda x: get_field(x, 'win_odds') or 999.0)
-                    top_five = "|".join([str(get_field(run, 'number')) for run in active_runners[:5]])
-
-                    entry = f"{cat}~{track} R{get_field(race, 'race_number')} in {int(diff)}m [{top_five}]"
-                    if is_super:
-                        immediate_gold_super_snippet.append(entry)
-                    else:
-                        immediate_gold_snippet.append(entry)
-
-    final_grid_lines = []
-    if immediate_gold_super_snippet:
-        final_grid_lines.append("!!! IMMEDIATE GOLD (SUPERFECTA) !!!")
-        final_grid_lines.extend(immediate_gold_super_snippet)
-        final_grid_lines.append("")
-    if immediate_gold_snippet:
-        final_grid_lines.append("!!! IMMEDIATE GOLD !!!")
-        final_grid_lines.extend(immediate_gold_snippet)
-        final_grid_lines.append("")
-
-    # Render sections BEFORE extending final_grid_lines with grid_lines
-    if primary_stats:
-        render_stats(primary_stats, label="Preferred Superfecta Races")
-
-    if secondary_stats:
-        # Use label if primary also existed
-        label = "All Remaining Races" if primary_stats else None
-        render_stats(secondary_stats, label=label)
-
-    final_grid_lines.extend(grid_lines)
-
-    appendix = generate_fortuna_fives(races, all_races=all_races)
-    goldmines = generate_goldmines(races, all_races=all_races)
-    next_to_jump = generate_next_to_jump(races)
-
-    # Unified spacing management (Memory Directive Fix)
-    # Ensure each appendix part is appended with proper spacing and separators
-    # Use explicit newlines between major sections to ensure readability
-    full_report = "\n".join(final_grid_lines)
-    if appendix:
-        full_report += "\n" + appendix
-    if goldmines:
-        full_report += "\n" + goldmines
-    if next_to_jump:
-        full_report += "\n" + next_to_jump
-
-    return full_report
+    return "\n".join(lines)
 
 
 def normalize_course_name(name: str) -> str:
@@ -3488,13 +3416,7 @@ class FortunaDB:
         return self._conn
 
     async def _run_in_executor(self, func, *args):
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # Fallback for sync contexts if ever used
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, func, *args)
 
     async def initialize(self):
@@ -3541,7 +3463,24 @@ class FortunaDB:
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
-                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+
+                # Cleanup potential duplicates before creating unique index (Memory Directive Fix)
+                try:
+                    self.logger.info("Cleaning up duplicate race_ids before indexing")
+                    conn.execute("""
+                        DELETE FROM tips
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM tips
+                            GROUP BY race_id
+                        )
+                    """)
+                    self.logger.info("Duplicates removed, creating unique index")
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                except Exception as e:
+                    self.logger.error("Failed to cleanup or create unique index", error=str(e))
+                    # If index exists but table has duplicates, we might get IntegrityError
+                    # Just log it and continue - better than crashing the whole app
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
@@ -3581,8 +3520,20 @@ class FortunaDB:
             await self._run_in_executor(_update_version)
             self.logger.info("Schema migrated to version 2")
 
+        if current_version < 3:
+            def _declutter():
+                # Delete every record that got loaded before 04h00 on 20260208 USA EST
+                # Using ISO format comparison which works for these sortable strings
+                cutoff = "2026-02-08T04:00:00"
+                with self._get_conn() as conn:
+                    cursor = conn.execute("DELETE FROM tips WHERE report_date < ?", (cutoff,))
+                    self.logger.info("Database decluttered (pre-04h00 cleanup)", deleted_count=cursor.rowcount)
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_declutter)
+            self.logger.info("Schema migrated to version 3")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 2))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 3))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -4879,7 +4830,11 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             for a in parser.css(s):
                 href = a.attributes.get("href")
                 if href:
-                    if re.search(r"/results/\d+/", href) or len(href.split("/")) >= 4:
+                    # Broaden regex to match various RP result link patterns (Memory Directive Fix)
+                    if re.search(r"/results/.*?\d{5,}", href) or \
+                       re.search(r"/results/\d+/", href) or \
+                       re.search(r"/\d{4}-\d{2}-\d{2}/", href) or \
+                       len(href.split("/")) >= 4:
                         links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
 
         async def fetch_result_page(link):
@@ -4933,13 +4888,16 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if tote_container:
             for row in (tote_container.css('div.rp-toteReturns__row') or tote_container.css('.rp-toteReturns__row')):
-                label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
-                val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
-                if label_node and val_node:
-                    label = clean_text(label_node.text())
-                    value = clean_text(val_node.text())
-                    if label and value:
-                        dividends[label] = value
+                try:
+                    label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
+                    val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
+                    if label_node and val_node:
+                        label = clean_text(label_node.text())
+                        value = clean_text(val_node.text())
+                        if label and value:
+                            dividends[label] = value
+                except Exception as e:
+                    self.logger.debug("Failed parsing RP tote row", error=str(e))
 
         # Derive race number from header or navigation
         race_num = 1
@@ -5015,7 +4973,10 @@ async def run_discovery(
     window_hours: Optional[int] = 8,
     loaded_races: Optional[List[Race]] = None,
     adapter_names: Optional[List[str]] = None,
-    save_path: Optional[str] = None
+    save_path: Optional[str] = None,
+    fetch_only: bool = False,
+    live_dashboard: bool = False,
+    track_odds: bool = False
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -5149,6 +5110,10 @@ async def run_discovery(
             except Exception as e:
                 logger.error("Failed to save races", error=str(e))
 
+        if fetch_only:
+            logger.info("Fetch-only mode active. Skipping analysis and reporting.")
+            return
+
         # Analyze
         analyzer = SimplySuccessAnalyzer()
         result = analyzer.qualify_races(unique_races)
@@ -5157,11 +5122,6 @@ async def run_discovery(
         # Generate Grid & Goldmine
         grid = generate_summary_grid(qualified, all_races=unique_races)
         logger.info("Summary Grid Generated")
-
-        # Output the grid clearly without messing up structured logs
-        print("\n" + grid + "\n")
-
-        with open("summary_grid.txt", "w") as f: f.write(grid)
 
         # Log Hot Tips & Fetch recent historical results for the report
         tracker = HotTipsTracker()
@@ -5173,9 +5133,48 @@ async def run_discovery(
         gm_report = generate_goldmine_report(qualified, all_races=unique_races)
         if historical_report:
             gm_report += "\n" + historical_report
-            # Also print historical report to console
-            print("\n" + historical_report + "\n")
 
+        # NEW: Dashboard and Live Tracking
+        goldmines = [r for r in qualified if get_field(r, 'metadata', {}).get('is_goldmine')]
+
+        # Calculate today's stats for dashboard
+        recent_tips = await tracker.db.get_recent_tips(limit=100)
+        today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+        today_tips = [t for t in recent_tips if t.get("report_date", "").startswith(today_str)]
+
+        cashed = sum(1 for t in today_tips if t.get("verdict") == "CASHED")
+        total_tips = len(today_tips)
+        profit = sum(t.get("net_profit", 0) for t in today_tips)
+
+        stats = {
+            "tips": total_tips,
+            "cashed": cashed,
+            "profit": profit
+        }
+
+        if live_dashboard:
+            from dashboard import FortunaDashboard
+            dash = FortunaDashboard()
+            dash.update(goldmines, stats)
+
+            # Start odds tracker if requested
+            if track_odds:
+                from odds_tracker import LiveOddsTracker
+                adapter_classes = get_discovery_adapter_classes()
+                odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
+                asyncio.create_task(odds_tracker.start_tracking())
+
+            await dash.run_live()
+        else:
+            # Fallback to static print
+            from dashboard import print_dashboard
+            print_dashboard(goldmines, stats)
+            print("\n" + grid + "\n")
+            if historical_report:
+                print("\n" + historical_report + "\n")
+
+        # Always save reports to files
+        with open("summary_grid.txt", "w") as f: f.write(grid)
         with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
         # Save qualified races to JSON
@@ -5272,6 +5271,34 @@ def start_desktop_app():
     webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
     webview.start()
 
+async def ensure_browsers():
+    """Ensure browser dependencies are available for scraping."""
+    try:
+        # Check if playwright is installed and has a chromium binary
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            try:
+                # We try to launch a headless browser to verify installation
+                browser = await p.chromium.launch(headless=True)
+                await browser.close()
+                return True
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+    print("Installing browser dependencies (Playwright Chromium)...")
+    try:
+        # Run installation in a separate process to avoid blocking the loop too much
+        # though it's still a synchronous call here, it's better than nothing.
+        subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        print("Browser dependencies installed successfully.")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to install browsers: {e}")
+        return False
+
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
@@ -5281,12 +5308,16 @@ async def main_all_in_one():
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
+    parser.add_argument("--fetch-only", action="store_true", help="Only fetch and save data, skip analysis and reporting")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
+    parser.add_argument("--live-dashboard", action="store_true", help="Show live updating terminal dashboard")
+    parser.add_argument("--track-odds", action="store_true", help="Monitor live odds and send notifications")
     args = parser.parse_args()
 
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.
+        await ensure_browsers()
         start_desktop_app()
         return
 
@@ -5321,16 +5352,21 @@ async def main_all_in_one():
             target_dates.append(future.strftime("%Y-%m-%d"))
 
     if args.monitor:
+        await ensure_browsers()
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
         else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
+        await ensure_browsers()
         await run_discovery(
             target_dates,
             window_hours=args.hours,
             loaded_races=loaded_races,
             adapter_names=adapter_filter,
-            save_path=args.save
+            save_path=args.save,
+            fetch_only=args.fetch_only,
+            live_dashboard=args.live_dashboard,
+            track_odds=args.track_odds
         )
 
 if __name__ == "__main__":

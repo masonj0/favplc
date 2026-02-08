@@ -1,4 +1,4 @@
-name: List of Best Bets (Parallel)
+name: List of Best Bets
 
 on:
   push:
@@ -13,57 +13,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  fetch:
+  intelligence:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [UK_IRE, Americas, Rest]
-        include:
-          - group: UK_IRE
-            adapters: "AtTheRacesAdapter,SportingLifeAdapter,SkySportsAdapter,RacingPostAdapter,OddscheckerAdapter,TimeformAdapter"
-          - group: Americas
-            adapters: "EquibaseAdapter,TwinSpiresAdapter,StandardbredCanadaAdapter,RacingPostB2BAdapter"
-          - group: Rest
-            adapters: "TabAdapter,BetfairDataScientistAdapter,AtTheRacesGreyhoundAdapter,BoyleSportsAdapter"
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          cache: 'pip'
-
-      - name: Install dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install setuptools wheel
-          python3 -m pip install httpx structlog pydantic==2.5.0 pandas selectolax tenacity scrapling pydantic-settings redis curl_cffi msgspec browserforge camoufox
-          python3 -m browserforge update
-          playwright install --with-deps chromium
-
-      - name: Fetch Race Data
-        env:
-          PYTHONPATH: .
-          DEBUG_MODE: "true"
-        run: |
-          python3 fortuna.py --include "${{ matrix.adapters }}" --save "races_${{ matrix.group }}.json"
-
-      - name: Upload Raw Data
-        uses: actions/upload-artifact@v4
-        with:
-          name: races-${{ matrix.group }}
-          path: races_${{ matrix.group }}.json
-          retention-days: 1
-
-  report:
-    needs: fetch
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -90,24 +42,18 @@ jobs:
           python3 -m browserforge update
           playwright install --with-deps chromium
 
-      - name: Download All Raw Data
-        uses: actions/download-artifact@v4
-        with:
-          pattern: races-*
-          merge-multiple: true
-
-      - name: Consolidate and Run Discovery
+      - name: Run Global Discovery
         env:
           PYTHONPATH: .
+          DEBUG_MODE: "true"
         run: |
-          # Combine all downloaded json files
-          FILES=$(ls races_*.json | tr '\n' ',' | sed 's/,$//')
-          python3 fortuna.py --load "$FILES"
+          # Running discovery without --include runs all adapters in parallel
+          python3 fortuna.py --save "raw_races.json"
 
       - name: Run Monitor Report
         run: |
-          FILES=$(ls races_*.json | tr '\n' ',' | sed 's/,$//')
-          python3 fortuna.py --load "$FILES" --monitor --once
+          # Use the saved races to run the monitor report
+          python3 fortuna.py --load "raw_races.json" --monitor --once
 
       - name: Add Monitor to Job Summary
         if: always()
@@ -196,16 +142,15 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Upload Artifacts
+      - name: Upload Final Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fortuna-standalone-results
+          name: best-bet-reports
           path: |
             summary_grid.txt
             goldmine_report.txt
-            qualified_races.json
-            race_data.json
             analytics_report.txt
             fortuna.db
+            prediction_history.jsonl
           retention-days: 7
