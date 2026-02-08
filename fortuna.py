@@ -3372,7 +3372,10 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|"
     ]
     for tr in table_races:
-        lines.append(f"| {tr['mtp']}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
+        # Better alignment: leading zero for single digits (Memory Directive Fix)
+        mtp_val = tr['mtp']
+        mtp_str = f"{mtp_val:02d}" if 0 <= mtp_val < 10 else str(mtp_val)
+        lines.append(f"| {mtp_str}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
 
     return "\n".join(lines)
 
@@ -5058,13 +5061,15 @@ async def run_discovery(
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
             try:
+                harvest_summary = {}
+
                 async def fetch_one(a, date_str):
                     try:
                         races = await a.get_races(date_str)
-                        return races
+                        return a.source_name, races
                     except Exception as e:
                         logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
-                        return []
+                        return a.source_name, []
 
                 fetch_tasks = []
                 for d in target_dates:
@@ -5072,10 +5077,18 @@ async def run_discovery(
                         fetch_tasks.append(fetch_one(a, d))
 
                 results = await asyncio.gather(*fetch_tasks)
-                for r_list in results:
+                for adapter_name, r_list in results:
                     all_races_raw.extend(r_list)
+                    harvest_summary[adapter_name] = harvest_summary.get(adapter_name, 0) + len(r_list)
 
                 logger.info("Fetched total races", count=len(all_races_raw))
+
+                # Save discovery harvest summary for GHA reporting
+                try:
+                    with open("discovery_harvest.json", "w") as f:
+                        json.dump(harvest_summary, f)
+                except: pass
+
             finally:
                 # Shutdown adapters
                 for a in adapters:

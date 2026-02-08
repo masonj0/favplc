@@ -1965,6 +1965,12 @@ async def run_analytics(target_dates: List[str]) -> None:
                 # Perform audit
                 await auditor.audit_races(all_results)
 
+            # Save results harvest summary for GHA reporting
+            try:
+                with open("results_harvest.json", "w") as f:
+                    json.dump(harvest_summary, f)
+            except: pass
+
         # Generate and save comprehensive report
         all_audited = await auditor.get_all_audited_tips()
         recent_tips = await auditor.get_recent_tips(limit=20)

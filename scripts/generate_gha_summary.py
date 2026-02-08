@@ -44,6 +44,13 @@ def generate_summary():
                 for r in d['bet_now_races']:
                     sup = '✅' if r.get('superfecta_offered') else '❌'
                     mtp = r.get('mtp', 'N/A')
+                    # Leading zero formatting for MTP if needed (should already be in text reports but here it is in JSON)
+                    try:
+                        m_int = int(mtp)
+                        mtp_str = f"{m_int:02d}m" if 0 <= m_int < 10 else f"{m_int}m"
+                    except:
+                        mtp_str = f"{mtp}m"
+
                     disc = r.get('discipline', 'N/A')
                     track = r.get('track', 'N/A')
                     race_num = r.get('race_number', 'N/A')
@@ -52,7 +59,7 @@ def generate_summary():
                     sec = f"{r['second_fav_odds']:.2f}" if r.get('second_fav_odds') else 'N/A'
                     odds = f"{fav}, {sec}"
                     top5 = f"`{r['top_five_numbers']}`" if r.get('top_five_numbers') else 'N/A'
-                    write_to_summary(f"| {sup} | {mtp} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
+                    write_to_summary(f"| {sup} | {mtp_str} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
                 write_to_summary("")
 
             if d.get('you_might_like_races'):
@@ -62,6 +69,12 @@ def generate_summary():
                 for r in d['you_might_like_races']:
                     sup = '✅' if r.get('superfecta_offered') else '❌'
                     mtp = r.get('mtp', 'N/A')
+                    try:
+                        m_int = int(mtp)
+                        mtp_str = f"{m_int:02d}m" if 0 <= m_int < 10 else f"{m_int}m"
+                    except:
+                        mtp_str = f"{mtp}m"
+
                     disc = r.get('discipline', 'N/A')
                     track = r.get('track', 'N/A')
                     race_num = r.get('race_number', 'N/A')
@@ -70,7 +83,7 @@ def generate_summary():
                     sec = f"{r['second_fav_odds']:.2f}" if r.get('second_fav_odds') else 'N/A'
                     odds = f"{fav}, {sec}"
                     top5 = f"`{r['top_five_numbers']}`" if r.get('top_five_numbers') else 'N/A'
-                    write_to_summary(f"| {sup} | {mtp} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
+                    write_to_summary(f"| {sup} | {mtp_str} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
                 write_to_summary("")
         except Exception as e:
             write_to_summary(f"❌ Error parsing race_data.json: {e}")
@@ -100,9 +113,40 @@ def generate_summary():
         write_to_summary("### 📊 Performance Analytics Audit")
         write_to_summary("```text")
         with open('analytics_report.txt', 'r', encoding='utf-8') as f:
-            write_to_summary(f.read())
+            # We skip the harvest summary if it's already at the bottom
+            content = f.read()
+            if "🔎 LIVE ADAPTER HARVEST PROOF" in content:
+                content = content.split("🔎 LIVE ADAPTER HARVEST PROOF")[0]
+            write_to_summary(content.strip())
         write_to_summary("```")
         write_to_summary("")
+
+    # 5. LIVE ADAPTER HARVEST PROOF (Consolidated)
+    write_to_summary("### 🔎 LIVE ADAPTER HARVEST PROOF")
+    write_to_summary("-" * 40)
+
+    harvested = {}
+    if os.path.exists('discovery_harvest.json'):
+        try:
+            with open('discovery_harvest.json', 'r') as f:
+                harvested.update(json.load(f))
+        except: pass
+
+    if os.path.exists('results_harvest.json'):
+        try:
+            with open('results_harvest.json', 'r') as f:
+                harvested.update(json.load(f))
+        except: pass
+
+    if harvested:
+        # Sort by adapter name
+        for adapter in sorted(harvested.keys()):
+            count = harvested[adapter]
+            status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
+            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}")
+    else:
+        write_to_summary("No harvest data available.")
+    write_to_summary("")
 
     # Footer
     write_to_summary("---")
