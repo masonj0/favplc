@@ -351,17 +351,24 @@ class AuditorEngine:
         top1_place_payout = top_finishers[0].place_payout if len(top_finishers) >= 1 else None
         top2_place_payout = top_finishers[1].place_payout if len(top_finishers) >= 2 else None
 
-        # Find 2nd favorite by final odds
+        # Find 2nd favorite by final odds (Memory Directive Fix)
         runners_with_odds = [
             r for r in result.runners
-            if r.final_win_odds is not None and r.final_win_odds > 0
+            if r.final_win_odds is not None and r.final_win_odds > 0 and not r.scratched
         ]
         runners_with_odds.sort(key=lambda x: x.final_win_odds)
-        actual_2nd_fav_odds = (
-            runners_with_odds[1].final_win_odds
-            if len(runners_with_odds) >= 2
-            else None
-        )
+
+        # We want the 2nd unique odds or 2nd runner
+        actual_2nd_fav_odds = None
+        if len(runners_with_odds) >= 2:
+            # Check if many are joint favorites
+            fav_odds = runners_with_odds[0].final_win_odds
+            next_odds_runners = [r for r in runners_with_odds if r.final_win_odds > fav_odds]
+            if next_odds_runners:
+                actual_2nd_fav_odds = next_odds_runners[0].final_win_odds
+            else:
+                # Everyone is joint favorite, so 2nd fav odds = fav odds
+                actual_2nd_fav_odds = fav_odds
 
         # Default outcome
         verdict = "BURNED"
@@ -488,9 +495,22 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
             self.logger.error("Invalid date format", date=date_str)
             return None
 
-        url = f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}"
+        # Try multiple index URL patterns (Memory Directive Fix)
+        urls = [
+            f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}",
+            f"/static/chart/summary/{dt.strftime('%m%d%y')}sum.html",
+            f"/static/chart/summary/{dt.strftime('%Y%m%d')}sum.html",
+        ]
 
-        resp = await self.make_request("GET", url, headers=self._get_headers())
+        resp = None
+        for url in urls:
+            try:
+                resp = await self.make_request("GET", url, headers=self._get_headers())
+                if resp and resp.text and len(resp.text) > 1000:
+                    break
+            except:
+                continue
+
         if not resp or not resp.text:
             self.logger.warning("No response from Equibase index", url=url)
             return None
@@ -1761,7 +1781,7 @@ def generate_analytics_report(
             f"{'RACE TIME':<18} | {'VENUE':<20} | {'R#':<3} | {'GM?':<4} | {'STATUS'}",
             "." * 80
         ])
-        for tip in recent_tips[:15]:
+        for tip in recent_tips[:25]:
             st_raw = tip.get("start_time", "N/A")
             try:
                 st = datetime.fromisoformat(str(st_raw).replace('Z', '+00:00'))
@@ -1801,6 +1821,14 @@ def generate_analytics_report(
             p2 = tip.get("top2_place_payout")
             if p1 or p2:
                 payout_info = f"P: {p1 or 0:.2f}/{p2 or 0:.2f} | "
+
+            # Add Odds Stability Check (Memory Directive Fix)
+            po = tip.get("predicted_2nd_fav_odds")
+            ao = tip.get("actual_2nd_fav_odds")
+            if po is not None or ao is not None:
+                p1_s = f"{po:.1f}" if po is not None else "?"
+                p2_s = f"{ao:.1f}" if ao is not None else "?"
+                payout_info += f"Odds: {p1_s}->{p2_s} | "
 
             if tip.get("superfecta_payout"):
                 payout_info += f"Super: ${tip['superfecta_payout']:.2f}"

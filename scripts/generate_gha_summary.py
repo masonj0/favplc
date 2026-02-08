@@ -125,26 +125,37 @@ def generate_summary():
     write_to_summary("### 🔎 LIVE ADAPTER HARVEST PROOF")
     write_to_summary("-" * 40)
 
-    harvested = {}
+    discovery_harvest = {}
     if os.path.exists('discovery_harvest.json'):
         try:
             with open('discovery_harvest.json', 'r') as f:
-                harvested.update(json.load(f))
+                discovery_harvest = json.load(f)
         except: pass
 
+    results_harvest = {}
     if os.path.exists('results_harvest.json'):
         try:
             with open('results_harvest.json', 'r') as f:
-                harvested.update(json.load(f))
+                results_harvest = json.load(f)
         except: pass
 
-    if harvested:
-        # Sort by adapter name
-        for adapter in sorted(harvested.keys()):
-            count = harvested[adapter]
+    if discovery_harvest:
+        write_to_summary("#### 📋 Entries Adapters")
+        for adapter in sorted(discovery_harvest.keys()):
+            count = discovery_harvest[adapter]
             status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
             write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}")
-    else:
+        write_to_summary("")
+
+    if results_harvest:
+        write_to_summary("#### 🏁 Results Adapters")
+        for adapter in sorted(results_harvest.keys()):
+            count = results_harvest[adapter]
+            status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
+            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}")
+        write_to_summary("")
+
+    if not discovery_harvest and not results_harvest:
         write_to_summary("No harvest data available.")
     write_to_summary("")
 

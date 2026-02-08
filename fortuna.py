@@ -51,6 +51,7 @@ from contextlib import asynccontextmanager
 import structlog
 import subprocess
 import sys
+import webbrowser
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -1218,7 +1219,12 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, timeout=45)
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=60
+        )
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.skyracingworld.com")
@@ -1971,10 +1977,13 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         dt = datetime.strptime(date, "%Y-%m-%d")
         date_label = dt.strftime(f"%A %b {dt.day}, %Y")
-        try: from playwright.async_api import async_playwright
-        except: return None
+        date_short = dt.strftime("%m%d") # e.g. 0208
+
         index_html = None
+
+        # 1. Try browser-based fetch if available
         try:
+            from playwright.async_api import async_playwright
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
                 page = await browser.new_page()
@@ -1994,8 +2003,25 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
                     await page.close()
                     await browser.close()
         except Exception as e:
-            self.logger.error("Playwright failed", error=str(e))
-            return None
+            self.logger.debug("Playwright index fetch failed, trying fallback", error=str(e))
+
+        # 2. Fallback: Try to guess the data URL pattern if index fetch failed
+        if not index_html:
+            # Common tracks and their codes (heuristic)
+            tracks = [
+                ("Western Fair", f"e{date_short}lonn.dat"),
+                ("Mohawk", f"e{date_short}wbsbsn.dat"),
+                ("Flamboro", f"e{date_short}flmn.dat"),
+                ("Rideau", f"e{date_short}ridcn.dat"),
+            ]
+            metadata = []
+            for track_name, filename in tracks:
+                url = f"/racing/entries/data/{filename}"
+                metadata.append({"url": url, "venue": track_name, "finalized": True})
+
+            pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
+            return {"pages": pages, "date": date}
+
         if not index_html: return None
         self._save_debug_snapshot(index_html, f"sc_index_{date}")
         parser = HTMLParser(index_html)
@@ -2222,7 +2248,13 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.PLAYWRIGHT, enable_js=True, block_resources=True)
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            block_resources=True,
+            timeout=60
+        )
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.equibase.com")
@@ -2337,7 +2369,15 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CAMOUFOX, enable_js=True, stealth_mode="camouflage", block_resources=True, max_retries=3, timeout=60)
+        # Fallback to CURL_CFFI if browser engines are missing in frozen mode
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            block_resources=True,
+            max_retries=3,
+            timeout=60
+        )
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         ard = []
@@ -3300,6 +3340,116 @@ def generate_next_to_jump(races: List[Any]) -> str:
         lines.append("All races complete for today.")
 
     return "\n".join(lines)
+
+
+def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> str:
+    """Generates a high-impact, friendly HTML report for the Fortuna Faucet."""
+    now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')
+
+    rows = []
+    for r in sorted(races, key=lambda x: getattr(x, 'start_time', '')):
+        # Get selection (2nd favorite)
+        runners = getattr(r, 'runners', [])
+        active = [run for run in runners if not getattr(run, 'scratched', False)]
+        if len(active) < 2: continue
+
+        active.sort(key=lambda x: getattr(x, 'win_odds', 999.0) or 999.0)
+        sel = active[1]
+
+        st = getattr(r, 'start_time', '')
+        if isinstance(st, datetime):
+            st_str = st.strftime('%H:%M')
+        else:
+            st_str = str(st)[11:16]
+
+        is_gold = getattr(r, 'metadata', {}).get('is_goldmine', False)
+        gold_badge = '<span class="badge gold">GOLD</span>' if is_gold else ''
+
+        rows.append(f"""
+            <tr>
+                <td>{st_str}</td>
+                <td>{getattr(r, 'venue', 'Unknown')}</td>
+                <td>R{getattr(r, 'race_number', '?')}</td>
+                <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
+                <td>{getattr(sel, 'win_odds', 0.0):.2f}</td>
+                <td>{gold_badge}</td>
+            </tr>
+        """)
+
+    tips_count = stats.get('tips', 0)
+    cashed_count = stats.get('cashed', 0)
+    profit = stats.get('profit', 0.0)
+
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Fortuna Faucet Intelligence Report</title>
+        <style>
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }}
+            .container {{ max-width: 1000px; margin: 0 auto; background-color: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
+            h1 {{ color: #fbbf24; text-align: center; text-transform: uppercase; letter-spacing: 3px; border-bottom: 2px solid #fbbf24; padding-bottom: 15px; }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 30px 0; }}
+            .stat-card {{ background-color: #334155; padding: 20px; border-radius: 8px; text-align: center; }}
+            .stat-value {{ font-size: 24px; font-weight: bold; color: #fbbf24; }}
+            .stat-label {{ font-size: 14px; color: #94a3b8; text-transform: uppercase; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            th {{ background-color: #334155; color: #fbbf24; text-align: left; padding: 12px; }}
+            td {{ padding: 12px; border-bottom: 1px solid #334155; }}
+            tr:hover {{ background-color: #334155; }}
+            .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
+            .gold {{ background-color: #fbbf24; color: #0f172a; }}
+            .footer {{ margin-top: 40px; text-align: center; font-size: 12px; color: #64748b; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Fortuna Faucet Intelligence</h1>
+            <p style="text-align:center;">Real-time global racing analysis generated at {now_str} ET</p>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-value">{tips_count}</div>
+                    <div class="stat-label">Total Selections</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">{cashed_count}</div>
+                    <div class="stat-label">Recently Audited Wins</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${profit:+.2f}</div>
+                    <div class="stat-label">Estimated Profit</div>
+                </div>
+            </div>
+
+            <h2>🔥 Best Bet Opportunities</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th>
+                        <th>Venue</th>
+                        <th>Race</th>
+                        <th>Selection</th>
+                        <th>Odds</th>
+                        <th>Type</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {''.join(rows) if rows else '<tr><td colspan="6" style="text-align:center;">No immediate opportunities identified.</td></tr>'}
+                </tbody>
+            </table>
+
+            <div class="footer">
+                Fortuna Faucet Portable App - Sci-Fi Intelligence Edition<br>
+                Powered by the Council of Superbrains
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html
 
 
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
@@ -5216,6 +5366,27 @@ async def run_discovery(
             "cashed": cashed,
             "profit": profit
         }
+
+        # Generate friendly HTML report
+        try:
+            html_content = generate_friendly_html_report(qualified, stats)
+            html_path = Path("fortuna_report.html")
+            html_path.write_text(html_content, encoding="utf-8")
+            logger.info("Friendly HTML report generated", path=str(html_path))
+
+            # Launch the report if running as a portable app (not in GHA)
+            if not os.getenv("GITHUB_ACTIONS"):
+                try:
+                    # Use absolute path for reliable opening
+                    abs_path = html_path.absolute()
+                    if sys.platform == "win32":
+                        os.startfile(abs_path)
+                    else:
+                        webbrowser.open(f"file://{abs_path}")
+                except Exception as e:
+                    logger.warning("Failed to automatically launch report", error=str(e))
+        except Exception as e:
+            logger.error("Failed to generate HTML report", error=str(e))
 
         if live_dashboard:
             try:
