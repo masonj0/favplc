@@ -3501,13 +3501,7 @@ class FortunaDB:
         return self._conn
 
     async def _run_in_executor(self, func, *args):
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # Fallback for sync contexts if ever used
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, func, *args)
 
     async def initialize(self):
@@ -3611,8 +3605,20 @@ class FortunaDB:
             await self._run_in_executor(_update_version)
             self.logger.info("Schema migrated to version 2")
 
+        if current_version < 3:
+            def _declutter():
+                # Delete every record that got loaded before 04h00 on 20260208 USA EST
+                # Using ISO format comparison which works for these sortable strings
+                cutoff = "2026-02-08T04:00:00"
+                with self._get_conn() as conn:
+                    cursor = conn.execute("DELETE FROM tips WHERE report_date < ?", (cutoff,))
+                    self.logger.info("Database decluttered (pre-04h00 cleanup)", deleted_count=cursor.rowcount)
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_declutter)
+            self.logger.info("Schema migrated to version 3")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 2))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 3))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""

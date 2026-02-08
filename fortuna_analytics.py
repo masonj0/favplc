@@ -185,6 +185,13 @@ class ResultRace(fortuna.Race):
         disc = (self.discipline or "T")[:1].upper()
         return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{time_str}|{disc}"
 
+    @property
+    def relaxed_key(self) -> str:
+        """Generate a time-relaxed key for matching."""
+        date_str = self.start_time.strftime('%Y%m%d')
+        disc = (self.discipline or "T")[:1].upper()
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{disc}"
+
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
         """Get top N finishers sorted by position."""
         with_position = [
@@ -232,10 +239,12 @@ class AuditorEngine:
         """
         Match results to history and update audit status.
         """
-        # Build lookup map: canonical_key -> ResultRace
+        # Build lookup maps: full key and relaxed key (Memory Directive Fix)
         results_map: Dict[str, ResultRace] = {}
+        relaxed_results_map: Dict[str, ResultRace] = {}
         for r in results:
             results_map[r.canonical_key] = r
+            relaxed_results_map[r.relaxed_key] = r
 
         self.logger.debug("Built results map", count=len(results_map))
 
@@ -255,7 +264,17 @@ class AuditorEngine:
 
                 result = results_map.get(tip_key)
                 if not result:
-                    # Lenient fallback: try matching without discipline if discipline was the only difference
+                    # Lenient fallback 1: try matching without time (relaxed key)
+                    key_parts = tip_key.split("|")
+                    if len(key_parts) >= 5:
+                        # tip_key is venue|race|date|time|disc
+                        relaxed_tip_key = f"{key_parts[0]}|{key_parts[1]}|{key_parts[2]}|{key_parts[4]}"
+                        result = relaxed_results_map.get(relaxed_tip_key)
+                        if result:
+                            self.logger.info("Matched tip with time-relaxed fallback", race_id=race_id, tip_key=tip_key, match_key=result.canonical_key)
+
+                if not result:
+                    # Lenient fallback 2: try matching without discipline
                     key_parts = tip_key.split("|")
                     if len(key_parts) >= 4:
                         # Match venue|race|date|time
