@@ -381,7 +381,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
         "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
         "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE"
+        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY"
     ]
 
     upper_name = cleaned.upper()
@@ -3062,7 +3062,21 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
         return cat == 'T' and field_size >= 6
 
     # Include all goldmines (2nd fav >= 5.0)
-    goldmines = [r for r in races if get_field(r, 'metadata', {}).get('is_goldmine')]
+    # Deduplicate to prevent double-reporting (e.g. from multiple sources)
+    goldmines = []
+    seen_gold = set()
+    for r in races:
+        if get_field(r, 'metadata', {}).get('is_goldmine'):
+            rid = getattr(r, 'id', None)
+            track = normalize_venue_name(get_field(r, 'venue'))
+            num = get_field(r, 'race_number')
+            st = get_field(r, 'start_time')
+            st_str = st.strftime('%Y%m%d') if isinstance(st, datetime) else str(st)
+            # Prioritize stable ID, fallback to track/num/date
+            key = rid if rid else (track, num, st_str)
+            if key not in seen_gold:
+                seen_gold.add(key)
+                goldmines.append(r)
 
     if not goldmines:
         return "No Goldmine races found."
@@ -3256,24 +3270,16 @@ def generate_next_to_jump(races: List[Any]) -> str:
 
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """
-    Generates a tiered summary grid.
-    Primary section: Races with Superfectas (Explicit or T-tracks with field > 6).
-    Secondary section: All remaining races.
+    Generates a Markdown table summary of upcoming races.
+    Sorted by MTP, ceiling of 4 hours from now.
     """
     now = datetime.now(EASTERN)
-
-    def is_superfecta_explicit(r):
-        available_bets = get_field(r, 'available_bets', [])
-        metadata_bets = get_field(r, 'metadata', {}).get('available_bets', [])
-        return 'Superfecta' in available_bets or 'Superfecta' in metadata_bets
-
-    track_categories = {}
-    all_field_sizes = set()
-    WRAP_WIDTH = 4
+    cutoff = now + timedelta(hours=4)
 
     # 1. Pre-calculate track categories
-    races_by_track = defaultdict(list)
+    track_categories = {}
     source_races = all_races if all_races is not None else races
+    races_by_track = defaultdict(list)
     for r in source_races:
         venue = get_field(r, 'venue')
         track = normalize_venue_name(venue)
@@ -3282,152 +3288,59 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     for track, tr_races in races_by_track.items():
         track_categories[track] = get_track_category(tr_races)
 
-    # 2. Partition races based on explicit Superfecta OR T-track field size rule
-    primary_stats = defaultdict(lambda: defaultdict(list))
-    secondary_stats = defaultdict(lambda: defaultdict(list))
-
+    table_races = []
+    seen = set()
     for race in races:
+        st = get_field(race, 'start_time')
+        if isinstance(st, str):
+            try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            except: continue
+        if st and st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
+
+        # Ceiling of 4 hours, ignore races more than 10 mins past
+        if not st or st < now - timedelta(minutes=10) or st > cutoff:
+            continue
+
+        rid = getattr(race, 'id', None)
         track = normalize_venue_name(get_field(race, 'venue'))
+        num = get_field(race, 'race_number')
+        # Deduplication key: Use stable ID or track/num/date
+        key = rid if rid else (track, num, st.strftime('%Y%m%d'))
+        if key in seen: continue
+        seen.add(key)
+
+        mtp = int((st - now).total_seconds() / 60)
         runners = get_field(race, 'runners', [])
-        field_size = len([r for r in runners if not get_field(r, 'scratched', False)])
-        race_num = get_field(race, 'race_number') or 0
-        is_goldmine = get_field(race, 'metadata', {}).get('is_goldmine', False)
+        field_size = len([run for run in runners if not get_field(run, 'scratched', False)])
+        top5 = getattr(race, 'top_five_numbers', 'N/A')
+        gap12 = get_field(race, 'metadata', {}).get('1Gap2', 0.0)
+        is_gold = get_field(race, 'metadata', {}).get('is_goldmine', False)
 
-        all_field_sizes.add(field_size)
-        cat = track_categories.get(track, 'T')
+        table_races.append({
+            'mtp': mtp,
+            'cat': track_categories.get(track, 'T'),
+            'track': track,
+            'num': num,
+            'field': field_size,
+            'top5': top5,
+            'gap': gap12,
+            'gold': '💰' if is_gold else ''
+        })
 
-        is_primary = is_superfecta_explicit(race) or (cat == 'T' and field_size >= 6)
+    # Sort by MTP
+    table_races.sort(key=lambda x: x['mtp'])
 
-        if is_primary:
-            primary_stats[track][field_size].append((race_num, is_goldmine))
-        else:
-            secondary_stats[track][field_size].append((race_num, is_goldmine))
+    if not table_races:
+        return "No upcoming races in the next 4 hours."
 
-    if not all_field_sizes:
-        return "\nNo races found to display in grid."
+    lines = [
+        "| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | |",
+        "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|"
+    ]
+    for tr in table_races:
+        lines.append(f"| {tr['mtp']}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
 
-    sorted_field_sizes = sorted(list(all_field_sizes))
-    cat_map = {'T': 3, 'H': 2, 'G': 1}
-    col_widths = {fs: max(len(str(fs)), WRAP_WIDTH) for fs in sorted_field_sizes}
-
-    header_parts = [f"{'CATEG':<5}", f"{'Track':<25}"]
-    for fs in sorted_field_sizes:
-        header_parts.append(f"{str(fs):^{col_widths[fs]}}")
-
-    header = " | ".join(header_parts)
-    grid_lines = ["\n" + header, "-" * len(header)]
-
-    def render_stats(stats_dict, label=None):
-        if not stats_dict:
-            return
-        if label:
-            label_row = f"--- {label.upper()} ---"
-            grid_lines.append(f"{label_row:^{len(header)}}")
-            grid_lines.append("-" * len(header))
-
-        sorted_tracks = sorted(stats_dict.keys(), key=lambda t: (-cat_map.get(track_categories.get(t, 'T'), 0), t))
-        for track in sorted_tracks:
-            wrapped_stats = {}
-            max_lines = 1
-            for fs in sorted_field_sizes:
-                wrapped = format_grid_code(stats_dict[track].get(fs, []), WRAP_WIDTH)
-                wrapped_stats[fs] = wrapped
-                max_lines = max(max_lines, len(wrapped))
-
-            for line_idx in range(max_lines):
-                if line_idx == 0:
-                    row_prefix = f"{track_categories.get(track, 'T'):<5} | {track[:25]:<25} | "
-                else:
-                    row_prefix = f"{' ':<5} | {' ':<25} | "
-
-                row_vals = []
-                for fs in sorted_field_sizes:
-                    wrapped = wrapped_stats[fs]
-                    val = wrapped[line_idx] if line_idx < len(wrapped) else ""
-                    row_vals.append(f"{val:^{col_widths[fs]}}")
-
-                grid_lines.append(row_prefix + " | ".join(row_vals))
-            grid_lines.append("-" * len(header))
-
-    # 3. Identify Immediate Goldmine races for prime display
-    immediate_gold_super_snippet = []
-    immediate_gold_snippet = []
-
-    # We need track categories for the goldmine partitioning check
-    for race in races:
-        if get_field(race, 'metadata', {}).get('is_goldmine'):
-            track = normalize_venue_name(get_field(race, 'venue'))
-            cat = track_categories.get(track, 'T')
-
-            # Use same Superfecta filter as generate_goldmine_report
-            available_bets = get_field(race, 'available_bets', [])
-            metadata_bets = get_field(race, 'metadata', {}).get('available_bets', [])
-            runners = get_field(race, 'runners', [])
-            field_size = len([run for run in runners if not get_field(run, 'scratched', False)])
-
-            is_super = 'Superfecta' in available_bets or 'Superfecta' in metadata_bets or (cat == 'T' and field_size >= 6)
-
-            start_time = get_field(race, 'start_time')
-            if isinstance(start_time, str):
-                try:
-                    start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
-                except ValueError:
-                    start_time = None
-
-            if start_time:
-                if start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=EASTERN)
-
-                diff = (start_time - now).total_seconds() / 60
-                if 0 <= diff <= 20:
-                    # Calculate top 5 for the snippet
-                    active_runners = [run for run in runners if not get_field(run, 'scratched')]
-                    active_runners.sort(key=lambda x: get_field(x, 'win_odds') or 999.0)
-                    top_five = "|".join([str(get_field(run, 'number')) for run in active_runners[:5]])
-
-                    entry = f"{cat}~{track} R{get_field(race, 'race_number')} in {int(diff)}m [{top_five}]"
-                    if is_super:
-                        immediate_gold_super_snippet.append(entry)
-                    else:
-                        immediate_gold_snippet.append(entry)
-
-    final_grid_lines = []
-    if immediate_gold_super_snippet:
-        final_grid_lines.append("!!! IMMEDIATE GOLD (SUPERFECTA) !!!")
-        final_grid_lines.extend(immediate_gold_super_snippet)
-        final_grid_lines.append("")
-    if immediate_gold_snippet:
-        final_grid_lines.append("!!! IMMEDIATE GOLD !!!")
-        final_grid_lines.extend(immediate_gold_snippet)
-        final_grid_lines.append("")
-
-    # Render sections BEFORE extending final_grid_lines with grid_lines
-    if primary_stats:
-        render_stats(primary_stats, label="Preferred Superfecta Races")
-
-    if secondary_stats:
-        # Use label if primary also existed
-        label = "All Remaining Races" if primary_stats else None
-        render_stats(secondary_stats, label=label)
-
-    final_grid_lines.extend(grid_lines)
-
-    appendix = generate_fortuna_fives(races, all_races=all_races)
-    goldmines = generate_goldmines(races, all_races=all_races)
-    next_to_jump = generate_next_to_jump(races)
-
-    # Unified spacing management (Memory Directive Fix)
-    # Ensure each appendix part is appended with proper spacing and separators
-    # Use explicit newlines between major sections to ensure readability
-    full_report = "\n".join(final_grid_lines)
-    if appendix:
-        full_report += "\n" + appendix
-    if goldmines:
-        full_report += "\n" + goldmines
-    if next_to_jump:
-        full_report += "\n" + next_to_jump
-
-    return full_report
+    return "\n".join(lines)
 
 
 def normalize_course_name(name: str) -> str:
