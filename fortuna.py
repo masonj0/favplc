@@ -768,13 +768,22 @@ class SmartFetcher:
             except Exception as e:
                 self.logger.warning("Failed to generate browserforge headers", error=str(e))
 
+        # Define browser-specific arguments to strip for non-browser engines
+        BROWSER_SPECIFIC_KWARGS = [
+            "network_idle", "wait_selector", "wait_until", "impersonate",
+            "stealth", "block_resources", "wait_for_selector", "stealth_mode"
+        ]
+
         if engine == BrowserEngine.HTTPX:
             # Pass strategy timeout if present in kwargs or use default
             timeout = kwargs.get("timeout", self.strategy.timeout)
             client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
 
-            # Remove timeout from kwargs to avoid double-passing to request
-            req_kwargs = {k: v for k, v in kwargs.items() if k != "timeout"}
+            # Remove timeout and browser-specific keys from kwargs
+            req_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
+            }
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             resp.status = resp.status_code
             return resp
@@ -788,10 +797,14 @@ class SmartFetcher:
 
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
+            # Respect impersonate if provided, otherwise default
             impersonate = kwargs.get("impersonate", "chrome110")
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
-            clean_kwargs = {k: v for k, v in kwargs.items() if k not in ["timeout", "headers", "impersonate", "network_idle", "wait_selector", "wait_until"]}
+            clean_kwargs = {
+                k: v for k, v in kwargs.items()
+                if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
+            }
             
             async with curl_requests.AsyncSession() as s:
                 resp = await s.request(
@@ -3543,15 +3556,22 @@ class FortunaDB:
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
 
                 # Cleanup potential duplicates before creating unique index (Memory Directive Fix)
-                conn.execute("""
-                    DELETE FROM tips
-                    WHERE id NOT IN (
-                        SELECT MAX(id)
-                        FROM tips
-                        GROUP BY race_id
-                    )
-                """)
-                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                try:
+                    self.logger.info("Cleaning up duplicate race_ids before indexing")
+                    conn.execute("""
+                        DELETE FROM tips
+                        WHERE id NOT IN (
+                            SELECT MAX(id)
+                            FROM tips
+                            GROUP BY race_id
+                        )
+                    """)
+                    self.logger.info("Duplicates removed, creating unique index")
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                except Exception as e:
+                    self.logger.error("Failed to cleanup or create unique index", error=str(e))
+                    # If index exists but table has duplicates, we might get IntegrityError
+                    # Just log it and continue - better than crashing the whole app
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
@@ -4889,7 +4909,11 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             for a in parser.css(s):
                 href = a.attributes.get("href")
                 if href:
-                    if re.search(r"/results/\d+/", href) or len(href.split("/")) >= 4:
+                    # Broaden regex to match various RP result link patterns (Memory Directive Fix)
+                    if re.search(r"/results/.*?\d{5,}", href) or \
+                       re.search(r"/results/\d+/", href) or \
+                       re.search(r"/\d{4}-\d{2}-\d{2}/", href) or \
+                       len(href.split("/")) >= 4:
                         links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
 
         async def fetch_result_page(link):
@@ -4943,13 +4967,16 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if tote_container:
             for row in (tote_container.css('div.rp-toteReturns__row') or tote_container.css('.rp-toteReturns__row')):
-                label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
-                val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
-                if label_node and val_node:
-                    label = clean_text(label_node.text())
-                    value = clean_text(val_node.text())
-                    if label and value:
-                        dividends[label] = value
+                try:
+                    label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
+                    val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
+                    if label_node and val_node:
+                        label = clean_text(label_node.text())
+                        value = clean_text(val_node.text())
+                        if label and value:
+                            dividends[label] = value
+                except Exception as e:
+                    self.logger.debug("Failed parsing RP tote row", error=str(e))
 
         # Derive race number from header or navigation
         race_num = 1
