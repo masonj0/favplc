@@ -5271,14 +5271,16 @@ def start_desktop_app():
     webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
     webview.start()
 
-def ensure_browsers():
+async def ensure_browsers():
     """Ensure browser dependencies are available for scraping."""
     try:
         # Check if playwright is installed and has a chromium binary
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
             try:
-                p.chromium.executable_path
+                # We try to launch a headless browser to verify installation
+                browser = await p.chromium.launch(headless=True)
+                await browser.close()
                 return True
             except Exception:
                 pass
@@ -5287,6 +5289,8 @@ def ensure_browsers():
 
     print("Installing browser dependencies (Playwright Chromium)...")
     try:
+        # Run installation in a separate process to avoid blocking the loop too much
+        # though it's still a synchronous call here, it's better than nothing.
         subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True)
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
         print("Browser dependencies installed successfully.")
@@ -5313,7 +5317,7 @@ async def main_all_in_one():
 
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.
-        ensure_browsers()
+        await ensure_browsers()
         start_desktop_app()
         return
 
@@ -5348,12 +5352,12 @@ async def main_all_in_one():
             target_dates.append(future.strftime("%Y-%m-%d"))
 
     if args.monitor:
-        ensure_browsers()
+        await ensure_browsers()
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
         else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
-        ensure_browsers()
+        await ensure_browsers()
         await run_discovery(
             target_dates,
             window_hours=args.hours,
