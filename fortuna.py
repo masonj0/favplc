@@ -381,7 +381,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
         "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
         "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-        "NEXT"
+        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE"
     ]
 
     upper_name = cleaned.upper()
