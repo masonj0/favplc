@@ -48,6 +48,8 @@ import sqlite3
 from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor
 import structlog
+import subprocess
+import sys
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -4972,7 +4974,9 @@ async def run_discovery(
     loaded_races: Optional[List[Race]] = None,
     adapter_names: Optional[List[str]] = None,
     save_path: Optional[str] = None,
-    fetch_only: bool = False
+    fetch_only: bool = False,
+    live_dashboard: bool = False,
+    track_odds: bool = False
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -5119,11 +5123,6 @@ async def run_discovery(
         grid = generate_summary_grid(qualified, all_races=unique_races)
         logger.info("Summary Grid Generated")
 
-        # Output the grid clearly without messing up structured logs
-        print("\n" + grid + "\n")
-
-        with open("summary_grid.txt", "w") as f: f.write(grid)
-
         # Log Hot Tips & Fetch recent historical results for the report
         tracker = HotTipsTracker()
         await tracker.log_tips(qualified)
@@ -5134,9 +5133,48 @@ async def run_discovery(
         gm_report = generate_goldmine_report(qualified, all_races=unique_races)
         if historical_report:
             gm_report += "\n" + historical_report
-            # Also print historical report to console
-            print("\n" + historical_report + "\n")
 
+        # NEW: Dashboard and Live Tracking
+        goldmines = [r for r in qualified if get_field(r, 'metadata', {}).get('is_goldmine')]
+
+        # Calculate today's stats for dashboard
+        recent_tips = await tracker.db.get_recent_tips(limit=100)
+        today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+        today_tips = [t for t in recent_tips if t.get("report_date", "").startswith(today_str)]
+
+        cashed = sum(1 for t in today_tips if t.get("verdict") == "CASHED")
+        total_tips = len(today_tips)
+        profit = sum(t.get("net_profit", 0) for t in today_tips)
+
+        stats = {
+            "tips": total_tips,
+            "cashed": cashed,
+            "profit": profit
+        }
+
+        if live_dashboard:
+            from dashboard import FortunaDashboard
+            dash = FortunaDashboard()
+            dash.update(goldmines, stats)
+
+            # Start odds tracker if requested
+            if track_odds:
+                from odds_tracker import LiveOddsTracker
+                adapter_classes = get_discovery_adapter_classes()
+                odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
+                asyncio.create_task(odds_tracker.start_tracking())
+
+            await dash.run_live()
+        else:
+            # Fallback to static print
+            from dashboard import print_dashboard
+            print_dashboard(goldmines, stats)
+            print("\n" + grid + "\n")
+            if historical_report:
+                print("\n" + historical_report + "\n")
+
+        # Always save reports to files
+        with open("summary_grid.txt", "w") as f: f.write(grid)
         with open("goldmine_report.txt", "w") as f: f.write(gm_report)
 
         # Save qualified races to JSON
@@ -5233,6 +5271,30 @@ def start_desktop_app():
     webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
     webview.start()
 
+def ensure_browsers():
+    """Ensure browser dependencies are available for scraping."""
+    try:
+        # Check if playwright is installed and has a chromium binary
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            try:
+                p.chromium.executable_path
+                return True
+            except Exception:
+                pass
+    except ImportError:
+        pass
+
+    print("Installing browser dependencies (Playwright Chromium)...")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        print("Browser dependencies installed successfully.")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to install browsers: {e}")
+        return False
+
 async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
@@ -5245,10 +5307,13 @@ async def main_all_in_one():
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch and save data, skip analysis and reporting")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
+    parser.add_argument("--live-dashboard", action="store_true", help="Show live updating terminal dashboard")
+    parser.add_argument("--track-odds", action="store_true", help="Monitor live odds and send notifications")
     args = parser.parse_args()
 
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.
+        ensure_browsers()
         start_desktop_app()
         return
 
@@ -5283,17 +5348,21 @@ async def main_all_in_one():
             target_dates.append(future.strftime("%Y-%m-%d"))
 
     if args.monitor:
+        ensure_browsers()
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
         else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
+        ensure_browsers()
         await run_discovery(
             target_dates,
             window_hours=args.hours,
             loaded_races=loaded_races,
             adapter_names=adapter_filter,
             save_path=args.save,
-            fetch_only=args.fetch_only
+            fetch_only=args.fetch_only,
+            live_dashboard=args.live_dashboard,
+            track_odds=args.track_odds
         )
 
 if __name__ == "__main__":
