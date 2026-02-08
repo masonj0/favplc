@@ -113,7 +113,7 @@ jobs:
         if: always()
         run: |
           echo "## 🎯 List of Best Bets - Intelligence Report" >> $GITHUB_STEP_SUMMARY
-          echo "**Run Date:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Date:** $(TZ='America/New_York' date)" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           if [ -f race_data.json ]; then
             echo "### 🎯 Favorite-to-Place Monitor" >> $GITHUB_STEP_SUMMARY
