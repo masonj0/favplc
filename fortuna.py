@@ -383,7 +383,8 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
         "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
         "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY"
+        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
+        "SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED"
     ]
 
     upper_name = cleaned.upper()
@@ -424,6 +425,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "DEAUVILLE": "Deauville",
         "DELTA DOWNS": "Delta Downs",
         "DONCASTER": "Doncaster",
+        "DOVER DOWNS": "Dover Downs",
         "DOWN ROYAL": "Down Royal",
         "DUNDALK": "Dundalk",
         "DUNSTALL PARK": "Wolverhampton",
@@ -437,6 +439,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "GULFSTREAM PARK": "Gulfstream Park",
         "HAYDOCK": "Haydock Park",
         "HAYDOCK PARK": "Haydock Park",
+        "HOOSIER PARK": "Hoosier Park",
         "HOVE": "Hove",
         "KEMPTON": "Kempton Park",
         "KEMPTON PARK": "Kempton Park",
@@ -445,18 +448,28 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "LINGFIELD PARK": "Lingfield Park",
         "LOS ALAMITOS": "Los Alamitos",
         "MARONAS": "Maronas",
+        "MEADOWLANDS": "Meadowlands",
         "MEYDAN": "Meydan",
+        "MIAMI VALLEY": "Miami Valley",
+        "MIAMI VALLEY RACEWAY": "Miami Valley",
+        "MOHAWK": "Mohawk",
+        "MOHAWK PARK": "Mohawk",
         "MUSSELBURGH": "Musselburgh",
         "NAAS": "Naas",
         "NEWCASTLE": "Newcastle",
         "NEWMARKET": "Newmarket",
+        "NORTHFIELD PARK": "Northfield Park",
         "OXFORD": "Oxford",
         "PAU": "Pau",
+        "POCONO DOWNS": "Pocono Downs",
         "SAM HOUSTON": "Sam Houston",
         "SAM HOUSTON RACE PARK": "Sam Houston",
         "SANDOWN": "Sandown Park",
         "SANDOWN PARK": "Sandown Park",
         "SANTA ANITA": "Santa Anita",
+        "SARATOGA": "Saratoga",
+        "SARATOGA HARNESS": "Saratoga Harness",
+        "SCIOTO DOWNS": "Scioto Downs",
         "SHEFFIELD": "Sheffield",
         "STRATFORD": "Stratford-on-Avon",
         "SUNLAND PARK": "Sunland Park",
@@ -469,7 +482,12 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "WARWICK": "Warwick",
         "WETHERBY": "Wetherby",
         "WOLVERHAMPTON": "Wolverhampton",
+        "WOODBINE": "Woodbine",
+        "WOODBINE MOHAWK": "Mohawk",
+        "WOODBINE MOHAWK PARK": "Mohawk",
         "YARMOUTH": "Great Yarmouth",
+        "YONKERS": "Yonkers",
+        "YONKERS RACEWAY": "Yonkers",
     }
 
     # Direct match
@@ -3069,13 +3087,12 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     seen_gold = set()
     for r in races:
         if get_field(r, 'metadata', {}).get('is_goldmine'):
-            rid = getattr(r, 'id', None)
-            track = normalize_venue_name(get_field(r, 'venue'))
+            track = get_canonical_venue(get_field(r, 'venue'))
             num = get_field(r, 'race_number')
             st = get_field(r, 'start_time')
             st_str = st.strftime('%Y%m%d') if isinstance(st, datetime) else str(st)
-            # Prioritize stable ID, fallback to track/num/date
-            key = rid if rid else (track, num, st_str)
+            # Use canonical key for cross-adapter deduplication
+            key = (track, num, st_str)
             if key not in seen_gold:
                 seen_gold.add(key)
                 goldmines.append(r)
@@ -3303,11 +3320,11 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         if not st or st < now - timedelta(minutes=10) or st > cutoff:
             continue
 
-        rid = getattr(race, 'id', None)
         track = normalize_venue_name(get_field(race, 'venue'))
+        canonical_track = get_canonical_venue(get_field(race, 'venue'))
         num = get_field(race, 'race_number')
-        # Deduplication key: Use stable ID or track/num/date
-        key = rid if rid else (track, num, st.strftime('%Y%m%d'))
+        # Deduplication key: Use canonical track/num/date
+        key = (canonical_track, num, st.strftime('%Y%m%d'))
         if key in seen: continue
         seen.add(key)
 
@@ -4079,10 +4096,10 @@ class FavoriteToPlaceMonitor:
                     continue
 
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number + Date + Discipline
+                # Stable key: Canonical Venue + Race Number + Date
                 canonical_venue = get_canonical_venue(summary.track)
                 date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
-                key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
+                key = f"{canonical_venue}|{summary.race_number}|{date_str}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -5073,8 +5090,8 @@ async def run_discovery(
                     pass
 
             date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            disc = (race.discipline or "T")[:1].upper()
-            key = f"{canonical_venue}|{race.race_number}|{date_str}|{disc}"
+            # Removing discipline from key to allow better merging across adapters
+            key = f"{canonical_venue}|{race.race_number}|{date_str}"
             
             if key not in race_map:
                 race_map[key] = race
