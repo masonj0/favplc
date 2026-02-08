@@ -109,6 +109,9 @@ def get_places_paid(field_size: int) -> int:
     return 3  # Default
 
 
+_currency_logger = structlog.get_logger("currency_parser")
+
+
 def parse_currency_value(value_str: str) -> float:
     """Parse currency strings like '$123.45', '£50.00', '1,234.56'."""
     if not value_str:
@@ -116,12 +119,12 @@ def parse_currency_value(value_str: str) -> float:
     try:
         # Check for unexpected characters (excluding common currency/formatting)
         if re.search(r'[^\d.,$£€\s]', str(value_str)):
-            structlog.get_logger().debug("unexpected_currency_format", value=value_str)
+            _currency_logger.debug("unexpected_currency_format", value=value_str)
 
         cleaned = re.sub(r'[^\d.]', '', str(value_str).replace(',', ''))
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
-        structlog.get_logger().warning("failed_parsing_currency", value=value_str)
+        _currency_logger.warning("failed_parsing_currency", value=value_str)
         return 0.0
 
 
@@ -239,12 +242,13 @@ class AuditorEngine:
         """
         Match results to history and update audit status.
         """
-        # Build lookup maps: full key and relaxed key (Memory Directive Fix)
+        # Build single lookup map with both keys pointing to same object
         results_map: Dict[str, ResultRace] = {}
-        relaxed_results_map: Dict[str, ResultRace] = {}
         for r in results:
             results_map[r.canonical_key] = r
-            relaxed_results_map[r.relaxed_key] = r
+            # Store relaxed key only if different from canonical
+            if r.relaxed_key != r.canonical_key:
+                results_map[r.relaxed_key] = r
 
         self.logger.debug("Built results map", count=len(results_map))
 
@@ -269,7 +273,7 @@ class AuditorEngine:
                     if len(key_parts) >= 5:
                         # tip_key is venue|race|date|time|disc
                         relaxed_tip_key = f"{key_parts[0]}|{key_parts[1]}|{key_parts[2]}|{key_parts[4]}"
-                        result = relaxed_results_map.get(relaxed_tip_key)
+                        result = results_map.get(relaxed_tip_key)
                         if result:
                             self.logger.info("Matched tip with time-relaxed fallback", race_id=race_id, tip_key=tip_key, match_key=result.canonical_key)
 
@@ -347,17 +351,24 @@ class AuditorEngine:
         top1_place_payout = top_finishers[0].place_payout if len(top_finishers) >= 1 else None
         top2_place_payout = top_finishers[1].place_payout if len(top_finishers) >= 2 else None
 
-        # Find 2nd favorite by final odds
+        # Find 2nd favorite by final odds (Memory Directive Fix)
         runners_with_odds = [
             r for r in result.runners
-            if r.final_win_odds is not None and r.final_win_odds > 0
+            if r.final_win_odds is not None and r.final_win_odds > 0 and not r.scratched
         ]
         runners_with_odds.sort(key=lambda x: x.final_win_odds)
-        actual_2nd_fav_odds = (
-            runners_with_odds[1].final_win_odds
-            if len(runners_with_odds) >= 2
-            else None
-        )
+
+        # We want the 2nd unique odds or 2nd runner
+        actual_2nd_fav_odds = None
+        if len(runners_with_odds) >= 2:
+            # Check if many are joint favorites
+            fav_odds = runners_with_odds[0].final_win_odds
+            next_odds_runners = [r for r in runners_with_odds if r.final_win_odds > fav_odds]
+            if next_odds_runners:
+                actual_2nd_fav_odds = next_odds_runners[0].final_win_odds
+            else:
+                # Everyone is joint favorite, so 2nd fav odds = fav odds
+                actual_2nd_fav_odds = fav_odds
 
         # Default outcome
         verdict = "BURNED"
@@ -484,9 +495,22 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
             self.logger.error("Invalid date format", date=date_str)
             return None
 
-        url = f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}"
+        # Try multiple index URL patterns (Memory Directive Fix)
+        urls = [
+            f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}",
+            f"/static/chart/summary/{dt.strftime('%m%d%y')}sum.html",
+            f"/static/chart/summary/{dt.strftime('%Y%m%d')}sum.html",
+        ]
 
-        resp = await self.make_request("GET", url, headers=self._get_headers())
+        resp = None
+        for url in urls:
+            try:
+                resp = await self.make_request("GET", url, headers=self._get_headers())
+                if resp and resp.text and len(resp.text) > 1000:
+                    break
+            except:
+                continue
+
         if not resp or not resp.text:
             self.logger.warning("No response from Equibase index", url=url)
             return None
@@ -1757,7 +1781,7 @@ def generate_analytics_report(
             f"{'RACE TIME':<18} | {'VENUE':<20} | {'R#':<3} | {'GM?':<4} | {'STATUS'}",
             "." * 80
         ])
-        for tip in recent_tips[:15]:
+        for tip in recent_tips[:25]:
             st_raw = tip.get("start_time", "N/A")
             try:
                 st = datetime.fromisoformat(str(st_raw).replace('Z', '+00:00'))
@@ -1798,6 +1822,14 @@ def generate_analytics_report(
             if p1 or p2:
                 payout_info = f"P: {p1 or 0:.2f}/{p2 or 0:.2f} | "
 
+            # Add Odds Stability Check (Memory Directive Fix)
+            po = tip.get("predicted_2nd_fav_odds")
+            ao = tip.get("actual_2nd_fav_odds")
+            if po is not None or ao is not None:
+                p1_s = f"{po:.1f}" if po is not None else "?"
+                p2_s = f"{ao:.1f}" if ao is not None else "?"
+                payout_info += f"Odds: {p1_s}->{p2_s} | "
+
             if tip.get("superfecta_payout"):
                 payout_info += f"Super: ${tip['superfecta_payout']:.2f}"
             elif tip.get("trifecta_payout"):
@@ -1805,7 +1837,7 @@ def generate_analytics_report(
             elif tip.get("actual_top_5"):
                 payout_info += f"Top 5: [{tip['actual_top_5']}]"
 
-            lines.append(f"{emoji:<6} | {venue:<25} | {profit:<8} | {payout_info}")
+            lines.append(f"{emoji:<6} | {venue:<25} | {profit:>8} | {payout_info}")
         lines.append("")
 
     # --- 4. SUPERFECTA PERFORMANCE TRACKING ---
@@ -1904,6 +1936,7 @@ async def run_analytics(target_dates: List[str]) -> None:
         logger.error("No valid dates provided", input_dates=target_dates)
         return
 
+    harvest_summary: Dict[str, int] = {}
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
@@ -1914,8 +1947,6 @@ async def run_analytics(target_dates: List[str]) -> None:
             logger.info("Tips to audit", count=len(unverified))
 
             all_results: List[ResultRace] = []
-
-            harvest_summary: Dict[str, int] = {}
             async with managed_adapters() as adapters:
                 # Create fetch tasks for all date/adapter combinations
                 async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
@@ -1962,6 +1993,12 @@ async def run_analytics(target_dates: List[str]) -> None:
                 # Perform audit
                 await auditor.audit_races(all_results)
 
+            # Save results harvest summary for GHA reporting
+            try:
+                with open("results_harvest.json", "w") as f:
+                    json.dump(harvest_summary, f)
+            except: pass
+
         # Generate and save comprehensive report
         all_audited = await auditor.get_all_audited_tips()
         recent_tips = await auditor.get_recent_tips(limit=20)
@@ -1969,7 +2006,7 @@ async def run_analytics(target_dates: List[str]) -> None:
         report = generate_analytics_report(
             audited_tips=all_audited,
             recent_tips=recent_tips,
-            harvest_summary=harvest_summary if 'harvest_summary' in locals() else None
+            harvest_summary=harvest_summary
         )
         print(report)
 
