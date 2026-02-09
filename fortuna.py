@@ -1131,14 +1131,16 @@ class BaseAdapterV3(ABC):
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
         self.logger.debug("Requesting", method=method, url=full_url)
-        try:
-            resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
-            status = getattr(resp, 'status', 'unknown')
-            self.logger.debug("Response received", method=method, url=full_url, status=status)
-            return resp
-        except Exception as e:
-            self.logger.error("Request failed", method=method, url=full_url, error=str(e))
-            return None
+        # Apply global concurrency limit (Memory Directive Fix)
+        async with GlobalResourceManager.get_global_semaphore():
+            try:
+                resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
+                status = getattr(resp, 'status', 'unknown')
+                self.logger.debug("Response received", method=method, url=full_url, status=status)
+                return resp
+            except Exception as e:
+                self.logger.error("Request failed", method=method, url=full_url, error=str(e))
+                return None
 
     async def close(self) -> None: await self.smart_fetcher.close()
     async def shutdown(self) -> None: await self.close()
@@ -1646,7 +1648,8 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, timeout=30)
+        # Use CURL_CFFI for better reliability against bot detection
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.boylesports.com", referer="https://www.boylesports.com/sports/horse-racing")
@@ -2260,19 +2263,66 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return self._get_browser_headers(host="www.equibase.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        for url in [f"/entries/{date}", "/static/entry/index.html", f"/static/entry/{date}/index.html"]:
+        dt = datetime.strptime(date, "%Y-%m-%d")
+        date_str = dt.strftime("%m%d%y")
+
+        # Try different possible index URLs
+        index_urls = [
+            f"/static/entry/index.html",
+            f"/entries/{date}",
+        ]
+
+        resp = None
+        for url in index_urls:
             try:
-                resp = await self.make_request("GET", url, headers=self._get_headers())
-                if resp and resp.text and len(resp.text) > 1000: break
+                resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
+                if resp and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
+                    break
             except: continue
-        else: raise AdapterHttpError(self.source_name, 500, "Equibase index failed")
+
+        if not resp or not resp.text:
+            return None
+
         self._save_debug_snapshot(resp.text, f"equibase_index_{date}")
         parser, links = HTMLParser(resp.text), []
         for a in parser.css("a"):
-            h, c = a.attributes.get("href", ""), a.attributes.get("class", "")
-            if "/static/entry/" in h or "entry-race-level" in c: links.append(h)
+            h = a.attributes.get("href") or ""
+            c = a.attributes.get("class") or ""
+            # Normalize backslashes (Project fix for Equibase path separators)
+            h_norm = h.replace("\\", "/")
+            if "/static/entry/" in h_norm and date_str in h_norm:
+                links.append(h_norm)
+            elif "entry-race-level" in c:
+                links.append(h_norm)
+
+        if not links:
+            return None
+
+        # Fetch initial set of pages
         pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(links)], self._get_headers(), semaphore_limit=5)
-        return {"pages": [p.get("html") for p in pages if p and p.get("html")], "date": date}
+
+        all_htmls = []
+        extra_links = []
+        for p in pages:
+            html_content = p.get("html")
+            if not html_content: continue
+
+            # If it's an index page for a track, we need to extract individual race links
+            if "RaceCardIndex" in p.get("url", ""):
+                sub_parser = HTMLParser(html_content)
+                for a in sub_parser.css("a"):
+                    sh = (a.attributes.get("href") or "").replace("\\", "/")
+                    if "/static/entry/" in sh and date_str in sh and "RaceCardIndex" not in sh:
+                        extra_links.append(sh)
+            else:
+                all_htmls.append(html_content)
+
+        if extra_links:
+            self.logger.info("Fetching extra race pages from track index", count=len(extra_links))
+            extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(extra_links)], self._get_headers(), semaphore_limit=5)
+            all_htmls.extend([p.get("html") for p in extra_pages if p and p.get("html")])
+
+        return {"pages": all_htmls, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
@@ -2378,6 +2428,11 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             max_retries=3,
             timeout=60
         )
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        # Force chrome120 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         ard = []
@@ -3342,10 +3397,11 @@ def generate_next_to_jump(races: List[Any]) -> str:
     return "\n".join(lines)
 
 
-def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> str:
+async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> str:
     """Generates a high-impact, friendly HTML report for the Fortuna Faucet."""
     now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')
 
+    # 1. Best Bet Opportunities
     rows = []
     for r in sorted(races, key=lambda x: getattr(x, 'start_time', '')):
         # Get selection (2nd favorite)
@@ -3441,6 +3497,8 @@ def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> st
                 </tbody>
             </table>
 
+            {await _generate_audit_history_html()}
+
             <div class="footer">
                 Fortuna Faucet Portable App - Sci-Fi Intelligence Edition<br>
                 Powered by the Council of Superbrains
@@ -3450,6 +3508,60 @@ def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> st
     </html>
     """
     return html
+
+
+async def _generate_audit_history_html() -> str:
+    """Generates HTML for recent audited results."""
+    db = FortunaDB()
+    history = await db.get_all_audited_tips()
+    if not history:
+        return ""
+
+    # Take latest 15
+    history = sorted(history, key=lambda x: x.get('audit_timestamp', ''), reverse=True)[:15]
+
+    rows = []
+    for t in history:
+        verdict = t.get("verdict", "?")
+        emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+        profit = t.get("net_profit", 0.0)
+        p_class = "profit-pos" if profit > 0 else "profit-neg" if profit < 0 else ""
+
+        po = t.get("predicted_2nd_fav_odds")
+        ao = t.get("actual_2nd_fav_odds")
+        odds_str = f"{po or '?':.1f} → {ao or '?':.1f}"
+
+        rows.append(f"""
+            <tr>
+                <td>{emoji} {verdict}</td>
+                <td>{t.get('venue', 'Unknown')}</td>
+                <td>R{t.get('race_number', '?')}</td>
+                <td>{odds_str}</td>
+                <td class="{p_class}">${profit:+.2f}</td>
+            </tr>
+        """)
+
+    return f"""
+        <style>
+            .profit-pos {{ color: #4ade80; font-weight: bold; }}
+            .profit-neg {{ color: #f87171; }}
+        </style>
+        <h2 style="margin-top: 40px;">💰 Recent Audit Results</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Verdict</th>
+                    <th>Venue</th>
+                    <th>Race</th>
+                    <th>Odds (Pred → Act)</th>
+                    <th>Net Profit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {''.join(rows)}
+            </tbody>
+        </table>
+    """
 
 
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
@@ -3707,6 +3819,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
                 if "predicted_2nd_fav_odds" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN predicted_2nd_fav_odds REAL")
+                if "actual_2nd_fav_odds" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN actual_2nd_fav_odds REAL")
 
         await self._run_in_executor(_init)
 
@@ -4379,7 +4493,9 @@ class FavoriteToPlaceMonitor:
                     fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
                     so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
                     top5 = r.top_five_numbers or "N/A"
-                    lines.append(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
+                    # Leading zero alignment (Memory Directive Fix)
+                    m_str = f"{r.mtp:02d}" if 0 <= r.mtp < 10 else str(r.mtp)
+                    lines.append(f"{sup:<6} {m_str:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
                 lines.append("-" * 160)
             self.logger.info("\n".join(lines))
             return
@@ -4393,7 +4509,8 @@ class FavoriteToPlaceMonitor:
             fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
             so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
             top5 = r.top_five_numbers or "N/A"
-            lines.append(f"{sup:<6} {r.mtp:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
+            m_str = f"{r.mtp:02d}" if 0 <= r.mtp < 10 else str(r.mtp)
+            lines.append(f"{sup:<6} {m_str:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
         lines.extend(["-" * 160, f"Total opportunities: {len(bet_now)}"])
         self.logger.info("\n".join(lines))
 
@@ -5369,7 +5486,7 @@ async def run_discovery(
 
         # Generate friendly HTML report
         try:
-            html_content = generate_friendly_html_report(qualified, stats)
+            html_content = await generate_friendly_html_report(qualified, stats)
             html_path = Path("fortuna_report.html")
             html_path.write_text(html_content, encoding="utf-8")
             logger.info("Friendly HTML report generated", path=str(html_path))

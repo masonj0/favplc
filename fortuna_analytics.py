@@ -519,22 +519,27 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
         parser = HTMLParser(resp.text)
 
         # Extract track-specific result page links
-        # Try multiple patterns for robust detection
+        # Try multiple patterns for robust detection (Memory Directive Fix)
         links = set()
         date_short = dt.strftime('%m%d%y')
 
-        # Pattern 1: Any link with /static/chart/summary/
+        # Pattern 1: Links inside the central content table
+        for a in parser.css('table.display a[href*="sum.html"]'):
+            links.add(a.attributes.get("href"))
+
+        # Pattern 2: Any link with /static/chart/summary/
         for a in parser.css('a[href*="/static/chart/summary/"]'):
             href = a.attributes.get("href", "").replace("\\", "/")
             if "index.html" not in href:
                 links.add(href)
 
-        # Pattern 2: Discovery-style pattern
+        # Pattern 3: Broad pattern matching for result filenames
         for a in parser.css("a"):
             href = a.attributes.get("href") or ""
             href = href.replace("\\", "/")
-            if (date_short in href or date_str.replace("-","") in href) and \
-               (".html" in href.lower() or "sum" in href.lower()):
+            # Matches strings like 'AQU020826sum.html'
+            if re.search(r'[A-Z]{3}\d{6}sum\.html', href) or \
+               (date_short in href and "sum.html" in href.lower()):
                 if "index.html" not in href:
                     links.add(href)
 
