@@ -5633,10 +5633,25 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             '.ui-link.rp-raceCourse__panel__race__time',
             'a.rp-raceCourse__panel__race__time'
         ]
+        target_venues = getattr(self, "target_venues", None)
         for s in selectors:
             for a in parser.css(s):
                 href = a.attributes.get("href")
                 if href:
+                    # Filter by venue
+                    if target_venues:
+                        match_found = False
+                        for v in target_venues:
+                            if v in href.lower().replace("-", ""):
+                                match_found = True
+                                break
+                        if not match_found:
+                            v_text = get_canonical_venue(node_text(a))
+                            if v_text in target_venues:
+                                match_found = True
+                        if not match_found:
+                            continue
+
                     # Broaden regex to match various RP result link patterns (Memory Directive Fix)
                     if re.search(r"/results/.*?\d{5,}", href) or \
                        re.search(r"/results/\d+/", href) or \
