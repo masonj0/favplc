@@ -131,6 +131,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "pydantic",
         "starlette",
         "rich",
+        "winotify",
         "win10toast_py3",
     ]
 
@@ -157,6 +158,9 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         # Logging & resilience
         "structlog",
         "tenacity",
+
+        # Notifications
+        "winotify",
 
         # Uvicorn internals
         "uvicorn.logging",
