@@ -3856,8 +3856,19 @@ class FortunaDB:
             await self._run_in_executor(_declutter)
             self.logger.info("Schema migrated to version 3")
 
+        if current_version < 4:
+            # Migration to version 4: Housekeeping & Long-term retention.
+            # 1. Clear the tips table for a fresh start as requested by JB.
+            # 2. Historical retention is now enabled (auto-cleanup removed from future migrations).
+            def _housekeeping():
+                with self._get_conn() as conn:
+                    conn.execute("DELETE FROM tips")
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_housekeeping)
+            self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 3))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 4))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -4122,8 +4133,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Strict future cutoff to prevent leakage (e.g., 36 hours from now)
-        future_limit = now + timedelta(hours=36)
+        # Strict future cutoff to prevent leakage (Never log more than 20 mins ahead)
+        future_limit = now + timedelta(minutes=20)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -4421,7 +4432,22 @@ class FavoriteToPlaceMonitor:
                         race_map[key] = summary
             except: pass
 
-        self.all_races = list(race_map.values())
+        unique_summaries = list(race_map.values())
+
+        # Filter: Only keep THE NEXT RACE per track (Memory Directive)
+        # We keep the earliest upcoming race (or very recently started) for each venue.
+        next_races_map = {}
+        now = datetime.now(EASTERN)
+        for summary in unique_summaries:
+            st = summary.start_time
+            if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
+
+            v = get_canonical_venue(summary.track)
+            if st > now - timedelta(minutes=5):
+                if v not in next_races_map or st < next_races_map[v].start_time:
+                    next_races_map[v] = summary
+
+        self.all_races = list(next_races_map.values())
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -4458,12 +4484,12 @@ class FavoriteToPlaceMonitor:
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
-        # Criteria: Not in BET NOW, but 0 < MTP <= 30 and 2nd Fav Odds >= 4.0
+        # Criteria: Not in BET NOW, but 0 < MTP <= 20 and 2nd Fav Odds >= 4.0
         # and field size <= 8
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.all_races
-            if r.mtp is not None and 0 < r.mtp <= 30
+            if r.mtp is not None and 0 < r.mtp <= 20
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
             and r.field_size <= 8
             and (r.track, r.race_number) not in bet_now_keys
@@ -5439,6 +5465,29 @@ async def run_discovery(
 
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
+
+        # Filter: Only keep THE NEXT RACE per track (Memory Directive)
+        # We keep the earliest upcoming race (or very recently started) for each venue.
+        next_races_map = {}
+        now = datetime.now(EASTERN)
+        for race in unique_races:
+            st = race.start_time
+            if isinstance(st, str):
+                try:
+                    st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    continue
+            if st.tzinfo is None:
+                st = st.replace(tzinfo=EASTERN)
+
+            v = get_canonical_venue(race.venue)
+            # Race must be upcoming or jumped within the last 5 minutes
+            if st > now - timedelta(minutes=5):
+                if v not in next_races_map or st < next_races_map[v].start_time:
+                    next_races_map[v] = race
+
+        unique_races = list(next_races_map.values())
+        logger.info("Filtered to Next Race per track", count=len(unique_races))
 
         # Save raw fetched/merged races if requested
         if save_path:
