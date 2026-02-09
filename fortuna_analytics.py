@@ -1912,9 +1912,19 @@ def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
 
 
 @asynccontextmanager
-async def managed_adapters():
+async def managed_adapters(region: Optional[str] = None):
     """Context manager for adapter lifecycle using auto-discovery."""
     adapter_classes = get_results_adapter_classes()
+
+    if region:
+        usa_results = {"EquibaseResults"}
+        int_results = {
+            "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
+            "SportingLifeResults", "SkySportsResults"
+        }
+        target_set = usa_results if region == "USA" else int_results
+        adapter_classes = [c for c in adapter_classes if getattr(c, "SOURCE_NAME", "") in target_set]
+
     adapters = [cls() for cls in adapter_classes]
     try:
         yield adapters
@@ -1930,7 +1940,7 @@ async def managed_adapters():
             pass
 
 
-async def run_analytics(target_dates: List[str]) -> None:
+async def run_analytics(target_dates: List[str], region: Optional[str] = None) -> None:
     """Main analytics orchestration function."""
     logger = structlog.get_logger("run_analytics")
     logger.info("Starting Analytics Audit", dates=target_dates)
@@ -1952,7 +1962,7 @@ async def run_analytics(target_dates: List[str]) -> None:
             logger.info("Tips to audit", count=len(unverified))
 
             all_results: List[ResultRace] = []
-            async with managed_adapters() as adapters:
+            async with managed_adapters(region=region) as adapters:
                 # Create fetch tasks for all date/adapter combinations
                 async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
                     try:
@@ -2042,6 +2052,12 @@ def main() -> None:
         help="Target date (YYYY-MM-DD format)"
     )
     parser.add_argument(
+        "--region",
+        type=str,
+        choices=["USA", "INT"],
+        help="Filter results by region (USA or INT)"
+    )
+    parser.add_argument(
         "--days",
         type=int,
         default=2,
@@ -2103,7 +2119,7 @@ def main() -> None:
             target_dates.append(d.strftime("%Y-%m-%d"))
 
     # Run
-    asyncio.run(run_analytics(target_dates))
+    asyncio.run(run_analytics(target_dates, region=args.region))
 
 
 if __name__ == "__main__":

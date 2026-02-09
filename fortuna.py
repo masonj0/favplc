@@ -2438,6 +2438,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         ard = []
         last_err = None
 
+        # Respect region from config if provided
+        target_region = self.config.get("region") # "USA", "INT", or None for both
+
         async def fetch_disc(disc, region="USA"):
             suffix = "" if region == "USA" else "?region=INT"
             url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
@@ -2455,8 +2458,10 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         # Fetch both USA and International for all disciplines
         tasks = []
         for d in ["thoroughbred", "harness", "greyhound"]:
-            tasks.append(fetch_disc(d, "USA"))
-            tasks.append(fetch_disc(d, "INT"))
+            if target_region in [None, "USA"]:
+                tasks.append(fetch_disc(d, "USA"))
+            if target_region in [None, "INT"]:
+                tasks.append(fetch_disc(d, "INT"))
         results = await asyncio.gather(*tasks)
         for r_list in results:
             ard.extend(r_list)
@@ -4233,7 +4238,7 @@ def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
 class FavoriteToPlaceMonitor:
     """Monitor for favorite-to-place betting opportunities."""
 
-    def __init__(self, target_dates: Optional[List[str]] = None, refresh_interval: int = 30):
+    def __init__(self, target_dates: Optional[List[str]] = None, refresh_interval: int = 30, config: Optional[Dict] = None):
         """
         Initialize monitor.
 
@@ -4249,6 +4254,7 @@ class FavoriteToPlaceMonitor:
             self.target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
 
         self.refresh_interval = refresh_interval
+        self.config = config or {}
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
         self.logger = structlog.get_logger(self.__class__.__name__)
@@ -4266,7 +4272,7 @@ class FavoriteToPlaceMonitor:
 
         for adapter_class in classes_to_init:
             try:
-                adapter = adapter_class()
+                adapter = adapter_class(config={"region": self.config.get("region")})
                 self.adapters.append(adapter)
                 self.logger.debug("Adapter initialized", adapter=adapter_class.__name__)
             except Exception as e:
@@ -5298,7 +5304,8 @@ async def run_discovery(
     save_path: Optional[str] = None,
     fetch_only: bool = False,
     live_dashboard: bool = False,
-    track_odds: bool = False
+    track_odds: bool = False,
+    region: Optional[str] = None
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -5323,7 +5330,7 @@ async def run_discovery(
             adapters = []
             for cls in adapter_classes:
                 try:
-                    adapters.append(cls())
+                    adapters.append(cls(config={"region": region}))
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
@@ -5692,6 +5699,7 @@ async def main_all_in_one():
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
+    parser.add_argument("--region", type=str, choices=["USA", "INT"], help="Filter by region (USA or INT)")
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
@@ -5716,6 +5724,28 @@ async def main_all_in_one():
         return
 
     adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
+
+    # Region-based adapter filtering
+    if args.region:
+        usa_adapters = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada"}
+        int_adapters = {
+            "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
+            "TAB", "BetfairDataScientist", "Oddschecker", "Timeform", "BoyleSports",
+            "SportingLife", "SkySports"
+        }
+
+        target_set = usa_adapters if args.region == "USA" else int_adapters
+
+        if adapter_filter:
+            adapter_filter = [n for n in adapter_filter if n in target_set]
+        else:
+            adapter_filter = list(target_set)
+
+        # Special case: TwinSpires needs to know its region internally if it's not filtered out
+        # We can pass the region via config if we were creating adapters manually,
+        # but here we use names.
+        # Actually, I updated TwinSpiresAdapter to check self.config.get("region").
+        # I need to ensure the adapter gets this config.
 
     loaded_races = None
     if args.load:
@@ -5742,6 +5772,8 @@ async def main_all_in_one():
     if args.monitor:
         await ensure_browsers()
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
+        # Pass region config to monitor
+        monitor.config["region"] = args.region
         if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
         else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
@@ -5754,7 +5786,8 @@ async def main_all_in_one():
             save_path=args.save,
             fetch_only=args.fetch_only,
             live_dashboard=args.live_dashboard,
-            track_odds=args.track_odds
+            track_odds=args.track_odds,
+            region=args.region # Pass region to run_discovery
         )
 
 if __name__ == "__main__":

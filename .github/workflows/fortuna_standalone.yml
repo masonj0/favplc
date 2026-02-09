@@ -13,67 +13,177 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  intelligence:
+  fetch-usa:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
-      - name: Cache pip packages
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-${{ runner.os }}-
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-v1
-          restore-keys: playwright-${{ runner.os }}-
-
       - name: Restore Fortuna Database
         uses: actions/cache@v4
         with:
           path: fortuna.db
-          key: fortuna-db-${{ github.run_number }}
+          key: fortuna-db-
           restore-keys: fortuna-db-
-
       - name: Install dependencies
-        run: python3 -m pip install --upgrade pip setuptools wheel && python3 -m pip install -r requirements.txt && python3 -m browserforge update && playwright install --with-deps chromium
-
-      - name: Run Global Discovery
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+          playwright install --with-deps chromium
+      - name: Run USA Discovery
         env:
           PYTHONPATH: .
-          DEBUG_MODE: "true"
-        run: python3 fortuna.py --save "raw_races.json"
+        run: python3 fortuna.py --region USA --save "races_usa.json"
+      - name: Prepare Artifact
+        run: |
+          cp fortuna.db fortuna_usa.db
+          mv discovery_harvest.json discovery_harvest_usa.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results-usa
+          path: |
+            races_usa.json
+            fortuna_usa.db
+            discovery_harvest_usa.json
 
-      - name: Run Monitor Report
-        run: python3 fortuna.py --load "raw_races.json" --monitor --once
+  fetch-int:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+      - name: Restore Fortuna Database
+        uses: actions/cache@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-
+          restore-keys: fortuna-db-
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+          playwright install --with-deps chromium
+      - name: Run INT Discovery
+        env:
+          PYTHONPATH: .
+        run: python3 fortuna.py --region INT --save "races_int.json"
+      - name: Prepare Artifact
+        run: |
+          cp fortuna.db fortuna_int.db
+          mv discovery_harvest.json discovery_harvest_int.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results-int
+          path: |
+            races_int.json
+            fortuna_int.db
+            discovery_harvest_int.json
 
-      - name: Run Fortuna Analytics
+  audit-results:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+      - name: Restore Fortuna Database
+        uses: actions/cache@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-
+          restore-keys: fortuna-db-
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+      - name: Run Results Audit
         env:
           PYTHONPATH: .
         run: python3 fortuna_analytics.py --days 2
+      - name: Prepare Artifact
+        run: |
+          cp fortuna.db fortuna_results.db
+          mv results_harvest.json results_harvest_audit.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results-audit
+          path: |
+            analytics_report.txt
+            fortuna_results.db
+            results_harvest_audit.json
 
+  conclude:
+    needs: [fetch-usa, fetch-int, audit-results]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+      - name: Restore Fortuna Database
+        uses: actions/cache@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-
+          restore-keys: fortuna-db-
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      - name: Consolidate Data
+        run: |
+          # The download-artifact v4 downloads into subdirectories named after the artifact
+          cp results-usa/races_usa.json .
+          cp results-usa/fortuna_usa.db .
+          cp results-usa/discovery_harvest_usa.json .
+          cp results-int/races_int.json .
+          cp results-int/fortuna_int.db .
+          cp results-int/discovery_harvest_int.json .
+          cp results-audit/fortuna_results.db .
+          cp results-audit/analytics_report.txt .
+          cp results-audit/results_harvest_audit.json .
+
+          python3 scripts/consolidate_parallel_runs.py \
+            --json-pattern "races_*.json" \
+            --db-pattern "fortuna_*.db" \
+            --output-json "raw_races.json" \
+            --output-db "fortuna.db"
+      - name: Install summary dependencies
+        run: python3 -m pip install -r requirements.txt
+      - name: Run Monitor Report
+        run: python3 fortuna.py --load "raw_races.json" --monitor --once
       - name: Generate Job Summary
         if: always()
         run: python3 scripts/generate_gha_summary.py
-
       - name: Save Fortuna Database
         if: always()
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
-
       - name: Upload Final Reports
         if: always()
         uses: actions/upload-artifact@v4
