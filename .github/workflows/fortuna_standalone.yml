@@ -15,12 +15,12 @@ concurrency:
 jobs:
   fetch-usa:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -55,12 +55,12 @@ jobs:
 
   fetch-int:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -95,12 +95,12 @@ jobs:
 
   audit-results:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
@@ -135,12 +135,12 @@ jobs:
   conclude:
     needs: [fetch-usa, fetch-int, audit-results]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
