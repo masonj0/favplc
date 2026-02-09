@@ -5979,10 +5979,10 @@ async def ensure_browsers():
                 browser = await p.chromium.launch(headless=True)
                 await browser.close()
                 return True
-            except Exception:
-                pass
+            except Exception as e:
+                structlog.get_logger().debug("Playwright launch failed during verification", error=str(e))
     except ImportError:
-        pass
+        structlog.get_logger().debug("Playwright not imported")
 
     if is_frozen():
         print("━" * 60)
@@ -5993,15 +5993,17 @@ async def ensure_browsers():
         print("━" * 60)
         return False
 
-    print("Installing browser dependencies (Playwright Chromium)...")
+    structlog.get_logger().info("Installing browser dependencies (Playwright Chromium)...")
     try:
         # Run installation in a separate process to avoid blocking the loop too much
-        subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True)
+        # We explicitly don't use 'pip install playwright' here if possible because it might conflict
+        # but for local non-frozen runs it's a helpful fallback.
+        subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True)
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
-        print("Browser dependencies installed successfully.")
+        structlog.get_logger().info("Browser dependencies installed successfully.")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"Failed to install browsers: {e}")
+        structlog.get_logger().error("Failed to install browsers", error=str(e))
         return False
 
 async def main_all_in_one():
