@@ -5,8 +5,19 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 * * * *' # Every hour
+    - cron: '*/30 * * * *' # Every 30 minutes
   workflow_dispatch:
+    inputs:
+      hours:
+        description: 'Discovery window in hours'
+        required: false
+        default: '8'
+        type: string
+      days:
+        description: 'Audit lookback days'
+        required: false
+        default: '2'
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,7 +26,7 @@ concurrency:
 jobs:
   fetch-usa:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,8 +40,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: fortuna.db
-          key: fortuna-db-
-          restore-keys: fortuna-db-
+          key: fortuna-db-${{ github.run_number }}
+          restore-keys: |
+            fortuna-db-
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
@@ -40,7 +52,7 @@ jobs:
       - name: Run USA Discovery
         env:
           PYTHONPATH: .
-        run: python3 fortuna.py --region USA --save "races_usa.json"
+        run: python3 fortuna.py --region USA --save "races_usa.json" --hours ${{ github.event.inputs.hours || 8 }}
       - name: Prepare Artifact
         run: |
           cp fortuna.db fortuna_usa.db
@@ -55,7 +67,7 @@ jobs:
 
   fetch-int:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -69,8 +81,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: fortuna.db
-          key: fortuna-db-
-          restore-keys: fortuna-db-
+          key: fortuna-db-${{ github.run_number }}
+          restore-keys: |
+            fortuna-db-
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
@@ -80,7 +93,7 @@ jobs:
       - name: Run INT Discovery
         env:
           PYTHONPATH: .
-        run: python3 fortuna.py --region INT --save "races_int.json"
+        run: python3 fortuna.py --region INT --save "races_int.json" --hours ${{ github.event.inputs.hours || 8 }}
       - name: Prepare Artifact
         run: |
           cp fortuna.db fortuna_int.db
@@ -95,7 +108,7 @@ jobs:
 
   audit-results:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -109,8 +122,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: fortuna.db
-          key: fortuna-db-
-          restore-keys: fortuna-db-
+          key: fortuna-db-${{ github.run_number }}
+          restore-keys: |
+            fortuna-db-
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
@@ -119,7 +133,7 @@ jobs:
       - name: Run Results Audit
         env:
           PYTHONPATH: .
-        run: python3 fortuna_analytics.py --days 2
+        run: python3 fortuna_analytics.py --days ${{ github.event.inputs.days || 2 }}
       - name: Prepare Artifact
         run: |
           cp fortuna.db fortuna_results.db
@@ -149,15 +163,26 @@ jobs:
         uses: actions/cache@v4
         with:
           path: fortuna.db
-          key: fortuna-db-
-          restore-keys: fortuna-db-
+          key: fortuna-db-${{ github.run_number }}
+          restore-keys: |
+            fortuna-db-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
       - name: Consolidate Data
         run: |
-          # The download-artifact v4 downloads into subdirectories named after the artifact
-          cp results-usa/races_usa.json .
-          cp results-usa/fortuna_usa.db .
+          set -e
+
+          # Validate artifacts were downloaded
+          for artifact_dir in results-usa results-int results-audit; do
+            if [ ! -d "$artifact_dir" ]; then
+              echo "Error: Artifact directory $artifact_dir not found!"
+              exit 1
+            fi
+          done
+
+          echo "Copying artifacts..."
+          cp results-usa/races_usa.json . || { echo "Failed to copy races_usa.json"; exit 1; }
+          cp results-usa/fortuna_usa.db . || { echo "Failed to copy fortuna_usa.db"; exit 1; }
           cp results-usa/discovery_harvest_usa.json .
           cp results-int/races_int.json .
           cp results-int/fortuna_int.db .
@@ -166,11 +191,25 @@ jobs:
           cp results-audit/analytics_report.txt .
           cp results-audit/results_harvest_audit.json .
 
+          # Verify consolidation script exists
+          if [ ! -f "scripts/consolidate_parallel_runs.py" ]; then
+            echo "Error: scripts/consolidate_parallel_runs.py not found!"
+            exit 1
+          fi
+
+          echo "Running consolidation..."
           python3 scripts/consolidate_parallel_runs.py \
             --json-pattern "races_*.json" \
             --db-pattern "fortuna_*.db" \
             --output-json "raw_races.json" \
             --output-db "fortuna.db"
+
+          # Validate outputs were created
+          if [ ! -f "raw_races.json" ] || [ ! -f "fortuna.db" ]; then
+            echo "Error: Consolidation did not produce expected outputs!"
+            exit 1
+          fi
+          echo "Consolidation complete!"
       - name: Install summary dependencies
         run: |
           python3 -m pip install --upgrade pip
