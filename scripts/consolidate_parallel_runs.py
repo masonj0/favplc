@@ -129,7 +129,22 @@ def merge_harvest_jsons(pattern, output_file):
             with open(f_path, 'r') as f:
                 data = json.load(f)
                 for k, v in data.items():
-                    merged[k] = merged.get(k, 0) + v
+                    if isinstance(v, dict):
+                        if k not in merged:
+                            merged[k] = {"count": 0, "max_odds": 0.0}
+                        elif not isinstance(merged[k], dict):
+                            # Fallback if mixed types
+                            merged[k] = {"count": int(merged[k]), "max_odds": 0.0}
+
+                        merged[k]["count"] += v.get("count", 0)
+                        merged[k]["max_odds"] = max(merged[k].get("max_odds", 0.0), v.get("max_odds", 0.0))
+                    else:
+                        if k not in merged:
+                            merged[k] = v
+                        elif isinstance(merged[k], dict):
+                            merged[k]["count"] += v
+                        else:
+                            merged[k] += v
         except Exception as e:
             print(f"Error merging harvest JSON {f_path}: {e}")
 
