@@ -87,6 +87,6 @@ uvicorn[standard]==0.24.0
 watchfiles==0.20.0
 winotify==1.1.0
 websockets==12.0
-wheel==0.46.3
+wheel==0.45.1
 wrapt==1.16.0
 wsproto==1.2.0
