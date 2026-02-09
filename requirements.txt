@@ -14,7 +14,7 @@ cffi==1.16.0
 charset-normalizer==3.3.2
 click==8.1.7
 cryptography==41.0.7
-curl_cffi==0.7.2
+curl_cffi==0.7.4
 deprecated==1.2.14
 fastapi==0.104.1
 greenlet==3.0.2
@@ -36,7 +36,7 @@ limits==3.7.0
 more-itertools==10.1.0
 msgspec>=0.18.0
 mypy-extensions==1.0.0
-numpy==1.24.3
+numpy==1.26.4
 packaging==23.2
 pandas==2.0.3
 pathspec==0.11.2
