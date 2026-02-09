@@ -142,17 +142,33 @@ def generate_summary():
     if discovery_harvest:
         write_to_summary("#### 📋 Entries Adapters")
         for adapter in sorted(discovery_harvest.keys()):
-            count = discovery_harvest[adapter]
+            data = discovery_harvest[adapter]
+            if isinstance(data, dict):
+                count = data.get("count", 0)
+                max_odds = data.get("max_odds", 0.0)
+            else:
+                count = data
+                max_odds = 0.0
+
             status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}")
+            odds_str = f" | MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else ""
+            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}{odds_str}")
         write_to_summary("")
 
     if results_harvest:
         write_to_summary("#### 🏁 Results Adapters")
         for adapter in sorted(results_harvest.keys()):
-            count = results_harvest[adapter]
+            data = results_harvest[adapter]
+            if isinstance(data, dict):
+                count = data.get("count", 0)
+                max_odds = data.get("max_odds", 0.0)
+            else:
+                count = data
+                max_odds = 0.0
+
             status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}")
+            odds_str = f" | MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else ""
+            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}{odds_str}")
         write_to_summary("")
 
     if not discovery_harvest and not results_harvest:
