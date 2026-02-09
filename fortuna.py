@@ -1060,17 +1060,19 @@ class DebugMixin:
 
 class RacePageFetcherMixin:
     async def _fetch_race_pages_concurrent(self, metadata: List[Dict[str, Any]], headers: Dict[str, str], semaphore_limit: int = 5, delay_range: tuple[float, float] = (0.5, 1.5)) -> List[Dict[str, Any]]:
-        global_sem = GlobalResourceManager.get_global_semaphore()
         local_sem = asyncio.Semaphore(semaphore_limit)
         async def fetch_single(item):
             url = item.get("url")
             if not url: return None
-            async with global_sem:
-                async with local_sem:
-                    await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
+
+            # Move sleep outside semaphores to avoid holding slots (Performance Fix)
+            await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
+
+            async with local_sem:
                     try:
                         if hasattr(self, 'logger'):
                             self.logger.debug("fetching_race_page", url=url)
+                        # make_request handles global_sem internally
                         resp = await self.make_request("GET", url, headers=headers)
                         if resp and hasattr(resp, "text") and resp.text:
                             if hasattr(self, 'logger'):
@@ -1290,11 +1292,22 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         parser = HTMLParser(resp.text)
         track_links = defaultdict(list)
+        now = now_eastern()
+
+        # Optimization: If it's late in ET, skip countries that are finished
+        # Europe/Turkey/SA usually finished by 18:00 ET
+        skip_finished_countries = now.hour >= 18 or now.hour < 6
+        finished_keywords = ["turkey", "south-africa", "united-kingdom", "france", "germany", "dubai", "bahrain"]
+
         for link in parser.css("a.fg-race-link"):
             url = link.attributes.get("href")
             if url:
                 if not url.startswith("http"):
                     url = self.BASE_URL + url
+
+                if skip_finished_countries:
+                    if any(kw in url.lower() for kw in finished_keywords):
+                        continue
 
                 # Group by track (everything before R#)
                 track_key = re.sub(r'/R\d+$', '', url)
@@ -1302,7 +1315,9 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         metadata = []
         for t_url in track_links:
-            # Take just the first race link for each track index page (Memory Directive Fix)
+            # For discovery, we usually only care about upcoming races.
+            # Without times in index, we pick R1 as a guess, but if we have multiple,
+            # R1 might be in the past. However, picking R1 is the safest if we want "one per track".
             if track_links[t_url]:
                 metadata.append({"url": track_links[t_url][0]})
 
@@ -1436,7 +1451,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         if resp and resp.text:
             self._save_debug_snapshot(resp.text, f"atr_index_{date}")
             parser = HTMLParser(resp.text)
-            metadata.extend(self._extract_race_metadata(parser))
+            metadata.extend(self._extract_race_metadata(parser, date))
 
         elif resp:
             self.logger.warning("Unexpected status", status=resp.status, url=index_url)
@@ -1444,7 +1459,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         if intl_resp and intl_resp.text:
             self._save_debug_snapshot(intl_resp.text, f"atr_intl_index_{date}")
             intl_parser = HTMLParser(intl_resp.text)
-            metadata.extend(self._extract_race_metadata(intl_parser))
+            metadata.extend(self._extract_race_metadata(intl_parser, date))
         elif intl_resp:
             self.logger.warning("Unexpected status", status=intl_resp.status, url=intl_url)
 
@@ -1454,10 +1469,14 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
 
-    def _extract_race_metadata(self, parser: HTMLParser) -> List[Dict[str, Any]]:
+    def _extract_race_metadata(self, parser: HTMLParser, date_str: str) -> List[Dict[str, Any]]:
         meta: List[Dict[str, Any]] = []
         track_map = defaultdict(list)
-        now = now_eastern()
+
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
 
         for link in parser.css('a[href*="/racecard/"]'):
             url = link.attributes.get("href")
@@ -1474,6 +1493,10 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                 time_str = time_match.group(1) if time_match else None
                 track_map[track_name].append({"url": url, "time_str": time_str})
 
+        # Site usually shows UK time
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
+
         for track, race_infos in track_map.items():
             # Sort by time if possible
             sorted_races = sorted(race_infos, key=lambda x: x["time_str"] or "9999")
@@ -1481,22 +1504,18 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             next_race = None
             for r in sorted_races:
                 if r["time_str"]:
-                    # Assume today's date for comparison if we are in this method
                     try:
                         rt = datetime.strptime(r["time_str"], "%H%M").replace(
-                            year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                            year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        # If race is more than 5 mins in the past, skip to next
-                        if rt < now - timedelta(minutes=5):
+                        # Optimization: Skip if race is more than 5 mins in the past (Only for today's races)
+                        if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                             continue
                         next_race = r
                         break
                     except Exception: pass
 
-            # Fallback to first race if we couldn't determine "next"
-            if not next_race and sorted_races:
-                next_race = sorted_races[0]
-
+            # Only append if we found an upcoming race (Optimization: Skip finished meetings)
             if next_race:
                 meta.append({"url": next_race["url"], "race_number": 1, "venue_raw": track})
 
@@ -1638,7 +1657,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
             return None
         self._save_debug_snapshot(resp.text, f"atr_grey_index_{date}")
         parser = HTMLParser(resp.text)
-        metadata = self._extract_race_metadata(parser)
+        metadata = self._extract_race_metadata(parser, date)
         if not metadata:
             links = []
             scripts = self._parse_all_jsons_from_scripts(parser, 'script[type="application/ld+json"]', context="ATR Greyhound Index")
@@ -1659,13 +1678,22 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
 
-    def _extract_race_metadata(self, parser: HTMLParser) -> List[Dict[str, Any]]:
+    def _extract_race_metadata(self, parser: HTMLParser, date_str: str) -> List[Dict[str, Any]]:
         meta: List[Dict[str, Any]] = []
         pc = parser.css_first("page-content")
         if not pc: return []
         items_raw = pc.attributes.get(":items") or pc.attributes.get(":modules")
         if not items_raw: return []
-        now = now_eastern()
+
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
+        # Usually UK time
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
+
         try:
             modules = json.loads(html.unescape(items_raw))
             for module in modules:
@@ -1679,17 +1707,16 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                         if r_time_str:
                             try:
                                 rt = datetime.strptime(r_time_str, "%H:%M").replace(
-                                    year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                    year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                                 )
-                                if rt < now - timedelta(minutes=5):
+                                # Skip if in past (Today only)
+                                if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                                     continue
                                 next_race = race
                                 break
                             except Exception: pass
 
-                    if not next_race and races:
-                        next_race = races[0]
-
+                    # No fallback to first race - skip if meeting is likely finished
                     if next_race:
                         r_num = next_race.get("raceNumber") or next_race.get("number") or 1
                         if u := next_race.get("cta", {}).get("href"):
@@ -1854,17 +1881,25 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             raise AdapterHttpError(self.source_name, getattr(resp, 'status', 500), index_url)
         self._save_debug_snapshot(resp.text, f"sportinglife_index_{date}")
         parser = HTMLParser(resp.text)
-        metadata = self._extract_race_metadata(parser)
+        metadata = self._extract_race_metadata(parser, date)
         if not metadata:
             self.logger.warning("No metadata found", context="SportingLife Index Parsing", url=index_url)
             return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=8)
         return {"pages": pages, "date": date}
 
-    def _extract_race_metadata(self, parser: HTMLParser) -> List[Dict[str, Any]]:
+    def _extract_race_metadata(self, parser: HTMLParser, date_str: str) -> List[Dict[str, Any]]:
         meta: List[Dict[str, Any]] = []
         data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Index")
-        now = now_eastern()
+
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
+
         if data:
             for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
                 # Only take the "next" race for each meeting (Memory Directive Fix)
@@ -1875,16 +1910,14 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                     if r_time_str:
                         try:
                             rt = datetime.strptime(r_time_str, "%H:%M").replace(
-                                year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            if rt < now - timedelta(minutes=5):
+                            # Skip if in past (Today only)
+                            if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                                 continue
                             next_race_info = (race, i + 1)
                             break
                         except Exception: pass
-
-                if not next_race_info and races:
-                    next_race_info = (races[0], 1)
 
                 if next_race_info:
                     race, r_num = next_race_info
@@ -1894,7 +1927,6 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             meetings = parser.css('section[class^="MeetingSummary"]') or parser.css(".meeting-summary")
             for meeting in meetings:
                 # In HTML fallback, just take the first upcoming link we find
-                found = False
                 for link in meeting.css('a[href*="/racecard/"]'):
                     if url := link.attributes.get("href"):
                         # Try to see if time is in link text
@@ -1902,20 +1934,15 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                         if re.match(r"\d{1,2}:\d{2}", txt):
                             try:
                                 rt = datetime.strptime(txt, "%H:%M").replace(
-                                    year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                    year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                                 )
-                                if rt < now - timedelta(minutes=5):
+                                # Skip if in past (Today only)
+                                if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                                     continue
                             except Exception: pass
 
                         meta.append({"url": url, "race_number": 1})
-                        found = True
                         break
-                if not found:
-                    # If all were in past or no times, just take the first one
-                    link = meeting.css_first('a[href*="/racecard/"]')
-                    if link and (url := link.attributes.get("href")):
-                        meta.append({"url": url, "race_number": 1})
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
@@ -2027,7 +2054,15 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         self._save_debug_snapshot(resp.text, f"skysports_index_{date}")
         parser = HTMLParser(resp.text)
         metadata = []
-        now = now_eastern()
+
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
+
         meetings = parser.css(".sdc-site-concertina-block") or parser.css(".page-details__section") or parser.css(".racing-meetings__meeting")
         for meeting in meetings:
             hn = meeting.css_first(".sdc-site-concertina-block__title") or meeting.css_first(".racing-meetings__meeting-title")
@@ -2035,26 +2070,21 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             vr = clean_text(hn.text()) or ""
             if "ABD:" in vr: continue
 
-            found = False
             for link in meeting.css('a[href*="/racecards/"]'):
                 if h := link.attributes.get("href"):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
                             rt = datetime.strptime(txt, "%H:%M").replace(
-                                year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            if rt < now - timedelta(minutes=5):
+                            # Skip if in past (Today only)
+                            if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                                 continue
                         except Exception: pass
 
                     metadata.append({"url": h, "venue_raw": vr, "race_number": 1})
-                    found = True
                     break
-            if not found:
-                link = meeting.css_first('a[href*="/racecards/"]')
-                if link and (h := link.attributes.get("href")):
-                    metadata.append({"url": h, "venue_raw": vr, "race_number": 1})
 
         if not metadata:
             self.logger.warning("No metadata found", context="SkySports Index Parsing", url=index_url)
@@ -2515,6 +2545,11 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         all_htmls = []
         extra_links = []
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
         now = now_eastern()
         for p in pages:
             html_content = p.get("html")
@@ -2542,16 +2577,14 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                     if tm:
                         try:
                             rt = datetime.strptime(tm.group(1).upper(), "%I:%M %p").replace(
-                                year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=EASTERN
                             )
-                            if rt < now - timedelta(minutes=5):
+                            # Skip if in past (Today only)
+                            if target_date == now.date() and rt < now - timedelta(minutes=5):
                                 continue
                             next_race = r
                             break
                         except Exception: pass
-
-                if not next_race and track_races:
-                    next_race = track_races[0]
 
                 if next_race:
                     extra_links.append(next_race["url"])
@@ -4998,7 +5031,15 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         parser = HTMLParser(index_response.text)
         # Find all links to individual race pages
         metadata = []
-        now = now_eastern()
+
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
+
         # Group by track to pick "next" race
         track_map = defaultdict(list)
 
@@ -5024,16 +5065,14 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 if re.match(r"\d{1,2}:\d{2}", r["time_txt"]):
                     try:
                         rt = datetime.strptime(r["time_txt"], "%H:%M").replace(
-                            year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                            year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        if rt < now - timedelta(minutes=5):
+                        # Skip if in past (Today only)
+                        if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                             continue
                         next_race = r
                         break
                     except Exception: pass
-
-            if not next_race and races:
-                next_race = races[0]
 
             if next_race:
                 metadata.append(next_race["url"])
@@ -5196,7 +5235,14 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
-        now = now_eastern()
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
+
         track_map = defaultdict(list)
         for selector in ["a[href*='/racecards/'][href*='/20']", ".rf__link", "a.rf-meeting-race__time"]:
             for a in parser.css(selector):
@@ -5216,16 +5262,14 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 if re.match(r"\d{1,2}:\d{2}", r["time_txt"]):
                     try:
                         rt = datetime.strptime(r["time_txt"], "%H:%M").replace(
-                            year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                            year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        if rt < now - timedelta(minutes=5):
+                        # Skip if in past (Today only)
+                        if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
                             continue
                         next_race = r
                         break
                     except Exception: pass
-
-            if not next_race and races:
-                next_race = races[0]
 
             if next_race:
                 links.append(next_race["url"])
@@ -5427,7 +5471,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         intl_response = await self.make_request("GET", intl_url, headers=self._get_headers())
 
         race_card_urls = []
-        now = now_eastern()
+        try:
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except Exception:
+            target_date = datetime.now(EASTERN).date()
+
+        site_tz = ZoneInfo("Europe/London")
+        now_site = datetime.now(site_tz)
 
         if index_response and index_response.text:
             self._save_debug_html(index_response.text, f"racingpost_index_{date}")
@@ -5436,24 +5486,19 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             # Group by meeting to pick "next" race (Memory Directive Fix)
             meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('[data-test-selector="RC-meetingItem"]')
             for meeting in meetings:
-                found = False
                 for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"]'):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
                             rt = datetime.strptime(txt, "%H:%M").replace(
-                                year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            if rt < now - timedelta(minutes=5):
+                            if rt < now_site - timedelta(minutes=5):
                                 continue
                         except Exception: pass
 
                     race_card_urls.append(link.attributes["href"])
-                    found = True
                     break
-                if not found:
-                    link = meeting.css_first('a[data-test-selector^="RC-meetingItem__link_race"]')
-                    if link: race_card_urls.append(link.attributes["href"])
 
         elif index_response:
             self.logger.warning("Unexpected status", status=index_response.status, url=index_url)
@@ -5464,24 +5509,19 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
             meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('[data-test-selector="RC-meetingItem"]')
             for meeting in meetings:
-                found = False
                 for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"]'):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
                             rt = datetime.strptime(txt, "%H:%M").replace(
-                                year=now.year, month=now.month, day=now.day, tzinfo=EASTERN
+                                year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            if rt < now - timedelta(minutes=5):
+                            if rt < now_site - timedelta(minutes=5):
                                 continue
                         except Exception: pass
 
                     race_card_urls.append(link.attributes["href"])
-                    found = True
                     break
-                if not found:
-                    link = meeting.css_first('a[data-test-selector^="RC-meetingItem__link_race"]')
-                    if link: race_card_urls.append(link.attributes["href"])
         elif intl_response:
             self.logger.warning("Unexpected status", status=intl_response.status, url=intl_url)
 
