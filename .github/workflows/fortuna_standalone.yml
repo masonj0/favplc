@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   fetch-usa:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -54,7 +54,7 @@ jobs:
             discovery_harvest_usa.json
 
   fetch-int:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -94,7 +94,7 @@ jobs:
             discovery_harvest_int.json
 
   audit-results:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
 
   conclude:
     needs: [fetch-usa, fetch-int, audit-results]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
