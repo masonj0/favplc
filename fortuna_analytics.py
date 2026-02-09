@@ -1755,7 +1755,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
 def generate_analytics_report(
     audited_tips: List[Dict[str, Any]],
     recent_tips: List[Dict[str, Any]] = None,
-    harvest_summary: Dict[str, int] = None
+    harvest_summary: Dict[str, Any] = None
 ) -> str:
     """Generate a high-impact human-readable performance audit report."""
     now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET')
@@ -1773,9 +1773,17 @@ def generate_analytics_report(
             "🔎 LIVE ADAPTER HARVEST PROOF",
             "-" * 40,
         ])
-        for adapter, count in harvest_summary.items():
+        for adapter, data in harvest_summary.items():
+            if isinstance(data, dict):
+                count = data.get("count", 0)
+                max_odds = data.get("max_odds", 0.0)
+            else:
+                count = data
+                max_odds = 0.0
+
             status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            lines.append(f"{adapter:<25} | {status:<15} | Results Found: {count}")
+            odds_str = f"MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else "Odds: N/A"
+            lines.append(f"{adapter:<25} | {status:<15} | Records: {count:<4} | {odds_str}")
         lines.append("")
 
     # --- 2. PENDING VERIFICATION (THE "WATCH" LIST) ---
@@ -1951,7 +1959,7 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
         logger.error("No valid dates provided", input_dates=target_dates)
         return
 
-    harvest_summary: Dict[str, int] = {}
+    harvest_summary: Dict[str, Dict[str, Any]] = {}
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
@@ -1993,9 +2001,22 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
 
                 for res in fetch_results:
                     if isinstance(res, tuple):
-                        adapter_name, races = res
-                        all_results.extend(races)
-                        harvest_summary[adapter_name] = harvest_summary.get(adapter_name, 0) + len(races)
+                        adapter_name, r_list = res
+                        all_results.extend(r_list)
+
+                        # Track count and MaxOdds
+                        m_odds = 0.0
+                        for r in r_list:
+                            for run in r.runners:
+                                if getattr(run, 'final_win_odds', None) and run.final_win_odds > m_odds:
+                                    m_odds = float(run.final_win_odds)
+
+                        if adapter_name not in harvest_summary:
+                            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
+                        harvest_summary[adapter_name]["count"] += len(r_list)
+                        if m_odds > harvest_summary[adapter_name]["max_odds"]:
+                            harvest_summary[adapter_name]["max_odds"] = m_odds
                     elif isinstance(res, Exception):
                         logger.warning("Task raised exception", error=str(res))
 
