@@ -3856,8 +3856,19 @@ class FortunaDB:
             await self._run_in_executor(_declutter)
             self.logger.info("Schema migrated to version 3")
 
+        if current_version < 4:
+            # Migration to version 4: Housekeeping & Long-term retention.
+            # 1. Clear the tips table for a fresh start as requested by JB.
+            # 2. Historical retention is now enabled (auto-cleanup removed from future migrations).
+            def _housekeeping():
+                with self._get_conn() as conn:
+                    conn.execute("DELETE FROM tips")
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_housekeeping)
+            self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 3))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 4))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -4426,6 +4437,7 @@ class FavoriteToPlaceMonitor:
         # Filter: Only keep THE NEXT RACE per track (Memory Directive)
         # We keep the earliest upcoming race (or very recently started) for each venue.
         next_races_map = {}
+        now = datetime.now(EASTERN)
         for summary in unique_summaries:
             st = summary.start_time
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
