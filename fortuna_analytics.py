@@ -1220,10 +1220,12 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             try:
                 name_node = row.css_first(".result-racecard__horse-name a") or \
                             row.css_first(".horse-name a") or \
-                            row.css_first("a[href*='/horse/']")
+                            row.css_first("a[href*='/horse/']") or \
+                            row.css_first("[class*='HorseName']")
                 pos_node = row.css_first(".result-racecard__pos") or \
                            row.css_first(".pos") or \
-                           row.css_first(".position")
+                           row.css_first(".position") or \
+                           row.css_first("[class*='Position']")
 
                 if not name_node:
                     continue
@@ -1989,6 +1991,11 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
 
         if not unverified:
             logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
+            # Always ensure results_harvest.json exists for GHA workflow (Memory Directive Fix)
+            try:
+                with open("results_harvest.json", "w") as f:
+                    json.dump({}, f)
+            except: pass
         else:
             logger.info("Tips to audit", count=len(unverified))
 

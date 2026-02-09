@@ -1392,10 +1392,15 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             parser = HTMLParser(resp.text)
             metadata.extend(self._extract_race_metadata(parser))
 
+        elif resp:
+            self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+
         if intl_resp and intl_resp.text:
             self._save_debug_snapshot(intl_resp.text, f"atr_intl_index_{date}")
             intl_parser = HTMLParser(intl_resp.text)
             metadata.extend(self._extract_race_metadata(intl_parser))
+        elif intl_resp:
+            self.logger.warning("Unexpected status", status=intl_resp.status, url=intl_url)
 
         if not metadata:
             self.logger.warning("No metadata found", context="ATR Index Parsing", date=date)
@@ -2539,7 +2544,14 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
         for i, relem in enumerate(relems, 1):
             try:
-                html_str = str(relem.html) if hasattr(relem, 'html') else str(relem)
+                # Handle both Scrapling Selector and Selectolax Node
+                if hasattr(relem, 'html'):
+                    html_str = str(relem.html)
+                elif hasattr(relem, 'raw_html'):
+                     html_str = relem.raw_html.decode('utf-8', 'ignore') if isinstance(relem.raw_html, bytes) else str(relem.raw_html)
+                else:
+                    # Last resort for selectolax: reconstruct HTML or use text
+                    html_str = str(relem)
 
                 # Try to find track name in the card, but fallback to the last seen track
                 # (addressing grouped race cards)
@@ -4514,8 +4526,9 @@ class FavoriteToPlaceMonitor:
 
         unique_summaries = list(race_map.values())
 
-        # Filter: Only keep THE NEXT RACE per track (Memory Directive)
-        # We keep the earliest upcoming race (or very recently started) for each venue.
+        # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
+        # We keep the earliest upcoming race (or very recently started) for each venue,
+        # but only if it falls within the -5 to 20 minute window.
         next_races_map = {}
         now = datetime.now(EASTERN)
         for summary in unique_summaries:
@@ -5127,11 +5140,16 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             links = index_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
             race_card_urls.extend([link.attributes["href"] for link in links])
 
+        elif index_response:
+            self.logger.warning("Unexpected status", status=index_response.status, url=index_url)
+
         if intl_response and intl_response.text:
             self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
             intl_parser = HTMLParser(intl_response.text)
             intl_links = intl_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
             race_card_urls.extend([link.attributes["href"] for link in intl_links])
+        elif intl_response:
+            self.logger.warning("Unexpected status", status=intl_response.status, url=intl_url)
 
         if not race_card_urls:
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
@@ -5447,6 +5465,12 @@ async def run_discovery(
             logger.info("Using loaded races", count=len(loaded_races))
             all_races_raw = loaded_races
             adapters = []
+            # Ensure harvest files exist even for loaded runs (Memory Directive Fix)
+            try:
+                if not os.path.exists("discovery_harvest.json"):
+                    with open("discovery_harvest.json", "w") as f:
+                        json.dump({}, f)
+            except: pass
         else:
             # Auto-discover discovery adapter classes
             adapter_classes = get_discovery_adapter_classes()
@@ -5583,8 +5607,9 @@ async def run_discovery(
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
 
-        # Filter: Only keep THE NEXT RACE per track (Memory Directive)
-        # We keep the earliest upcoming race (or very recently started) for each venue.
+        # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
+        # We keep the earliest upcoming race (or very recently started) for each venue,
+        # but only if it falls within the -5 to 20 minute window.
         next_races_map = {}
         now = datetime.now(EASTERN)
         for race in unique_races:
@@ -5597,14 +5622,24 @@ async def run_discovery(
             if st.tzinfo is None:
                 st = st.replace(tzinfo=EASTERN)
 
+            # Calculate Minutes to Post
+            diff = st - now
+            mtp = diff.total_seconds() / 60
+
             v = get_canonical_venue(race.venue)
-            # Race must be upcoming or jumped within the last 5 minutes
-            if st > now - timedelta(minutes=5):
+            # THE GOLDEN ZONE: -5 to 20 mins
+            if -5 < mtp <= 20:
                 if v not in next_races_map or st < next_races_map[v].start_time:
                     next_races_map[v] = race
+                    logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
 
         unique_races = list(next_races_map.values())
-        logger.info("Filtered to Next Race per track", count=len(unique_races))
+        if not unique_races:
+            logger.warning("🔭 No 'Immediate Gold' races found (0-20 mins).")
+            # We continue instead of returning to allow the rest of the discovery process (saving reports, etc)
+            # but no tips will be logged or processed.
+
+        logger.info("Filtered to Next Race per track in Golden Zone", count=len(unique_races))
 
         # Save raw fetched/merged races if requested
         if save_path:
