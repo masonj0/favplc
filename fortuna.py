@@ -2263,19 +2263,66 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return self._get_browser_headers(host="www.equibase.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        for url in [f"/entries/{date}", "/static/entry/index.html", f"/static/entry/{date}/index.html"]:
+        dt = datetime.strptime(date, "%Y-%m-%d")
+        date_str = dt.strftime("%m%d%y")
+
+        # Try different possible index URLs
+        index_urls = [
+            f"/static/entry/index.html",
+            f"/entries/{date}",
+        ]
+
+        resp = None
+        for url in index_urls:
             try:
-                resp = await self.make_request("GET", url, headers=self._get_headers())
-                if resp and resp.text and len(resp.text) > 1000: break
+                resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
+                if resp and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
+                    break
             except: continue
-        else: raise AdapterHttpError(self.source_name, 500, "Equibase index failed")
+
+        if not resp or not resp.text:
+            return None
+
         self._save_debug_snapshot(resp.text, f"equibase_index_{date}")
         parser, links = HTMLParser(resp.text), []
         for a in parser.css("a"):
-            h, c = a.attributes.get("href", ""), a.attributes.get("class", "")
-            if "/static/entry/" in h or "entry-race-level" in c: links.append(h)
+            h = a.attributes.get("href") or ""
+            c = a.attributes.get("class") or ""
+            # Normalize backslashes (Project fix for Equibase path separators)
+            h_norm = h.replace("\\", "/")
+            if "/static/entry/" in h_norm and date_str in h_norm:
+                links.append(h_norm)
+            elif "entry-race-level" in c:
+                links.append(h_norm)
+
+        if not links:
+            return None
+
+        # Fetch initial set of pages
         pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(links)], self._get_headers(), semaphore_limit=5)
-        return {"pages": [p.get("html") for p in pages if p and p.get("html")], "date": date}
+
+        all_htmls = []
+        extra_links = []
+        for p in pages:
+            html_content = p.get("html")
+            if not html_content: continue
+
+            # If it's an index page for a track, we need to extract individual race links
+            if "RaceCardIndex" in p.get("url", ""):
+                sub_parser = HTMLParser(html_content)
+                for a in sub_parser.css("a"):
+                    sh = (a.attributes.get("href") or "").replace("\\", "/")
+                    if "/static/entry/" in sh and date_str in sh and "RaceCardIndex" not in sh:
+                        extra_links.append(sh)
+            else:
+                all_htmls.append(html_content)
+
+        if extra_links:
+            self.logger.info("Fetching extra race pages from track index", count=len(extra_links))
+            extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(extra_links)], self._get_headers(), semaphore_limit=5)
+            all_htmls.extend([p.get("html") for p in extra_pages if p and p.get("html")])
+
+        return {"pages": all_htmls, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
@@ -2381,6 +2428,11 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             max_retries=3,
             timeout=60
         )
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        # Force chrome120 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         ard = []
@@ -3767,6 +3819,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
                 if "predicted_2nd_fav_odds" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN predicted_2nd_fav_odds REAL")
+                if "actual_2nd_fav_odds" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN actual_2nd_fav_odds REAL")
 
         await self._run_in_executor(_init)
 
