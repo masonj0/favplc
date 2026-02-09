@@ -62,6 +62,17 @@ def now_eastern() -> datetime:
     return datetime.now(EASTERN)
 
 
+def get_optimal_region_at_time(dt: datetime) -> str:
+    """Determine which region has the most active racing at given time."""
+    et_hour = dt.astimezone(EASTERN).hour
+    # US Racing Window: 9am - 11pm ET
+    if 9 <= et_hour < 23:
+        return "USA"
+    # International Window: 11pm - 9am ET (covers AUS/UK morning)
+    else:
+        return "INT"
+
+
 def to_eastern(dt: datetime) -> datetime:
     """Converts a datetime object to US Eastern Time."""
     if dt.tzinfo is None:
@@ -512,7 +523,8 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                 continue
 
         if not resp or not resp.text:
-            self.logger.warning("No response from Equibase index", url=url)
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
+            else: self.logger.warning("No response from Equibase index", url=url)
             return None
 
         self._save_debug_snapshot(resp.text, f"eqb_results_index_{date_str}")
@@ -578,6 +590,8 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
             async with self._semaphore:
                 try:
                     r = await self.make_request("GET", link, headers=self._get_headers())
+                    if not r or not r.text:
+                        self.logger.warning("Skipping track page (empty or error)", url=link, status=getattr(r, 'status', 'N/A'))
                     return (link, r.text if r else "")
                 except Exception as e:
                     self.logger.warning("Failed to fetch track page", link=link, error=str(e))
@@ -802,7 +816,14 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                 row_text = row.text().lower()
                 if bet_type.lower() in row_text:
                     cols = row.css("td")
-                    if len(cols) >= 2:
+                    if len(cols) >= 3:
+                        # 3-column format: Bet Type | Combination | Payout
+                        combination = fortuna.clean_text(cols[1].text())
+                        payout = parse_currency_value(cols[2].text())
+                        if payout > 0:
+                            return payout, combination
+                    elif len(cols) == 2:
+                        # 2-column format: Combination | Payout
                         combination = fortuna.clean_text(cols[0].text())
                         payout = parse_currency_value(cols[1].text())
                         if payout > 0:
@@ -846,7 +867,8 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         url = f"/results/{date_str}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp:
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
             return None
 
         parser = HTMLParser(resp.text)
@@ -1113,7 +1135,9 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
         for url in urls:
             try:
                 resp = await self.make_request("GET", url, headers=self._get_headers())
-                if not resp or not resp.text: continue
+                if not resp or not resp.text:
+                    if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
+                    continue
 
                 self._save_debug_snapshot(resp.text, f"atr_results_index_{date_str}_{url.replace('/','_')}")
                 parser = HTMLParser(resp.text)
@@ -1131,7 +1155,7 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                 self.logger.debug(f"ATR fetch failed for {url}: {e}")
 
         if not links:
-            self.logger.warning("No result links found for ATR", date=date_str)
+            self.logger.warning("No metadata found", context="ATR Results Index Parsing", date=date_str)
             return None
 
         unique_links = list(links)
@@ -1192,18 +1216,23 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
 
         # Parse runners
         runners = []
+        # Broaden selectors for result rows
         rows = parser.css(".result-racecard__row") or \
                parser.css(".card-cell--horse") or \
-               parser.css("atr-result-horse")
+               parser.css("atr-result-horse") or \
+               parser.css("div[class*='RacecardResultItem']") or \
+               parser.css(".p-results__item")
 
         for row in rows:
             try:
                 name_node = row.css_first(".result-racecard__horse-name a") or \
                             row.css_first(".horse-name a") or \
-                            row.css_first("a[href*='/horse/']")
+                            row.css_first("a[href*='/horse/']") or \
+                            row.css_first("[class*='HorseName']")
                 pos_node = row.css_first(".result-racecard__pos") or \
                            row.css_first(".pos") or \
-                           row.css_first(".position")
+                           row.css_first(".position") or \
+                           row.css_first("[class*='Position']")
 
                 if not name_node:
                     continue
@@ -1329,7 +1358,8 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         url = f"/racing/results/{date_str}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp:
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
             return None
 
         parser = HTMLParser(resp.text)
@@ -1342,6 +1372,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
 
         unique_links = list(set(links))
         if not unique_links:
+            self.logger.warning("No metadata found", context="SportingLife Results Index Parsing", url=url)
             return None
 
         self.logger.info("Found Sporting Life result links", count=len(unique_links))
@@ -1572,6 +1603,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
         url = f"/racing/results/{url_date}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
             return None
 
         parser = HTMLParser(resp.text)
@@ -1755,7 +1787,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
 def generate_analytics_report(
     audited_tips: List[Dict[str, Any]],
     recent_tips: List[Dict[str, Any]] = None,
-    harvest_summary: Dict[str, int] = None
+    harvest_summary: Dict[str, Any] = None
 ) -> str:
     """Generate a high-impact human-readable performance audit report."""
     now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET')
@@ -1773,9 +1805,17 @@ def generate_analytics_report(
             "🔎 LIVE ADAPTER HARVEST PROOF",
             "-" * 40,
         ])
-        for adapter, count in harvest_summary.items():
+        for adapter, data in harvest_summary.items():
+            if isinstance(data, dict):
+                count = data.get("count", 0)
+                max_odds = data.get("max_odds", 0.0)
+            else:
+                count = data
+                max_odds = 0.0
+
             status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            lines.append(f"{adapter:<25} | {status:<15} | Results Found: {count}")
+            odds_str = f"MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else "Odds: N/A"
+            lines.append(f"{adapter:<25} | {status:<15} | Records: {count:<4} | {odds_str}")
         lines.append("")
 
     # --- 2. PENDING VERIFICATION (THE "WATCH" LIST) ---
@@ -1951,13 +1991,18 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
         logger.error("No valid dates provided", input_dates=target_dates)
         return
 
-    harvest_summary: Dict[str, int] = {}
+    harvest_summary: Dict[str, Dict[str, Any]] = {}
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
 
         if not unverified:
             logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
+            # Always ensure results_harvest.json exists for GHA workflow (Memory Directive Fix)
+            try:
+                with open("results_harvest.json", "w") as f:
+                    json.dump({}, f)
+            except: pass
         else:
             logger.info("Tips to audit", count=len(unverified))
 
@@ -1993,9 +2038,22 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
 
                 for res in fetch_results:
                     if isinstance(res, tuple):
-                        adapter_name, races = res
-                        all_results.extend(races)
-                        harvest_summary[adapter_name] = harvest_summary.get(adapter_name, 0) + len(races)
+                        adapter_name, r_list = res
+                        all_results.extend(r_list)
+
+                        # Track count and MaxOdds
+                        m_odds = 0.0
+                        for r in r_list:
+                            for run in r.runners:
+                                if getattr(run, 'final_win_odds', None) and run.final_win_odds > m_odds:
+                                    m_odds = float(run.final_win_odds)
+
+                        if adapter_name not in harvest_summary:
+                            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
+                        harvest_summary[adapter_name]["count"] += len(r_list)
+                        if m_odds > harvest_summary[adapter_name]["max_odds"]:
+                            harvest_summary[adapter_name]["max_odds"] = m_odds
                     elif isinstance(res, Exception):
                         logger.warning("Task raised exception", error=str(res))
 
@@ -2008,10 +2066,12 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
                 # Perform audit
                 await auditor.audit_races(all_results)
 
-            # Save results harvest summary for GHA reporting
+            # Save results harvest summary for GHA reporting and DB persistence
             try:
                 with open("results_harvest.json", "w") as f:
                     json.dump(harvest_summary, f)
+
+                await auditor.db.log_harvest(harvest_summary, region=region)
             except: pass
 
         # Generate and save comprehensive report
@@ -2117,6 +2177,11 @@ def main() -> None:
         for i in range(args.days):
             d = now - timedelta(days=i)
             target_dates.append(d.strftime("%Y-%m-%d"))
+
+    # Auto-select region if not specified
+    if not args.region:
+        args.region = get_optimal_region_at_time(datetime.now(EASTERN))
+        structlog.get_logger().info("Auto-selected region", region=args.region)
 
     # Run
     asyncio.run(run_analytics(target_dates, region=args.region))
