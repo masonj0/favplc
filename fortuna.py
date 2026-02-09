@@ -1042,6 +1042,9 @@ class RacePageFetcherMixin:
                             if hasattr(self, 'logger'):
                                 self.logger.debug("fetched_race_page", url=url, status=getattr(resp, 'status', 'unknown'))
                             return {**item, "html": resp.text}
+                        elif resp:
+                            if hasattr(self, 'logger'):
+                                self.logger.warning("failed_fetching_race_page_unexpected_status", url=url, status=getattr(resp, 'status', 'unknown'))
                     except Exception as e:
                         if hasattr(self, 'logger'):
                             self.logger.error("failed_fetching_race_page", url=url, error=str(e))
@@ -4000,6 +4003,31 @@ class FortunaDB:
 
         await self._run_in_executor(_log)
 
+    async def get_adapter_scores(self, days: int = 30) -> Dict[str, float]:
+        """Calculates historical performance scores for each adapter."""
+        if not self._initialized: await self.initialize()
+
+        def _get():
+            conn = self._get_conn()
+            cutoff = (datetime.now(EASTERN) - timedelta(days=days)).isoformat()
+            cursor = conn.execute("""
+                SELECT adapter_name,
+                       AVG(race_count) as avg_count,
+                       AVG(max_odds) as avg_max_odds
+                FROM harvest_logs
+                WHERE timestamp > ?
+                GROUP BY adapter_name
+            """, (cutoff,))
+
+            scores = {}
+            for row in cursor.fetchall():
+                # Heuristic: Score = Avg Race Count + (Avg Max Odds * 2)
+                # This prioritizes adapters that find races and high longshots
+                scores[row["adapter_name"]] = (row["avg_count"] or 0) + ((row["avg_max_odds"] or 0) * 2)
+            return scores
+
+        return await self._run_in_executor(_get)
+
     async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 12):
         """Logs new tips to the database with batch deduplication."""
         if not self._initialized: await self.initialize()
@@ -4535,8 +4563,13 @@ class FavoriteToPlaceMonitor:
             st = summary.start_time
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
+            # Calculate Minutes to Post
+            diff = st - now
+            mtp = diff.total_seconds() / 60
+
             v = get_canonical_venue(summary.track)
-            if st > now - timedelta(minutes=5):
+            # THE GOLDEN ZONE: -5 to 20 mins
+            if -5 < mtp <= 20:
                 if v not in next_races_map or st < next_races_map[v].start_time:
                     next_races_map[v] = summary
 
@@ -5477,6 +5510,17 @@ async def run_discovery(
 
             if adapter_names:
                 adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
+
+            # Load historical performance scores to prioritize adapters
+            db = FortunaDB()
+            adapter_scores = await db.get_adapter_scores(days=30)
+
+            # Prioritize adapters by score (descending)
+            adapter_classes = sorted(
+                adapter_classes,
+                key=lambda c: adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
+                reverse=True
+            )
 
             adapters = []
             for cls in adapter_classes:

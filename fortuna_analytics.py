@@ -816,7 +816,14 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                 row_text = row.text().lower()
                 if bet_type.lower() in row_text:
                     cols = row.css("td")
-                    if len(cols) >= 2:
+                    if len(cols) >= 3:
+                        # 3-column format: Bet Type | Combination | Payout
+                        combination = fortuna.clean_text(cols[1].text())
+                        payout = parse_currency_value(cols[2].text())
+                        if payout > 0:
+                            return payout, combination
+                    elif len(cols) == 2:
+                        # 2-column format: Combination | Payout
                         combination = fortuna.clean_text(cols[0].text())
                         payout = parse_currency_value(cols[1].text())
                         if payout > 0:
