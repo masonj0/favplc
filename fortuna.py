@@ -4535,13 +4535,8 @@ class FavoriteToPlaceMonitor:
             st = summary.start_time
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
-            # Calculate Minutes to Post
-            diff = st - now
-            mtp = diff.total_seconds() / 60
-
             v = get_canonical_venue(summary.track)
-            # THE GOLDEN ZONE: -5 to 20 mins
-            if -5 < mtp <= 20:
+            if st > now - timedelta(minutes=5):
                 if v not in next_races_map or st < next_races_map[v].start_time:
                     next_races_map[v] = summary
 
