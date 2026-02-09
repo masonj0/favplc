@@ -12,7 +12,6 @@ from various racing websites. It serves as a high-reliability fallback system.
 import argparse
 import asyncio
 import functools
-import hashlib
 import html
 import json
 import logging
@@ -327,6 +326,15 @@ def clean_text(text: Optional[str]) -> Optional[str]:
     return " ".join(str(text).strip().split())
 
 
+def node_text(n: Any) -> str:
+    """Consistently extracts text from Scrapling Selectors and Selectolax Nodes."""
+    if n is None:
+        return ""
+    # Selectolax nodes have a .text() method, Scrapling Selectors have a .text property
+    txt = getattr(n, "text", "")
+    return txt().strip() if callable(txt) else str(txt).strip()
+
+
 def get_canonical_venue(name: Optional[str]) -> str:
     """Returns a sanitized canonical form for deduplication keys."""
     if not name:
@@ -560,7 +568,7 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
             if val >= 2: # "2" -> 2/1 -> 3.0
                 return float(val + 1)
 
-    except: pass
+    except Exception: pass
     return None
 
 
@@ -569,7 +577,7 @@ def is_valid_odds(odds: Any) -> bool:
     try:
         odds_float = float(odds)
         return MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS
-    except: return False
+    except Exception: return False
 
 
 def create_odds_data(source_name: str, win_odds: Any, place_odds: Any = None) -> Optional[OddsData]:
@@ -677,6 +685,7 @@ class DataValidationPipeline:
                 err_msg = f"[{adapter_name}] Race {i} ({getattr(race, 'venue', 'Unknown')} R{getattr(race, 'race_number', '?')}) validation failed: {str(e)}"
                 warnings.append(err_msg)
                 structlog.get_logger().error("race_validation_failed", adapter=adapter_name, error=str(e), race_index=i, venue=getattr(race, 'venue', 'Unknown'))
+                continue
         return valid_races, warnings
 
 
@@ -684,8 +693,14 @@ class DataValidationPipeline:
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _httpx_client: Optional[httpx.AsyncClient] = None
-    _lock: asyncio.Lock = asyncio.Lock()
+    _lock: Optional[asyncio.Lock] = None
     _global_semaphore: Optional[asyncio.Semaphore] = None
+
+    @classmethod
+    async def _get_lock(cls) -> asyncio.Lock:
+        if cls._lock is None:
+            cls._lock = asyncio.Lock()
+        return cls._lock
 
     @classmethod
     async def get_httpx_client(cls, timeout: Optional[int] = None) -> httpx.AsyncClient:
@@ -693,9 +708,10 @@ class GlobalResourceManager:
         Returns a shared httpx client.
         If timeout is provided and differs from current client, the client is recreated.
         """
-        async with cls._lock:
+        lock = await cls._get_lock()
+        async with lock:
             if cls._httpx_client is not None:
-                if timeout is not None and cls._httpx_client.timeout.read != timeout:
+                if timeout is not None and abs(cls._httpx_client.timeout.read - timeout) > 0.001:
                     await cls._httpx_client.aclose()
                     cls._httpx_client = None
 
@@ -712,7 +728,13 @@ class GlobalResourceManager:
     @classmethod
     def get_global_semaphore(cls) -> asyncio.Semaphore:
         if cls._global_semaphore is None:
-            cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+            try:
+                # Attempt to get running loop to ensure we are in async context
+                asyncio.get_running_loop()
+                cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+            except RuntimeError:
+                # Fallback if called outside a loop
+                return asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
         return cls._global_semaphore
 
     @classmethod
@@ -918,18 +940,29 @@ class RateLimiter:
     requests_per_second: float = 10.0
     _tokens: float = field(default=10.0, init=False)
     _last_update: float = field(default_factory=time.time, init=False)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _lock: Optional[asyncio.Lock] = field(default=None, init=False)
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
     async def acquire(self) -> None:
-        async with self._lock:
-            now = time.time()
-            elapsed = now - self._last_update
-            self._tokens = min(self.requests_per_second, self._tokens + elapsed * self.requests_per_second)
-            self._last_update = now
-            if self._tokens < 1:
+        lock = self._get_lock()
+        while True:
+            wait_time = 0
+            async with lock:
+                now = time.time()
+                elapsed = now - self._last_update
+                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
+                self._last_update = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return
                 wait_time = (1 - self._tokens) / self.requests_per_second
+
+            if wait_time > 0:
                 await asyncio.sleep(wait_time)
-                self._tokens = 0
-            else: self._tokens -= 1
 
 
 class AdapterMetrics:
@@ -1020,7 +1053,7 @@ class DebugMixin:
             with open(f, "w", encoding="utf-8") as out:
                 if url: out.write(f"<!-- URL: {url} -->\n")
                 out.write(content)
-        except: pass
+        except Exception: pass
     def _save_debug_html(self, content: str, filename: str, **kwargs) -> None:
         self._save_debug_snapshot(content, filename)
 
@@ -1226,7 +1259,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
             if not runners: return None
             return Race(venue=venue, race_number=num, start_time=datetime.now(EASTERN), runners=runners, source=self.SOURCE_NAME, url=url)
-        except: return None
+        except Exception: return None
 
 class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
@@ -1269,10 +1302,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         metadata = []
         for t_url in track_links:
-            # Only take the first race for each track (Memory Directive Fix)
-            sorted_races = sorted(track_links[t_url])
-            if sorted_races:
-                metadata.append({"url": sorted_races[0]})
+            for url in track_links[t_url]:
+                metadata.append({"url": url})
 
         if not metadata:
             self.logger.warning("No metadata found", context="SRW Index Parsing", url=index_url)
@@ -1284,7 +1315,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except: return []
+        except Exception: return []
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1292,7 +1323,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             try:
                 race = self._parse_single_race(html_content, item.get("url", ""), race_date)
                 if race: races.append(race)
-            except: pass
+            except Exception: pass
         return races
 
     def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
@@ -1314,7 +1345,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         try:
             start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
-        except:
+        except Exception:
             start_time = datetime.combine(race_date, datetime.min.time())
 
         # Race number from URL
@@ -1352,7 +1383,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                     od[self.SOURCE_NAME] = ov
 
                 runners.append(Runner(name=name, number=number, scratched=scratched, odds=od, win_odds=win_odds))
-            except: continue
+            except Exception: continue
 
         if not runners: return None
 
@@ -1431,24 +1462,20 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             parts = url.split("/")
             if len(parts) >= 3: track_map[parts[2]].append(url)
         for track, urls in track_map.items():
-            # Only take the first race for each track (Memory Directive Fix)
-            sorted_urls = sorted(set(urls))
-            if sorted_urls:
-                meta.append({"url": sorted_urls[0], "race_number": 1, "venue_raw": track})
+            for url in set(urls):
+                meta.append({"url": url, "race_number": 1, "venue_raw": track})
 
         if not meta:
             for meeting in (parser.css(".meeting-summary") or parser.css(".p-meetings__item")):
-                # Only take the first race link from each meeting summary block
-                first_link = meeting.css_first('a[href*="/racecard/"]')
-                if first_link:
-                    if url := first_link.attributes.get("href"):
+                for link in meeting.css('a[href*="/racecard/"]'):
+                    if url := link.attributes.get("href"):
                         meta.append({"url": url, "race_number": 1})
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except: return []
+        except Exception: return []
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1456,7 +1483,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             try:
                 race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("race_number"))
                 if race: races.append(race)
-            except: pass
+            except Exception: pass
         return races
 
     def _parse_single_race(self, html_content: str, url_path: str, race_date: date, race_number_fallback: Optional[int]) -> Optional[Race]:
@@ -1490,7 +1517,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                 time_str = f"{raw_time[:2]}:{raw_time[2:]}"
         if not track_name or not time_str: return None
         try: start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
-        except: return None
+        except Exception: return None
         race_number = race_number_fallback or 1
         distance = None
         dist_match = re.search(r"\|\s*(\d+[mfy].*)", header_text, re.I)
@@ -1507,7 +1534,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                     try:
                         p_val = float(price)
                         if is_valid_odds(p_val): odds_map[m.group(1)] = p_val
-                    except: pass
+                    except Exception: pass
         runners: List[Runner] = []
         for selector in self.SELECTORS["runners"]:
             nodes = parser.css(selector)
@@ -1549,7 +1576,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             odds: Dict[str, OddsData] = {}
             if od := create_odds_data(self.source_name, win_odds): odds[self.source_name] = od
             return Runner(number=number, name=name, odds=odds, win_odds=win_odds)
-        except: return None
+        except Exception: return None
 
 # ----------------------------------------
 # AtTheRacesGreyhoundAdapter
@@ -1613,21 +1640,20 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                             r_num = race.get("raceNumber") or race.get("number") or (i + 1)
                             if u := race.get("cta", {}).get("href"):
                                 meta.append({"url": u, "race_number": r_num})
-                                break # Stop after first racecard in this meeting
-        except: pass
+        except Exception: pass
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now(EASTERN).date()
+        except Exception: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             if not item or not item.get("html"): continue
             try:
                 race = self._parse_single_race(item["html"], item.get("url", ""), race_date, item.get("race_number"))
                 if race: races.append(race)
-            except: pass
+            except Exception: pass
         return races
 
     def _parse_single_race(self, html_content: str, url_path: str, race_date: date, race_number: Optional[int]) -> Optional[Race]:
@@ -1637,7 +1663,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         items_raw = pc.attributes.get(":items") or pc.attributes.get(":modules")
         if not items_raw: return None
         try: modules = json.loads(html.unescape(items_raw))
-        except: return None
+        except Exception: return None
         venue, race_time_str, distance, runners, odds_map = "", "", "", [], {}
         for module in modules:
             m_type, m_data = module.get("type"), module.get("data", {})
@@ -1683,7 +1709,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         try:
             if ":" not in race_time_str and len(race_time_str) == 4: race_time_str = f"{race_time_str[:2]}:{race_time_str[2:]}"
             start_time = datetime.combine(race_date, datetime.strptime(race_time_str, "%H:%M").time())
-        except: return None
+        except Exception: return None
         return Race(discipline="Greyhound", id=generate_race_id("atrg", venue, start_time, race_number or 0, "Greyhound"), venue=venue, race_number=race_number or 0, start_time=start_time, runners=runners, distance=str(distance) if distance else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
 # ----------------------------------------
@@ -1715,7 +1741,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except: race_date = datetime.now(EASTERN).date()
+        except Exception: race_date = datetime.now(EASTERN).date()
         item = raw_data["pages"][0]
         parser = HTMLParser(item.get("html", ""))
         races: List[Race] = []
@@ -1739,7 +1765,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 dm = re.search(r'(\d+(?:\.\d+)?\s*[kmf]|1\s*mile)', txt, re.I)
                 dist = dm.group(1) if dm else None
                 try: st = datetime.combine(race_date, datetime.strptime(tm.group(1), "%H:%M").time())
-                except: continue
+                except Exception: continue
                 runners = [Runner(number=j+1, name=f"Runner {j+1}", scratched=False, odds={}) for j in range(fs)]
                 disc = "Harness" if r_harness else "Greyhound" if is_grey else "Thoroughbred"
                 ab = []
@@ -1790,21 +1816,18 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                 for i, race in enumerate(meeting.get("races", [])):
                     if url := race.get("racecard_url"):
                         meta.append({"url": url, "race_number": i + 1})
-                        break
         if not meta:
             meetings = parser.css('section[class^="MeetingSummary"]') or parser.css(".meeting-summary")
             for meeting in meetings:
-                # Only take the first race link for each meeting (Memory Directive Fix)
-                first_link = meeting.css_first('a[href*="/racecard/"]')
-                if first_link:
-                    if url := first_link.attributes.get("href"):
+                for link in meeting.css('a[href*="/racecard/"]'):
+                    if url := link.attributes.get("href"):
                         meta.append({"url": url, "race_number": 1})
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except: return []
+        except Exception: return []
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1814,7 +1837,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                 race = self._parse_from_next_data(parser, race_date, item.get("race_number"), html_content)
                 if not race: race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content)
                 if race: races.append(race)
-            except: pass
+            except Exception: pass
         return races
 
     def _parse_from_next_data(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
@@ -1838,7 +1861,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             rt = f(race_info)
         if not rt: return None
         try: start_time = datetime.combine(race_date, datetime.strptime(rt, "%H:%M").time())
-        except: return None
+        except Exception: return None
         runners = []
         for rd in (race_info.get("runners") or race_info.get("rides") or []):
             name = clean_text(rd.get("horse_name") or rd.get("horse", {}).get("name", ""))
@@ -1859,7 +1882,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         parts = ht.split()
         if not parts: return None
         try: start_time = datetime.combine(race_date, datetime.strptime(parts[0], "%H:%M").time())
-        except: return None
+        except Exception: return None
         track_name = normalize_venue_name(" ".join(parts[1:]))
         runners = []
         for row in parser.css('div[class*="RunnerCard"]'):
@@ -1879,7 +1902,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
                 runners.append(Runner(number=number, name=name, odds=od, win_odds=wo))
-            except: continue
+            except Exception: continue
         if not runners: return None
         dn = parser.css_first('span[class*="RacecardHeader__Distance"]') or parser.css_first(".race-distance")
         return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(dn.text()) if dn else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
@@ -1916,10 +1939,8 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             if not hn: continue
             vr = clean_text(hn.text()) or ""
             if "ABD:" in vr: continue
-            # Only take the first race for each meeting (Memory Directive Fix)
-            first_link = meeting.css_first('a[href*="/racecards/"]')
-            if first_link:
-                if h := first_link.attributes.get("href"):
+            for link in meeting.css('a[href*="/racecards/"]'):
+                if h := link.attributes.get("href"):
                     metadata.append({"url": h, "venue_raw": vr, "race_number": 1})
         if not metadata:
             self.logger.warning("No metadata found", context="SkySports Index Parsing", url=index_url)
@@ -1930,7 +1951,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now(EASTERN).date()
+        except Exception: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -1948,7 +1969,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             track_name = normalize_venue_name(tnr)
             if not track_name: continue
             try: start_time = datetime.combine(race_date, datetime.strptime(rts, "%H:%M").time())
-            except: continue
+            except Exception: continue
             dist = None
             for d in parser.css(".sdc-site-racing-header__detail-item"):
                 dt = clean_text(d.text()) or ""
@@ -1965,7 +1986,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                     nt = clean_text(nnode.text())
                     if nt:
                         try: number = int(nt)
-                        except: pass
+                        except Exception: pass
                 onode = node.css_first(".sdc-site-racing-card__betting-odds")
                 wo = parse_odds_to_decimal(clean_text(onode.text()) if onode else "")
 
@@ -2003,7 +2024,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         resp = await self.make_request("GET", endpoint)
         if not resp: return None
         try: data = resp.json()
-        except: return None
+        except Exception: return None
         if not isinstance(data, list): return None
         return {"venues": data, "date": date, "fetched_at": datetime.now(EASTERN).isoformat()}
 
@@ -2023,7 +2044,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         rid, rnum, dts, nr = rd.get("id"), rd.get("raceNumber"), rd.get("datetimeUtc"), rd.get("numberOfRunners", 0)
         if not all([rid, rnum, dts]): return None
         try: st = datetime.fromisoformat(dts.replace("Z", "+00:00"))
-        except: return None
+        except Exception: return None
         runners = [Runner(number=i + 1, name=f"Runner {i + 1}", scratched=False, odds={}) for i in range(nr)]
         return Race(discipline="Thoroughbred", id=f"rpb2b_{rid.replace('-', '')[:16]}", venue=normalize_venue_name(vn), race_number=rnum, start_time=st, runners=runners, source=self.source_name, metadata={"original_race_id": rid, "country_code": cc, "num_runners": nr})
 
@@ -2063,13 +2084,13 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
                     await page.goto(f"{self.base_url}/entries", wait_until="networkidle")
                     await page.evaluate("() => { document.querySelectorAll('details').forEach(d => d.open = true); }")
                     try: await page.select_option("#edit-entries-track", label="View All Tracks")
-                    except: pass
+                    except Exception: pass
                     try: await page.select_option("#edit-entries-date", label=date_label)
-                    except: pass
+                    except Exception: pass
                     try: await page.click("#edit-custom-submit-entries", force=True, timeout=5000)
-                    except: pass
+                    except Exception: pass
                     try: await page.wait_for_selector("#entries-results-container a[href*='/entries/']", timeout=10000)
-                    except: pass
+                    except Exception: pass
                     index_html = await page.content()
                 finally:
                     await page.close()
@@ -2105,10 +2126,8 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
             if not tnn: continue
             tn = clean_text(tnn.text()) or ""
             isf = "*" in tn or "*" in (clean_text(container.text()) or "")
-            # Only take the first race link for each track container (Memory Directive Fix)
-            first_link = container.css_first('a[href*="/entries/"]')
-            if first_link:
-                if u := first_link.attributes.get("href"):
+            for link in container.css('a[href*="/entries/"]'):
+                if u := link.attributes.get("href"):
                     metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
         if not metadata:
             self.logger.warning("No metadata found", context="StandardbredCanada Index Parsing")
@@ -2119,7 +2138,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
         try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
-        except: race_date = datetime.now(EASTERN).date()
+        except Exception: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
@@ -2132,7 +2151,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
                     try:
                         r = self._parse_single_race(race_chunks[i+1], int(race_chunks[i]), race_date, track_name)
                         if r: races.append(r)
-                    except: continue
+                    except Exception: continue
         return races
 
     def _parse_single_race(self, content: str, race_num: int, race_date: date, track_name: str) -> Optional[Race]:
@@ -2140,7 +2159,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         st = None
         if tm:
             try: st = datetime.combine(race_date, datetime.strptime(tm.group(1), "%I:%M %p").time())
-            except: pass
+            except Exception: pass
         if not st: st = datetime.combine(race_date, datetime.min.time())
         ab = scrape_available_bets(content)
         dist = "1 Mile"
@@ -2184,7 +2203,7 @@ class TabAdapter(BaseAdapterV3):
         resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
         if not resp: return None
         try: data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
-        except: return None
+        except Exception: return None
         if not data or "meetings" not in data: return None
 
         # TAB meetings often only have race headers. We need to fetch each meeting's details
@@ -2204,10 +2223,10 @@ class TabAdapter(BaseAdapterV3):
                             if m_data:
                                 all_meetings.append(m_data)
                                 continue
-                        except: pass
+                        except Exception: pass
                 # Fallback to the summary data if detail fetch fails
                 all_meetings.append(m)
-            except:
+            except Exception:
                 all_meetings.append(m)
 
         return {"meetings": all_meetings, "date": date}
@@ -2226,7 +2245,7 @@ class TabAdapter(BaseAdapterV3):
                 if not rst or not rn: continue
 
                 try: st = datetime.fromisoformat(rst.replace("Z", "+00:00"))
-                except: continue
+                except Exception: continue
 
                 runners = []
                 # If detail data was fetched, extract runners
@@ -2311,11 +2330,11 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
                             if "T" in st_val:
                                 start_time = to_eastern(datetime.fromisoformat(st_val.replace("Z", "+00:00")))
                             break
-                        except: pass
+                        except Exception: pass
 
                 races.append(Race(id=str(mid), venue=vn, race_number=int(ri.get("race_number", 0)), start_time=start_time, runners=runners, source=self.source_name, discipline="Thoroughbred"))
             return races
-        except: return []
+        except Exception: return []
 
 # ----------------------------------------
 # EquibaseAdapter
@@ -2355,7 +2374,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
                 if resp and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
                     break
-            except: continue
+            except Exception: continue
 
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=resp.url)
@@ -2424,7 +2443,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
                 if not runners: continue
                 races.append(Race(id=f"eqb_{venue.lower().replace(' ', '')}_{ds}_{rnum_txt}", venue=venue, race_number=int(rnum_txt), start_time=st, runners=runners, source=self.source_name, discipline="Thoroughbred", available_bets=ab))
-            except: continue
+            except Exception: continue
         return races
 
     def _parse_runner(self, node: Node) -> Optional[Runner]:
@@ -2475,12 +2494,12 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             if len(parts) >= 2:
                 dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", "%Y-%m-%d %I:%M %p")
                 return dt.replace(tzinfo=EASTERN)
-        except: pass
+        except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
             dt = datetime.strptime(ds, "%Y-%m-%d")
             return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
-        except:
+        except Exception:
             return datetime.now(EASTERN)
 
 # ----------------------------------------
@@ -2570,7 +2589,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 if el:
                     relems, used = el, s
                     break
-            except: continue
+            except Exception: continue
 
         if not relems:
             return [{"html": resp.text, "selector": page, "track": "Unknown", "race_number": 0, "date": date, "full_page": True}]
@@ -2616,7 +2635,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     "full_page": False,
                     "available_bets": scrape_available_bets(html_str)
                 })
-            except: continue
+            except Exception: continue
         return rd
 
     def _find_with_selectors(self, el, selectors: List[str]) -> Optional[str]:
@@ -2624,9 +2643,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             try:
                 f = el.css_first(s)
                 if f:
-                    t = f.text.strip() if hasattr(f, 'text') else str(f).strip()
+                    t = node_text(f)
                     if t: return t
-            except: continue
+            except Exception: continue
         return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
@@ -2636,7 +2655,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             try:
                 r = self._parse_single_race(rd, ds)
                 if r and r.runners: parsed.append(r)
-            except: continue
+            except Exception: continue
         return parsed
 
     def _parse_single_race(self, rd: dict, ds: str) -> Optional[Race]:
@@ -2661,7 +2680,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             try:
                 e = page.css_first(s)
                 if e:
-                    da = e.attrib.get('datetime')
+                    # Scrapling attrib vs Selectolax attributes
+                    da = getattr(e, 'attrib', getattr(e, 'attributes', {})).get('datetime')
                     if da:
                         try:
                             dt = datetime.fromisoformat(da.replace('Z', '+00:00'))
@@ -2670,10 +2690,10 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                                 return dt
                             else:
                                 self.logger.debug("Suspicious date in HTML datetime attribute", html_dt=da, expected_date=bd)
-                        except: pass
-                    p = self._parse_time_string(e.text.strip() if hasattr(e, 'text') else str(e).strip(), bd)
+                        except Exception: pass
+                    p = self._parse_time_string(node_text(e), bd)
                     if p: return p
-            except: continue
+            except Exception: continue
         return datetime.combine(bd, datetime.now(EASTERN).time()) + timedelta(hours=1)
 
     def _parse_time_string(self, ts: str, bd) -> Optional[datetime]:
@@ -2693,7 +2713,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     t = t.replace(hour=t.hour + 12)
 
                 return datetime.combine(bd, t)
-            except: continue
+            except Exception: continue
         return None
 
     def _parse_runners(self, page) -> List[Runner]:
@@ -2703,38 +2723,39 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             try:
                 el = page.css(s)
                 if el: relems = el; break
-            except: continue
+            except Exception: continue
         for i, e in enumerate(relems):
             try:
                 r = self._parse_single_runner(e, i + 1)
                 if r: runners.append(r)
-            except: continue
+            except Exception: continue
         return runners
 
     def _parse_single_runner(self, e, dn: int) -> Optional[Runner]:
-        es = str(e.html) if hasattr(e, 'html') else str(e)
+        # Scrapling Selector has .html property
+        es = str(getattr(e, 'html', e))
         sc = any(s in es.lower() for s in ['scratched', 'scr', 'scratch'])
         num = None
         for s in ['[class*="program"]', '[class*="saddle"]', '[class*="post"]', '[class*="number"]', '[data-program-number]', 'td:first-child']:
             try:
                 ne = e.css_first(s)
                 if ne:
-                    nt = ne.text.strip() if hasattr(ne, 'text') else str(ne)
+                    nt = node_text(ne)
                     dig = "".join(filter(str.isdigit, nt))
                     if dig:
                         val = int(dig)
                         if val <= 40:
                             num = val
                             break
-            except: continue
+            except Exception: continue
         name = None
         for s in ['[class*="horse-name"]', '[class*="horseName"]', '[class*="runner-name"]', 'a[class*="name"]', '[data-horse-name]', 'td:nth-child(2)']:
             try:
                 ne = e.css_first(s)
                 if ne:
-                    nt = ne.text.strip() if hasattr(ne, 'text') else None
+                    nt = node_text(ne)
                     if nt and len(nt) > 1: name = re.sub(r"\(.*\)", "", nt).strip(); break
-            except: continue
+            except Exception: continue
         if not name: return None
         odds, wo = {}, None
         if not sc:
@@ -2742,11 +2763,11 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 try:
                     oe = e.css_first(s)
                     if oe:
-                        ot = oe.text.strip() if hasattr(oe, 'text') else None
+                        ot = node_text(oe)
                         if ot and ot.upper() not in ['SCR', 'SCRATCHED', '--', 'N/A']:
                             wo = parse_odds_to_decimal(ot)
                             if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
-                except: continue
+                except Exception: continue
 
             # Advanced heuristic fallback
             if wo is None:
@@ -2918,12 +2939,15 @@ class TrifectaAnalyzer(BaseAnalyzer):
         # User requested to exclude every race with an odds-on favorite (< 2.0 decimal)
         if (
             len(active_runners) > self.max_field_size
-            or favorite_odds < 2.0
+            or favorite_odds < Decimal("2.0")
             or favorite_odds < self.min_favorite_odds
             or second_favorite_odds < self.min_second_favorite_odds
         ):
             return 0.0
 
+        # field_score can be negative if len(active_runners) > self.max_field_size,
+        # but the check above handles it. To be safe:
+        field_score = max(0.0, field_score)
         score = round(final_score * 100, 2)
         race.qualification_score = score
         return score
@@ -2975,8 +2999,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             is_goldmine = False
             active_runners = [r for r in race.runners if not r.scratched]
             gap12 = 0.0
+            all_odds = []
             if active_runners:
-                all_odds = []
                 for runner in active_runners:
                     odds = _get_best_win_odds(runner)
                     if odds is not None:
@@ -2985,7 +3009,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.sort()
                     fav, sec = all_odds[0], all_odds[1]
                     gap12 = round(float(sec - fav), 2)
-                    if len(active_runners) <= 8 and sec >= 5.0:
+                    if len(active_runners) <= 8 and sec >= Decimal("5.0"):
                         is_goldmine = True
 
                 # Calculate Top 5 for all races
@@ -2999,16 +3023,19 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
                 race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
 
+            # Stability Check: Only if 1st and 2nd fav are established
+            if len(all_odds) < 2:
+                continue
+
             # Best Bet Detection:
             # Goldmine = 2nd Fav >= 5.0, Field <= 8
             # You Might Like = 2nd Fav >= 4.0, Field <= 8
-            is_best_bet = (len(active_runners) <= 8 and active_runners and len(all_odds) >= 2 and all_odds[1] >= 4.0)
+            is_best_bet = (len(active_runners) <= 8 and all_odds[1] >= Decimal("4.0"))
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
-            if active_runners and len(all_odds) >= 2:
-                race.metadata['predicted_2nd_fav_odds'] = all_odds[1]
+            race.metadata['predicted_2nd_fav_odds'] = float(all_odds[1])
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -3436,7 +3463,7 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
         try:
             st = datetime.fromisoformat(start_time_raw.replace('Z', '+00:00'))
             time_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
-        except:
+        except Exception:
             time_str = str(start_time_raw)[:16]
 
         emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
@@ -3686,7 +3713,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         st = get_field(race, 'start_time')
         if isinstance(st, str):
             try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-            except: continue
+            except Exception: continue
         if st and st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
         # Ceiling of 4 hours, ignore races more than 10 mins past
@@ -3784,9 +3811,6 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
-def is_frozen() -> bool:
-    """Check if the script is running as a bundled PyInstaller executable."""
-    return getattr(sys, 'frozen', False)
 
 
 def get_db_path() -> str:
@@ -3824,7 +3848,12 @@ class FortunaDB:
     @asynccontextmanager
     async def get_connection(self):
         """Returns an async context manager for a database connection."""
-        import aiosqlite
+        try:
+            import aiosqlite
+        except ImportError:
+            self.logger.error("aiosqlite not installed. Async database features will fail.")
+            raise
+
         async with aiosqlite.connect(self.db_path) as conn:
             conn.row_factory = aiosqlite.Row
             yield conn
@@ -3997,7 +4026,7 @@ class FortunaDB:
                                 dt_utc = datetime.fromisoformat(val.replace("Z", "+00:00"))
                                 dt_eastern = dt_utc.astimezone(EASTERN)
                                 updates[col] = dt_eastern.isoformat()
-                            except: pass
+                            except Exception: pass
                     if updates:
                         try:
                             set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
@@ -4298,7 +4327,7 @@ class HotTipsTracker:
             st = r.start_time
             if isinstance(st, str):
                 try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-                except: continue
+                except Exception: continue
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
             # Reject races too far in the future
@@ -4583,7 +4612,7 @@ class FavoriteToPlaceMonitor:
                     # Or prefer more detailed available bets
                     elif summary.superfecta_offered and not existing.superfecta_offered:
                         race_map[key] = summary
-            except: pass
+            except Exception: pass
 
         unique_summaries = list(race_map.values())
 
@@ -4827,7 +4856,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         parser = HTMLParser(index_response.text)
         # Find all links to individual race pages
-        track_links = defaultdict(list)
+        metadata = []
         # Broaden selectors for race links
         for selector in ["a.race-time-link[href]", "a[href*='/horse-racing/'][href*='/20']", ".rf__link"]:
             for a in parser.css(selector):
@@ -4835,18 +4864,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 if href and not href.endswith("/horse-racing"):
                     # Ensure absolute URL
                     full_url = href if href.startswith("http") else f"{self.BASE_URL}{href}"
-
-                    # Group by track (everything before time)
-                    # Example: /horse-racing/2026-02-09/bendigo/13:30
-                    track_key = re.sub(r'/\d{1,2}:\d{2}$', '', full_url)
-                    track_links[track_key].append(full_url)
-
-        metadata = []
-        for t_url in track_links:
-            # Only take the first race for each track (Memory Directive Fix)
-            sorted_races = sorted(track_links[t_url])
-            if sorted_races:
-                metadata.append(sorted_races[0])
+                    metadata.append(full_url)
 
         if not metadata:
             self.logger.warning("No metadata found", context="Oddschecker Index Parsing", url=index_url)
@@ -5006,26 +5024,12 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
-        track_links = defaultdict(list)
+        links = []
         for selector in ["a[href*='/racecards/'][href*='/20']", ".rf__link", "a.rf-meeting-race__time"]:
             for a in parser.css(selector):
                 href = a.attributes.get("href")
                 if href and not href.endswith("/racecards"):
-                    # Group by track (everything before time/race ID)
-                    # Example: /horse-racing/racecards/dundalk/28-january-2026/1432/207/1/view
-                    parts = href.split('/')
-                    if len(parts) >= 5:
-                        track_key = '/'.join(parts[:5])
-                        track_links[track_key].append(href)
-                    else:
-                        track_links[href].append(href)
-
-        links = []
-        for t_key in track_links:
-            # Only take the first race for each track (Memory Directive Fix)
-            sorted_races = sorted(track_links[t_key])
-            if sorted_races:
-                links.append(sorted_races[0])
+                    links.append(href)
 
         if not links:
             self.logger.warning("No metadata found", context="Timeform Index Parsing", url=index_url)
@@ -5122,7 +5126,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 url_parts = url_path.split('/')
                 if len(url_parts) >= 10:
                     try: race_number = int(url_parts[9])
-                    except: pass
+                    except Exception: pass
 
                 race = Race(
                     id=f"tf_{venue.lower().replace(' ', '')}_{start_time:%Y%m%d}_R{race_number}",
@@ -5152,7 +5156,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 try:
                     val = int(num_attr)
                     if val <= 40: number = val
-                except:
+                except Exception:
                     pass
 
             if not number:
@@ -5440,7 +5444,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         try:
             start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
-        except:
+        except Exception:
             return None
 
         # Extract dividends
@@ -5491,7 +5495,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             num_node = row.css_first(".rp-resultRunner__saddleClothNo")
             if num_node:
                 try: number = int(clean_text(num_node.text()))
-                except: pass
+                except Exception: pass
 
             runners.append(Runner(
                 name=name,
@@ -5561,7 +5565,7 @@ async def run_discovery(
                 if not os.path.exists("discovery_harvest.json"):
                     with open("discovery_harvest.json", "w") as f:
                         json.dump({}, f)
-            except: pass
+            except Exception: pass
         else:
             # Auto-discover discovery adapter classes
             adapter_classes = get_discovery_adapter_classes()
@@ -5636,7 +5640,7 @@ async def run_discovery(
                 # Shutdown adapters
                 for a in adapters:
                     try: await a.close()
-                    except: pass
+                    except Exception: pass
 
         # Apply time window filter if requested to avoid overloading
         if cutoff:
@@ -5891,19 +5895,23 @@ async def start_desktop_app():
     async def get_dashboard():
         # Retrieve latest Goldmines from the database
         db = FortunaDB()
-        async with db.get_connection() as conn:  # ✅ Fixed Council's syntax (removed await)
-            try:
-                async with conn.execute(
-                    "SELECT venue, race_number, selection_name, win_odds, discovered_at "
-                    "FROM tips ORDER BY id DESC LIMIT 50"
-                ) as cursor:
-                    tips = await cursor.fetchall()
-            except Exception as e:
-                print(f"DB query failed: {e}")
-                tips = []
+        try:
+            async with db.get_connection() as conn:
+                try:
+                    async with conn.execute(
+                        "SELECT venue, race_number, selection_number, predicted_2nd_fav_odds, start_time "
+                        "FROM tips ORDER BY id DESC LIMIT 50"
+                    ) as cursor:
+                        tips = await cursor.fetchall()
+                except Exception as e:
+                    print(f"DB query failed: {e}")
+                    tips = []
+        except Exception as e:
+            print(f"Failed to connect to database: {e}")
+            tips = []
 
         tips_html = "".join([
-            f"<tr><td>{t[4]}</td><td>{t[0]}</td><td>R{t[1]}</td><td>{t[2]}</td><td>{t[3]}</td></tr>"
+            f"<tr><td>{t[4]}</td><td>{t[0]}</td><td>R{t[1]}</td><td>#{t[2]}</td><td>{t[3]}</td></tr>"
             for t in tips
         ])
 
