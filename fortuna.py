@@ -1255,13 +1255,23 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
 
         parser = HTMLParser(resp.text)
-        metadata = []
+        track_links = defaultdict(list)
         for link in parser.css("a.fg-race-link"):
             url = link.attributes.get("href")
             if url:
                 if not url.startswith("http"):
                     url = self.BASE_URL + url
-                metadata.append({"url": url})
+
+                # Group by track (everything before R#)
+                track_key = re.sub(r'/R\d+$', '', url)
+                track_links[track_key].append(url)
+
+        metadata = []
+        for t_url in track_links:
+            # Only take the first race for each track (Memory Directive Fix)
+            sorted_races = sorted(track_links[t_url])
+            if sorted_races:
+                metadata.append({"url": sorted_races[0]})
 
         if not metadata:
             self.logger.warning("No metadata found", context="SRW Index Parsing", url=index_url)
@@ -1420,12 +1430,18 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             parts = url.split("/")
             if len(parts) >= 3: track_map[parts[2]].append(url)
         for track, urls in track_map.items():
-            for i, url in enumerate(sorted(set(urls))):
-                meta.append({"url": url, "race_number": i + 1, "venue_raw": track})
+            # Only take the first race for each track (Memory Directive Fix)
+            sorted_urls = sorted(set(urls))
+            if sorted_urls:
+                meta.append({"url": sorted_urls[0], "race_number": 1, "venue_raw": track})
+
         if not meta:
             for meeting in (parser.css(".meeting-summary") or parser.css(".p-meetings__item")):
-                for i, link in enumerate(meeting.css('a[href*="/racecard/"]')):
-                    if url := link.attributes.get("href"): meta.append({"url": url, "race_number": i + 1})
+                # Only take the first race link from each meeting summary block
+                first_link = meeting.css_first('a[href*="/racecard/"]')
+                if first_link:
+                    if url := first_link.attributes.get("href"):
+                        meta.append({"url": url, "race_number": 1})
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
@@ -1590,11 +1606,13 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
             modules = json.loads(html.unescape(items_raw))
             for module in modules:
                 for meeting in module.get("data", {}).get("items", []):
+                    # Only take the first race for each meeting (Memory Directive Fix)
                     for i, race in enumerate(meeting.get("items", [])):
                         if race.get("type") == "racecard":
                             r_num = race.get("raceNumber") or race.get("number") or (i + 1)
                             if u := race.get("cta", {}).get("href"):
                                 meta.append({"url": u, "race_number": r_num})
+                                break # Stop after first racecard in this meeting
         except: pass
         return meta
 
@@ -1767,13 +1785,19 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Index")
         if data:
             for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
+                # Only take the first race for each meeting (Memory Directive Fix)
                 for i, race in enumerate(meeting.get("races", [])):
-                    if url := race.get("racecard_url"): meta.append({"url": url, "race_number": i + 1})
+                    if url := race.get("racecard_url"):
+                        meta.append({"url": url, "race_number": i + 1})
+                        break
         if not meta:
             meetings = parser.css('section[class^="MeetingSummary"]') or parser.css(".meeting-summary")
             for meeting in meetings:
-                for i, link in enumerate(meeting.css('a[href*="/racecard/"]')):
-                    if url := link.attributes.get("href"): meta.append({"url": url, "race_number": i + 1})
+                # Only take the first race link for each meeting (Memory Directive Fix)
+                first_link = meeting.css_first('a[href*="/racecard/"]')
+                if first_link:
+                    if url := first_link.attributes.get("href"):
+                        meta.append({"url": url, "race_number": 1})
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
@@ -1891,8 +1915,11 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             if not hn: continue
             vr = clean_text(hn.text()) or ""
             if "ABD:" in vr: continue
-            for i, link in enumerate(meeting.css('a[href*="/racecards/"]')):
-                if h := link.attributes.get("href"): metadata.append({"url": h, "venue_raw": vr, "race_number": i + 1})
+            # Only take the first race for each meeting (Memory Directive Fix)
+            first_link = meeting.css_first('a[href*="/racecards/"]')
+            if first_link:
+                if h := first_link.attributes.get("href"):
+                    metadata.append({"url": h, "venue_raw": vr, "race_number": 1})
         if not metadata:
             self.logger.warning("No metadata found", context="SkySports Index Parsing", url=index_url)
             return None
@@ -2077,8 +2104,11 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
             if not tnn: continue
             tn = clean_text(tnn.text()) or ""
             isf = "*" in tn or "*" in (clean_text(container.text()) or "")
-            for link in container.css('a[href*="/entries/"]'):
-                if u := link.attributes.get("href"): metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
+            # Only take the first race link for each track container (Memory Directive Fix)
+            first_link = container.css_first('a[href*="/entries/"]')
+            if first_link:
+                if u := first_link.attributes.get("href"):
+                    metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
         if not metadata:
             self.logger.warning("No metadata found", context="StandardbredCanada Index Parsing")
             return None
@@ -2358,10 +2388,12 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             # If it's an index page for a track, we need to extract individual race links
             if "RaceCardIndex" in p.get("url", ""):
                 sub_parser = HTMLParser(html_content)
+                # Only take the first race link for this track (Memory Directive Fix)
                 for a in sub_parser.css("a"):
                     sh = (a.attributes.get("href") or "").replace("\\", "/")
                     if "/static/entry/" in sh and date_str in sh and "RaceCardIndex" not in sh:
                         extra_links.append(sh)
+                        break
             else:
                 all_htmls.append(html_content)
 
@@ -4794,7 +4826,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         parser = HTMLParser(index_response.text)
         # Find all links to individual race pages
-        race_links = set()
+        track_links = defaultdict(list)
         # Broaden selectors for race links
         for selector in ["a.race-time-link[href]", "a[href*='/horse-racing/'][href*='/20']", ".rf__link"]:
             for a in parser.css(selector):
@@ -4802,9 +4834,20 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 if href and not href.endswith("/horse-racing"):
                     # Ensure absolute URL
                     full_url = href if href.startswith("http") else f"{self.BASE_URL}{href}"
-                    race_links.add(full_url)
 
-        if not race_links:
+                    # Group by track (everything before time)
+                    # Example: /horse-racing/2026-02-09/bendigo/13:30
+                    track_key = re.sub(r'/\d{1,2}:\d{2}$', '', full_url)
+                    track_links[track_key].append(full_url)
+
+        metadata = []
+        for t_url in track_links:
+            # Only take the first race for each track (Memory Directive Fix)
+            sorted_races = sorted(track_links[t_url])
+            if sorted_races:
+                metadata.append(sorted_races[0])
+
+        if not metadata:
             self.logger.warning("No metadata found", context="Oddschecker Index Parsing", url=index_url)
             return None
 
@@ -4962,12 +5005,26 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
-        links = set()
+        track_links = defaultdict(list)
         for selector in ["a[href*='/racecards/'][href*='/20']", ".rf__link", "a.rf-meeting-race__time"]:
             for a in parser.css(selector):
                 href = a.attributes.get("href")
                 if href and not href.endswith("/racecards"):
-                    links.add(href)
+                    # Group by track (everything before time/race ID)
+                    # Example: /horse-racing/racecards/dundalk/28-january-2026/1432/207/1/view
+                    parts = href.split('/')
+                    if len(parts) >= 5:
+                        track_key = '/'.join(parts[:5])
+                        track_links[track_key].append(href)
+                    else:
+                        track_links[href].append(href)
+
+        links = []
+        for t_key in track_links:
+            # Only take the first race for each track (Memory Directive Fix)
+            sorted_races = sorted(track_links[t_key])
+            if sorted_races:
+                links.append(sorted_races[0])
 
         if not links:
             self.logger.warning("No metadata found", context="Timeform Index Parsing", url=index_url)
