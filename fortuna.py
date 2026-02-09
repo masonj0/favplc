@@ -344,6 +344,17 @@ def now_eastern() -> datetime:
     return datetime.now(EASTERN)
 
 
+def get_optimal_region_at_time(dt: datetime) -> str:
+    """Determine which region has the most active racing at given time."""
+    et_hour = dt.astimezone(EASTERN).hour
+    # US Racing Window: 9am - 11pm ET
+    if 9 <= et_hour < 23:
+        return "USA"
+    # International Window: 11pm - 9am ET (covers AUS/UK morning)
+    else:
+        return "INT"
+
+
 def to_eastern(dt: datetime) -> datetime:
     """Converts a datetime object to US Eastern Time."""
     if dt.tzinfo is None:
@@ -1031,6 +1042,9 @@ class RacePageFetcherMixin:
                             if hasattr(self, 'logger'):
                                 self.logger.debug("fetched_race_page", url=url, status=getattr(resp, 'status', 'unknown'))
                             return {**item, "html": resp.text}
+                        elif resp:
+                            if hasattr(self, 'logger'):
+                                self.logger.warning("failed_fetching_race_page_unexpected_status", url=url, status=getattr(resp, 'status', 'unknown'))
                     except Exception as e:
                         if hasattr(self, 'logger'):
                             self.logger.error("failed_fetching_race_page", url=url, error=str(e))
@@ -1235,7 +1249,9 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         # Index for the day
         index_url = f"/form-guide/thoroughbred/{date}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not resp or not resp.text: return None
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+            return None
         self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
 
         parser = HTMLParser(resp.text)
@@ -1247,7 +1263,9 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                     url = self.BASE_URL + url
                 metadata.append({"url": url})
 
-        if not metadata: return None
+        if not metadata:
+            self.logger.warning("No metadata found", context="SRW Index Parsing", url=index_url)
+            return None
         # Limit to first 50 to avoid hammering
         pages = await self._fetch_race_pages_concurrent(metadata[:50], self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
@@ -1377,12 +1395,19 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             parser = HTMLParser(resp.text)
             metadata.extend(self._extract_race_metadata(parser))
 
+        elif resp:
+            self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+
         if intl_resp and intl_resp.text:
             self._save_debug_snapshot(intl_resp.text, f"atr_intl_index_{date}")
             intl_parser = HTMLParser(intl_resp.text)
             metadata.extend(self._extract_race_metadata(intl_parser))
+        elif intl_resp:
+            self.logger.warning("Unexpected status", status=intl_resp.status, url=intl_url)
 
-        if not metadata: return None
+        if not metadata:
+            self.logger.warning("No metadata found", context="ATR Index Parsing", date=date)
+            return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
 
@@ -1520,7 +1545,8 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.PLAYWRIGHT, enable_js=True, stealth_mode="fast", timeout=45)
+        engine = BrowserEngine.PLAYWRIGHT if ASYNC_SESSIONS_AVAILABLE else BrowserEngine.HTTPX
+        return FetchStrategy(primary_engine=engine, enable_js=(engine != BrowserEngine.HTTPX), stealth_mode="fast", timeout=45)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="greyhounds.attheraces.com", referer="https://greyhounds.attheraces.com/racecards")
@@ -1528,7 +1554,9 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         index_url = f"/racecards/{date}" if date else "/racecards"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not resp: return None
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+            return None
         self._save_debug_snapshot(resp.text, f"atr_grey_index_{date}")
         parser = HTMLParser(resp.text)
         metadata = self._extract_race_metadata(parser)
@@ -1546,7 +1574,9 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                         elif isinstance(loc, dict):
                             if u := loc.get("url"): links.append(u)
             metadata = [{"url": l, "race_number": 0} for l in set(links)]
-        if not metadata: return None
+        if not metadata:
+            self.logger.warning("No metadata found", context="ATR Greyhound Index Parsing", url=index_url)
+            return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
 
@@ -1657,7 +1687,9 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         url = "/sports/horse-racing/race-card"
         resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp or not resp.text: return None
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
+            return None
         self._save_debug_snapshot(resp.text, f"boylesports_index_{date}")
         return {"pages": [{"url": url, "html": resp.text}], "date": date}
 
@@ -1718,11 +1750,15 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         index_url = f"/racing/racecards/{date}/" if date else "/racing/racecards/"
         resp = await self.make_request("GET", index_url, headers=self._get_headers(), follow_redirects=True)
-        if not resp or not resp.text: raise AdapterHttpError(self.source_name, 500, index_url)
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+            raise AdapterHttpError(self.source_name, getattr(resp, 'status', 500), index_url)
         self._save_debug_snapshot(resp.text, f"sportinglife_index_{date}")
         parser = HTMLParser(resp.text)
         metadata = self._extract_race_metadata(parser)
-        if not metadata: return None
+        if not metadata:
+            self.logger.warning("No metadata found", context="SportingLife Index Parsing", url=index_url)
+            return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=8)
         return {"pages": pages, "date": date}
 
@@ -1843,7 +1879,9 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         dt = datetime.strptime(date, "%Y-%m-%d")
         index_url = f"/racing/racecards/{dt.strftime('%d-%m-%Y')}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
-        if not resp or not resp.text: raise AdapterHttpError(self.source_name, 500, index_url)
+        if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+            raise AdapterHttpError(self.source_name, getattr(resp, 'status', 500), index_url)
         self._save_debug_snapshot(resp.text, f"skysports_index_{date}")
         parser = HTMLParser(resp.text)
         metadata = []
@@ -1855,7 +1893,9 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             if "ABD:" in vr: continue
             for i, link in enumerate(meeting.css('a[href*="/racecards/"]')):
                 if h := link.attributes.get("href"): metadata.append({"url": h, "venue_raw": vr, "race_number": i + 1})
-        if not metadata: return None
+        if not metadata:
+            self.logger.warning("No metadata found", context="SkySports Index Parsing", url=index_url)
+            return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=10)
         return {"pages": pages, "date": date}
 
@@ -1972,7 +2012,8 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         self._semaphore = asyncio.Semaphore(3)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.PLAYWRIGHT, enable_js=True, stealth_mode="fast", timeout=45)
+        engine = BrowserEngine.PLAYWRIGHT if ASYNC_SESSIONS_AVAILABLE else BrowserEngine.HTTPX
+        return FetchStrategy(primary_engine=engine, enable_js=(engine != BrowserEngine.HTTPX), stealth_mode="fast", timeout=45)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
@@ -2025,7 +2066,9 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
             pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
             return {"pages": pages, "date": date}
 
-        if not index_html: return None
+        if not index_html:
+            self.logger.warning("No index HTML found", context="StandardbredCanada Index Fetch")
+            return None
         self._save_debug_snapshot(index_html, f"sc_index_{date}")
         parser = HTMLParser(index_html)
         metadata = []
@@ -2036,7 +2079,9 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
             isf = "*" in tn or "*" in (clean_text(container.text()) or "")
             for link in container.css('a[href*="/entries/"]'):
                 if u := link.attributes.get("href"): metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
-        if not metadata: return None
+        if not metadata:
+            self.logger.warning("No metadata found", context="StandardbredCanada Index Parsing")
+            return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=3)
         return {"pages": pages, "date": date}
 
@@ -2100,7 +2145,8 @@ class TabAdapter(BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, rate_limit=2.0)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.PLAYWRIGHT, enable_js=True, stealth_mode="fast", timeout=45)
+        engine = BrowserEngine.PLAYWRIGHT if ASYNC_SESSIONS_AVAILABLE else BrowserEngine.HTTPX
+        return FetchStrategy(primary_engine=engine, enable_js=(engine != BrowserEngine.HTTPX), stealth_mode="fast", timeout=45)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}/dates/{date}/meetings"
@@ -2281,6 +2327,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             except: continue
 
         if not resp or not resp.text:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=resp.url)
             return None
 
         self._save_debug_snapshot(resp.text, f"equibase_index_{date}")
@@ -2296,6 +2343,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 links.append(h_norm)
 
         if not links:
+            self.logger.warning("No links found", context="Equibase Index Parsing", date=date)
             return None
 
         # Fetch initial set of pages
@@ -2475,10 +2523,13 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return {"races": ard, "date": date, "source": self.source_name} if ard else None
 
     def _extract_races_from_page(self, resp, date: str) -> List[Dict[str, Any]]:
-        if Selector is None:
-            self.logger.error("Scrapling Selector not available")
-            return []
-        rd, page = [], Selector(resp.text)
+        if Selector is not None:
+            page = Selector(resp.text)
+        else:
+            self.logger.warning("Scrapling Selector not available, falling back to selectolax")
+            page = HTMLParser(resp.text)
+
+        rd = []
         relems, used = [], None
         for s in self.RACE_CONTAINER_SELECTORS:
             try:
@@ -2496,7 +2547,14 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
         for i, relem in enumerate(relems, 1):
             try:
-                html_str = str(relem.html) if hasattr(relem, 'html') else str(relem)
+                # Handle both Scrapling Selector and Selectolax Node
+                if hasattr(relem, 'html'):
+                    html_str = str(relem.html)
+                elif hasattr(relem, 'raw_html'):
+                     html_str = relem.raw_html.decode('utf-8', 'ignore') if isinstance(relem.raw_html, bytes) else str(relem.raw_html)
+                else:
+                    # Last resort for selectolax: reconstruct HTML or use text
+                    html_str = str(relem)
 
                 # Try to find track name in the card, but fallback to the last seen track
                 # (addressing grouped race cards)
@@ -3756,6 +3814,16 @@ class FortunaDB:
                     )
                 """)
                 conn.execute("""
+                    CREATE TABLE IF NOT EXISTS harvest_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        timestamp TEXT NOT NULL,
+                        region TEXT,
+                        adapter_name TEXT NOT NULL,
+                        race_count INTEGER NOT NULL,
+                        max_odds REAL
+                    )
+                """)
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS tips (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         race_id TEXT NOT NULL,
@@ -3856,8 +3924,19 @@ class FortunaDB:
             await self._run_in_executor(_declutter)
             self.logger.info("Schema migrated to version 3")
 
+        if current_version < 4:
+            # Migration to version 4: Housekeeping & Long-term retention.
+            # 1. Clear the tips table for a fresh start as requested by JB.
+            # 2. Historical retention is now enabled (auto-cleanup removed from future migrations).
+            def _housekeeping():
+                with self._get_conn() as conn:
+                    conn.execute("DELETE FROM tips")
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_housekeeping)
+            self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 3))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 4))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -3896,6 +3975,58 @@ class FortunaDB:
                             self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
             self.logger.info("Migration complete", total=len(rows), converted=converted, errors=errors)
         await self._run_in_executor(_migrate)
+
+    async def log_harvest(self, harvest_summary: Dict[str, Any], region: Optional[str] = None):
+        """Logs harvest performance metrics to the database."""
+        if not self._initialized: await self.initialize()
+
+        def _log():
+            conn = self._get_conn()
+            now = datetime.now(EASTERN).isoformat()
+            to_insert = []
+            for adapter, data in harvest_summary.items():
+                if isinstance(data, dict):
+                    count = data.get("count", 0)
+                    max_odds = data.get("max_odds", 0.0)
+                else:
+                    count = data
+                    max_odds = 0.0
+
+                to_insert.append((now, region, adapter, count, max_odds))
+
+            if to_insert:
+                with conn:
+                    conn.executemany("""
+                        INSERT INTO harvest_logs (timestamp, region, adapter_name, race_count, max_odds)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, to_insert)
+
+        await self._run_in_executor(_log)
+
+    async def get_adapter_scores(self, days: int = 30) -> Dict[str, float]:
+        """Calculates historical performance scores for each adapter."""
+        if not self._initialized: await self.initialize()
+
+        def _get():
+            conn = self._get_conn()
+            cutoff = (datetime.now(EASTERN) - timedelta(days=days)).isoformat()
+            cursor = conn.execute("""
+                SELECT adapter_name,
+                       AVG(race_count) as avg_count,
+                       AVG(max_odds) as avg_max_odds
+                FROM harvest_logs
+                WHERE timestamp > ?
+                GROUP BY adapter_name
+            """, (cutoff,))
+
+            scores = {}
+            for row in cursor.fetchall():
+                # Heuristic: Score = Avg Race Count + (Avg Max Odds * 2)
+                # This prioritizes adapters that find races and high longshots
+                scores[row["adapter_name"]] = (row["avg_count"] or 0) + ((row["avg_max_odds"] or 0) * 2)
+            return scores
+
+        return await self._run_in_executor(_get)
 
     async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 12):
         """Logs new tips to the database with batch deduplication."""
@@ -4122,8 +4253,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Strict future cutoff to prevent leakage (e.g., 36 hours from now)
-        future_limit = now + timedelta(hours=36)
+        # Strict future cutoff to prevent leakage (Never log more than 20 mins ahead)
+        future_limit = now + timedelta(minutes=20)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -4421,7 +4552,28 @@ class FavoriteToPlaceMonitor:
                         race_map[key] = summary
             except: pass
 
-        self.all_races = list(race_map.values())
+        unique_summaries = list(race_map.values())
+
+        # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
+        # We keep the earliest upcoming race (or very recently started) for each venue,
+        # but only if it falls within the -5 to 20 minute window.
+        next_races_map = {}
+        now = datetime.now(EASTERN)
+        for summary in unique_summaries:
+            st = summary.start_time
+            if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
+
+            # Calculate Minutes to Post
+            diff = st - now
+            mtp = diff.total_seconds() / 60
+
+            v = get_canonical_venue(summary.track)
+            # THE GOLDEN ZONE: -5 to 20 mins
+            if -5 < mtp <= 20:
+                if v not in next_races_map or st < next_races_map[v].start_time:
+                    next_races_map[v] = summary
+
+        self.all_races = list(next_races_map.values())
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -4458,12 +4610,12 @@ class FavoriteToPlaceMonitor:
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
-        # Criteria: Not in BET NOW, but 0 < MTP <= 30 and 2nd Fav Odds >= 4.0
+        # Criteria: Not in BET NOW, but 0 < MTP <= 20 and 2nd Fav Odds >= 4.0
         # and field size <= 8
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.all_races
-            if r.mtp is not None and 0 < r.mtp <= 30
+            if r.mtp is not None and 0 < r.mtp <= 20
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
             and r.field_size <= 8
             and (r.track, r.race_number) not in bet_now_keys
@@ -4642,7 +4794,19 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         parser = HTMLParser(index_response.text)
         # Find all links to individual race pages
-        race_links = {a.attributes["href"] for a in parser.css("a.race-time-link[href]") if a.attributes.get("href")}
+        race_links = set()
+        # Broaden selectors for race links
+        for selector in ["a.race-time-link[href]", "a[href*='/horse-racing/'][href*='/20']", ".rf__link"]:
+            for a in parser.css(selector):
+                href = a.attributes.get("href")
+                if href and not href.endswith("/horse-racing"):
+                    # Ensure absolute URL
+                    full_url = href if href.startswith("http") else f"{self.BASE_URL}{href}"
+                    race_links.add(full_url)
+
+        if not race_links:
+            self.logger.warning("No metadata found", context="Oddschecker Index Parsing", url=index_url)
+            return None
 
         async def fetch_single_html(url_path: str):
             response = await self.make_request("GET", url_path, headers=self._get_headers())
@@ -4798,7 +4962,16 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
-        links = {a.attributes["href"] for a in parser.css("a[href*='/racecards/'][href*='/20']") if a.attributes.get("href") and not a.attributes.get("href").endswith("/racecards")}
+        links = set()
+        for selector in ["a[href*='/racecards/'][href*='/20']", ".rf__link", "a.rf-meeting-race__time"]:
+            for a in parser.css(selector):
+                href = a.attributes.get("href")
+                if href and not href.endswith("/racecards"):
+                    links.add(href)
+
+        if not links:
+            self.logger.warning("No metadata found", context="Timeform Index Parsing", url=index_url)
+            return None
 
         async def fetch_single_html(url_path: str):
             async with self._semaphore:
@@ -5000,11 +5173,16 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             links = index_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
             race_card_urls.extend([link.attributes["href"] for link in links])
 
+        elif index_response:
+            self.logger.warning("Unexpected status", status=index_response.status, url=index_url)
+
         if intl_response and intl_response.text:
             self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
             intl_parser = HTMLParser(intl_response.text)
             intl_links = intl_parser.css('a[data-test-selector^="RC-meetingItem__link_race"]')
             race_card_urls.extend([link.attributes["href"] for link in intl_links])
+        elif intl_response:
+            self.logger.warning("Unexpected status", status=intl_response.status, url=intl_url)
 
         if not race_card_urls:
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
@@ -5320,12 +5498,29 @@ async def run_discovery(
             logger.info("Using loaded races", count=len(loaded_races))
             all_races_raw = loaded_races
             adapters = []
+            # Ensure harvest files exist even for loaded runs (Memory Directive Fix)
+            try:
+                if not os.path.exists("discovery_harvest.json"):
+                    with open("discovery_harvest.json", "w") as f:
+                        json.dump({}, f)
+            except: pass
         else:
             # Auto-discover discovery adapter classes
             adapter_classes = get_discovery_adapter_classes()
 
             if adapter_names:
                 adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
+
+            # Load historical performance scores to prioritize adapters
+            db = FortunaDB()
+            adapter_scores = await db.get_adapter_scores(days=30)
+
+            # Prioritize adapters by score (descending)
+            adapter_classes = sorted(
+                adapter_classes,
+                key=lambda c: adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
+                reverse=True
+            )
 
             adapters = []
             for cls in adapter_classes:
@@ -5353,14 +5548,30 @@ async def run_discovery(
                 results = await asyncio.gather(*fetch_tasks)
                 for adapter_name, r_list in results:
                     all_races_raw.extend(r_list)
-                    harvest_summary[adapter_name] = harvest_summary.get(adapter_name, 0) + len(r_list)
+
+                    # Track count and MaxOdds (Proxy for successful odds fetching)
+                    m_odds = 0.0
+                    for r in r_list:
+                        for run in r.runners:
+                            if run.win_odds and run.win_odds > m_odds:
+                                m_odds = float(run.win_odds)
+
+                    if adapter_name not in harvest_summary:
+                        harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
+                    harvest_summary[adapter_name]["count"] += len(r_list)
+                    if m_odds > harvest_summary[adapter_name]["max_odds"]:
+                        harvest_summary[adapter_name]["max_odds"] = m_odds
 
                 logger.info("Fetched total races", count=len(all_races_raw))
 
-                # Save discovery harvest summary for GHA reporting
+                # Save discovery harvest summary for GHA reporting and DB persistence
                 try:
                     with open("discovery_harvest.json", "w") as f:
                         json.dump(harvest_summary, f)
+
+                    db = FortunaDB()
+                    await db.log_harvest(harvest_summary, region=region)
                 except: pass
 
             finally:
@@ -5439,6 +5650,40 @@ async def run_discovery(
 
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
+
+        # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
+        # We keep the earliest upcoming race (or very recently started) for each venue,
+        # but only if it falls within the -5 to 20 minute window.
+        next_races_map = {}
+        now = datetime.now(EASTERN)
+        for race in unique_races:
+            st = race.start_time
+            if isinstance(st, str):
+                try:
+                    st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
+                    continue
+            if st.tzinfo is None:
+                st = st.replace(tzinfo=EASTERN)
+
+            # Calculate Minutes to Post
+            diff = st - now
+            mtp = diff.total_seconds() / 60
+
+            v = get_canonical_venue(race.venue)
+            # THE GOLDEN ZONE: -5 to 20 mins
+            if -5 < mtp <= 20:
+                if v not in next_races_map or st < next_races_map[v].start_time:
+                    next_races_map[v] = race
+                    logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
+
+        unique_races = list(next_races_map.values())
+        if not unique_races:
+            logger.warning("🔭 No 'Immediate Gold' races found (0-20 mins).")
+            # We continue instead of returning to allow the rest of the discovery process (saving reports, etc)
+            # but no tips will be logged or processed.
+
+        logger.info("Filtered to Next Race per track in Golden Zone", count=len(unique_races))
 
         # Save raw fetched/merged races if requested
         if save_path:
@@ -5724,6 +5969,11 @@ async def main_all_in_one():
         return
 
     adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
+
+    # Auto-select region if not specified
+    if not args.region:
+        args.region = get_optimal_region_at_time(datetime.now(EASTERN))
+        structlog.get_logger().info("Auto-selected region", region=args.region)
 
     # Region-based adapter filtering
     if args.region:
