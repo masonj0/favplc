@@ -67,7 +67,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     print("=" * 60)
 
     # Pre-flight checks
-    required_packages = ["PyInstaller", "pydantic", "httpx", "structlog"]
+    required_packages = ["PyInstaller", "pydantic", "httpx", "structlog", "setuptools"]
     missing = []
 
     for pkg in required_packages:
@@ -167,6 +167,10 @@ def build_exe(console_mode: bool = True, debug: bool = False):
 
         # Notifications
         "winotify",
+
+        # Build tools
+        "setuptools",
+        "pkg_resources",
 
         # Uvicorn internals
         "uvicorn.logging",

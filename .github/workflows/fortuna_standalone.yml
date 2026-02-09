@@ -33,7 +33,7 @@ jobs:
           restore-keys: fortuna-db-
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
           playwright install --with-deps chromium
@@ -73,7 +73,7 @@ jobs:
           restore-keys: fortuna-db-
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
           playwright install --with-deps chromium
@@ -113,7 +113,7 @@ jobs:
           restore-keys: fortuna-db-
       - name: Install dependencies
         run: |
-          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
       - name: Run Results Audit
@@ -172,7 +172,9 @@ jobs:
             --output-json "raw_races.json" \
             --output-db "fortuna.db"
       - name: Install summary dependencies
-        run: python3 -m pip install -r requirements.txt
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
       - name: Run Monitor Report
         run: python3 fortuna.py --load "raw_races.json" --monitor --once
       - name: Generate Job Summary

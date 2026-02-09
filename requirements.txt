@@ -68,6 +68,7 @@ requests==2.31.0
 scrapling==0.3.14
 playwright==1.49.1
 pyee==12.0.0
+setuptools==69.5.1
 secretstorage==3.3.3
 selectolax==0.3.20
 six==1.16.0
@@ -86,6 +87,6 @@ uvicorn[standard]==0.24.0
 watchfiles==0.20.0
 winotify==1.1.0
 websockets==12.0
-wheel==0.41.2
+wheel==0.46.3
 wrapt==1.16.0
 wsproto==1.2.0
