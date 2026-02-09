@@ -5634,7 +5634,7 @@ async def run_discovery(
 
                     db = FortunaDB()
                     await db.log_harvest(harvest_summary, region=region)
-                except: pass
+                except Exception: pass
 
             finally:
                 # Shutdown adapters
