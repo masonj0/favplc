@@ -75,13 +75,19 @@ def build_exe(console_mode: bool = True, debug: bool = False):
             if pkg == "PyInstaller":
                 import PyInstaller
             else:
-                __import__(pkg.lower())
-        except ImportError:
+                __import__(pkg)
+            print(f"[OK] Found {pkg}")
+        except ImportError as e:
+            print(f"[MISSING] {pkg}: {e}")
             missing.append(pkg)
 
     if missing:
-        print(f"Error: Missing required packages: {', '.join(missing)}")
-        print(f"\nPlease install with: pip install {' '.join(missing)}")
+        print(f"\nError: Missing required packages: {', '.join(missing)}")
+        print(f"Please install with: python -m pip install {' '.join(missing)}")
+        # Print current sys.path for debugging
+        print("\nCurrent Python Path:")
+        for p in sys.path:
+            print(f"  - {p}")
         sys.exit(1)
 
     script_path = "fortuna.py"
