@@ -23,11 +23,11 @@ def create_version_info():
       StringTable(
         u'040904B0',
         [StringStruct(u'CompanyName', u'Fortuna Intelligence'),
-        StringStruct(u'FileDescription', u'Fortuna All-In-One Intelligence Monolith'),
+        StringStruct(u'FileDescription', u'Fortuna Faucet Portable App'),
         StringStruct(u'FileVersion', u'1.0.0'),
-        StringStruct(u'InternalName', u'FortunaMonolith'),
+        StringStruct(u'InternalName', u'FortunaFaucetPortableApp'),
         StringStruct(u'LegalCopyright', u'Copyright (c) {year}'),
-        StringStruct(u'OriginalFilename', u'FortunaMonolith.exe'),
+        StringStruct(u'OriginalFilename', u'FortunaFaucetPortableApp.exe'),
         StringStruct(u'ProductName', u'Fortuna Intelligence'),
         StringStruct(u'ProductVersion', u'1.0.0')])
       ]),
@@ -97,7 +97,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     args = [
         script_path,
         "--onefile",
-        "--name=FortunaMonolith",
+        "--name=FortunaFaucetPortableApp",
         "--clean",
         "--version-file=version_info.txt",
     ]
@@ -238,7 +238,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     try:
         PyInstaller.__main__.run(args)
 
-        exe_path = os.path.join("dist", "FortunaMonolith.exe")
+        exe_path = os.path.join("dist", "FortunaFaucetPortableApp.exe")
         if os.path.exists(exe_path):
             size_mb = os.path.getsize(exe_path) / (1024 * 1024)
             print("\n" + "=" * 60)
