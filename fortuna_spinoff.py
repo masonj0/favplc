@@ -36,6 +36,7 @@ from typing import (
     Final,
     List,
     Optional,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -50,6 +51,7 @@ from contextlib import asynccontextmanager
 import structlog
 import subprocess
 import sys
+import threading
 import webbrowser
 from pydantic import (
     BaseModel,
@@ -127,8 +129,10 @@ EASTERN = ZoneInfo("America/New_York")
 # Region-based adapter lists
 USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires"}
 INT_DISCOVERY_ADAPTERS: Final[set] = set()
+
 USA_RESULTS_ADAPTERS: Final[set] = set()
 INT_RESULTS_ADAPTERS: Final[set] = set()
+
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
@@ -324,7 +328,7 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     return getattr(obj, field_name, default)
 
 
-def clean_text(text: Optional[str]) -> Optional[str]:
+def clean_text(text: Any) -> str:
     """Strips leading/trailing whitespace and collapses internal whitespace."""
     if not text:
         return ""
@@ -336,7 +340,9 @@ def node_text(n: Any) -> str:
     if n is None:
         return ""
     # Selectolax nodes have a .text() method, Scrapling Selectors have a .text property
-    txt = getattr(n, "text", "")
+    txt = getattr(n, "text", None)
+    if txt is None:
+        return ""
     return txt().strip() if callable(txt) else str(txt).strip()
 
 
@@ -380,7 +386,7 @@ def ensure_eastern(dt: datetime) -> datetime:
     """Ensures datetime is timezone-aware and in Eastern time. More strict than to_eastern."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
-    if dt.tzinfo != EASTERN:
+    if str(dt.tzinfo) != str(EASTERN):
         return dt.astimezone(EASTERN)
     return dt
 
@@ -570,7 +576,7 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
         int_match = re.match(r"^(\d+)$", s)
         if int_match:
             val = int(int_match.group(1))
-            if val >= 2: # "2" -> 2/1 -> 3.0
+            if val >= 1: # "1" -> 1/1 -> 2.0
                 return float(val + 1)
 
     except Exception: pass
@@ -699,12 +705,15 @@ class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _httpx_client: Optional[httpx.AsyncClient] = None
     _lock: Optional[asyncio.Lock] = None
+    _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
     _global_semaphore: Optional[asyncio.Semaphore] = None
 
     @classmethod
     async def _get_lock(cls) -> asyncio.Lock:
         if cls._lock is None:
-            cls._lock = asyncio.Lock()
+            with cls._lock_initialized:
+                if cls._lock is None:
+                    cls._lock = asyncio.Lock()
         return cls._lock
 
     @classmethod
@@ -739,7 +748,8 @@ class GlobalResourceManager:
                 cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
             except RuntimeError:
                 # Fallback if called outside a loop
-                return asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+                cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+                return cls._global_semaphore
         return cls._global_semaphore
 
     @classmethod
@@ -972,8 +982,8 @@ class RateLimiter:
                     return
                 wait_time = (1 - self._tokens) / self.requests_per_second
 
-            if wait_time > 0:
-                await asyncio.sleep(wait_time)
+            if wait_time >= 0:
+                await asyncio.sleep(max(wait_time, 0.01))
 
 
 class AdapterMetrics:
@@ -1076,10 +1086,9 @@ class RacePageFetcherMixin:
             url = item.get("url")
             if not url: return None
 
-            # Move sleep outside semaphores to avoid holding slots (Performance Fix)
-            await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
-
             async with local_sem:
+                    # Stagger requests by sleeping inside the semaphore (Project Convention)
+                    await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
                     try:
                         if hasattr(self, 'logger'):
                             self.logger.debug("fetching_race_page", url=url)
@@ -1102,117 +1111,6 @@ class RacePageFetcherMixin:
 
 
 # --- BASE ADAPTER ---
-class BaseAdapterV3(ABC):
-    ADAPTER_TYPE: ClassVar[str] = "discovery"
-
-    def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
-        self.source_name = source_name
-        self.base_url = base_url.rstrip("/")
-        self.config = config or {}
-        # Merge kwargs into config
-        self.config.update(kwargs)
-
-        # Override rate_limit from config if present
-        actual_rate_limit = float(self.config.get("rate_limit", rate_limit))
-
-        self.logger = structlog.get_logger(adapter_name=self.source_name)
-        self.circuit_breaker = CircuitBreaker(
-            failure_threshold=int(self.config.get("failure_threshold", 5)),
-            recovery_timeout=float(self.config.get("recovery_timeout", 60.0))
-        )
-        self.rate_limiter = RateLimiter(requests_per_second=actual_rate_limit)
-        self.metrics = AdapterMetrics()
-        self.smart_fetcher = SmartFetcher(strategy=self._configure_fetch_strategy())
-        self.last_race_count = 0
-        self.last_duration_s = 0.0
-
-    @abstractmethod
-    def _configure_fetch_strategy(self) -> FetchStrategy: pass
-    @abstractmethod
-    async def _fetch_data(self, date: str) -> Optional[Any]: pass
-    @abstractmethod
-    def _parse_races(self, raw_data: Any) -> List[Race]: pass
-
-    async def get_races(self, date: str) -> List[Race]:
-        start = time.time()
-        try:
-            # Check for browser requirement in monolith mode
-            strategy = self.smart_fetcher.strategy
-            if is_frozen() and strategy.primary_engine in [BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX]:
-                self.logger.info("Skipping browser-dependent adapter in monolith mode")
-                return []
-
-            if not await self.circuit_breaker.allow_request(): return []
-            await self.rate_limiter.acquire()
-            raw = await self._fetch_data(date)
-            if not raw:
-                await self.circuit_breaker.record_failure()
-                return []
-            races = self._validate_and_parse_races(raw)
-            self.last_race_count = len(races)
-            self.last_duration_s = time.time() - start
-            await self.circuit_breaker.record_success()
-            await self.metrics.record_success(self.last_duration_s * 1000)
-            return races
-        except Exception as e:
-            self.logger.error("Adapter failed", error=str(e))
-            await self.circuit_breaker.record_failure()
-            await self.metrics.record_failure(str(e))
-            return []
-
-    def _validate_and_parse_races(self, raw_data: Any) -> List[Race]:
-        races = self._parse_races(raw_data)
-        for r in races:
-            # Global heuristic for runner numbers (addressing "impossible" high numbers)
-            active_runners = [run for run in r.runners if not run.scratched]
-            field_size = len(active_runners)
-
-            # If any runner has a number > 20 and it's also > field_size + 10 (buffer)
-            # or if it's extremely high (> 100), re-index everything as it's likely a parsing error (horse IDs).
-            # Also re-index if all numbers are missing/zero.
-            suspicious = all(run.number == 0 or run.number is None for run in r.runners)
-            if not suspicious:
-                for run in r.runners:
-                    if run.number:
-                        if run.number > 100 or (run.number > 20 and run.number > field_size + 10):
-                            suspicious = True
-                            break
-
-            if suspicious:
-                self.logger.warning("suspicious_runner_numbers", venue=r.venue, field_size=field_size)
-                for i, run in enumerate(r.runners):
-                    run.number = i + 1
-
-            for runner in r.runners:
-                if not runner.scratched and (runner.win_odds is None or runner.win_odds <= 0):
-                    runner.win_odds = DEFAULT_ODDS_FALLBACK
-        valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
-        return valid
-
-    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
-        self.logger.debug("Requesting", method=method, url=full_url)
-        # Apply global concurrency limit (Memory Directive Fix)
-        async with GlobalResourceManager.get_global_semaphore():
-            try:
-                resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
-                status = getattr(resp, 'status', 'unknown')
-                self.logger.debug("Response received", method=method, url=full_url, status=status)
-                return resp
-            except Exception as e:
-                self.logger.error("Request failed", method=method, url=full_url, error=str(e))
-                return None
-
-    async def close(self) -> None: await self.smart_fetcher.close()
-    async def shutdown(self) -> None: await self.close()
-
-# ============================================================================
-# ADAPTER IMPLEMENTATIONS
-# ============================================================================
-
-# ----------------------------------------
-# SkyRacingWorldAdapter
-# ----------------------------------------
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
     BASE_URL: ClassVar[str] = "https://www.equibase.com"
@@ -1299,7 +1197,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         all_htmls = []
         extra_links = []
         try:
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -1593,8 +1491,11 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         page = rd.get("selector")
         hc = rd.get("html", "")
         if not page:
-            if not hc or Selector is None: return None
-            page = Selector(hc)
+            if not hc: return None
+            if Selector is not None:
+                page = Selector(hc)
+            else:
+                page = HTMLParser(hc)
         tn, rnum = rd.get("track", "Unknown"), rd.get("race_number", 1)
         st = self._parse_post_time(rd.get("post_time_text"), page, ds)
         runners = self._parse_runners(page)
@@ -1719,18 +1620,12 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 log = structlog.get_logger(__name__)
 
 
-def _get_best_win_odds(runner: Runner, refresh: bool = False) -> Optional[Decimal]:
+def _get_best_win_odds(runner: Runner, refresh: bool = True) -> Optional[Decimal]:
     """Gets the best win odds for a runner, filtering out invalid or placeholder values."""
-    # Check if we have already calculated and cached a valid best odds in metadata
-    if not refresh and "best_win_odds_decimal" in runner.metadata:
-        return runner.metadata["best_win_odds_decimal"]
-
     if not runner.odds:
         # Fallback to win_odds if available
         if runner.win_odds and 0 < runner.win_odds < 999:
-            val = Decimal(str(runner.win_odds))
-            runner.metadata["best_win_odds_decimal"] = val
-            return val
+            return Decimal(str(runner.win_odds))
         return None
 
     valid_odds = []
@@ -1746,10 +1641,7 @@ def _get_best_win_odds(runner: Runner, refresh: bool = False) -> Optional[Decima
         if win is not None and 0 < win < 999:
             valid_odds.append(Decimal(str(win)))
 
-    res = min(valid_odds) if valid_odds else None
-    if res is not None:
-        runner.metadata["best_win_odds_decimal"] = res
-    return res
+    return min(valid_odds) if valid_odds else None
 
 
 class BaseAnalyzer(ABC):
@@ -1856,18 +1748,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
         second_favorite_odds = runners_with_odds[1][1]
 
         # --- Calculate Qualification Score (as inspired by the TypeScript Genesis) ---
-        field_score = (self.max_field_size - len(active_runners)) / self.max_field_size
-
-        # Normalize odds scores - cap influence of extremely high odds
-        fav_odds_score = min(float(favorite_odds) / FAV_ODDS_NORMALIZATION, 1.0)
-        sec_fav_odds_score = min(float(second_favorite_odds) / SEC_FAV_ODDS_NORMALIZATION, 1.0)
-
-        # Weighted average
-        odds_score = (fav_odds_score * FAV_ODDS_WEIGHT) + (sec_fav_odds_score * SEC_FAV_ODDS_WEIGHT)
-        final_score = (field_score * FIELD_SIZE_SCORE_WEIGHT) + (odds_score * ODDS_SCORE_WEIGHT)
-
         # --- Apply hard filters before scoring ---
-        # User requested to exclude every race with an odds-on favorite (< 2.0 decimal)
         if (
             len(active_runners) > self.max_field_size
             or favorite_odds < Decimal("2.0")
@@ -1876,7 +1757,15 @@ class TrifectaAnalyzer(BaseAnalyzer):
         ):
             return 0.0
 
-        # field_score can be negative if len(active_runners) > self.max_field_size,
+        field_score = (self.max_field_size - len(active_runners)) / self.max_field_size
+
+        # Normalize odds scores - cap influence of extremely high odds
+        fav_odds_score = min(float(favorite_odds) / FAV_ODDS_NORMALIZATION, 1.0)
+        sec_fav_odds_score = min(float(second_favorite_odds) / SEC_FAV_ODDS_NORMALIZATION, 1.0)
+
+        # Weighted average
+        odds_score = (fav_odds_score * FAV_ODDS_WEIGHT) + (sec_fav_odds_score * SEC_FAV_ODDS_WEIGHT)
+        final_score = (field_score * FIELD_SIZE_SCORE_WEIGHT) + (odds_score * ODDS_SCORE_WEIGHT)        # field_score can be negative if len(active_runners) > self.max_field_size,
         # but the check above handles it. To be safe:
         field_score = max(0.0, field_score)
         score = round(final_score * 100, 2)
@@ -2015,7 +1904,7 @@ class AudioAlertSystem:
 
     def __init__(self):
         self.sounds = {
-            "high_value": Path(__file__).parent.parent.parent / "assets" / "sounds" / "alert_premium.wav",
+            "high_value": Path(__file__).resolve().parent / "assets" / "sounds" / "alert_premium.wav",
         }
         self.enabled = winsound is not None
 
@@ -2061,11 +1950,12 @@ class RaceNotifier:
         message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {race.start_time.strftime('%I:%M %p')}"
 
         try:
-            self.notifier.send({
-                "title": title,
-                "message": message,
-                "urgency": "high" if race.qualification_score >= 80 else "normal"
-            })
+            # Use keyword arguments for better compatibility (AI Review Fix)
+            self.notifier.send(
+                title=title,
+                message=message,
+                urgency="high" if race.qualification_score >= 80 else "normal"
+            )
             self.notified_races.add(race.id)
             self.audio_system.play("high_value")
             log.info("Notification and audio alert sent for high-value race", race_id=race.id)
@@ -2765,12 +2655,14 @@ class FortunaDB:
         self.db_path = db_path or get_db_path()
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._conn = None
+        self._conn_lock = threading.Lock()
         self._initialized = False
         self.logger = structlog.get_logger(self.__class__.__name__)
 
     def _get_conn(self):
-        if not self._conn:
-            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        with self._conn_lock:
+            if not self._conn:
+                self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             # Enable WAL mode for better concurrency
             self._conn.execute("PRAGMA journal_mode=WAL")
@@ -2922,6 +2814,7 @@ class FortunaDB:
             # 1. Clear the tips table for a fresh start as requested by JB.
             # 2. Historical retention is now enabled (auto-cleanup removed from future migrations).
             def _housekeeping():
+                self.logger.warning("Applying destructive migration: Clearing all historical tips for version 4 fresh start.")
                 with self._get_conn() as conn:
                     conn.execute("DELETE FROM tips")
                     conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)", (datetime.now(EASTERN).isoformat(),))
@@ -3228,6 +3121,7 @@ class FortunaDB:
             if self._conn:
                 self._conn.close()
                 self._conn = None
+        self._conn_lock = threading.Lock()
         await self._run_in_executor(_close)
         self._executor.shutdown(wait=True)
 
@@ -3546,6 +3440,7 @@ class FavoriteToPlaceMonitor:
             except Exception: pass
 
         unique_summaries = list(race_map.values())
+        self.all_races = sorted(unique_summaries, key=lambda x: x.start_time)
 
         # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
         # We keep the earliest upcoming race (or very recently started) for each venue,
@@ -3566,7 +3461,7 @@ class FavoriteToPlaceMonitor:
                 if v not in next_races_map or st < next_races_map[v].start_time:
                     next_races_map[v] = summary
 
-        self.all_races = list(next_races_map.values())
+        self.golden_zone_races = list(next_races_map.values())
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -3592,7 +3487,7 @@ class FavoriteToPlaceMonitor:
         # 2. 2nd Fav Odds >= 5.0
         # 3. Field size <= 8 (User Directive)
         bet_now = [
-            r for r in self.all_races
+            r for r in self.golden_zone_races
             if r.mtp is not None and 0 < r.mtp <= 20
             and r.second_fav_odds is not None and r.second_fav_odds >= 5.0
             and r.field_size <= 8
@@ -3607,7 +3502,7 @@ class FavoriteToPlaceMonitor:
         # and field size <= 8
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
-            r for r in self.all_races
+            r for r in self.golden_zone_races
             if r.mtp is not None and 0 < r.mtp <= 20
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
             and r.field_size <= 8
@@ -3753,6 +3648,9 @@ class FavoriteToPlaceMonitor:
 
 
 
+# MASTER ORCHESTRATOR
+# ----------------------------------------
+
 async def run_discovery(
     target_dates: List[str],
     window_hours: Optional[int] = 8,
@@ -3851,7 +3749,6 @@ async def run_discovery(
                             json.dump(harvest_summary, f)
 
                     if harvest_summary:
-                        db = FortunaDB()
                         await db.log_harvest(harvest_summary, region=region)
                 except Exception: pass
 
@@ -3964,20 +3861,19 @@ async def run_discovery(
                     next_races_map[v] = race
                     logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
 
-        unique_races = list(next_races_map.values())
-        if not unique_races:
+        golden_zone_races = list(next_races_map.values())
+        if not golden_zone_races:
             logger.warning("🔭 No 'Immediate Gold' races found (0-20 mins).")
-            # We continue instead of returning to allow the rest of the discovery process (saving reports, etc)
-            # but no tips will be logged or processed.
 
-        logger.info("Filtered to Next Race per track in Golden Zone", count=len(unique_races))
+        logger.info("Filtered to Next Race per track in Golden Zone", count=len(golden_zone_races))
+        logger.info("Total unique races available for summary", count=len(unique_races))
 
-        # Save raw fetched/merged races if requested
+        # Save raw fetched/merged races if requested (Save EVERYTHING unique)
         if save_path:
             try:
                 with open(save_path, "w") as f:
                     json.dump([r.model_dump(mode='json') for r in unique_races], f, indent=4)
-                logger.info("Saved races to file", path=save_path)
+                logger.info("Saved all unique races to file", path=save_path)
             except Exception as e:
                 logger.error("Failed to save races", error=str(e))
 
@@ -3985,12 +3881,12 @@ async def run_discovery(
             logger.info("Fetch-only mode active. Skipping analysis and reporting.")
             return
 
-        # Analyze
+        # Analyze ONLY Golden Zone races for immediate tips
         analyzer = SimplySuccessAnalyzer()
-        result = analyzer.qualify_races(unique_races)
+        result = analyzer.qualify_races(golden_zone_races)
         qualified = result.get("races", [])
 
-        # Generate Grid & Goldmine
+        # Generate Grid & Goldmine (Grid uses unique_races for the broader context)
         grid = generate_summary_grid(qualified, all_races=unique_races)
         logger.info("Summary Grid Generated")
 
