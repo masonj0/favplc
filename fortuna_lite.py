@@ -560,7 +560,7 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
             if val >= 2: # "2" -> 2/1 -> 3.0
                 return float(val + 1)
 
-    except: pass
+    except Exception: pass
     return None
 
 
@@ -569,7 +569,7 @@ def is_valid_odds(odds: Any) -> bool:
     try:
         odds_float = float(odds)
         return MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS
-    except: return False
+    except Exception: return False
 
 
 def create_odds_data(source_name: str, win_odds: Any, place_odds: Any = None) -> Optional[OddsData]:
@@ -1020,7 +1020,7 @@ class DebugMixin:
             with open(f, "w", encoding="utf-8") as out:
                 if url: out.write(f"<!-- URL: {url} -->\n")
                 out.write(content)
-        except: pass
+        except Exception: pass
     def _save_debug_html(self, content: str, filename: str, **kwargs) -> None:
         self._save_debug_snapshot(content, filename)
 
@@ -1202,7 +1202,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
                 if resp and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
                     break
-            except: continue
+            except Exception: continue
 
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=resp.url)
@@ -1271,7 +1271,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
                 if not runners: continue
                 races.append(Race(id=f"eqb_{venue.lower().replace(' ', '')}_{ds}_{rnum_txt}", venue=venue, race_number=int(rnum_txt), start_time=st, runners=runners, source=self.source_name, discipline="Thoroughbred", available_bets=ab))
-            except: continue
+            except Exception: continue
         return races
 
     def _parse_runner(self, node: Node) -> Optional[Runner]:
@@ -1322,12 +1322,12 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             if len(parts) >= 2:
                 dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", "%Y-%m-%d %I:%M %p")
                 return dt.replace(tzinfo=EASTERN)
-        except: pass
+        except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
             dt = datetime.strptime(ds, "%Y-%m-%d")
             return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
-        except:
+        except Exception:
             return datetime.now(EASTERN)
 
 # ----------------------------------------
@@ -1417,7 +1417,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 if el:
                     relems, used = el, s
                     break
-            except: continue
+            except Exception: continue
 
         if not relems:
             return [{"html": resp.text, "selector": page, "track": "Unknown", "race_number": 0, "date": date, "full_page": True}]
@@ -1463,7 +1463,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     "full_page": False,
                     "available_bets": scrape_available_bets(html_str)
                 })
-            except: continue
+            except Exception: continue
         return rd
 
     def _find_with_selectors(self, el, selectors: List[str]) -> Optional[str]:
@@ -1473,7 +1473,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 if f:
                     t = f.text.strip() if hasattr(f, 'text') else str(f).strip()
                     if t: return t
-            except: continue
+            except Exception: continue
         return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
@@ -1483,7 +1483,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             try:
                 r = self._parse_single_race(rd, ds)
                 if r and r.runners: parsed.append(r)
-            except: continue
+            except Exception: continue
         return parsed
 
     def _parse_single_race(self, rd: dict, ds: str) -> Optional[Race]:
@@ -1517,10 +1517,10 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                                 return dt
                             else:
                                 self.logger.debug("Suspicious date in HTML datetime attribute", html_dt=da, expected_date=bd)
-                        except: pass
+                        except Exception: pass
                     p = self._parse_time_string(e.text.strip() if hasattr(e, 'text') else str(e).strip(), bd)
                     if p: return p
-            except: continue
+            except Exception: continue
         return datetime.combine(bd, datetime.now(EASTERN).time()) + timedelta(hours=1)
 
     def _parse_time_string(self, ts: str, bd) -> Optional[datetime]:
@@ -1540,7 +1540,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     t = t.replace(hour=t.hour + 12)
 
                 return datetime.combine(bd, t)
-            except: continue
+            except Exception: continue
         return None
 
     def _parse_runners(self, page) -> List[Runner]:
@@ -1550,12 +1550,12 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             try:
                 el = page.css(s)
                 if el: relems = el; break
-            except: continue
+            except Exception: continue
         for i, e in enumerate(relems):
             try:
                 r = self._parse_single_runner(e, i + 1)
                 if r: runners.append(r)
-            except: continue
+            except Exception: continue
         return runners
 
     def _parse_single_runner(self, e, dn: int) -> Optional[Runner]:
@@ -1573,7 +1573,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                         if val <= 40:
                             num = val
                             break
-            except: continue
+            except Exception: continue
         name = None
         for s in ['[class*="horse-name"]', '[class*="horseName"]', '[class*="runner-name"]', 'a[class*="name"]', '[data-horse-name]', 'td:nth-child(2)']:
             try:
@@ -1581,7 +1581,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                 if ne:
                     nt = ne.text.strip() if hasattr(ne, 'text') else None
                     if nt and len(nt) > 1: name = re.sub(r"\(.*\)", "", nt).strip(); break
-            except: continue
+            except Exception: continue
         if not name: return None
         odds, wo = {}, None
         if not sc:
@@ -1593,7 +1593,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                         if ot and ot.upper() not in ['SCR', 'SCRATCHED', '--', 'N/A']:
                             wo = parse_odds_to_decimal(ot)
                             if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
-                except: continue
+                except Exception: continue
 
             # Advanced heuristic fallback
             if wo is None:
@@ -2283,7 +2283,7 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
         try:
             st = datetime.fromisoformat(start_time_raw.replace('Z', '+00:00'))
             time_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
-        except:
+        except Exception:
             time_str = str(start_time_raw)[:16]
 
         emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
@@ -2533,7 +2533,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         st = get_field(race, 'start_time')
         if isinstance(st, str):
             try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-            except: continue
+            except Exception: continue
         if st and st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
         # Ceiling of 4 hours, ignore races more than 10 mins past
@@ -2844,7 +2844,7 @@ class FortunaDB:
                                 dt_utc = datetime.fromisoformat(val.replace("Z", "+00:00"))
                                 dt_eastern = dt_utc.astimezone(EASTERN)
                                 updates[col] = dt_eastern.isoformat()
-                            except: pass
+                            except Exception: pass
                     if updates:
                         try:
                             set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
@@ -3145,7 +3145,7 @@ class HotTipsTracker:
             st = r.start_time
             if isinstance(st, str):
                 try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-                except: continue
+                except Exception: continue
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
             # Reject races too far in the future
@@ -3430,7 +3430,7 @@ class FavoriteToPlaceMonitor:
                     # Or prefer more detailed available bets
                     elif summary.superfecta_offered and not existing.superfecta_offered:
                         race_map[key] = summary
-            except: pass
+            except Exception: pass
 
         unique_summaries = list(race_map.values())
 
@@ -3664,7 +3664,7 @@ async def run_discovery(
                 if not os.path.exists("discovery_harvest.json"):
                     with open("discovery_harvest.json", "w") as f:
                         json.dump({}, f)
-            except: pass
+            except Exception: pass
         else:
             # Auto-discover discovery adapter classes
             adapter_classes = get_discovery_adapter_classes()
@@ -3733,13 +3733,13 @@ async def run_discovery(
 
                     db = FortunaDB()
                     await db.log_harvest(harvest_summary, region=region)
-                except: pass
+                except Exception: pass
 
             finally:
                 # Shutdown adapters
                 for a in adapters:
                     try: await a.close()
-                    except: pass
+                    except Exception: pass
 
         # Apply time window filter if requested to avoid overloading
         if cutoff:
