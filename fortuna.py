@@ -4135,6 +4135,7 @@ class FortunaDB:
         self.db_path = db_path or get_db_path()
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._conn = None
+        self._conn_lock = threading.Lock()
 
         self._initialized = False
         self.logger = structlog.get_logger(self.__class__.__name__)
