@@ -101,6 +101,10 @@ except (ImportError, RuntimeError):
     winsound = None
 
 
+def get_resp_status(resp: Any) -> Union[int, str]:
+    if hasattr(resp, "status_code"): return resp.status_code
+    return getattr(resp, "status", "unknown")
+
 def is_frozen() -> bool:
     """Check if running as a frozen executable (PyInstaller, cx_Freeze, etc.)"""
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
@@ -251,7 +255,11 @@ class FetchError(Exception):
 
 # --- MODELS ---
 def decimal_serializer(value: Any, handler: Callable[[Any], Any]) -> Any:
-    return float(value)
+    if value is None: return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return handler(value)
 
 
 JsonDecimal = Annotated[Any, WrapSerializer(decimal_serializer, when_used="json")]
@@ -395,9 +403,111 @@ def ensure_eastern(dt: datetime) -> datetime:
     """Ensures datetime is timezone-aware and in Eastern time. More strict than to_eastern."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
-    if str(dt.tzinfo) != str(EASTERN):
+    if dt.tzinfo is not EASTERN:
         return dt.astimezone(EASTERN)
     return dt
+
+
+RACING_KEYWORDS = [
+"PRIX", "CHASE", "HURDLE", "HANDICAP", "STAKES", "CUP", "LISTED", "GBB",
+"RACE", "MEETING", "NOVICE", "TRIAL", "PLATE", "TROPHY", "CHAMPIONSHIP",
+"JOCKEY", "TRAINER", "BEST ODDS", "GUARANTEED", "PRO/AM", "AUCTION",
+"HUNT", "MARES", "FILLIES", "COLTS", "GELDINGS", "JUVENILE", "SELLING",
+"CLAIMING", "OPTIONAL", "ALLOWANCE", "MAIDEN", "OPEN", "INVITATIONAL",
+"CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
+"FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
+"CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
+"GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
+"PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
+"BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
+"4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
+"DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
+"NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
+"SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS"
+]
+
+
+VENUE_MAP = {
+"ABU DHABI": "Abu Dhabi",
+"AQUEDUCT": "Aqueduct",
+"ARGENTAN": "Argentan",
+"ASCOT": "Ascot",
+"AYR": "Ayr",
+"BAHRAIN": "Bahrain",
+"BANGOR ON DEE": "Bangor-on-Dee",
+"CATTERICK": "Catterick",
+"CATTERICK BRIDGE": "Catterick",
+"CENTRAL PARK": "Central Park",
+"CHELMSFORD": "Chelmsford",
+"CHELMSFORD CITY": "Chelmsford",
+"CURRAGH": "Curragh",
+"DEAUVILLE": "Deauville",
+"DELTA DOWNS": "Delta Downs",
+"DONCASTER": "Doncaster",
+"DOVER DOWNS": "Dover Downs",
+"DOWN ROYAL": "Down Royal",
+"DUNDALK": "Dundalk",
+"DUNSTALL PARK": "Wolverhampton",
+"EPSOM": "Epsom",
+"EPSOM DOWNS": "Epsom",
+"FAIR GROUNDS": "Fair Grounds",
+"FONTWELL": "Fontwell Park",
+"FONTWELL PARK": "Fontwell Park",
+"GREAT YARMOUTH": "Great Yarmouth",
+"GULFSTREAM": "Gulfstream Park",
+"GULFSTREAM PARK": "Gulfstream Park",
+"HAYDOCK": "Haydock Park",
+"HAYDOCK PARK": "Haydock Park",
+"HOOSIER PARK": "Hoosier Park",
+"HOVE": "Hove",
+"KEMPTON": "Kempton Park",
+"KEMPTON PARK": "Kempton Park",
+"LAUREL PARK": "Laurel Park",
+"LINGFIELD": "Lingfield Park",
+"LINGFIELD PARK": "Lingfield Park",
+"LOS ALAMITOS": "Los Alamitos",
+"MARONAS": "Maronas",
+"MEADOWLANDS": "Meadowlands",
+"MEYDAN": "Meydan",
+"MIAMI VALLEY": "Miami Valley",
+"MIAMI VALLEY RACEWAY": "Miami Valley",
+"MOHAWK": "Mohawk",
+"MOHAWK PARK": "Mohawk",
+"MUSSELBURGH": "Musselburgh",
+"NAAS": "Naas",
+"NEWCASTLE": "Newcastle",
+"NEWMARKET": "Newmarket",
+"NORTHFIELD PARK": "Northfield Park",
+"OXFORD": "Oxford",
+"PAU": "Pau",
+"POCONO DOWNS": "Pocono Downs",
+"SAM HOUSTON": "Sam Houston",
+"SAM HOUSTON RACE PARK": "Sam Houston",
+"SANDOWN": "Sandown Park",
+"SANDOWN PARK": "Sandown Park",
+"SANTA ANITA": "Santa Anita",
+"SARATOGA": "Saratoga",
+"SARATOGA HARNESS": "Saratoga Harness",
+"SCIOTO DOWNS": "Scioto Downs",
+"SHEFFIELD": "Sheffield",
+"STRATFORD": "Stratford-on-Avon",
+"SUNLAND PARK": "Sunland Park",
+"TAMPA BAY DOWNS": "Tampa Bay Downs",
+"THURLES": "Thurles",
+"TURF PARADISE": "Turf Paradise",
+"TURFFONTEIN": "Turffontein",
+"UTTOXETER": "Uttoxeter",
+"VINCENNES": "Vincennes",
+"WARWICK": "Warwick",
+"WETHERBY": "Wetherby",
+"WOLVERHAMPTON": "Wolverhampton",
+"WOODBINE": "Woodbine",
+"WOODBINE MOHAWK": "Mohawk",
+"WOODBINE MOHAWK PARK": "Mohawk",
+"YARMOUTH": "Great Yarmouth",
+"YONKERS": "Yonkers",
+"YONKERS RACEWAY": "Yonkers",
+}
 
 
 def normalize_venue_name(name: Optional[str]) -> str:
@@ -419,23 +529,6 @@ def normalize_venue_name(name: Optional[str]) -> str:
 
     # 2. Aggressive Race/Meeting Name Stripping
     # If these keywords are found, assume everything after is the race name.
-    RACING_KEYWORDS = [
-        "PRIX", "CHASE", "HURDLE", "HANDICAP", "STAKES", "CUP", "LISTED", "GBB",
-        "RACE", "MEETING", "NOVICE", "TRIAL", "PLATE", "TROPHY", "CHAMPIONSHIP",
-        "JOCKEY", "TRAINER", "BEST ODDS", "GUARANTEED", "PRO/AM", "AUCTION",
-        "HUNT", "MARES", "FILLIES", "COLTS", "GELDINGS", "JUVENILE", "SELLING",
-        "CLAIMING", "OPTIONAL", "ALLOWANCE", "MAIDEN", "OPEN", "INVITATIONAL",
-        "CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
-        "FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
-        "CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
-        "GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
-        "PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
-        "BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
-        "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
-        "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-        "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
-        "SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS"
-    ]
 
     upper_name = cleaned.upper()
     earliest_idx = len(cleaned)
@@ -458,87 +551,6 @@ def normalize_venue_name(name: Optional[str]) -> str:
 
     # 3. High-Confidence Mapping
     # Map raw/cleaned names to canonical display names.
-    VENUE_MAP = {
-        "ABU DHABI": "Abu Dhabi",
-        "AQUEDUCT": "Aqueduct",
-        "ARGENTAN": "Argentan",
-        "ASCOT": "Ascot",
-        "AYR": "Ayr",
-        "BAHRAIN": "Bahrain",
-        "BANGOR ON DEE": "Bangor-on-Dee",
-        "CATTERICK": "Catterick",
-        "CATTERICK BRIDGE": "Catterick",
-        "CENTRAL PARK": "Central Park",
-        "CHELMSFORD": "Chelmsford",
-        "CHELMSFORD CITY": "Chelmsford",
-        "CURRAGH": "Curragh",
-        "DEAUVILLE": "Deauville",
-        "DELTA DOWNS": "Delta Downs",
-        "DONCASTER": "Doncaster",
-        "DOVER DOWNS": "Dover Downs",
-        "DOWN ROYAL": "Down Royal",
-        "DUNDALK": "Dundalk",
-        "DUNSTALL PARK": "Wolverhampton",
-        "EPSOM": "Epsom",
-        "EPSOM DOWNS": "Epsom",
-        "FAIR GROUNDS": "Fair Grounds",
-        "FONTWELL": "Fontwell Park",
-        "FONTWELL PARK": "Fontwell Park",
-        "GREAT YARMOUTH": "Great Yarmouth",
-        "GULFSTREAM": "Gulfstream Park",
-        "GULFSTREAM PARK": "Gulfstream Park",
-        "HAYDOCK": "Haydock Park",
-        "HAYDOCK PARK": "Haydock Park",
-        "HOOSIER PARK": "Hoosier Park",
-        "HOVE": "Hove",
-        "KEMPTON": "Kempton Park",
-        "KEMPTON PARK": "Kempton Park",
-        "LAUREL PARK": "Laurel Park",
-        "LINGFIELD": "Lingfield Park",
-        "LINGFIELD PARK": "Lingfield Park",
-        "LOS ALAMITOS": "Los Alamitos",
-        "MARONAS": "Maronas",
-        "MEADOWLANDS": "Meadowlands",
-        "MEYDAN": "Meydan",
-        "MIAMI VALLEY": "Miami Valley",
-        "MIAMI VALLEY RACEWAY": "Miami Valley",
-        "MOHAWK": "Mohawk",
-        "MOHAWK PARK": "Mohawk",
-        "MUSSELBURGH": "Musselburgh",
-        "NAAS": "Naas",
-        "NEWCASTLE": "Newcastle",
-        "NEWMARKET": "Newmarket",
-        "NORTHFIELD PARK": "Northfield Park",
-        "OXFORD": "Oxford",
-        "PAU": "Pau",
-        "POCONO DOWNS": "Pocono Downs",
-        "SAM HOUSTON": "Sam Houston",
-        "SAM HOUSTON RACE PARK": "Sam Houston",
-        "SANDOWN": "Sandown Park",
-        "SANDOWN PARK": "Sandown Park",
-        "SANTA ANITA": "Santa Anita",
-        "SARATOGA": "Saratoga",
-        "SARATOGA HARNESS": "Saratoga Harness",
-        "SCIOTO DOWNS": "Scioto Downs",
-        "SHEFFIELD": "Sheffield",
-        "STRATFORD": "Stratford-on-Avon",
-        "SUNLAND PARK": "Sunland Park",
-        "TAMPA BAY DOWNS": "Tampa Bay Downs",
-        "THURLES": "Thurles",
-        "TURF PARADISE": "Turf Paradise",
-        "TURFFONTEIN": "Turffontein",
-        "UTTOXETER": "Uttoxeter",
-        "VINCENNES": "Vincennes",
-        "WARWICK": "Warwick",
-        "WETHERBY": "Wetherby",
-        "WOLVERHAMPTON": "Wolverhampton",
-        "WOODBINE": "Woodbine",
-        "WOODBINE MOHAWK": "Mohawk",
-        "WOODBINE MOHAWK PARK": "Mohawk",
-        "YARMOUTH": "Great Yarmouth",
-        "YONKERS": "Yonkers",
-        "YONKERS RACEWAY": "Yonkers",
-    }
 
     # Direct match
     if upper_track in VENUE_MAP:
@@ -612,7 +624,7 @@ def scrape_available_bets(html_content: str) -> List[str]:
     available_bets: List[str] = []
     html_lower = html_content.lower()
     for kw, bet_name in BET_TYPE_KEYWORDS.items():
-        if kw in html_lower and bet_name not in available_bets:
+        if re.search(rf"\b{re.escape(kw)}\b", html_lower) and bet_name not in available_bets:
             available_bets.append(bet_name)
     return available_bets
 
@@ -715,17 +727,18 @@ class DataValidationPipeline:
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _httpx_client: Optional[httpx.AsyncClient] = None
-    _lock: Optional[asyncio.Lock] = None
+    _locks: ClassVar[dict[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
     _global_semaphore: Optional[asyncio.Semaphore] = None
 
     @classmethod
     async def _get_lock(cls) -> asyncio.Lock:
-        if cls._lock is None:
+        loop = asyncio.get_running_loop()
+        if loop not in cls._locks:
             with cls._lock_initialized:
-                if cls._lock is None:
-                    cls._lock = asyncio.Lock()
-        return cls._lock
+                if loop not in cls._locks:
+                    cls._locks[loop] = asyncio.Lock()
+        return cls._locks[loop]
 
     @classmethod
     async def get_httpx_client(cls, timeout: Optional[int] = None) -> httpx.AsyncClient:
@@ -976,10 +989,17 @@ class RateLimiter:
     _tokens: float = field(default=10.0, init=False)
     _last_update: float = field(default_factory=time.time, init=False)
     _lock: Optional[asyncio.Lock] = field(default=None, init=False)
+    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
 
     def _get_lock(self) -> asyncio.Lock:
         if self._lock is None:
-            self._lock = asyncio.Lock()
+            with self._lock_sentinel:
+                if self._lock is None:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        self._lock = asyncio.Lock()
+                    except RuntimeError:
+                        pass
         return self._lock
 
     async def acquire(self) -> None:
@@ -1002,6 +1022,7 @@ class RateLimiter:
 
 class AdapterMetrics:
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self.total_requests = 0
         self.successful_requests = 0
         self.failed_requests = 0
@@ -1012,13 +1033,15 @@ class AdapterMetrics:
     def success_rate(self) -> float:
         return self.successful_requests / self.total_requests if self.total_requests > 0 else 1.0
     async def record_success(self, latency_ms: float) -> None:
-        self.total_requests += 1
+        with self._lock:
+            self.total_requests += 1
         self.successful_requests += 1
         self.total_latency_ms += latency_ms
         self.consecutive_failures = 0
         self.last_failure_reason: Optional[str] = None
     async def record_failure(self, error: str) -> None:
-        self.total_requests += 1
+        with self._lock:
+            self.total_requests += 1
         self.failed_requests += 1
         self.consecutive_failures += 1
         self.last_failure_reason = error
@@ -1073,7 +1096,7 @@ class JSONParsingMixin:
 
 class BrowserHeadersMixin:
     def _get_browser_headers(self, host: Optional[str] = None, referer: Optional[str] = None, **extra: str) -> Dict[str, str]:
-        h = {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT, "sec-ch-ua": CHROME_SEC_CH_UA, "sec-ch-ua-mobile": "0", "sec-ch-ua-platform": '"Windows"'}
+        h = {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT, "sec-ch-ua": CHROME_SEC_CH_UA, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"'}
         if host: h["Host"] = host
         if referer: h["Referer"] = referer
         h.update(extra)
@@ -1221,7 +1244,7 @@ class BaseAdapterV3(ABC):
         async with GlobalResourceManager.get_global_semaphore():
             try:
                 resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
-                status = getattr(resp, 'status', 'unknown')
+                status = get_resp_status(resp)
                 self.logger.debug("Response received", method=method, url=full_url, status=status)
                 return resp
             except Exception as e:
@@ -1236,7 +1259,7 @@ class BaseAdapterV3(ABC):
 # ============================================================================
 
 # ----------------------------------------
-# SkyRacingWorldAdapter
+# EquibaseAdapter
 # ----------------------------------------
 class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     """
@@ -2119,7 +2142,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         return self._get_browser_headers(host="www.skysports.com", referer="https://www.skysports.com/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = datetime.strptime(ds, "%Y-%m-%d")
         index_url = f"/racing/racecards/{dt.strftime('%d-%m-%Y')}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         if not resp or not resp.text:
@@ -2130,7 +2153,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         metadata = []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2286,7 +2309,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = datetime.strptime(ds, "%Y-%m-%d")
         date_label = dt.strftime(f"%A %b {dt.day}, %Y")
         date_short = dt.strftime("%m%d") # e.g. 0208
 
@@ -2592,7 +2615,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return self._get_browser_headers(host="www.equibase.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = datetime.strptime(ds, "%Y-%m-%d")
         date_str = dt.strftime("%m%d%y")
 
         # Try different possible index URLs
@@ -2652,7 +2675,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         all_htmls = []
         extra_links = []
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -3075,7 +3098,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 log = structlog.get_logger(__name__)
 
 
-def _get_best_win_odds(runner: Runner, refresh: bool = True) -> Optional[Decimal]:
+def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
     """Gets the best win odds for a runner, filtering out invalid or placeholder values."""
     if not runner.odds:
         # Fallback to win_odds if available
@@ -3123,7 +3146,9 @@ class TrifectaAnalyzer(BaseAnalyzer):
         max_field_size: int = 14,
         min_favorite_odds: float = 0.01,
         min_second_favorite_odds: float = 0.01,
+        **kwargs
     ):
+        super().__init__(**kwargs)
         self.max_field_size = max_field_size
         self.min_favorite_odds = Decimal(str(min_favorite_odds))
         self.min_second_favorite_odds = Decimal(str(min_second_favorite_odds))
@@ -3220,9 +3245,9 @@ class TrifectaAnalyzer(BaseAnalyzer):
 
         # Weighted average
         odds_score = (fav_odds_score * FAV_ODDS_WEIGHT) + (sec_fav_odds_score * SEC_FAV_ODDS_WEIGHT)
-        final_score = (field_score * FIELD_SIZE_SCORE_WEIGHT) + (odds_score * ODDS_SCORE_WEIGHT)        # field_score can be negative if len(active_runners) > self.max_field_size,
-        # but the check above handles it. To be safe:
         field_score = max(0.0, field_score)
+        final_score = (field_score * FIELD_SIZE_SCORE_WEIGHT) + (odds_score * ODDS_SCORE_WEIGHT)
+        # To be safe:
         score = round(final_score * 100, 2)
         race.qualification_score = score
         return score
@@ -4111,6 +4136,7 @@ class FortunaDB:
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._conn = None
         self._conn_lock = threading.Lock()
+
         self._initialized = False
         self.logger = structlog.get_logger(self.__class__.__name__)
 
@@ -4577,7 +4603,7 @@ class FortunaDB:
             if self._conn:
                 self._conn.close()
                 self._conn = None
-        self._conn_lock = threading.Lock()
+
         await self._run_in_executor(_close)
         self._executor.shutdown(wait=True)
 
@@ -5147,7 +5173,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         metadata = []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -5355,7 +5381,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -5589,7 +5615,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         race_card_urls = []
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
