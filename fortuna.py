@@ -1545,7 +1545,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         track_map = defaultdict(list)
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -1756,7 +1756,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         if not items_raw: return []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -1990,7 +1990,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Index")
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2800,7 +2800,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
-            dt = datetime.strptime(date, "%Y-%m-%d")
+            dt = datetime.strptime(ds, "%Y-%m-%d")
             return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
         except Exception:
             return datetime.now(EASTERN)
@@ -2982,7 +2982,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return Race(discipline=disc, id=generate_race_id("ts", tn, st, rnum, disc), venue=tn, race_number=rnum, start_time=st, runners=runners, distance=rd.get("distance"), source=self.source_name, available_bets=ab)
 
     def _parse_post_time(self, tt: Optional[str], page, ds: str) -> datetime:
-        bd = datetime.strptime(date, "%Y-%m-%d").date()
+        bd = datetime.strptime(ds, "%Y-%m-%d").date()
         if tt:
             p = self._parse_time_string(tt, bd)
             if p: return p
@@ -3489,7 +3489,7 @@ def generate_fortuna_fives(races: List[Any], all_races: Optional[List[Any]] = No
     """Generate the FORTUNA FIVES appendix."""
     lines = ["", "", "FORTUNA FIVES", "-------------"]
     fives = []
-    for race in races:
+    for race in (all_races or races):
         runners = get_field(race, 'runners', [])
         field_size = len([r for r in runners if not get_field(r, 'scratched', False)])
         if field_size == 5:
@@ -3994,7 +3994,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     Sorted by MTP, ceiling of 4 hours from now.
     """
     now = datetime.now(EASTERN)
-    cutoff = now + timedelta(hours=4)
+    cutoff = now + timedelta(hours=18)
 
     # 1. Pre-calculate track categories
     track_categories = {}
@@ -4010,14 +4010,14 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
 
     table_races = []
     seen = set()
-    for race in races:
+    for race in (all_races or races):
         st = get_field(race, 'start_time')
         if isinstance(st, str):
             try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
             except Exception: continue
         if st and st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
-        # Ceiling of 4 hours, ignore races more than 10 mins past
+        # Ceiling of 18 hours, ignore races more than 10 mins past
         if not st or st < now - timedelta(minutes=10) or st > cutoff:
             continue
 
@@ -4900,8 +4900,7 @@ class FavoriteToPlaceMonitor:
                 st = race.start_time
                 if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
-                if cutoff and (st < now - timedelta(minutes=30) or st > cutoff):
-                    continue
+                # Time window filtering removed to ensure all unique races are counted
 
                 summary = self._create_race_summary(race, adapter_name)
                 # Stable key: Canonical Venue + Race Number + Date
@@ -6068,30 +6067,7 @@ async def run_discovery(
                     except Exception: pass
 
         # Apply time window filter if requested to avoid overloading
-        if cutoff:
-            original_count = len(all_races_raw)
-            filtered_races = []
-            for r in all_races_raw:
-                st = r.start_time
-                if isinstance(st, str):
-                    try:
-                        st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-                    except (ValueError, TypeError):
-                        continue
-
-                if st.tzinfo is None:
-                    st = st.replace(tzinfo=EASTERN)
-
-                if now <= st <= cutoff:
-                    filtered_races.append(r)
-
-            all_races_raw = filtered_races
-            logger.info(
-                "Filtered races by time window",
-                window_hours=window_hours,
-                before=original_count,
-                after=len(all_races_raw)
-            )
+        # Initial time window filtering removed to ensure all unique races are tracked for reporting
 
         if not all_races_raw:
             logger.error("No races fetched from any adapter. Discovery aborted.")
