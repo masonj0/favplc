@@ -58,11 +58,17 @@ class DesktopNotifier:
             self.platform = "none"
             self.logger.warning("No native notification system available or supported", platform=sys.platform)
 
-    def send(self, alert: dict):
-        """Send a desktop notification."""
-        title = alert.get("title", "Fortuna Alert")
-        message = alert.get("message", "")
-        urgency = alert.get("urgency", "normal")
+    def send(self, alert: Optional[dict] = None, **kwargs):
+        """
+        Send a desktop notification.
+        Supports both a dictionary 'alert' or direct keyword arguments.
+        """
+        if alert:
+            kwargs.update(alert)
+
+        title = kwargs.get("title", "Fortuna Alert")
+        message = kwargs.get("message", kwargs.get("msg", ""))
+        urgency = kwargs.get("urgency", "normal")
 
         # Always log the notification
         self.logger.info("NOTIFICATION", title=title, message=message, urgency=urgency)

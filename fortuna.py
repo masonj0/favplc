@@ -3396,11 +3396,12 @@ class RaceNotifier:
         message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {race.start_time.strftime('%I:%M %p')}"
 
         try:
-            self.notifier.send({
-                "title": title,
-                "message": message,
-                "urgency": "high" if race.qualification_score >= 80 else "normal"
-            })
+            # Use keyword arguments for better compatibility (AI Review Fix)
+            self.notifier.send(
+                title=title,
+                message=message,
+                urgency="high" if race.qualification_score >= 80 else "normal"
+            )
             self.notified_races.add(race.id)
             self.audio_system.play("high_value")
             log.info("Notification and audio alert sent for high-value race", race_id=race.id)

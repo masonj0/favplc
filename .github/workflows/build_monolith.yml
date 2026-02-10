@@ -6,6 +6,7 @@ on:
       - main
       - jules208
       - jules209
+      - jules210
   workflow_dispatch:
 
 jobs:
