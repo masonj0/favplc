@@ -2102,70 +2102,70 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
             all_results: List[ResultRace] = []
             try:
                 async with managed_adapters(region=region, target_venues=target_venues) as adapters:
-                # Create fetch tasks for all date/adapter combinations
-                async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
-                    try:
-                        races = await adapter.get_races(date_str)
-                        logger.debug(
-                            "Fetched results",
-                            adapter=adapter.source_name,
-                            date=date_str,
-                            count=len(races)
-                        )
-                        return adapter.source_name, races
-                    except Exception as e:
-                        logger.warning(
-                            "Adapter fetch failed",
-                            adapter=adapter.source_name,
-                            date=date_str,
-                            error=str(e)
-                        )
-                        return adapter.source_name, []
+                    # Create fetch tasks for all date/adapter combinations
+                    async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
+                        try:
+                            races = await adapter.get_races(date_str)
+                            logger.debug(
+                                "Fetched results",
+                                adapter=adapter.source_name,
+                                date=date_str,
+                                count=len(races)
+                            )
+                            return adapter.source_name, races
+                        except Exception as e:
+                            logger.warning(
+                                "Adapter fetch failed",
+                                adapter=adapter.source_name,
+                                date=date_str,
+                                error=str(e)
+                            )
+                            return adapter.source_name, []
 
-                # Use a semaphore to limit concurrent adapter fetches (Performance Optimization)
-                sem = asyncio.Semaphore(10)
+                    # Use a semaphore to limit concurrent adapter fetches (Performance Optimization)
+                    sem = asyncio.Semaphore(10)
 
-                async def fetch_limited(a, d):
-                    async with sem:
-                        return await fetch_with_adapter(a, d)
+                    async def fetch_limited(a, d):
+                        async with sem:
+                            return await fetch_with_adapter(a, d)
 
-                tasks = [
-                    fetch_limited(adapter, date_str)
-                    for date_str in valid_dates
-                    for adapter in adapters
-                ]
+                    tasks = [
+                        fetch_limited(adapter, date_str)
+                        for date_str in valid_dates
+                        for adapter in adapters
+                    ]
 
-                fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
+                    fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for res in fetch_results:
-                    if isinstance(res, tuple):
-                        adapter_name, r_list = res
-                        all_results.extend(r_list)
+                    for res in fetch_results:
+                        if isinstance(res, tuple):
+                            adapter_name, r_list = res
+                            all_results.extend(r_list)
 
-                        # Track count and MaxOdds
-                        m_odds = 0.0
-                        for r in r_list:
-                            for run in r.runners:
-                                if getattr(run, 'final_win_odds', None) and run.final_win_odds > m_odds:
-                                    m_odds = float(run.final_win_odds)
+                            # Track count and MaxOdds
+                            m_odds = 0.0
+                            for r in r_list:
+                                for run in r.runners:
+                                    if getattr(run, 'final_win_odds', None) and run.final_win_odds > m_odds:
+                                        m_odds = float(run.final_win_odds)
 
-                        if adapter_name not in harvest_summary:
-                            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+                            if adapter_name not in harvest_summary:
+                                harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
 
-                        harvest_summary[adapter_name]["count"] += len(r_list)
-                        if m_odds > harvest_summary[adapter_name]["max_odds"]:
-                            harvest_summary[adapter_name]["max_odds"] = m_odds
-                    elif isinstance(res, Exception):
-                        logger.warning("Task raised exception", error=str(res))
+                            harvest_summary[adapter_name]["count"] += len(r_list)
+                            if m_odds > harvest_summary[adapter_name]["max_odds"]:
+                                harvest_summary[adapter_name]["max_odds"] = m_odds
+                        elif isinstance(res, Exception):
+                            logger.warning("Task raised exception", error=str(res))
 
-            logger.info("Total results harvested", count=len(all_results))
+                logger.info("Total results harvested", count=len(all_results))
 
-            if not all_results:
-                logger.warning("No results harvested from any source")
-                # We continue to show report if we have previous audits
-            else:
-                # Perform audit
-                await auditor.audit_races(all_results)
+                if not all_results:
+                    logger.warning("No results harvested from any source")
+                    # We continue to show report if we have previous audits
+                else:
+                    # Perform audit
+                    await auditor.audit_races(all_results)
 
             finally:
                 # Save results harvest summary for GHA reporting and DB persistence
