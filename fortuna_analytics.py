@@ -548,6 +548,8 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 
         target_venues = getattr(self, "target_venues", None)
 
+        target_venues = getattr(self, "target_venues", None)
+
         # Pattern 1: Links inside the central content table
         for a in parser.css('table.display a[href*="sum.html"]'):
             venue = fortuna.get_canonical_venue(a.text())

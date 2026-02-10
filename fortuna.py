@@ -2560,7 +2560,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Equibase uses Instart Logic / Imperva; try CURL_CFFI first as it's often more successful if Playwright is detected as headless
         return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
+            primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=60
@@ -2785,7 +2785,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Try CURL_CFFI for TwinSpires as well, sometimes it's less aggressive than Playwright detection
         return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
+            primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=60
@@ -2794,6 +2794,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome120 for TwinSpires to bypass basic bot checks
         kwargs.setdefault("impersonate", "chrome120")
+        kwargs.setdefault("headers", {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -5104,7 +5105,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=120,
+            timeout=90,
             network_idle=True
         )
 
