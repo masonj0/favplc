@@ -428,7 +428,7 @@ def normalize_venue_name(name: Optional[str]) -> str:
         "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
         "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
         "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
-        "SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED"
+        "SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS"
     ]
 
     upper_name = cleaned.upper()
@@ -1317,10 +1317,11 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         parser = HTMLParser(resp.text)
         track_links = defaultdict(list)
         now = now_eastern()
+        today_str = now.strftime("%Y-%m-%d")
 
         # Optimization: If it's late in ET, skip countries that are finished
         # Europe/Turkey/SA usually finished by 18:00 ET
-        skip_finished_countries = now.hour >= 18 or now.hour < 6
+        skip_finished_countries = (now.hour >= 18 or now.hour < 6) and (date == today_str)
         finished_keywords = ["turkey", "south-africa", "united-kingdom", "france", "germany", "dubai", "bahrain"]
 
         for link in parser.css("a.fg-race-link"):
@@ -1777,6 +1778,15 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         try: modules = json.loads(html.unescape(items_raw))
         except Exception: return None
         venue, race_time_str, distance, runners, odds_map = "", "", "", [], {}
+
+        # Try to extract venue from title as high-priority fallback
+        title_node = parser.css_first("title")
+        if title_node:
+            title_text = title_node.text().strip()
+            # Title: "14:26 Oxford Greyhound Racecard..."
+            tm = re.search(r'\d{1,2}:\d{2}\s+(.+?)\s+Greyhound', title_text)
+            if tm:
+                venue = normalize_venue_name(tm.group(1))
         for module in modules:
             m_type, m_data = module.get("type"), module.get("data", {})
             if m_type == "RacecardHero":
@@ -1805,8 +1815,8 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                         g_id = o.get("betParams", {}).get("greyhoundId")
                         price = o.get("value", {}).get("decimal")
                         if g_id and price:
-                            p_val = float(price)
-                            if is_valid_odds(p_val): odds_map[str(g_id)] = p_val
+                            p_val = parse_odds_to_decimal(price)
+                            if p_val and is_valid_odds(p_val): odds_map[str(g_id)] = p_val
                 for t in odds_grid.get("traps", []):
                     trap_num = t.get("trap", 0)
                     name = clean_text(t.get("name", "")) or ""
@@ -1823,9 +1833,11 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                     runners.append(Runner(number=trap_num or 0, name=name, odds=odds_data, win_odds=win_odds))
 
         url_parts = url_path.split("/")
-        if not venue and len(url_parts) >= 4:
+        if not venue:
              # /racecard/GB/oxford/10-February-2026/1426
-             venue = normalize_venue_name(url_parts[3])
+             m = re.search(r'/(?:racecard|result)/[A-Z]{2,3}/([^/]+)', url_path)
+             if m:
+                 venue = normalize_venue_name(m.group(1))
         if not race_time_str and len(url_parts) >= 5:
              race_time_str = url_parts[-1]
         if not venue or not runners: return None
@@ -1857,7 +1869,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         return self._get_browser_headers(host="www.boylesports.com", referer="https://www.google.com/")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        url = "/sports/horse-racing/race-card"
+        url = "/sports/horse-racing"
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
@@ -2379,7 +2391,10 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 # ----------------------------------------
 class TabAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TAB"
-    BASE_URL: ClassVar[str] = "https://api.tab.com.au/v1/tab-info-service/racing"
+    # Note: api.tab.com.au often has DNS resolution issues in some environments.
+    # api.beta.tab.com.au is more reliable.
+    BASE_URL: ClassVar[str] = "https://api.beta.tab.com.au/v1/tab-info-service/racing"
+    BASE_URL_STABLE: ClassVar[str] = "https://api.tab.com.au/v1/tab-info-service/racing"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, rate_limit=2.0)
@@ -2391,6 +2406,12 @@ class TabAdapter(BaseAdapterV3):
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}/dates/{date}/meetings"
         resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
+
+        if not resp or resp.status != 200:
+            self.logger.info("Falling back to STABLE TAB API")
+            url = f"{self.BASE_URL_STABLE}/dates/{date}/meetings"
+            resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
+
         if not resp: return None
         try: data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
         except Exception: return None
@@ -2537,17 +2558,17 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Equibase uses Instart Logic / Imperva which often requires full JS execution
+        # Equibase uses Instart Logic / Imperva; try CURL_CFFI first as it's often more successful if Playwright is detected as headless
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            block_resources=False, # Need scripts for obfuscation bypass
             timeout=60
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
+        # For Equibase, sometimes a simple curl_cffi with chrome120 works better if Playwright is detected
+        # but let's try to be consistent with headers
         kwargs.setdefault("headers", self._get_browser_headers(host="www.equibase.com", referer="https://www.equibase.com/"))
         return await super().make_request(method, url, **kwargs)
 
@@ -2585,6 +2606,16 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         self._save_debug_snapshot(resp.text, f"equibase_index_{date}")
         parser, links = HTMLParser(resp.text), []
+
+        # New: Look for links in JSON data within scripts (Common on Equibase)
+        # Handles escaped slashes and different path separators
+        script_json_matches = re.findall(r'"URL":"([^"]+)"', resp.text)
+        for url in script_json_matches:
+            # Normalizing backslashes and escaped slashes in found URLs
+            url_norm = url.replace("\\/", "/").replace("\\", "/")
+            if "/static/entry/" in url_norm and date_str in url_norm:
+                links.append(url_norm)
+
         for a in parser.css("a"):
             h = a.attributes.get("href") or ""
             c = a.attributes.get("class") or ""
@@ -2752,13 +2783,11 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Try Playwright for better bypass of potential bot detection
+        # Try CURL_CFFI for TwinSpires as well, sometimes it's less aggressive than Playwright detection
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            block_resources=True,
-            max_retries=3,
             timeout=60
         )
 
@@ -5324,10 +5353,10 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             for a in parser.css(selector):
                 href = a.attributes.get("href")
                 if href and not href.endswith("/racecards"):
-                    # URL: /horse-racing/racecards/date/venue/time
+                    # URL: /horse-racing/racecards/venue/date/time/...
                     parts = href.split("/")
                     if len(parts) >= 6:
-                        track = parts[4]
+                        track = parts[3]
                         txt = node_text(a)
                         track_map[track].append({"url": href, "time_txt": txt})
 
@@ -5558,9 +5587,9 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             index_parser = HTMLParser(index_response.text)
 
             # Group by meeting to pick "next" race (Memory Directive Fix)
-            meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('[data-test-selector="RC-meetingItem"]') or index_parser.css('.rp-meetingItem')
+            meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('.RC-meetingItem') or index_parser.css('.rp-meetingItem')
             for meeting in meetings:
-                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time'):
+                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time, a.RC-meetingItem__race__time'):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
@@ -5581,9 +5610,9 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
             intl_parser = HTMLParser(intl_response.text)
 
-            meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('[data-test-selector="RC-meetingItem"]') or intl_parser.css('.rp-meetingItem')
+            meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('.RC-meetingItem') or intl_parser.css('.rp-meetingItem')
             for meeting in meetings:
-                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time'):
+                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time, a.RC-meetingItem__race__time'):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
@@ -5959,9 +5988,8 @@ async def run_discovery(
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
+            harvest_summary = {}
             try:
-                harvest_summary = {}
-
                 async def fetch_one(a, date_str):
                     try:
                         races = await a.get_races(date_str)
@@ -5994,17 +6022,19 @@ async def run_discovery(
                         harvest_summary[adapter_name]["max_odds"] = m_odds
 
                 logger.info("Fetched total races", count=len(all_races_raw))
-
+            finally:
                 # Save discovery harvest summary for GHA reporting and DB persistence
                 try:
-                    with open("discovery_harvest.json", "w") as f:
-                        json.dump(harvest_summary, f)
+                    # Only create if it doesn't exist or we have data
+                    if harvest_summary or not os.path.exists("discovery_harvest.json"):
+                        with open("discovery_harvest.json", "w") as f:
+                            json.dump(harvest_summary, f)
 
-                    db = FortunaDB()
-                    await db.log_harvest(harvest_summary, region=region)
+                    if harvest_summary:
+                        db = FortunaDB()
+                        await db.log_harvest(harvest_summary, region=region)
                 except Exception: pass
 
-            finally:
                 # Shutdown adapters
                 for a in adapters:
                     try: await a.close()
@@ -6038,6 +6068,13 @@ async def run_discovery(
 
         if not all_races_raw:
             logger.error("No races fetched from any adapter. Discovery aborted.")
+            if save_path:
+                try:
+                    with open(save_path, "w") as f:
+                        json.dump([], f)
+                    logger.info("Saved empty race list to file", path=save_path)
+                except Exception as e:
+                    logger.error("Failed to save empty race list", error=str(e))
             return
         
         # Deduplicate
@@ -6384,6 +6421,12 @@ async def ensure_browsers():
         return False
 
 async def main_all_in_one():
+    # Configure logging at the start of main
+    structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(logging.INFO)
+    )
+    # Ensure DB path env is set if passed via argument or already in environment
+    # Actually, we should probably add a --db-path arg here too for parity with analytics
     logger = structlog.get_logger("main")
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
@@ -6395,11 +6438,15 @@ async def main_all_in_one():
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch and save data, skip analysis and reporting")
+    parser.add_argument("--db-path", type=str, help="Path to tip history database")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
     parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
     parser.add_argument("--live-dashboard", action="store_true", help="Show live updating terminal dashboard")
     parser.add_argument("--track-odds", action="store_true", help="Monitor live odds and send notifications")
     args = parser.parse_args()
+
+    if args.db_path:
+        os.environ["FORTUNA_DB_PATH"] = args.db_path
 
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.

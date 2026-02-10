@@ -48,7 +48,7 @@ def generate_summary():
                     try:
                         m_int = int(mtp)
                         mtp_str = f"{m_int:02d}m" if 0 <= m_int < 10 else f"{m_int}m"
-                    except:
+                    except Exception:
                         mtp_str = f"{mtp}m"
 
                     disc = r.get('discipline', 'N/A')
@@ -72,7 +72,7 @@ def generate_summary():
                     try:
                         m_int = int(mtp)
                         mtp_str = f"{m_int:02d}m" if 0 <= m_int < 10 else f"{m_int}m"
-                    except:
+                    except Exception:
                         mtp_str = f"{mtp}m"
 
                     disc = r.get('discipline', 'N/A')
@@ -85,17 +85,20 @@ def generate_summary():
                     top5 = f"`{r['top_five_numbers']}`" if r.get('top_five_numbers') else 'N/A'
                     write_to_summary(f"| {sup} | {mtp_str} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
                 write_to_summary("")
+
+            # 1b. Race Analysis Grid (Moved here as requested by user)
+            if os.path.exists('summary_grid.txt'):
+                write_to_summary("#### 📋 Race Analysis Grid")
+                with open('summary_grid.txt', 'r', encoding='utf-8') as f:
+                    write_to_summary(f.read())
+                write_to_summary("")
+
         except Exception as e:
             write_to_summary(f"❌ Error parsing race_data.json: {e}")
     else:
         write_to_summary("⚠️ race_data.json not found - Discovery may have failed")
 
-    # 2. Race Analysis Grid
-    if os.path.exists('summary_grid.txt'):
-        write_to_summary("### 📋 Race Analysis Grid")
-        with open('summary_grid.txt', 'r', encoding='utf-8') as f:
-            write_to_summary(f.read())
-        write_to_summary("")
+    # 2. Race Analysis Grid (Already handled above)
 
     # 3. Goldmine Intelligence
     if os.path.exists('goldmine_report.txt'):

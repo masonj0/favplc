@@ -182,7 +182,7 @@ class FortunaDashboard:
         st = getattr(race, 'start_time', None)
         if isinstance(st, str):
             try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-            except: return None
+            except Exception: return None
         if st and st.tzinfo is None:
             st = st.replace(tzinfo=EASTERN)
         return st

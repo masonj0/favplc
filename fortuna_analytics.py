@@ -533,11 +533,20 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 
         self._save_debug_snapshot(resp.text, f"eqb_results_index_{date_str}")
         parser = HTMLParser(resp.text)
+        links = set()
+        date_short = dt.strftime('%m%d%y')
+
+        # New: Look for links in JSON data within scripts
+        script_json_matches = re.findall(r'"URL":"([^"]+)"', resp.text)
+        for url in script_json_matches:
+            url_norm = url.replace("\\/", "/").replace("\\", "/")
+            if "sum.html" in url_norm and date_short in url_norm:
+                links.add(url_norm)
 
         # Extract track-specific result page links
         # Try multiple patterns for robust detection (Memory Directive Fix)
-        links = set()
-        date_short = dt.strftime('%m%d%y')
+
+        target_venues = getattr(self, "target_venues", None)
 
         target_venues = getattr(self, "target_venues", None)
 
@@ -2091,7 +2100,8 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
             logger.info("Targeting venues", venues=list(target_venues))
 
             all_results: List[ResultRace] = []
-            async with managed_adapters(region=region, target_venues=target_venues) as adapters:
+            try:
+                async with managed_adapters(region=region, target_venues=target_venues) as adapters:
                 # Create fetch tasks for all date/adapter combinations
                 async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
                     try:
@@ -2157,14 +2167,17 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
                 # Perform audit
                 await auditor.audit_races(all_results)
 
-            # Save results harvest summary for GHA reporting and DB persistence
-            try:
-                with open("results_harvest.json", "w") as f:
-                    json.dump(harvest_summary, f)
+            finally:
+                # Save results harvest summary for GHA reporting and DB persistence
+                try:
+                    if harvest_summary or not os.path.exists("results_harvest.json"):
+                        with open("results_harvest.json", "w") as f:
+                            json.dump(harvest_summary, f)
 
-                await auditor.db.log_harvest(harvest_summary, region=region)
-            except Exception as e:
-                logger.debug("Failed to log results harvest", error=str(e))
+                    if harvest_summary:
+                        await auditor.db.log_harvest(harvest_summary, region=region)
+                except Exception as e:
+                    logger.debug("Failed to log results harvest", error=str(e))
 
         # Generate and save comprehensive report
         all_audited = await auditor.get_all_audited_tips()

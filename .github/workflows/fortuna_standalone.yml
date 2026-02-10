@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
   fetch-usa:
@@ -34,10 +34,12 @@ jobs:
           python-version: '3.11'
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
       - name: Restore Fortuna Database
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
@@ -75,10 +77,12 @@ jobs:
           python-version: '3.11'
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
       - name: Restore Fortuna Database
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
@@ -116,10 +120,12 @@ jobs:
           python-version: '3.11'
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
       - name: Restore Fortuna Database
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
@@ -157,10 +163,12 @@ jobs:
           python-version: '3.11'
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
       - name: Restore Fortuna Database
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
