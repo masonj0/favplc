@@ -93,10 +93,8 @@ def generate_summary():
     # 2. Race Analysis Grid
     if os.path.exists('summary_grid.txt'):
         write_to_summary("### 📋 Race Analysis Grid")
-        write_to_summary("```text")
         with open('summary_grid.txt', 'r', encoding='utf-8') as f:
             write_to_summary(f.read())
-        write_to_summary("```")
         write_to_summary("")
 
     # 3. Goldmine Intelligence
@@ -130,14 +128,14 @@ def generate_summary():
         try:
             with open('discovery_harvest.json', 'r') as f:
                 discovery_harvest = json.load(f)
-        except: pass
+        except Exception: pass
 
     results_harvest = {}
     if os.path.exists('results_harvest.json'):
         try:
             with open('results_harvest.json', 'r') as f:
                 results_harvest = json.load(f)
-        except: pass
+        except Exception: pass
 
     if discovery_harvest:
         write_to_summary("#### 📋 Entries Adapters")

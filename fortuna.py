@@ -124,6 +124,20 @@ RaceT = TypeVar("RaceT", bound="Race")
 # --- CONSTANTS ---
 EASTERN = ZoneInfo("America/New_York")
 
+# Region-based adapter lists
+USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada"}
+INT_DISCOVERY_ADAPTERS: Final[set] = {
+    "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
+    "TAB", "BetfairDataScientist", "Oddschecker", "Timeform", "BoyleSports",
+    "SportingLife", "SkySports"
+}
+
+USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults"}
+INT_RESULTS_ADAPTERS: Final[set] = {
+    "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
+    "SportingLifeResults", "SkySportsResults"
+}
+
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
@@ -884,15 +898,21 @@ class SmartFetcher:
 
         if not ASYNC_SESSIONS_AVAILABLE:
             raise ImportError("scrapling not available")
+
+        # Scrapling specific kwargs
+        SCRAPLING_KWARGS = ["network_idle", "wait_selector", "wait_until", "stealth_mode", "block_resources", "timeout"]
+        scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
+        if "timeout" not in scrapling_kwargs:
+             scrapling_kwargs["timeout"] = kwargs.get("timeout", self.strategy.timeout)
             
         # For other engines, we use AsyncFetcher from scrapling
         if engine == BrowserEngine.CAMOUFOX:
             async with AsyncStealthySession(headless=True) as s:
-                resp = await s.fetch(url, method=method, **kwargs)
+                resp = await s.fetch(url, method=method, **scrapling_kwargs)
             return resp
         elif engine == BrowserEngine.PLAYWRIGHT:
             async with AsyncDynamicSession(headless=True) as s:
-                resp = await s.fetch(url, method=method, **kwargs)
+                resp = await s.fetch(url, method=method, **scrapling_kwargs)
             return resp
         else:
             # Fallback to simple fetcher
@@ -1281,6 +1301,10 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.skyracingworld.com")
 
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
+
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         # Index for the day
         index_url = f"/form-guide/thoroughbred/{date}"
@@ -1421,6 +1445,13 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "AtTheRaces"
     BASE_URL: ClassVar[str] = "https://www.attheraces.com"
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
         "race_links": ['a.race-navigation-link', 'a.sidebar-racecardsigation-link', 'a[href^="/racecard/"]', 'a[href*="/racecard/"]'],
@@ -1643,8 +1674,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        engine = BrowserEngine.PLAYWRIGHT if ASYNC_SESSIONS_AVAILABLE else BrowserEngine.HTTPX
-        return FetchStrategy(primary_engine=engine, enable_js=(engine != BrowserEngine.HTTPX), stealth_mode="fast", timeout=45)
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="greyhounds.attheraces.com", referer="https://greyhounds.attheraces.com/racecards")
@@ -1720,7 +1750,8 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                     if next_race:
                         r_num = next_race.get("raceNumber") or next_race.get("number") or 1
                         if u := next_race.get("cta", {}).get("href"):
-                            meta.append({"url": u, "race_number": r_num})
+                            if "/racecard/" in u:
+                                meta.append({"url": u, "race_number": r_num})
         except Exception: pass
         return meta
 
@@ -1755,6 +1786,15 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                 if not race_number: race_number = m_data.get("raceNumber") or m_data.get("number")
             if m_type == "OddsGrid":
                 odds_grid = m_data.get("oddsGrid", {})
+
+                # If venue still empty, try to get it from OddsGrid data
+                if not venue:
+                    venue = normalize_venue_name(odds_grid.get("track", ""))
+                if not race_time_str:
+                    race_time_str = odds_grid.get("time", "")
+                if not distance:
+                    distance = odds_grid.get("distance", "")
+
                 partners = odds_grid.get("partners", {})
                 all_partners = []
                 if isinstance(partners, dict):
@@ -1781,11 +1821,13 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                     odds_data = {}
                     if ov := create_odds_data(self.source_name, win_odds): odds_data[self.source_name] = ov
                     runners.append(Runner(number=trap_num or 0, name=name, odds=odds_data, win_odds=win_odds))
-        if not venue or not runners:
-            url_parts = url_path.split("/")
-            if len(url_parts) >= 5:
-                venue = normalize_venue_name(url_parts[3])
-                race_time_str = url_parts[-1]
+
+        url_parts = url_path.split("/")
+        if not venue and len(url_parts) >= 4:
+             # /racecard/GB/oxford/10-February-2026/1426
+             venue = normalize_venue_name(url_parts[3])
+        if not race_time_str and len(url_parts) >= 5:
+             race_time_str = url_parts[-1]
         if not venue or not runners: return None
         try:
             if ":" not in race_time_str and len(race_time_str) == 4: race_time_str = f"{race_time_str[:2]}:{race_time_str[2:]}"
@@ -1804,11 +1846,15 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Use CURL_CFFI for better reliability against bot detection
+        # Use CURL_CFFI with chrome120 for better reliability against bot detection
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45)
 
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
+
     def _get_headers(self) -> Dict[str, str]:
-        return self._get_browser_headers(host="www.boylesports.com", referer="https://www.boylesports.com/sports/horse-racing")
+        return self._get_browser_headers(host="www.boylesports.com", referer="https://www.google.com/")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         url = "/sports/horse-racing/race-card"
@@ -2333,7 +2379,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 # ----------------------------------------
 class TabAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TAB"
-    BASE_URL: ClassVar[str] = "https://api.beta.tab.com.au/v1/tab-info-service/racing"
+    BASE_URL: ClassVar[str] = "https://api.tab.com.au/v1/tab-info-service/racing"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, rate_limit=2.0)
@@ -2491,13 +2537,19 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
+        # Equibase uses Instart Logic / Imperva which often requires full JS execution
         return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
+            primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            block_resources=True,
+            block_resources=False, # Need scripts for obfuscation bypass
             timeout=60
         )
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("impersonate", "chrome120")
+        kwargs.setdefault("headers", self._get_browser_headers(host="www.equibase.com", referer="https://www.equibase.com/"))
+        return await super().make_request(method, url, **kwargs)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.equibase.com")
@@ -2508,20 +2560,27 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         # Try different possible index URLs
         index_urls = [
+            f"/static/entry/index.html?SAP=TN",
             f"/static/entry/index.html",
             f"/entries/{date}",
+            f"/entries/index.cfm?date={dt.strftime('%m/%d/%Y')}",
         ]
 
         resp = None
         for url in index_urls:
             try:
                 resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
-                if resp and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
+                if resp and resp.status == 200 and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
+                    self.logger.info("Found Equibase index", url=url)
                     break
-            except Exception: continue
+                else:
+                    self.logger.debug("Equibase index candidate failed", url=url, status=getattr(resp, 'status', 'N/A'))
+            except Exception as e:
+                self.logger.debug("Equibase request exception", url=url, error=str(e))
+                continue
 
-        if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=resp.url)
+        if not resp or not resp.text or resp.status != 200:
+            if resp: self.logger.warning("Unexpected status", status=resp.status, url=getattr(resp, 'url', 'Unknown'))
             return None
 
         self._save_debug_snapshot(resp.text, f"equibase_index_{date}")
@@ -2693,9 +2752,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Fallback to CURL_CFFI if browser engines are missing in frozen mode
+        # Try Playwright for better bypass of potential bot detection
         return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
+            primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
             block_resources=True,
@@ -2706,6 +2765,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome120 for TwinSpires to bypass basic bot checks
         kwargs.setdefault("impersonate", "chrome120")
+        kwargs.setdefault("headers", {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -2717,7 +2777,12 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
         async def fetch_disc(disc, region="USA"):
             suffix = "" if region == "USA" else "?region=INT"
-            url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
+            # Try date-specific URL first, fallback to todays-races
+            # TwinSpires uses YYYY-MM-DD for races URL
+            if date == datetime.now(EASTERN).strftime("%Y-%m-%d"):
+                url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
+            else:
+                url = f"{self.BASE_URL}/bet/races/{date}/{disc}{suffix}"
             try:
                 resp = await self.make_request("GET", url, network_idle=True, wait_selector='div[class*="race"], [class*="RaceCard"], [class*="track"]')
                 if resp and resp.status == 200:
@@ -5006,12 +5071,18 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
+        # Oddschecker is heavily protected by Cloudflare; try Playwright with high wait time
         return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
+            primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
-            stealth_mode=StealthMode.CAMOUFLAGE,
-            timeout=45
+            stealth_mode="camouflage",
+            timeout=90,
+            network_idle=True
         )
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        # Playwright doesn't use impersonate but SmartFetcher handles it now
+        return await super().make_request(method, url, **kwargs)
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.oddschecker.com")
@@ -5210,8 +5281,13 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         self._semaphore = asyncio.Semaphore(5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        """Timeform works with HTTPX and good headers."""
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False)
+        # Timeform often blocks basic requests; try Playwright
+        return FetchStrategy(
+            primary_engine=BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=60
+        )
 
     def _get_headers(self) -> dict:
         headers = self._get_browser_headers(host="www.timeform.com")
@@ -5446,15 +5522,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        """
-        RacingPost has strong anti-bot measures. We need to use a full
-        browser with the highest stealth settings to avoid being blocked.
-        """
+        # RacingPost has strong anti-bot measures. Playwright is most reliable.
         return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
+            primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
-            stealth_mode=StealthMode.CAMOUFLAGE,  # Strongest stealth
-            block_resources=False,  # Load all resources to appear more human
+            stealth_mode="camouflage",
+            timeout=60,
+            block_resources=False,
         )
 
     def _get_headers(self) -> dict:
@@ -5484,9 +5558,9 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             index_parser = HTMLParser(index_response.text)
 
             # Group by meeting to pick "next" race (Memory Directive Fix)
-            meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('[data-test-selector="RC-meetingItem"]')
+            meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('[data-test-selector="RC-meetingItem"]') or index_parser.css('.rp-meetingItem')
             for meeting in meetings:
-                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"]'):
+                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time'):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
@@ -5507,9 +5581,9 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
             intl_parser = HTMLParser(intl_response.text)
 
-            meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('[data-test-selector="RC-meetingItem"]')
+            meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('[data-test-selector="RC-meetingItem"]') or intl_parser.css('.rp-meetingItem')
             for meeting in meetings:
-                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"]'):
+                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time'):
                     txt = node_text(link)
                     if re.match(r"\d{1,2}:\d{2}", txt):
                         try:
@@ -6292,15 +6366,25 @@ async def ensure_browsers():
         # Run installation in a separate process to avoid blocking the loop too much
         # We explicitly don't use 'pip install playwright' here if possible because it might conflict
         # but for local non-frozen runs it's a helpful fallback.
-        subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True)
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+        subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True, capture_output=True, text=True)
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
         structlog.get_logger().info("Browser dependencies installed successfully.")
         return True
     except subprocess.CalledProcessError as e:
-        structlog.get_logger().error("Failed to install browsers", error=str(e))
+        structlog.get_logger().error(
+            "Failed to install browsers",
+            error=str(e),
+            returncode=e.returncode,
+            stdout=e.stdout,
+            stderr=e.stderr
+        )
+        return False
+    except Exception as e:
+        structlog.get_logger().error("Unexpected error installing browsers", error=str(e))
         return False
 
 async def main_all_in_one():
+    logger = structlog.get_logger("main")
     parser = argparse.ArgumentParser(description="Fortuna All-In-One")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
@@ -6339,14 +6423,7 @@ async def main_all_in_one():
 
     # Region-based adapter filtering
     if args.region:
-        usa_adapters = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada"}
-        int_adapters = {
-            "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
-            "TAB", "BetfairDataScientist", "Oddschecker", "Timeform", "BoyleSports",
-            "SportingLife", "SkySports"
-        }
-
-        target_set = usa_adapters if args.region == "USA" else int_adapters
+        target_set = USA_DISCOVERY_ADAPTERS if args.region == "USA" else INT_DISCOVERY_ADAPTERS
 
         if adapter_filter:
             adapter_filter = [n for n in adapter_filter if n in target_set]
@@ -6363,8 +6440,13 @@ async def main_all_in_one():
     if args.load:
         loaded_races = []
         for path in args.load.split(","):
+            path = path.strip()
+            if not os.path.exists(path):
+                print(f"Warning: File not found: {path}")
+                logger.warning("Race data file not found", path=path)
+                continue
             try:
-                with open(path.strip(), "r") as f:
+                with open(path, "r") as f:
                     data = json.load(f)
                     loaded_races.extend([Race.model_validate(r) for r in data])
             except Exception as e:

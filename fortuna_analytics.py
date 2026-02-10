@@ -491,6 +491,10 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
             timeout=60,
         )
 
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
+
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.equibase.com")
 
@@ -519,7 +523,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                 resp = await self.make_request("GET", url, headers=self._get_headers())
                 if resp and resp.text and len(resp.text) > 1000:
                     break
-            except:
+            except Exception:
                 continue
 
         if not resp or not resp.text:
@@ -700,7 +704,7 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
                 dt_part = datetime.strptime(time_val, "%I:%M %p").time()
                 race_date = datetime.strptime(date_str, "%Y-%m-%d")
                 start_time = datetime.combine(race_date, dt_part).replace(tzinfo=EASTERN)
-            except: pass
+            except Exception: pass
 
         if not start_time:
             try:
@@ -1076,7 +1080,7 @@ class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                             final_odds = (n / d) + 1.0
                         else:
                             final_odds = float(sp_text)
-                    except: pass
+                    except Exception: pass
 
                 runners.append(ResultRunner(
                     name=name,
@@ -1133,6 +1137,10 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
             stealth_mode="camouflage",
             timeout=60,
         )
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        kwargs.setdefault("impersonate", "chrome120")
+        return await super().make_request(method, url, **kwargs)
 
     def _get_headers(self) -> dict:
         return self._get_browser_headers(host="www.attheraces.com")
@@ -1300,7 +1308,7 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                             final_odds = (n / d) + 1.0
                         else:
                             final_odds = float(sp)
-                    except: pass
+                    except Exception: pass
 
                 runners.append(ResultRunner(
                     name=name,
@@ -1499,7 +1507,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
                                         final_odds = (num / den) + 1.0
                                     else:
                                         final_odds = float(sp)
-                                except: pass
+                                except Exception: pass
 
                             runners.append(ResultRunner(
                                 name=horse.get("name") or r.get("name"),
@@ -1544,12 +1552,12 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
                                     pos = r.position_numeric
                                     if pos and 1 <= pos <= len(pays):
                                         r.place_payout = pays[pos-1]
-                                except: continue
+                                except Exception: continue
 
                         try:
                             dt = datetime.strptime(date_val, "%Y-%m-%d")
                             start_time = dt.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
-                        except:
+                        except Exception:
                             start_time = datetime.now(EASTERN)
 
                         return ResultRace(
@@ -1606,7 +1614,7 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
             start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
-        except:
+        except Exception:
             start_time = datetime.now(EASTERN)
 
         return ResultRace(
@@ -1653,7 +1661,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             url_date = dt.strftime("%d-%m-%Y")
-        except:
+        except Exception:
             url_date = date_str
 
         url = f"/racing/results/{url_date}"
@@ -1768,7 +1776,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
                 if number_node:
                     try:
                         number = int(re.sub(r"\D", "", number_node.text()))
-                    except:
+                    except Exception:
                         pass
 
                 # Final Odds / SP
@@ -1782,7 +1790,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
                             final_odds = (num / den) + 1.0
                         else:
                             final_odds = float(sp)
-                    except: pass
+                    except Exception: pass
 
                 runners.append(ResultRunner(
                     name=name,
@@ -1822,7 +1830,7 @@ class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, f
         try:
             race_date = datetime.strptime(date_str, "%Y-%m-%d")
             start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
-        except:
+        except Exception:
             start_time = datetime.now(EASTERN)
 
         # Extract race number from URL or page
@@ -1903,12 +1911,12 @@ def generate_analytics_report(
             try:
                 st = datetime.fromisoformat(str(st_raw).replace('Z', '+00:00'))
                 st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
-            except:
+            except Exception:
                 try:
                     import dateutil.parser
                     st = dateutil.parser.parse(str(st_raw))
                     st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
-                except:
+                except Exception:
                     st_str = str(st_raw)[:16].replace("T", " ")
 
             venue = str(tip.get("venue", "Unknown"))[:20]
@@ -2029,12 +2037,7 @@ async def managed_adapters(region: Optional[str] = None, target_venues: Optional
     adapter_classes = get_results_adapter_classes()
 
     if region:
-        usa_results = {"EquibaseResults"}
-        int_results = {
-            "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
-            "SportingLifeResults", "SkySportsResults"
-        }
-        target_set = usa_results if region == "USA" else int_results
+        target_set = fortuna.USA_RESULTS_ADAPTERS if region == "USA" else fortuna.INT_RESULTS_ADAPTERS
         adapter_classes = [c for c in adapter_classes if getattr(c, "SOURCE_NAME", "") in target_set]
 
     adapters = []
@@ -2080,7 +2083,8 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
             try:
                 with open("results_harvest.json", "w") as f:
                     json.dump({}, f)
-            except: pass
+            except Exception as e:
+                logger.debug("Failed to create results_harvest.json", error=str(e))
         else:
             logger.info("Tips to audit", count=len(unverified))
             target_venues = {fortuna.get_canonical_venue(t.get("venue")) for t in unverified}
@@ -2108,8 +2112,15 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
                         )
                         return adapter.source_name, []
 
+                # Use a semaphore to limit concurrent adapter fetches (Performance Optimization)
+                sem = asyncio.Semaphore(10)
+
+                async def fetch_limited(a, d):
+                    async with sem:
+                        return await fetch_with_adapter(a, d)
+
                 tasks = [
-                    fetch_with_adapter(adapter, date_str)
+                    fetch_limited(adapter, date_str)
                     for date_str in valid_dates
                     for adapter in adapters
                 ]
@@ -2152,7 +2163,8 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
                     json.dump(harvest_summary, f)
 
                 await auditor.db.log_harvest(harvest_summary, region=region)
-            except: pass
+            except Exception as e:
+                logger.debug("Failed to log results harvest", error=str(e))
 
         # Generate and save comprehensive report
         all_audited = await auditor.get_all_audited_tips()
@@ -2223,15 +2235,15 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Set DB path BEFORE any initialization
+    if args.db_path != DEFAULT_DB_PATH:
+        os.environ["FORTUNA_DB_PATH"] = args.db_path
+
     # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     structlog.configure(
         wrapper_class=structlog.make_filtering_bound_logger(log_level)
     )
-
-    # Set DB path
-    if args.db_path != DEFAULT_DB_PATH:
-        os.environ["FORTUNA_DB_PATH"] = args.db_path
 
     if args.migrate:
         async def do_migrate():
@@ -2241,6 +2253,8 @@ def main() -> None:
                 print("Migration complete.")
             except Exception as e:
                 print(f"Migration failed: {e}")
+            finally:
+                await db.close()
 
         asyncio.run(do_migrate())
         return
