@@ -72,25 +72,25 @@ from tenacity import (
 # --- OPTIONAL IMPORTS ---
 try:
     from curl_cffi import requests as curl_requests
-except ImportError:
+except Exception:
     curl_requests = None
 
 try:
     from scrapling import AsyncFetcher, Fetcher
     from scrapling.parser import Selector
     ASYNC_SESSIONS_AVAILABLE = True
-except ImportError:
+except Exception:
     ASYNC_SESSIONS_AVAILABLE = False
     Selector = None  # type: ignore
 
 try:
     from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
-except ImportError:
+except Exception:
     ASYNC_SESSIONS_AVAILABLE = False
 
 try:
     from scrapling.core.custom_types import StealthMode
-except ImportError:
+except Exception:
     class StealthMode:  # type: ignore
         FAST = "fast"
         CAMOUFLAGE = "camouflage"
@@ -108,14 +108,16 @@ def is_frozen() -> bool:
 try:
     from notifications import DesktopNotifier
     HAS_NOTIFICATIONS = True
-except ImportError:
+except Exception:
     HAS_NOTIFICATIONS = False
 
 try:
     from browserforge.headers import HeaderGenerator
     from browserforge.fingerprints import FingerprintGenerator
+    # Smoke test: HeaderGenerator often fails if data files are missing (frozen app issue)
+    _hg = HeaderGenerator()
     BROWSERFORGE_AVAILABLE = True
-except ImportError:
+except Exception:
     BROWSERFORGE_AVAILABLE = False
 
 
@@ -583,7 +585,9 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
         int_match = re.match(r"^(\d+)$", s)
         if int_match:
             val = int(int_match.group(1))
-            if val >= 1: # "1" -> 1/1 -> 2.0
+            # Heuristic: only treat as fractional odds if it's in a likely range (1-50)
+            # to avoid misinterpreting horse numbers or race numbers.
+            if 1 <= val <= 50:
                 return float(val + 1)
 
     except Exception: pass
@@ -733,7 +737,10 @@ class GlobalResourceManager:
         async with lock:
             if cls._httpx_client is not None:
                 if timeout is not None and abs(cls._httpx_client.timeout.read - timeout) > 0.001:
-                    await cls._httpx_client.aclose()
+                    try:
+                        await cls._httpx_client.aclose()
+                    except Exception:
+                        pass
                     cls._httpx_client = None
 
             if cls._httpx_client is None:
@@ -876,7 +883,7 @@ class SmartFetcher:
         
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
-                raise ImportError("curl_cffi not available")
+                raise ImportError("curl_cffi is not available")
             
             self.logger.debug(f"Using curl_cffi for {url}")
             timeout = kwargs.get("timeout", self.strategy.timeout)
@@ -977,7 +984,7 @@ class RateLimiter:
 
     async def acquire(self) -> None:
         lock = self._get_lock()
-        while True:
+        for _ in range(1000): # Iteration limit to prevent potential hangs
             wait_time = 0
             async with lock:
                 now = time.time()
@@ -1000,6 +1007,7 @@ class AdapterMetrics:
         self.failed_requests = 0
         self.total_latency_ms = 0.0
         self.consecutive_failures = 0
+        self.last_failure_reason: Optional[str] = None
     @property
     def success_rate(self) -> float:
         return self.successful_requests / self.total_requests if self.total_requests > 0 else 1.0
@@ -1008,6 +1016,7 @@ class AdapterMetrics:
         self.successful_requests += 1
         self.total_latency_ms += latency_ms
         self.consecutive_failures = 0
+        self.last_failure_reason: Optional[str] = None
     async def record_failure(self, error: str) -> None:
         self.total_requests += 1
         self.failed_requests += 1
@@ -2768,7 +2777,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
-            dt = datetime.strptime(ds, "%Y-%m-%d")
+            dt = datetime.strptime(date, "%Y-%m-%d")
             return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
         except Exception:
             return datetime.now(EASTERN)
@@ -2950,7 +2959,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return Race(discipline=disc, id=generate_race_id("ts", tn, st, rnum, disc), venue=tn, race_number=rnum, start_time=st, runners=runners, distance=rd.get("distance"), source=self.source_name, available_bets=ab)
 
     def _parse_post_time(self, tt: Optional[str], page, ds: str) -> datetime:
-        bd = datetime.strptime(ds, "%Y-%m-%d").date()
+        bd = datetime.strptime(date, "%Y-%m-%d").date()
         if tt:
             p = self._parse_time_string(tt, bd)
             if p: return p
@@ -4290,11 +4299,12 @@ class FortunaDB:
                 for row in rows:
                     updates = {}
                     for col in ["start_time", "report_date", "audit_timestamp"]:
+                        if col not in row.keys(): continue
                         val = row[col]
-                        if val and ("+00:00" in val or val.endswith("Z")):
+                        if val:
                             try:
-                                dt_utc = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                                dt_eastern = dt_utc.astimezone(EASTERN)
+                                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                                dt_eastern = ensure_eastern(dt)
                                 updates[col] = dt_eastern.isoformat()
                             except Exception: pass
                     if updates:
@@ -4815,13 +4825,13 @@ class FavoriteToPlaceMonitor:
         sorted_r = sorted(r_with_odds, key=lambda x: x[1])
         return [x[0] for x in sorted_r[:limit]]
 
-    def _calculate_mtp(self, start_time: datetime) -> Optional[int]:
-        """Calculate minutes to post."""
-        if not start_time: return None
-        now = datetime.now(EASTERN)
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=EASTERN)
-        delta = start_time - now
+    def _calculate_mtp(self, start_time: Optional[datetime]) -> int:
+        """Calculate minutes to post. Returns -9999 if start_time is None."""
+        if not start_time: return -9999
+        now = now_eastern()
+        # Use ensure_eastern to handle naive or other timezones correctly
+        st = ensure_eastern(start_time)
+        delta = st - now
         return int(delta.total_seconds() / 60)
 
     def _get_top_n_runners(self, race: Race, n: int = 5) -> str:
@@ -5070,7 +5080,7 @@ class FavoriteToPlaceMonitor:
         await self.build_race_summaries(raw, window_hours=12)
         self.print_full_list()
         try:
-            while True:
+            for _ in range(1000): # Iteration limit to prevent potential hangs
                 for r in self.all_races: r.mtp = self._calculate_mtp(r.start_time)
                 await self.print_bet_now_list()
                 self.save_to_json()
@@ -5521,8 +5531,8 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                         if val <= 40: number = val
 
             win_odds = None
-            if forecast_map and name.lower() in forecast_map:
-                win_odds = parse_odds_to_decimal(forecast_map[name.lower()])
+            if forecast_map:
+                win_odds = parse_odds_to_decimal(forecast_map.get(name.lower()))
 
             # Try to find live odds button if available (old selector)
             if not win_odds:
@@ -5868,19 +5878,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 except Exception as e:
                     self.logger.debug("Failed parsing RP tote row", error=str(e))
 
-        # Derive race number from header or navigation
-        race_num = 1
-        race_num_match = re.search(r'Race\s+(\d+)', parser.text())
-        if race_num_match:
-            race_num = int(race_num_match.group(1))
-        else:
-            # Fallback: find active time in navigation
-            time_links = parser.css('a[data-test-selector="RC-raceTime"]')
-            for i, link in enumerate(time_links):
-                cls = link.attributes.get("class", "")
-                if "active" in cls or "rp-raceTimeCourseName__time" in cls:
-                    race_num = i + 1
-                    break
+
 
         # Extract runners (finishers)
         runners = []

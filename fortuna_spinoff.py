@@ -72,25 +72,25 @@ from tenacity import (
 # --- OPTIONAL IMPORTS ---
 try:
     from curl_cffi import requests as curl_requests
-except ImportError:
+except Exception:
     curl_requests = None
 
 try:
     from scrapling import AsyncFetcher, Fetcher
     from scrapling.parser import Selector
     ASYNC_SESSIONS_AVAILABLE = True
-except ImportError:
+except Exception:
     ASYNC_SESSIONS_AVAILABLE = False
     Selector = None  # type: ignore
 
 try:
     from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
-except ImportError:
+except Exception:
     ASYNC_SESSIONS_AVAILABLE = False
 
 try:
     from scrapling.core.custom_types import StealthMode
-except ImportError:
+except Exception:
     class StealthMode:  # type: ignore
         FAST = "fast"
         CAMOUFLAGE = "camouflage"
@@ -108,14 +108,16 @@ def is_frozen() -> bool:
 try:
     from notifications import DesktopNotifier
     HAS_NOTIFICATIONS = True
-except ImportError:
+except Exception:
     HAS_NOTIFICATIONS = False
 
 try:
     from browserforge.headers import HeaderGenerator
     from browserforge.fingerprints import FingerprintGenerator
+    # Smoke test: HeaderGenerator often fails if data files are missing (frozen app issue)
+    _hg = HeaderGenerator()
     BROWSERFORGE_AVAILABLE = True
-except ImportError:
+except Exception:
     BROWSERFORGE_AVAILABLE = False
 
 
@@ -576,7 +578,9 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
         int_match = re.match(r"^(\d+)$", s)
         if int_match:
             val = int(int_match.group(1))
-            if val >= 1: # "1" -> 1/1 -> 2.0
+            # Heuristic: only treat as fractional odds if it's in a likely range (1-50)
+            # to avoid misinterpreting horse numbers or race numbers.
+            if 1 <= val <= 50:
                 return float(val + 1)
 
     except Exception: pass
@@ -726,7 +730,10 @@ class GlobalResourceManager:
         async with lock:
             if cls._httpx_client is not None:
                 if timeout is not None and abs(cls._httpx_client.timeout.read - timeout) > 0.001:
-                    await cls._httpx_client.aclose()
+                    try:
+                        await cls._httpx_client.aclose()
+                    except Exception:
+                        pass
                     cls._httpx_client = None
 
             if cls._httpx_client is None:
@@ -869,7 +876,7 @@ class SmartFetcher:
 
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
-                raise ImportError("curl_cffi not available")
+                raise ImportError("curl_cffi is not available")
 
             self.logger.debug(f"Using curl_cffi for {url}")
             timeout = kwargs.get("timeout", self.strategy.timeout)
@@ -970,7 +977,7 @@ class RateLimiter:
 
     async def acquire(self) -> None:
         lock = self._get_lock()
-        while True:
+        for _ in range(1000): # Iteration limit to prevent potential hangs
             wait_time = 0
             async with lock:
                 now = time.time()
@@ -993,6 +1000,7 @@ class AdapterMetrics:
         self.failed_requests = 0
         self.total_latency_ms = 0.0
         self.consecutive_failures = 0
+        self.last_failure_reason: Optional[str] = None
     @property
     def success_rate(self) -> float:
         return self.successful_requests / self.total_requests if self.total_requests > 0 else 1.0
@@ -1001,6 +1009,7 @@ class AdapterMetrics:
         self.successful_requests += 1
         self.total_latency_ms += latency_ms
         self.consecutive_failures = 0
+        self.last_failure_reason: Optional[str] = None
     async def record_failure(self, error: str) -> None:
         self.total_requests += 1
         self.failed_requests += 1
@@ -1111,6 +1120,117 @@ class RacePageFetcherMixin:
 
 
 # --- BASE ADAPTER ---
+class BaseAdapterV3(ABC):
+    ADAPTER_TYPE: ClassVar[str] = "discovery"
+
+    def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
+        self.source_name = source_name
+        self.base_url = base_url.rstrip("/")
+        self.config = config or {}
+        # Merge kwargs into config
+        self.config.update(kwargs)
+
+        # Override rate_limit from config if present
+        actual_rate_limit = float(self.config.get("rate_limit", rate_limit))
+
+        self.logger = structlog.get_logger(adapter_name=self.source_name)
+        self.circuit_breaker = CircuitBreaker(
+            failure_threshold=int(self.config.get("failure_threshold", 5)),
+            recovery_timeout=float(self.config.get("recovery_timeout", 60.0))
+        )
+        self.rate_limiter = RateLimiter(requests_per_second=actual_rate_limit)
+        self.metrics = AdapterMetrics()
+        self.smart_fetcher = SmartFetcher(strategy=self._configure_fetch_strategy())
+        self.last_race_count = 0
+        self.last_duration_s = 0.0
+
+    @abstractmethod
+    def _configure_fetch_strategy(self) -> FetchStrategy: pass
+    @abstractmethod
+    async def _fetch_data(self, date: str) -> Optional[Any]: pass
+    @abstractmethod
+    def _parse_races(self, raw_data: Any) -> List[Race]: pass
+
+    async def get_races(self, date: str) -> List[Race]:
+        start = time.time()
+        try:
+            # Check for browser requirement in monolith mode
+            strategy = self.smart_fetcher.strategy
+            if is_frozen() and strategy.primary_engine in [BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX]:
+                self.logger.info("Skipping browser-dependent adapter in monolith mode")
+                return []
+
+            if not await self.circuit_breaker.allow_request(): return []
+            await self.rate_limiter.acquire()
+            raw = await self._fetch_data(date)
+            if not raw:
+                await self.circuit_breaker.record_failure()
+                return []
+            races = self._validate_and_parse_races(raw)
+            self.last_race_count = len(races)
+            self.last_duration_s = time.time() - start
+            await self.circuit_breaker.record_success()
+            await self.metrics.record_success(self.last_duration_s * 1000)
+            return races
+        except Exception as e:
+            self.logger.error("Adapter failed", error=str(e))
+            await self.circuit_breaker.record_failure()
+            await self.metrics.record_failure(str(e))
+            return []
+
+    def _validate_and_parse_races(self, raw_data: Any) -> List[Race]:
+        races = self._parse_races(raw_data)
+        for r in races:
+            # Global heuristic for runner numbers (addressing "impossible" high numbers)
+            active_runners = [run for run in r.runners if not run.scratched]
+            field_size = len(active_runners)
+
+            # If any runner has a number > 20 and it's also > field_size + 10 (buffer)
+            # or if it's extremely high (> 100), re-index everything as it's likely a parsing error (horse IDs).
+            # Also re-index if all numbers are missing/zero.
+            suspicious = all(run.number == 0 or run.number is None for run in r.runners)
+            if not suspicious:
+                for run in r.runners:
+                    if run.number:
+                        if run.number > 100 or (run.number > 20 and run.number > field_size + 10):
+                            suspicious = True
+                            break
+
+            if suspicious:
+                self.logger.warning("suspicious_runner_numbers", venue=r.venue, field_size=field_size)
+                for i, run in enumerate(r.runners):
+                    run.number = i + 1
+
+            for runner in r.runners:
+                if not runner.scratched and (runner.win_odds is None or runner.win_odds <= 0):
+                    runner.win_odds = DEFAULT_ODDS_FALLBACK
+        valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
+        return valid
+
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+        self.logger.debug("Requesting", method=method, url=full_url)
+        # Apply global concurrency limit (Memory Directive Fix)
+        async with GlobalResourceManager.get_global_semaphore():
+            try:
+                resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
+                status = getattr(resp, 'status', 'unknown')
+                self.logger.debug("Response received", method=method, url=full_url, status=status)
+                return resp
+            except Exception as e:
+                self.logger.error("Request failed", method=method, url=full_url, error=str(e))
+                return None
+
+    async def close(self) -> None: await self.smart_fetcher.close()
+    async def shutdown(self) -> None: await self.close()
+
+# ============================================================================
+# ADAPTER IMPLEMENTATIONS
+# ============================================================================
+
+# ----------------------------------------
+# SkyRacingWorldAdapter
+# ----------------------------------------
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
     BASE_URL: ClassVar[str] = "https://www.equibase.com"
@@ -1322,7 +1442,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
-            dt = datetime.strptime(ds, "%Y-%m-%d")
+            dt = datetime.strptime(date, "%Y-%m-%d")
             return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
         except Exception:
             return datetime.now(EASTERN)
@@ -1504,7 +1624,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return Race(discipline=disc, id=generate_race_id("ts", tn, st, rnum, disc), venue=tn, race_number=rnum, start_time=st, runners=runners, distance=rd.get("distance"), source=self.source_name, available_bets=ab)
 
     def _parse_post_time(self, tt: Optional[str], page, ds: str) -> datetime:
-        bd = datetime.strptime(ds, "%Y-%m-%d").date()
+        bd = datetime.strptime(date, "%Y-%m-%d").date()
         if tt:
             p = self._parse_time_string(tt, bd)
             if p: return p
@@ -2844,11 +2964,12 @@ class FortunaDB:
                 for row in rows:
                     updates = {}
                     for col in ["start_time", "report_date", "audit_timestamp"]:
+                        if col not in row.keys(): continue
                         val = row[col]
-                        if val and ("+00:00" in val or val.endswith("Z")):
+                        if val:
                             try:
-                                dt_utc = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                                dt_eastern = dt_utc.astimezone(EASTERN)
+                                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                                dt_eastern = ensure_eastern(dt)
                                 updates[col] = dt_eastern.isoformat()
                             except Exception: pass
                     if updates:
@@ -3369,13 +3490,13 @@ class FavoriteToPlaceMonitor:
         sorted_r = sorted(r_with_odds, key=lambda x: x[1])
         return [x[0] for x in sorted_r[:limit]]
 
-    def _calculate_mtp(self, start_time: datetime) -> Optional[int]:
-        """Calculate minutes to post."""
-        if not start_time: return None
-        now = datetime.now(EASTERN)
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=EASTERN)
-        delta = start_time - now
+    def _calculate_mtp(self, start_time: Optional[datetime]) -> int:
+        """Calculate minutes to post. Returns -9999 if start_time is None."""
+        if not start_time: return -9999
+        now = now_eastern()
+        # Use ensure_eastern to handle naive or other timezones correctly
+        st = ensure_eastern(start_time)
+        delta = st - now
         return int(delta.total_seconds() / 60)
 
     def _get_top_n_runners(self, race: Race, n: int = 5) -> str:
@@ -3624,7 +3745,7 @@ class FavoriteToPlaceMonitor:
         await self.build_race_summaries(raw, window_hours=12)
         self.print_full_list()
         try:
-            while True:
+            for _ in range(1000): # Iteration limit to prevent potential hangs
                 for r in self.all_races: r.mtp = self._calculate_mtp(r.start_time)
                 await self.print_bet_now_list()
                 self.save_to_json()
