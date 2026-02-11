@@ -2025,7 +2025,6 @@ def generate_analytics_report(
 
 # --- MAIN ORCHESTRATOR ---
 
-@functools.lru_cache(None)
 def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
     """Returns all non-abstract results adapter classes."""
     def get_all_subclasses(cls):

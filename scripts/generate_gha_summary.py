@@ -109,6 +109,13 @@ def generate_summary():
         write_to_summary("```")
         write_to_summary("")
 
+    # 3b. Field Matrix Grid
+    if os.path.exists('field_matrix.txt'):
+        write_to_summary("### 📊 Race Field Matrix (3-11 Runners)")
+        with open('field_matrix.txt', 'r', encoding='utf-8') as f:
+            write_to_summary(f.read())
+        write_to_summary("")
+
     # 4. Performance Analytics Audit
     if os.path.exists('analytics_report.txt'):
         write_to_summary("### 📊 Performance Analytics Audit")
