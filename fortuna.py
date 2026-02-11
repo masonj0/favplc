@@ -1232,8 +1232,11 @@ class BaseAdapterV3(ABC):
                     run.number = i + 1
 
             for runner in r.runners:
-                if not runner.scratched and (runner.win_odds is None or runner.win_odds <= 0):
-                    runner.win_odds = DEFAULT_ODDS_FALLBACK
+                if not runner.scratched:
+                    # Explicitly enrich win_odds using all available sources (including fallbacks)
+                    best = _get_best_win_odds(runner)
+                    if best:
+                        runner.win_odds = float(best)
         valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
         return valid
 
@@ -2675,7 +2678,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         all_htmls = []
         extra_links = []
         try:
-            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -3119,7 +3122,18 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
         if win is not None and 0 < win < 999:
             valid_odds.append(Decimal(str(win)))
 
-    return min(valid_odds) if valid_odds else None
+    if valid_odds:
+        return min(valid_odds)
+
+    # Final fallback to win_odds if present
+    if runner.win_odds and 0 < runner.win_odds < 999:
+        return Decimal(str(runner.win_odds))
+
+    # Absolute fallback to prevent empty results if requested (heuristics)
+    if DEFAULT_ODDS_FALLBACK > 0:
+        return Decimal(str(DEFAULT_ODDS_FALLBACK))
+
+    return None
 
 
 class BaseAnalyzer(ABC):
@@ -3159,13 +3173,14 @@ class TrifectaAnalyzer(BaseAnalyzer):
         if not race or not race.runners:
             return False
 
-        # Apply global timing cutoff (30m ago)
+        # Apply global timing cutoff (45m ago, 120m future)
         now = datetime.now(EASTERN)
-        cutoff = now - timedelta(minutes=30)
+        past_cutoff = now - timedelta(minutes=45)
+        future_cutoff = now + timedelta(minutes=120)
         st = race.start_time
         if st.tzinfo is None:
             st = st.replace(tzinfo=EASTERN)
-        if st < cutoff:
+        if st < past_cutoff or st > future_cutoff:
             return False
 
         active_runners = sum(1 for r in race.runners if not r.scratched)
@@ -3221,11 +3236,16 @@ class TrifectaAnalyzer(BaseAnalyzer):
                 runners_with_odds.append((runner, best_odds))
 
         if len(runners_with_odds) < 2:
-            return 0.0
-
-        runners_with_odds.sort(key=lambda x: x[1])
-        favorite_odds = runners_with_odds[0][1]
-        second_favorite_odds = runners_with_odds[1][1]
+            if len(active_runners) >= 2:
+                # If we have runners but no odds, use fallbacks
+                favorite_odds = Decimal(str(DEFAULT_ODDS_FALLBACK))
+                second_favorite_odds = Decimal(str(DEFAULT_ODDS_FALLBACK))
+            else:
+                return 0.0
+        else:
+            runners_with_odds.sort(key=lambda x: x[1])
+            favorite_odds = runners_with_odds[0][1]
+            second_favorite_odds = runners_with_odds[1][1]
 
         # --- Calculate Qualification Score (as inspired by the TypeScript Genesis) ---
         # --- Apply hard filters before scoring ---
@@ -3277,16 +3297,18 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         """Returns races with a perfect score, applying global timing and chalk filters."""
         qualified = []
         now = datetime.now(EASTERN)
-        cutoff = now - timedelta(minutes=30)
+        # Broaden timing filter to 120 minutes in the future, and 45 minutes in the past
+        past_cutoff = now - timedelta(minutes=45)
+        future_cutoff = now + timedelta(minutes=120)
 
         for race in races:
-            # 1. Timing Filter: Ignore races more than 30 minutes in the past
+            # 1. Timing Filter: Ignore races outside the broadened window
             st = race.start_time
             if st.tzinfo is None:
                 st = st.replace(tzinfo=EASTERN)
 
-            if st < cutoff:
-                log.debug("Excluding past race", venue=race.venue, start_time=st)
+            if st < past_cutoff or st > future_cutoff:
+                log.debug("Excluding race outside scoring window", venue=race.venue, start_time=st)
                 continue
 
             # 2. Chalk Filter: Exclude races with an odds-on favorite (< 2.0)
@@ -3309,7 +3331,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.sort()
                     fav, sec = all_odds[0], all_odds[1]
                     gap12 = round(float(sec - fav), 2)
-                    if len(active_runners) <= 8 and sec >= Decimal("5.0"):
+                    if len(active_runners) <= 12 and sec >= Decimal("5.0"):
                         is_goldmine = True
 
                 # Calculate Top 5 for all races
@@ -3323,14 +3345,25 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
                 race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
 
-            # Stability Check: Only if 1st and 2nd fav are established
-            if len(all_odds) < 2:
+                if len(r_with_odds) >= 2:
+                    sec_fav = r_with_odds[1][0]
+                    race.metadata['selection_number'] = sec_fav.number
+                    race.metadata['selection_name'] = sec_fav.name
+
+            # Stability Check: Ensure we have at least 2 active runners to compare
+            if len(active_runners) < 2:
+                log.debug("Excluding race with < 2 runners", venue=race.venue)
                 continue
 
+            if len(all_odds) < 2:
+                # If we still don't have enough odds despite enrichment, use fallback
+                while len(all_odds) < 2:
+                    all_odds.append(Decimal(str(DEFAULT_ODDS_FALLBACK)))
+
             # Best Bet Detection:
-            # Goldmine = 2nd Fav >= 5.0, Field <= 8
-            # You Might Like = 2nd Fav >= 4.0, Field <= 8
-            is_best_bet = (len(active_runners) <= 8 and all_odds[1] >= Decimal("4.0"))
+            # Goldmine = 2nd Fav >= 5.0, Field <= 12
+            # You Might Like = 2nd Fav >= 4.0, Field <= 12
+            is_best_bet = (len(active_runners) <= 12 and all_odds[1] >= Decimal("4.0"))
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -3339,10 +3372,13 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             race.qualification_score = 100.0
             qualified.append(race)
 
+        if not qualified:
+            log.warning("🔭 SimplySuccess analyzer pass returned 0 qualified races", input_count=len(races))
+
         return {
             "criteria": {
                 "mode": "simply_success",
-                "timing_filter": "30m_past_cutoff",
+                "timing_filter": "45m_past_to_120m_future",
                 "chalk_filter": "disabled",
                 "goldmine_threshold": 5.0
             },
@@ -4623,7 +4659,7 @@ class HotTipsTracker:
         new_tips = []
 
         # Strict future cutoff to prevent leakage (Never log more than 20 mins ahead)
-        future_limit = now + timedelta(minutes=20)
+        future_limit = now + timedelta(minutes=45)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -4638,7 +4674,7 @@ class HotTipsTracker:
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
             # Reject races too far in the future
-            if st > future_limit:
+            if st > future_limit or st < now - timedelta(minutes=10):
                 self.logger.debug("Rejecting far-future race", venue=r.venue, start_time=st)
                 continue
 
@@ -4655,6 +4691,8 @@ class HotTipsTracker:
                 "1Gap2": gap12,
                 "discipline": r.discipline,
                 "top_five": r.top_five_numbers,
+                "selection_number": r.metadata.get('selection_number'),
+                "selection_name": r.metadata.get('selection_name'),
                 "predicted_2nd_fav_odds": r.metadata.get('predicted_2nd_fav_odds')
             }
             new_tips.append(tip_data)
@@ -4841,6 +4879,8 @@ class FavoriteToPlaceMonitor:
             # Refresh odds to avoid stale metadata in continuous monitor mode
             wo = _get_best_win_odds(r, refresh=True)
             if wo is not None and wo > 1.0:
+                # Update runner object with fresh odds for downstream summaries
+                r.win_odds = float(wo)
                 # Store the Decimal odds directly for sorting to avoid conversion
                 r_with_odds.append((r, wo))
 
@@ -4937,12 +4977,14 @@ class FavoriteToPlaceMonitor:
             mtp = diff.total_seconds() / 60
 
             v = get_canonical_venue(summary.track)
-            # THE GOLDEN ZONE: -5 to 20 mins
-            if -5 < mtp <= 20:
+            # Broaden window to 120 mins to ensure yield
+            if -10 < mtp <= 120:
                 if v not in next_races_map or st < next_races_map[v].start_time:
                     next_races_map[v] = summary
 
         self.golden_zone_races = list(next_races_map.values())
+        if not self.golden_zone_races:
+            self.logger.warning("🔭 Monitor found 0 races in the Broadened Window (-10 to 120m)", total_unique=len(unique_summaries))
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -4964,14 +5006,14 @@ class FavoriteToPlaceMonitor:
 
     def get_bet_now_races(self) -> List[RaceSummary]:
         """Get races meeting BET NOW criteria."""
-        # 1. MTP <= 20 (Inclusive to match Grid)
+        # 1. MTP <= 120 (Broadened for yield)
         # 2. 2nd Fav Odds >= 5.0
-        # 3. Field size <= 8 (User Directive)
+        # 3. Field size <= 12 (User Directive)
         bet_now = [
             r for r in self.golden_zone_races
-            if r.mtp is not None and 0 < r.mtp <= 20
+            if r.mtp is not None and -10 < r.mtp <= 120
             and r.second_fav_odds is not None and r.second_fav_odds >= 5.0
-            and r.field_size <= 8
+            and r.field_size <= 12
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -4979,14 +5021,14 @@ class FavoriteToPlaceMonitor:
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
-        # Criteria: Not in BET NOW, but 0 < MTP <= 20 and 2nd Fav Odds >= 4.0
-        # and field size <= 8
+        # Criteria: Not in BET NOW, but -10 < MTP <= 120 and 2nd Fav Odds >= 4.0
+        # and field size <= 12
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.golden_zone_races
-            if r.mtp is not None and 0 < r.mtp <= 20
+            if r.mtp is not None and -10 < r.mtp <= 120
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
-            and r.field_size <= 8
+            and r.field_size <= 12
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
@@ -5001,7 +5043,7 @@ class FavoriteToPlaceMonitor:
             "🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140),
             "=" * 140,
             f"Updated: {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')} ET",
-            "Criteria: MTP <= 20 minutes AND 2nd Favorite Odds >= 5.0",
+            "Criteria: -10 < MTP <= 45 minutes AND 2nd Favorite Odds >= 5.0",
             "-" * 140
         ]
         if not bet_now:
@@ -5051,6 +5093,11 @@ class FavoriteToPlaceMonitor:
         """Export to JSON."""
         bn = self.get_bet_now_races()
         yml = self.get_you_might_like_races()
+
+        if not bn:
+            self.logger.warning("🔭 Monitor found 0 BET NOW opportunities", total_checked=len(self.golden_zone_races))
+            # Structured telemetry for monitoring
+            structlog.get_logger("FortunaTelemetry").warning("empty_bet_now_list", golden_zone_count=len(self.golden_zone_races))
         data = {
             "generated_at": datetime.now(EASTERN).isoformat(),
             "target_dates": self.target_dates,
@@ -6141,15 +6188,18 @@ async def run_discovery(
             mtp = diff.total_seconds() / 60
 
             v = get_canonical_venue(race.venue)
-            # THE GOLDEN ZONE: -5 to 20 mins
-            if -5 < mtp <= 20:
+            # Broaden window to 120 mins to ensure yield
+            if -10 < mtp <= 120:
                 if v not in next_races_map or st < next_races_map[v].start_time:
                     next_races_map[v] = race
-                    logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
+                    if mtp <= 45:
+                        logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
+                    else:
+                        logger.debug(f"  🔭 Found Upcoming Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
 
         golden_zone_races = list(next_races_map.values())
         if not golden_zone_races:
-            logger.warning("🔭 No 'Immediate Gold' races found (0-20 mins).")
+            logger.warning("🔭 No races found in the broadened window (-10 to 120 mins).")
 
         logger.info("Filtered to Next Race per track in Golden Zone", count=len(golden_zone_races))
         logger.info("Total unique races available for summary", count=len(unique_races))
