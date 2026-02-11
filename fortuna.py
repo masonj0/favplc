@@ -1,10 +1,10 @@
 from __future__ import annotations
-# adapter_anthology.py
+# fortuna_discovery_engine.py
 # Aggregated monolithic discovery adapters for Fortuna
-# This anthology serves as a high-reliability fallback for the Fortuna discovery system.
+# This engine serves as a high-reliability fallback for the Fortuna discovery system.
 
 """
-Fortuna Adapter Anthology - Production-grade racing data aggregation.
+Fortuna Discovery Engine - Production-grade racing data aggregation.
 
 This module provides a unified collection of adapters for fetching racecard data
 from various racing websites. It serves as a high-reliability fallback system.
@@ -2145,7 +2145,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         return self._get_browser_headers(host="www.skysports.com", referer="https://www.skysports.com/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(ds, "%Y-%m-%d")
+        dt = datetime.strptime(date, "%Y-%m-%d")
         index_url = f"/racing/racecards/{dt.strftime('%d-%m-%Y')}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         if not resp or not resp.text:
@@ -2156,7 +2156,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         metadata = []
 
         try:
-            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2312,7 +2312,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(ds, "%Y-%m-%d")
+        dt = datetime.strptime(date, "%Y-%m-%d")
         date_label = dt.strftime(f"%A %b {dt.day}, %Y")
         date_short = dt.strftime("%m%d") # e.g. 0208
 
@@ -2618,7 +2618,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return self._get_browser_headers(host="www.equibase.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(ds, "%Y-%m-%d")
+        dt = datetime.strptime(date, "%Y-%m-%d")
         date_str = dt.strftime("%m%d%y")
 
         # Try different possible index URLs
@@ -2632,6 +2632,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         resp = None
         for url in index_urls:
             try:
+                # dt = datetime.strptime(date, "%Y-%m-%d")
                 resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
                 if resp and resp.status == 200 and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
                     self.logger.info("Found Equibase index", url=url)
@@ -3107,7 +3108,6 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
         # Fallback to win_odds if available
         if runner.win_odds and 0 < runner.win_odds < 999:
             return Decimal(str(runner.win_odds))
-        return None
 
     valid_odds = []
     for source_data in runner.odds.values():
@@ -3157,7 +3157,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
 
     def __init__(
         self,
-        max_field_size: int = 14,
+        max_field_size: int = 11,
         min_favorite_odds: float = 0.01,
         min_second_favorite_odds: float = 0.01,
         **kwargs
@@ -3297,27 +3297,20 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         """Returns races with a perfect score, applying global timing and chalk filters."""
         qualified = []
         now = datetime.now(EASTERN)
-        # Broaden timing filter to 120 minutes in the future, and 45 minutes in the past
-        past_cutoff = now - timedelta(minutes=45)
-        future_cutoff = now + timedelta(minutes=120)
 
         for race in races:
-            # 1. Timing Filter: Ignore races outside the broadened window
+            # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
             st = race.start_time
             if st.tzinfo is None:
                 st = st.replace(tzinfo=EASTERN)
-
-            if st < past_cutoff or st > future_cutoff:
-                log.debug("Excluding race outside scoring window", venue=race.venue, start_time=st)
-                continue
 
             # 2. Chalk Filter: Exclude races with an odds-on favorite (< 2.0)
             # if best_odds is not None and best_odds < 2.0:
             #     log.debug("Excluding chalk race", venue=race.venue, favorite_odds=best_odds)
             #     continue
 
-            # Goldmine Detection: 2nd favorite >= 4:1 (5.0 decimal)
-            # A race cannot be a goldmine if field size is over 8
+            # Goldmine Detection: 2nd favorite >= 4.5 decimal
+            # A race cannot be a goldmine if field size is over 11
             is_goldmine = False
             active_runners = [r for r in race.runners if not r.scratched]
             gap12 = 0.0
@@ -3331,7 +3324,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.sort()
                     fav, sec = all_odds[0], all_odds[1]
                     gap12 = round(float(sec - fav), 2)
-                    if len(active_runners) <= 12 and sec >= Decimal("5.0"):
+                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
                         is_goldmine = True
 
                 # Calculate Top 5 for all races
@@ -3340,6 +3333,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 for r in active_runners:
                     wo = _get_best_win_odds(r)
                     if wo is not None:
+                        # Propagate fresh odds to runner object for reporting
+                        r.win_odds = float(wo)
                         valid_r_with_odds.append((r, wo))
 
                 r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
@@ -3361,9 +3356,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.append(Decimal(str(DEFAULT_ODDS_FALLBACK)))
 
             # Best Bet Detection:
-            # Goldmine = 2nd Fav >= 5.0, Field <= 12
-            # You Might Like = 2nd Fav >= 4.0, Field <= 12
-            is_best_bet = (len(active_runners) <= 12 and all_odds[1] >= Decimal("4.0"))
+            # Goldmine = 2nd Fav >= 4.5, Field <= 11
+            # You Might Like = 2nd Fav >= 3.5, Field <= 11
+            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5"))
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -3380,7 +3375,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 "mode": "simply_success",
                 "timing_filter": "45m_past_to_120m_future",
                 "chalk_filter": "disabled",
-                "goldmine_threshold": 5.0
+                "goldmine_threshold": 4.5
             },
             "races": qualified
         }
@@ -3567,6 +3562,52 @@ def generate_fortuna_fives(races: List[Any], all_races: Optional[List[Any]] = No
     return "\n".join(lines)
 
 
+def generate_field_matrix(races: List[Any]) -> str:
+    """
+    Generates a Markdown table matrix of races by Track and Field Size.
+    Cells contain alphabetic race codes (lowercase=normal, uppercase=goldmine).
+    """
+    if not races:
+        return "No races available for field matrix."
+
+    # Group races by Track and Field Size
+    matrix = defaultdict(lambda: defaultdict(list))
+
+    for r in races:
+        track = normalize_venue_name(get_field(r, 'venue'))
+        field_size = len([run for run in get_field(r, 'runners', []) if not get_field(run, 'scratched', False)])
+
+        # Only interested in field sizes 3-11 for this report
+        if 3 <= field_size <= 11:
+            is_gold = get_field(r, 'metadata', {}).get('is_goldmine', False)
+            race_num = get_field(r, 'race_number')
+            matrix[track][field_size].append((race_num, is_gold))
+
+    if not matrix:
+        return "No qualifying races for field matrix (3-11 runners)."
+
+    # Header: Display sizes 3 to 11
+    display_sizes = range(3, 12)
+
+    header = "| TRACK / FIELD | " + " | ".join(map(str, display_sizes)) + " |"
+    separator = "| :--- | " + " | ".join([":---:"] * len(display_sizes)) + " |"
+    lines = [header, separator]
+
+    for track in sorted(matrix.keys()):
+        row = [track]
+        for size in display_sizes:
+            race_list = matrix[track].get(size, [])
+            if race_list:
+                # Standardize formatting of race codes
+                code_parts = format_grid_code(race_list, wrap_width=12)
+                row.append("<br>".join(code_parts))
+            else:
+                row.append(" ")
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines)
+
+
 def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """Generate the GOLDMINE RACES appendix, filtered to Superfecta races."""
     lines = ["", "", "GOLDMINE RACES", "--------------"]
@@ -3651,7 +3692,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
         field_size = len([run for run in runners if not get_field(run, 'scratched', False)])
         return cat == 'T' and field_size >= 6
 
-    # Include all goldmines (2nd fav >= 5.0)
+    # Include all goldmines (2nd fav >= 4.5)
     # Deduplicate to prevent double-reporting (e.g. from multiple sources)
     goldmines = []
     seen_gold = set()
@@ -3874,7 +3915,14 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
 
         st = getattr(r, 'start_time', '')
         if isinstance(st, datetime):
-            st_str = st.strftime('%H:%M')
+            # Ensure it's in Eastern for display (GPT5 Improvement)
+            st_str = to_eastern(st).strftime('%H:%M')
+        elif isinstance(st, str):
+            try:
+                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                st_str = to_eastern(dt).strftime('%H:%M')
+            except Exception:
+                st_str = str(st)[11:16]
         else:
             st_str = str(st)[11:16]
 
@@ -3887,7 +3935,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 <td>{getattr(r, 'venue', 'Unknown')}</td>
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
-                <td>{getattr(sel, 'win_odds', 0.0):.2f}</td>
+                <td>{ (getattr(sel, 'win_odds') or 0.0):.2f}</td>
                 <td>{gold_badge}</td>
             </tr>
         """)
@@ -4654,6 +4702,7 @@ class HotTipsTracker:
         if not races:
             return
 
+        await self.db.initialize()
         now = datetime.now(EASTERN)
         report_date = now.isoformat()
         new_tips = []
@@ -4714,8 +4763,8 @@ Fortuna Favorite-to-Place Betting Monitor
 
 This script monitors racing data from multiple adapters and identifies
 betting opportunities based on:
-1. Second favorite odds >= 5.0 decimal
-2. Races under 20 minutes to post (MTP)
+1. Second favorite odds >= 4.0 decimal
+2. Races under 120 minutes to post (MTP)
 3. Superfecta availability preferred
 
 Usage:
@@ -4758,7 +4807,6 @@ class RaceSummary:
         }
 
 
-@functools.lru_cache(None)
 def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
     """Returns all non-abstract discovery adapter classes."""
     def get_all_subclasses(cls):
@@ -4877,7 +4925,7 @@ class FavoriteToPlaceMonitor:
             if r.scratched:
                 continue
             # Refresh odds to avoid stale metadata in continuous monitor mode
-            wo = _get_best_win_odds(r, refresh=True)
+            wo = _get_best_win_odds(r)
             if wo is not None and wo > 1.0:
                 # Update runner object with fresh odds for downstream summaries
                 r.win_odds = float(wo)
@@ -4963,10 +5011,9 @@ class FavoriteToPlaceMonitor:
         unique_summaries = list(race_map.values())
         self.all_races = sorted(unique_summaries, key=lambda x: x.start_time)
 
-        # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
-        # We keep the earliest upcoming race (or very recently started) for each venue,
-        # but only if it falls within the -5 to 20 minute window.
-        next_races_map = {}
+        # GPT5 Improvement: Keep all races within window for analysis, not just one per track.
+        # Window broadened to 18 hours (News Mode)
+        timing_window_summaries = []
         now = datetime.now(EASTERN)
         for summary in unique_summaries:
             st = summary.start_time
@@ -4976,15 +5023,13 @@ class FavoriteToPlaceMonitor:
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            v = get_canonical_venue(summary.track)
-            # Broaden window to 120 mins to ensure yield
-            if -10 < mtp <= 120:
-                if v not in next_races_map or st < next_races_map[v].start_time:
-                    next_races_map[v] = summary
+            # Broaden window to 18 hours to ensure yield for "News"
+            if -45 < mtp <= 1080: # 18 hours
+                timing_window_summaries.append(summary)
 
-        self.golden_zone_races = list(next_races_map.values())
+        self.golden_zone_races = timing_window_summaries
         if not self.golden_zone_races:
-            self.logger.warning("🔭 Monitor found 0 races in the Broadened Window (-10 to 120m)", total_unique=len(unique_summaries))
+            self.logger.warning("🔭 Monitor found 0 races in the Broadened Window (-45m to 18h)", total_unique=len(unique_summaries))
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -5007,13 +5052,13 @@ class FavoriteToPlaceMonitor:
     def get_bet_now_races(self) -> List[RaceSummary]:
         """Get races meeting BET NOW criteria."""
         # 1. MTP <= 120 (Broadened for yield)
-        # 2. 2nd Fav Odds >= 5.0
-        # 3. Field size <= 12 (User Directive)
+        # 2. 2nd Fav Odds >= 4.0
+        # 3. Field size <= 11 (User Directive)
         bet_now = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 120
-            and r.second_fav_odds is not None and r.second_fav_odds >= 5.0
-            and r.field_size <= 12
+            and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
+            and r.field_size <= 11
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -5021,14 +5066,14 @@ class FavoriteToPlaceMonitor:
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
-        # Criteria: Not in BET NOW, but -10 < MTP <= 120 and 2nd Fav Odds >= 4.0
-        # and field size <= 12
+        # Criteria: Not in BET NOW, but -10 < MTP <= 240 (4h) and 2nd Fav Odds >= 3.0
+        # and field size <= 11
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.golden_zone_races
-            if r.mtp is not None and -10 < r.mtp <= 120
-            and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
-            and r.field_size <= 12
+            if r.mtp is not None and -10 < r.mtp <= 240
+            and r.second_fav_odds is not None and r.second_fav_odds >= 3.0
+            and r.field_size <= 11
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
@@ -5043,7 +5088,7 @@ class FavoriteToPlaceMonitor:
             "🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140),
             "=" * 140,
             f"Updated: {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')} ET",
-            "Criteria: -10 < MTP <= 45 minutes AND 2nd Favorite Odds >= 5.0",
+            "Criteria: -10 < MTP <= 120 minutes AND 2nd Favorite Odds >= 4.0",
             "-" * 140
         ]
         if not bet_now:
@@ -5098,6 +5143,17 @@ class FavoriteToPlaceMonitor:
             self.logger.warning("🔭 Monitor found 0 BET NOW opportunities", total_checked=len(self.golden_zone_races))
             # Structured telemetry for monitoring
             structlog.get_logger("FortunaTelemetry").warning("empty_bet_now_list", golden_zone_count=len(self.golden_zone_races))
+            # Create an indicator file for downstream monitoring (GPT5 Improvement)
+            try:
+                Path("monitor_empty.alert").write_text(datetime.now(EASTERN).isoformat())
+            except Exception: pass
+        else:
+            # Clear alert if it exists
+            try:
+                alert_file = Path("monitor_empty.alert")
+                if alert_file.exists(): alert_file.unlink()
+            except Exception: pass
+
         data = {
             "generated_at": datetime.now(EASTERN).isoformat(),
             "target_dates": self.target_dates,
@@ -5108,8 +5164,13 @@ class FavoriteToPlaceMonitor:
             "bet_now_races": [r.to_dict() for r in bn],
             "you_might_like_races": [r.to_dict() for r in yml],
         }
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
+        try:
+            # Ensure parent directory exists (GPT5 Improvement)
+            Path(filename).parent.mkdir(parents=True, exist_ok=True)
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            self.logger.error("failed_saving_race_data", path=filename, error=str(e))
 
         # Persistent history log
         self._append_to_history(bn + yml)
@@ -5219,7 +5280,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         metadata = []
 
         try:
-            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -5427,7 +5488,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
         try:
-            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -5661,7 +5722,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         race_card_urls = []
         try:
-            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
+            target_date = datetime.strptime(date, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -6168,10 +6229,9 @@ async def run_discovery(
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
 
-        # Filter: Only keep THE NEXT RACE per track within the GOLDEN ZONE (Memory Directive)
-        # We keep the earliest upcoming race (or very recently started) for each venue,
-        # but only if it falls within the -5 to 20 minute window.
-        next_races_map = {}
+        # GPT5 Improvement: Keep all races within window for analysis, not just one per track.
+        # Window broadened to 18 hours to match grid cutoff (News Mode)
+        timing_window_races = []
         now = datetime.now(EASTERN)
         for race in unique_races:
             st = race.start_time
@@ -6187,22 +6247,19 @@ async def run_discovery(
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            v = get_canonical_venue(race.venue)
-            # Broaden window to 120 mins to ensure yield
-            if -10 < mtp <= 120:
-                if v not in next_races_map or st < next_races_map[v].start_time:
-                    next_races_map[v] = race
-                    if mtp <= 45:
-                        logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
-                    else:
-                        logger.debug(f"  🔭 Found Upcoming Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
+            # Broaden window to 18 hours to ensure yield for "News"
+            if -45 < mtp <= 1080: # 18 hours = 1080 mins
+                timing_window_races.append(race)
+                if mtp <= 45:
+                    logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
+                else:
+                    logger.debug(f"  🔭 Found Upcoming Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
 
-        golden_zone_races = list(next_races_map.values())
+        golden_zone_races = timing_window_races
         if not golden_zone_races:
-            logger.warning("🔭 No races found in the broadened window (-10 to 120 mins).")
+            logger.warning("🔭 No races found in the broadened window (-45m to 18h).")
 
-        logger.info("Filtered to Next Race per track in Golden Zone", count=len(golden_zone_races))
-        logger.info("Total unique races available for summary", count=len(unique_races))
+        logger.info("Total unique races available for analysis", count=len(unique_races))
 
         # Save raw fetched/merged races if requested (Save EVERYTHING unique)
         if save_path:
@@ -6217,14 +6274,18 @@ async def run_discovery(
             logger.info("Fetch-only mode active. Skipping analysis and reporting.")
             return
 
-        # Analyze ONLY Golden Zone races for immediate tips
+        # Analyze ALL unique races to ensure Grid is populated with Top 5 info (News Mode)
         analyzer = SimplySuccessAnalyzer()
-        result = analyzer.qualify_races(golden_zone_races)
+        result = analyzer.qualify_races(unique_races)
         qualified = result.get("races", [])
 
         # Generate Grid & Goldmine (Grid uses unique_races for the broader context)
         grid = generate_summary_grid(qualified, all_races=unique_races)
         logger.info("Summary Grid Generated")
+
+        # Generate Field Matrix for all unique races
+        field_matrix = generate_field_matrix(unique_races)
+        logger.info("Field Matrix Generated")
 
         # Log Hot Tips & Fetch recent historical results for the report
         tracker = HotTipsTracker()
@@ -6318,9 +6379,13 @@ async def run_discovery(
             if historical_report:
                 print("\n" + historical_report + "\n")
 
-        # Always save reports to files
-        with open("summary_grid.txt", "w") as f: f.write(grid)
-        with open("goldmine_report.txt", "w") as f: f.write(gm_report)
+        # Always save reports to files (GPT5 Improvement: Defensive guards)
+        try:
+            with open("summary_grid.txt", "w", encoding='utf-8') as f: f.write(grid)
+            with open("field_matrix.txt", "w", encoding='utf-8') as f: f.write(field_matrix)
+            with open("goldmine_report.txt", "w", encoding='utf-8') as f: f.write(gm_report)
+        except Exception as e:
+            logger.error("failed_saving_text_reports", error=str(e))
 
         # Save qualified races to JSON
         report_data = {
@@ -6328,8 +6393,11 @@ async def run_discovery(
             "analysis_metadata": result.get("criteria", {}),
             "timestamp": datetime.now(EASTERN).isoformat(),
         }
-        with open("qualified_races.json", "w") as f:
-            json.dump(report_data, f, indent=4)
+        try:
+            with open("qualified_races.json", "w", encoding='utf-8') as f:
+                json.dump(report_data, f, indent=4)
+        except Exception as e:
+            logger.error("failed_saving_qualified_races", error=str(e))
 
     finally:
         await GlobalResourceManager.cleanup()
