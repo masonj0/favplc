@@ -13,7 +13,7 @@ The Jules sandbox is a fully instrumented Linux environment capable of executing
 ## 🛠️ Primary Tools for Verification
 
 ### 1. The Monolith: `fortuna.py`
-This is the high-stability, monolithic discovery pipeline (the "Anthology"). It orchestrates the entire fleet of functional adapters, applies the `SimplySuccess` analyzer filters, and generates the standardized alphabetic summary grid.
+This is the high-stability, monolithic discovery pipeline (the "Fortuna Discovery Engine"). It orchestrates the entire fleet of functional adapters, applies the `SimplySuccess` analyzer filters, and generates the standardized alphabetic summary grid.
 
 **Execution (Discovery Mode):**
 ```bash
