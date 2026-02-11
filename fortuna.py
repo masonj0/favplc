@@ -2145,7 +2145,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         return self._get_browser_headers(host="www.skysports.com", referer="https://www.skysports.com/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = datetime.strptime(ds, "%Y-%m-%d")
         index_url = f"/racing/racecards/{dt.strftime('%d-%m-%Y')}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         if not resp or not resp.text:
@@ -2156,7 +2156,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         metadata = []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2312,7 +2312,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = datetime.strptime(ds, "%Y-%m-%d")
         date_label = dt.strftime(f"%A %b {dt.day}, %Y")
         date_short = dt.strftime("%m%d") # e.g. 0208
 
@@ -2618,7 +2618,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return self._get_browser_headers(host="www.equibase.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = datetime.strptime(ds, "%Y-%m-%d")
         date_str = dt.strftime("%m%d%y")
 
         # Try different possible index URLs
@@ -3101,7 +3101,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 log = structlog.get_logger(__name__)
 
 
-def _get_best_win_odds(runner: Runner, refresh: bool = False) -> Optional[Decimal]:
+def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
     """Gets the best win odds for a runner, filtering out invalid or placeholder values."""
     if not runner.odds:
         # Fallback to win_odds if available
@@ -5219,7 +5219,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         metadata = []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -5427,7 +5427,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -5661,7 +5661,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         race_card_urls = []
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = datetime.strptime(ds, "%Y-%m-%d").date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
