@@ -3108,7 +3108,6 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
         # Fallback to win_odds if available
         if runner.win_odds and 0 < runner.win_odds < 999:
             return Decimal(str(runner.win_odds))
-        return None
 
     valid_odds = []
     for source_data in runner.odds.values():
@@ -3298,19 +3297,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         """Returns races with a perfect score, applying global timing and chalk filters."""
         qualified = []
         now = datetime.now(EASTERN)
-        # Broaden timing filter to 120 minutes in the future, and 45 minutes in the past
-        past_cutoff = now - timedelta(minutes=45)
-        future_cutoff = now + timedelta(minutes=120)
 
         for race in races:
-            # 1. Timing Filter: Ignore races outside the broadened window
+            # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
             st = race.start_time
             if st.tzinfo is None:
                 st = st.replace(tzinfo=EASTERN)
-
-            if st < past_cutoff or st > future_cutoff:
-                log.debug("Excluding race outside scoring window", venue=race.venue, start_time=st)
-                continue
 
             # 2. Chalk Filter: Exclude races with an odds-on favorite (< 2.0)
             # if best_odds is not None and best_odds < 2.0:
@@ -3943,7 +3935,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 <td>{getattr(r, 'venue', 'Unknown')}</td>
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
-                <td>{getattr(sel, 'win_odds', 0.0):.2f}</td>
+                <td>{ (getattr(sel, 'win_odds') or 0.0):.2f}</td>
                 <td>{gold_badge}</td>
             </tr>
         """)
@@ -5020,6 +5012,7 @@ class FavoriteToPlaceMonitor:
         self.all_races = sorted(unique_summaries, key=lambda x: x.start_time)
 
         # GPT5 Improvement: Keep all races within window for analysis, not just one per track.
+        # Window broadened to 18 hours (News Mode)
         timing_window_summaries = []
         now = datetime.now(EASTERN)
         for summary in unique_summaries:
@@ -5030,13 +5023,13 @@ class FavoriteToPlaceMonitor:
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            # Broaden window to 120 mins to ensure yield
-            if -10 < mtp <= 120:
+            # Broaden window to 18 hours to ensure yield for "News"
+            if -45 < mtp <= 1080: # 18 hours
                 timing_window_summaries.append(summary)
 
         self.golden_zone_races = timing_window_summaries
         if not self.golden_zone_races:
-            self.logger.warning("🔭 Monitor found 0 races in the Broadened Window (-10 to 120m)", total_unique=len(unique_summaries))
+            self.logger.warning("🔭 Monitor found 0 races in the Broadened Window (-45m to 18h)", total_unique=len(unique_summaries))
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -5073,12 +5066,12 @@ class FavoriteToPlaceMonitor:
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
-        # Criteria: Not in BET NOW, but -10 < MTP <= 120 and 2nd Fav Odds >= 3.0
+        # Criteria: Not in BET NOW, but -10 < MTP <= 240 (4h) and 2nd Fav Odds >= 3.0
         # and field size <= 11
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.golden_zone_races
-            if r.mtp is not None and -10 < r.mtp <= 120
+            if r.mtp is not None and -10 < r.mtp <= 240
             and r.second_fav_odds is not None and r.second_fav_odds >= 3.0
             and r.field_size <= 11
             and (r.track, r.race_number) not in bet_now_keys
@@ -6237,6 +6230,7 @@ async def run_discovery(
         logger.info("Unique races identified", count=len(unique_races))
 
         # GPT5 Improvement: Keep all races within window for analysis, not just one per track.
+        # Window broadened to 18 hours to match grid cutoff (News Mode)
         timing_window_races = []
         now = datetime.now(EASTERN)
         for race in unique_races:
@@ -6253,8 +6247,8 @@ async def run_discovery(
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            # Broaden window to 120 mins to ensure yield
-            if -10 < mtp <= 120:
+            # Broaden window to 18 hours to ensure yield for "News"
+            if -45 < mtp <= 1080: # 18 hours = 1080 mins
                 timing_window_races.append(race)
                 if mtp <= 45:
                     logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
@@ -6263,10 +6257,9 @@ async def run_discovery(
 
         golden_zone_races = timing_window_races
         if not golden_zone_races:
-            logger.warning("🔭 No races found in the broadened window (-10 to 120 mins).")
+            logger.warning("🔭 No races found in the broadened window (-45m to 18h).")
 
-        logger.info("Filtered to Next Race per track in Golden Zone", count=len(golden_zone_races))
-        logger.info("Total unique races available for summary", count=len(unique_races))
+        logger.info("Total unique races available for analysis", count=len(unique_races))
 
         # Save raw fetched/merged races if requested (Save EVERYTHING unique)
         if save_path:
@@ -6281,9 +6274,9 @@ async def run_discovery(
             logger.info("Fetch-only mode active. Skipping analysis and reporting.")
             return
 
-        # Analyze ONLY Golden Zone races for immediate tips
+        # Analyze ALL unique races to ensure Grid is populated with Top 5 info (News Mode)
         analyzer = SimplySuccessAnalyzer()
-        result = analyzer.qualify_races(golden_zone_races)
+        result = analyzer.qualify_races(unique_races)
         qualified = result.get("races", [])
 
         # Generate Grid & Goldmine (Grid uses unique_races for the broader context)
