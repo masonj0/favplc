@@ -142,7 +142,12 @@ def generate_summary():
 
     if discovery_harvest:
         write_to_summary("#### 📋 Entries Adapters")
-        for adapter in sorted(discovery_harvest.keys()):
+        # Sort by Records Found (descending), then alphabetically
+        sorted_adapters = sorted(
+            discovery_harvest.keys(),
+            key=lambda k: (-(discovery_harvest[k].get("count", 0) if isinstance(discovery_harvest[k], dict) else discovery_harvest[k]), k)
+        )
+        for adapter in sorted_adapters:
             data = discovery_harvest[adapter]
             if isinstance(data, dict):
                 count = data.get("count", 0)
@@ -158,7 +163,12 @@ def generate_summary():
 
     if results_harvest:
         write_to_summary("#### 🏁 Results Adapters")
-        for adapter in sorted(results_harvest.keys()):
+        # Sort by Records Found (descending), then alphabetically
+        sorted_results = sorted(
+            results_harvest.keys(),
+            key=lambda k: (-(results_harvest[k].get("count", 0) if isinstance(results_harvest[k], dict) else results_harvest[k]), k)
+        )
+        for adapter in sorted_results:
             data = results_harvest[adapter]
             if isinstance(data, dict):
                 count = data.get("count", 0)
