@@ -2081,16 +2081,23 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
         return
 
     harvest_summary: Dict[str, Dict[str, Any]] = {}
+
+    # Pre-populate harvest_summary for regional visibility (Memory Directive Fix)
+    target_region = region or get_optimal_region_at_time(now_eastern())
+    expected_adapters = fortuna.USA_RESULTS_ADAPTERS if target_region == "USA" else fortuna.INT_RESULTS_ADAPTERS
+    for adapter_name in expected_adapters:
+        harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
 
         if not unverified:
             logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
-            # Always ensure results_harvest.json exists for GHA workflow (Memory Directive Fix)
+            # Always ensure results_harvest.json exists with pre-populated summary (Memory Directive Fix)
             try:
                 with open("results_harvest.json", "w") as f:
-                    json.dump({}, f)
+                    json.dump(harvest_summary, f)
             except Exception as e:
                 logger.debug("Failed to create results_harvest.json", error=str(e))
         else:
@@ -2195,6 +2202,44 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
             logger.info("Report saved", path=str(report_path))
         except IOError as e:
             logger.error("Failed to save report", error=str(e))
+
+        # NEW: Write GHA Job Summary
+        if 'GITHUB_STEP_SUMMARY' in os.environ:
+            try:
+                # Reconstruct minimal Race objects for pending tips to populate the predictions section
+                pending_tips = await auditor.db.get_unverified_tips(lookback_hours=48)
+                qualified_from_db = []
+                for tip in pending_tips:
+                    try:
+                        # Create a minimal Race object for formatting
+                        r = fortuna.Race(
+                            id=tip['race_id'],
+                            venue=tip['venue'],
+                            race_number=tip['race_number'],
+                            start_time=datetime.fromisoformat(tip['start_time'].replace('Z', '+00:00')),
+                            runners=[],
+                            source="Database"
+                        )
+                        # Populate metadata for format_prediction_row
+                        r.metadata = {
+                            'is_goldmine': bool(tip.get('is_goldmine')),
+                            'selection_number': tip.get('selection_number'),
+                            'selection_name': tip.get('selection_name'),
+                            'predicted_2nd_fav_odds': tip.get('predicted_2nd_fav_odds')
+                        }
+                        r.top_five_numbers = tip.get('top_five')
+                        qualified_from_db.append(r)
+                    except Exception:
+                        continue
+
+                predictions_md = fortuna.format_predictions_section(qualified_from_db)
+                proof_md = await fortuna.format_proof_section(auditor.db)
+                harvest_md = fortuna.build_harvest_table(harvest_summary, "🛰️ Results Harvest Performance")
+                artifacts_md = fortuna.format_artifact_links()
+                fortuna.write_job_summary(predictions_md, harvest_md, proof_md, artifacts_md)
+                logger.info("GHA Job Summary written")
+            except Exception as e:
+                logger.error("Failed to write GHA summary", error=str(e))
 
         # Summary
         if all_audited:

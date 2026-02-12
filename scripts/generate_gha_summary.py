@@ -1,6 +1,7 @@
 import json
 import sys
 import os
+import re
 from datetime import datetime
 
 def get_summary_file():
@@ -14,188 +15,162 @@ def write_to_summary(text):
     else:
         print(text)
 
+def build_harvest_table(summary, title):
+    if not summary:
+        return f"#### {title}\n| Adapter | Races | Max Odds | Status |\n| --- | --- | --- | --- |\n| N/A | 0 | 0.0 | ⚠️ No harvest data |\n"
+
+    lines = [f"#### {title}", "", "| Adapter | Races | Max Odds | Status |", "| --- | --- | --- | --- |"]
+
+    def sort_key(item):
+        adapter, data = item
+        count = data.get('count', 0) if isinstance(data, dict) else data
+        return (-count, adapter)
+
+    sorted_adapters = sorted(summary.items(), key=sort_key)
+
+    for adapter, data in sorted_adapters:
+        if isinstance(data, dict):
+            count = data.get('count', 0)
+            max_odds = data.get('max_odds', 0.0)
+        else:
+            count = data
+            max_odds = 0.0
+
+        status = '✅' if count > 0 else '⚠️ No Data'
+        lines.append(f"| {adapter} | {count} | {max_odds:.1f} | {status} |")
+    return "\n".join(lines) + "\n"
+
 def generate_summary():
     # Header
     now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    write_to_summary(f"## 🎯 List of Best Bets - Intelligence Report")
-    write_to_summary(f"**Run Date:** {now_str} (UTC)")
+    write_to_summary(f"## 🔔 Fortuna Intelligence Job Summary")
+    write_to_summary(f"*Executive Intelligence Briefing - {now_str} (UTC)*")
     write_to_summary("")
 
-    # 1. Favorite-to-Place Monitor (from race_data.json)
+    # 1. Predictions & Proof
+    write_to_summary("### 🔮 Fortuna Predictions & Proof")
+
+    # 1a. Predictions Table
     if os.path.exists('race_data.json'):
-        write_to_summary("### 🎯 Favorite-to-Place Monitor")
         try:
             with open('race_data.json', 'r', encoding='utf-8') as f:
                 d = json.load(f)
 
-            total = d.get('total_races', 0)
-            bet_now = d.get('bet_now_count', 0)
-            might_like = d.get('you_might_like_count', 0)
+            races = d.get('bet_now_races', []) + d.get('you_might_like_races', [])
 
-            write_to_summary(f"**Total Races:** {total}")
-            write_to_summary(f"**BET NOW:** {bet_now}")
-            write_to_summary(f"**You Might Like:** {might_like}")
-            write_to_summary("")
+            if races:
+                write_to_summary("| Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |")
+                write_to_summary("| --- | --- | --- | --- | --- | --- | --- | --- |")
 
-            if d.get('bet_now_races'):
-                write_to_summary("#### 🎯 BET NOW OPPORTUNITIES")
-                write_to_summary("| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |")
-                write_to_summary("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
-                for r in d['bet_now_races']:
-                    sup = '✅' if r.get('superfecta_offered') else '❌'
-                    mtp = r.get('mtp', 'N/A')
-                    # Leading zero formatting for MTP if needed (should already be in text reports but here it is in JSON)
-                    try:
-                        m_int = int(mtp)
-                        mtp_str = f"{m_int:02d}m" if 0 <= m_int < 10 else f"{m_int}m"
-                    except Exception:
-                        mtp_str = f"{mtp}m"
+                # Take top 10
+                for r in races[:10]:
+                    odds = r.get('second_fav_odds') or 0.0
+                    gap = r.get('gap12', 0.0)
+                    gold = '✅' if odds >= 4.5 and gap > 0.25 else '—'
+                    selection = r.get('second_fav_name') or f"#{r.get('selection_number', '?')}"
+                    top5 = r.get('top_five_numbers') or 'TBD'
 
-                    disc = r.get('discipline', 'N/A')
-                    track = r.get('track', 'N/A')
-                    race_num = r.get('race_number', 'N/A')
-                    field = r.get('field_size', 'N/A')
-                    fav = f"{r['favorite_odds']:.2f}" if r.get('favorite_odds') else 'N/A'
-                    sec = f"{r['second_fav_odds']:.2f}" if r.get('second_fav_odds') else 'N/A'
-                    odds = f"{fav}, {sec}"
-                    top5 = f"`{r['top_five_numbers']}`" if r.get('top_five_numbers') else 'N/A'
-                    write_to_summary(f"| {sup} | {mtp_str} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
-                write_to_summary("")
+                    # Try to find payout info if available (merged from analytics maybe)
+                    payout_text = 'Awaiting Results'
 
-            if d.get('you_might_like_races'):
-                write_to_summary("#### 🌟 YOU MIGHT LIKE")
-                write_to_summary("| SUP | MTP | DISC | TRACK | R# | FIELD | ODDS | TOP 5 |")
-                write_to_summary("|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|")
-                for r in d['you_might_like_races']:
-                    sup = '✅' if r.get('superfecta_offered') else '❌'
-                    mtp = r.get('mtp', 'N/A')
-                    try:
-                        m_int = int(mtp)
-                        mtp_str = f"{m_int:02d}m" if 0 <= m_int < 10 else f"{m_int}m"
-                    except Exception:
-                        mtp_str = f"{mtp}m"
-
-                    disc = r.get('discipline', 'N/A')
-                    track = r.get('track', 'N/A')
-                    race_num = r.get('race_number', 'N/A')
-                    field = r.get('field_size', 'N/A')
-                    fav = f"{r['favorite_odds']:.2f}" if r.get('favorite_odds') else 'N/A'
-                    sec = f"{r['second_fav_odds']:.2f}" if r.get('second_fav_odds') else 'N/A'
-                    odds = f"{fav}, {sec}"
-                    top5 = f"`{r['top_five_numbers']}`" if r.get('top_five_numbers') else 'N/A'
-                    write_to_summary(f"| {sup} | {mtp_str} | {disc} | {track} | {race_num} | {field} | {odds} | {top5} |")
-                write_to_summary("")
-
-            # 1b. Race Analysis Grid (Moved here as requested by user)
-            if os.path.exists('summary_grid.txt'):
-                write_to_summary("#### 📋 Race Analysis Grid")
-                with open('summary_grid.txt', 'r', encoding='utf-8') as f:
-                    write_to_summary(f.read())
-                write_to_summary("")
-
+                    write_to_summary(f"| {r['track']} | {r['race_number']} | {selection} | {odds:.2f} | {gap:.2f} | {gold} | {top5} | {payout_text} |")
+            else:
+                write_to_summary("No immediate Goldmine predictions available for this run.")
         except Exception as e:
-            write_to_summary(f"❌ Error parsing race_data.json: {e}")
+            write_to_summary(f"⚠️ Error parsing race_data.json: {e}")
     else:
-        write_to_summary("⚠️ race_data.json not found - Discovery may have failed")
+        write_to_summary("Awaiting discovery predictions.")
 
-    # 2. Race Analysis Grid (Already handled above)
+    # 1b. Audited Proof
+    write_to_summary("")
+    write_to_summary("#### 💰 Recent Audited Proof")
 
-    # 3. Goldmine Intelligence
-    if os.path.exists('goldmine_report.txt'):
-        write_to_summary("### 💰 Goldmine Intelligence")
-        write_to_summary("```text")
-        with open('goldmine_report.txt', 'r', encoding='utf-8') as f:
-            write_to_summary(f.read())
-        write_to_summary("```")
-        write_to_summary("")
-
-    # 3b. Field Matrix Grid
-    if os.path.exists('field_matrix.txt'):
-        write_to_summary("### 📊 Race Field Matrix (3-11 Runners)")
-        with open('field_matrix.txt', 'r', encoding='utf-8') as f:
-            write_to_summary(f.read())
-        write_to_summary("")
-
-    # 4. Performance Analytics Audit
+    proof_found = False
     if os.path.exists('analytics_report.txt'):
-        write_to_summary("### 📊 Performance Analytics Audit")
-        write_to_summary("```text")
-        with open('analytics_report.txt', 'r', encoding='utf-8') as f:
-            # We skip the harvest summary if it's already at the bottom
-            content = f.read()
-            if "🔎 LIVE ADAPTER HARVEST PROOF" in content:
-                content = content.split("🔎 LIVE ADAPTER HARVEST PROOF")[0]
-            write_to_summary(content.strip())
-        write_to_summary("```")
-        write_to_summary("")
+        try:
+            with open('analytics_report.txt', 'r', encoding='utf-8') as f:
+                content = f.read()
+                # Extract the "RECENT PERFORMANCE PROOF" section
+                if "💰 RECENT PERFORMANCE PROOF" in content:
+                    proof_found = True
+                    section = content.split("💰 RECENT PERFORMANCE PROOF")[1].split("\n\n")[0]
+                    # Convert to table if possible or just code block
+                    write_to_summary("```text")
+                    write_to_summary("RECENT PERFORMANCE PROOF" + section)
+                    write_to_summary("```")
+        except Exception: pass
 
-    # 5. LIVE ADAPTER HARVEST PROOF (Consolidated)
-    write_to_summary("### 🔎 LIVE ADAPTER HARVEST PROOF")
-    write_to_summary("-" * 40)
+    if not proof_found:
+        write_to_summary("Awaiting race results; nothing audited in this cycle.")
+
+    # 2. Harvest Performance
+    write_to_summary("")
+    write_to_summary("### 🛰️ Harvest Performance & Adapter Health")
 
     discovery_harvest = {}
-    if os.path.exists('discovery_harvest.json'):
-        try:
-            with open('discovery_harvest.json', 'r') as f:
-                discovery_harvest = json.load(f)
-        except Exception: pass
+    # Look for all possible discovery harvest files from parallel runs (Memory Directive Fix)
+    for hf in ['discovery_harvest.json', 'discovery_harvest_usa.json', 'discovery_harvest_int.json']:
+        if os.path.exists(hf):
+            try:
+                with open(hf, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if k not in discovery_harvest:
+                            discovery_harvest[k] = v
+                        else:
+                            # Merge: take highest count and max_odds
+                            if isinstance(v, dict) and isinstance(discovery_harvest[k], dict):
+                                discovery_harvest[k]['count'] = max(discovery_harvest[k].get('count', 0), v.get('count', 0))
+                                discovery_harvest[k]['max_odds'] = max(discovery_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
+            except Exception: pass
 
     results_harvest = {}
-    if os.path.exists('results_harvest.json'):
-        try:
-            with open('results_harvest.json', 'r') as f:
-                results_harvest = json.load(f)
-        except Exception: pass
+    # Look for all possible results harvest files from parallel runs (Memory Directive Fix)
+    for hf in ['results_harvest.json', 'results_harvest_audit.json']:
+        if os.path.exists(hf):
+            try:
+                with open(hf, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if k not in results_harvest:
+                            results_harvest[k] = v
+                        else:
+                            # Merge: take highest count and max_odds
+                            if isinstance(v, dict) and isinstance(results_harvest[k], dict):
+                                results_harvest[k]['count'] = max(results_harvest[k].get('count', 0), v.get('count', 0))
+                                results_harvest[k]['max_odds'] = max(results_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
+            except Exception: pass
 
-    if discovery_harvest:
-        write_to_summary("#### 📋 Entries Adapters")
-        # Sort by Records Found (descending), then alphabetically
-        sorted_adapters = sorted(
-            discovery_harvest.keys(),
-            key=lambda k: (-(discovery_harvest[k].get("count", 0) if isinstance(discovery_harvest[k], dict) else discovery_harvest[k]), k)
-        )
-        for adapter in sorted_adapters:
-            data = discovery_harvest[adapter]
-            if isinstance(data, dict):
-                count = data.get("count", 0)
-                max_odds = data.get("max_odds", 0.0)
-            else:
-                count = data
-                max_odds = 0.0
+    write_to_summary(build_harvest_table(discovery_harvest, "Discovery Harvest"))
+    write_to_summary(build_harvest_table(results_harvest, "Results Harvest"))
 
-            status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            odds_str = f" | MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else ""
-            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}{odds_str}")
-        write_to_summary("")
+    # 3. Intelligence Grids
+    if os.path.exists('summary_grid.txt') or os.path.exists('field_matrix.txt'):
+        write_to_summary("### 📋 Intelligence Grids")
 
-    if results_harvest:
-        write_to_summary("#### 🏁 Results Adapters")
-        # Sort by Records Found (descending), then alphabetically
-        sorted_results = sorted(
-            results_harvest.keys(),
-            key=lambda k: (-(results_harvest[k].get("count", 0) if isinstance(results_harvest[k], dict) else results_harvest[k]), k)
-        )
-        for adapter in sorted_results:
-            data = results_harvest[adapter]
-            if isinstance(data, dict):
-                count = data.get("count", 0)
-                max_odds = data.get("max_odds", 0.0)
-            else:
-                count = data
-                max_odds = 0.0
+        if os.path.exists('summary_grid.txt'):
+            write_to_summary("#### 🏁 Race Analysis Grid")
+            with open('summary_grid.txt', 'r', encoding='utf-8') as f:
+                write_to_summary(f.read())
+            write_to_summary("")
 
-            status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            odds_str = f" | MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else ""
-            write_to_summary(f"{adapter:<25} | {status:<15} | Records Found: {count}{odds_str}")
-        write_to_summary("")
+        if os.path.exists('field_matrix.txt'):
+            write_to_summary("#### 📊 Field Matrix (3-11 Runners)")
+            with open('field_matrix.txt', 'r', encoding='utf-8') as f:
+                write_to_summary(f.read())
+            write_to_summary("")
 
-    if not discovery_harvest and not results_harvest:
-        write_to_summary("No harvest data available.")
+    # 4. Report Artifacts
+    write_to_summary("### 📁 Report Artifacts")
+    write_to_summary("- [Summary Grid](summary_grid.txt)")
+    write_to_summary("- [Field Matrix](field_matrix.txt)")
+    write_to_summary("- [Goldmine Report](goldmine_report.txt)")
+    write_to_summary("- [HTML Report](fortuna_report.html)")
+    write_to_summary("- [Analytics Log](analytics_report.txt)")
+
     write_to_summary("")
-
-    # Footer
     write_to_summary("---")
-    write_to_summary(f"*Generated by List of Best Bets at {now_str} (UTC)*")
+    write_to_summary(f"*Fortuna Intelligence Monolith - Optimized Briefing*")
 
 if __name__ == "__main__":
     generate_summary()
