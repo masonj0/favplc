@@ -1,138 +1,108 @@
+#!/usr/bin/env python3
+"""
+fortuna_analytics.py
+Race result harvesting and performance analysis engine for Fortuna.
+"""
 from __future__ import annotations
-# fortuna_analytics.py
-# Race result harvesting and performance analysis engine for Fortuna
 
 import argparse
 import asyncio
-import functools
 import json
 import logging
 import os
 import re
-from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import (
-    Any,
-    Dict,
-    Final,
-    List,
-    Optional,
-    Tuple,
-    Type,
-)
+from typing import Any, Dict, Final, List, Optional, Tuple, Type
+from zoneinfo import ZoneInfo
 
 import structlog
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    field_validator,
-    model_validator,
-)
+from pydantic import Field, model_validator
 from selectolax.parser import HTMLParser, Node
 
-# --- OPTIONAL IMPORTS ---
 try:
     from scrapling import AsyncFetcher
+
     ASYNC_SESSIONS_AVAILABLE = True
 except ImportError:
     ASYNC_SESSIONS_AVAILABLE = False
 
-# Import monolithic fortuna
 import fortuna
 
-# --- CONSTANTS ---
-EASTERN = ZoneInfo("America/New_York")
+# -- CONSTANTS ----------------------------------------------------------------
 
+EASTERN = ZoneInfo("America/New_York")
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
-    4: 1,   # 4 or fewer runners: only win counts
-    7: 2,   # 5-7 runners: top 2
-    999: 3, # 8+ runners: top 3
+    4: 1,    # =4 runners: win only
+    7: 2,    # 5-7 runners: top 2
+    999: 3,  # 8+: top 3
 }
 
+_currency_logger = structlog.get_logger("currency_parser")
 
-# --- HELPER FUNCTIONS ---
+
+# -- HELPER FUNCTIONS ---------------------------------------------------------
 
 def now_eastern() -> datetime:
-    """Returns the current time in US Eastern Time."""
     return datetime.now(EASTERN)
 
 
-def get_optimal_region_at_time(dt: datetime) -> str:
-    """Determine which region has the most active racing at given time."""
-    et_hour = dt.astimezone(EASTERN).hour
-    # US Racing Window: 9am - 11pm ET
-    if 9 <= et_hour < 23:
-        return "USA"
-    # International Window: 11pm - 9am ET (covers AUS/UK morning)
-    else:
-        return "INT"
-
-
 def to_eastern(dt: datetime) -> datetime:
-    """Converts a datetime object to US Eastern Time."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
     return dt.astimezone(EASTERN)
 
 
-def parse_position(pos_str: Optional[str]) -> Optional[int]:
-    """
-    Extract numeric position from strings like '1st', '2/12', 'W', 'P', 'S', etc.
+def get_optimal_region_at_time(dt: datetime) -> str:
+    """US 9am–11pm ET, otherwise international."""
+    et_hour = dt.astimezone(EASTERN).hour
+    return "USA" if 9 <= et_hour < 23 else "INT"
 
-    Returns:
-        Integer position (1-based) or None if unparseable.
-    """
+
+def parse_position(pos_str: Optional[str]) -> Optional[int]:
+    """``'1st'`` ? 1, ``'2/12'`` ? 2, ``'W'`` ? 1, etc."""
     if not pos_str:
         return None
-
-    pos_str = str(pos_str).upper().strip()
-
-    # Direct mappings for common abbreviations
-    position_map = {
+    s = str(pos_str).upper().strip()
+    direct = {
         "W": 1, "1": 1, "1ST": 1,
         "P": 2, "2": 2, "2ND": 2,
         "S": 3, "3": 3, "3RD": 3,
         "4": 4, "4TH": 4,
         "5": 5, "5TH": 5,
     }
-
-    if pos_str in position_map:
-        return position_map[pos_str]
-
-    # Extract first number from strings like "2/12" or "3rd"
-    match = re.search(r"^(\d+)", pos_str)
-    if match:
-        return int(match.group(1))
-
-    return None
+    if s in direct:
+        return direct[s]
+    m = re.search(r"^(\d+)", s)
+    return int(m.group(1)) if m else None
 
 
 def get_places_paid(field_size: int) -> int:
-    """Determine how many places are paid based on field size."""
     for max_size, places in sorted(PLACE_POSITIONS_BY_FIELD_SIZE.items()):
         if field_size <= max_size:
             return places
-    return 3  # Default
-
-
-_currency_logger = structlog.get_logger("currency_parser")
+    return 3
 
 
 def parse_currency_value(value_str: str) -> float:
-    """Parse currency strings like '$123.45', '£50.00', '1,234.56'."""
+    """``'$1,234.56'`` ? 1234.56"""
     if not value_str:
         return 0.0
     try:
-        # Check for unexpected characters (excluding common currency/formatting)
-        if re.search(r'[^\d.,$£€\s]', str(value_str)):
-            _currency_logger.debug("unexpected_currency_format", value=value_str)
+        raw = str(value_str).strip()
+        if re.search(r"[^\d.,$£€\s]", raw):
+            _currency_logger.debug("unexpected_currency_format", value=raw)
 
-        cleaned = re.sub(r'[^\d.]', '', str(value_str).replace(',', ''))
+        if "," in raw and "." in raw:
+            cleaned = raw.replace(",", "")
+        elif "," in raw and re.search(r",\d{2}$", raw):
+            cleaned = raw.replace(",", ".")
+        else:
+            cleaned = raw.replace(",", "")
+
+        cleaned = re.sub(r"[^\d.]", "", cleaned)
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
         _currency_logger.warning("failed_parsing_currency", value=value_str)
@@ -140,7 +110,6 @@ def parse_currency_value(value_str: str) -> float:
 
 
 def validate_date_format(date_str: str) -> bool:
-    """Validate YYYY-MM-DD format."""
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
         return True
@@ -148,279 +117,236 @@ def validate_date_format(date_str: str) -> bool:
         return False
 
 
-# --- MODELS FOR ANALYTICS ---
+# -- MODELS -------------------------------------------------------------------
 
 class ResultRunner(fortuna.Runner):
-    """
-    Extended runner with result information, inheriting from discovery Runner.
-    """
+    """Runner extended with finishing position and payouts."""
+
     position: Optional[str] = None
     position_numeric: Optional[int] = None
-
-    # Result-specific fields
     final_win_odds: Optional[float] = None
     win_payout: Optional[float] = None
     place_payout: Optional[float] = None
     show_payout: Optional[float] = None
 
-    @model_validator(mode='after')
-    def compute_position_numeric(self) -> 'ResultRunner':
-        """Auto-compute numeric position from string."""
+    @model_validator(mode="after")
+    def compute_position_numeric(self) -> ResultRunner:
         if self.position and self.position_numeric is None:
             self.position_numeric = parse_position(self.position)
         return self
 
 
 class ResultRace(fortuna.Race):
-    """
-    Race with full result data, inheriting from discovery Race.
-    """
+    """Race with full result data."""
+
     runners: List[ResultRunner] = Field(default_factory=list)
     official_dividends: Dict[str, float] = Field(default_factory=dict)
     chart_url: Optional[str] = None
     is_fully_parsed: bool = False
 
-    # Exotic bet payouts
     trifecta_payout: Optional[float] = None
     trifecta_cost: float = 1.00
     trifecta_combination: Optional[str] = None
-
     exacta_payout: Optional[float] = None
     exacta_combination: Optional[str] = None
-
     superfecta_payout: Optional[float] = None
     superfecta_combination: Optional[str] = None
 
     @property
     def canonical_key(self) -> str:
-        """Generate a canonical key for matching, including discipline if available."""
-        date_str = self.start_time.strftime('%Y%m%d')
-        time_str = self.start_time.strftime('%H%M')
+        d = self.start_time.strftime("%Y%m%d")
+        t = self.start_time.strftime("%H%M")
         disc = (self.discipline or "T")[:1].upper()
-        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{time_str}|{disc}"
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{d}|{t}|{disc}"
 
     @property
     def relaxed_key(self) -> str:
-        """Generate a time-relaxed key for matching."""
-        date_str = self.start_time.strftime('%Y%m%d')
+        d = self.start_time.strftime("%Y%m%d")
         disc = (self.discipline or "T")[:1].upper()
-        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{date_str}|{disc}"
+        return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{d}|{disc}"
 
     def get_top_finishers(self, n: int = 5) -> List[ResultRunner]:
-        """Get top N finishers sorted by position."""
-        with_position = [
-            r for r in self.runners
-            if r.position_numeric is not None
-        ]
-        sorted_runners = sorted(with_position, key=lambda x: x.position_numeric)
-        return sorted_runners[:n]
+        ranked = [r for r in self.runners if r.position_numeric is not None]
+        ranked.sort(key=lambda r: r.position_numeric)
+        return ranked[:n]
 
 
-# --- AUDITOR ENGINE ---
+# -- AUDITOR ENGINE -----------------------------------------------------------
 
 class AuditorEngine:
-    """
-    Matches tips from history against actual race results using SQLite.
-    """
+    """Matches predicted tips against actual race results via SQLite."""
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None) -> None:
         self.db = fortuna.FortunaDB(db_path or DEFAULT_DB_PATH)
         self.logger = structlog.get_logger(self.__class__.__name__)
 
-    async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
-        """
-        Returns tips that haven't been successfully audited yet.
-        """
+    # -- data access -------------------------------------------------------
+
+    async def get_unverified_tips(
+        self, lookback_hours: int = 48,
+    ) -> List[Dict[str, Any]]:
         return await self.db.get_unverified_tips(lookback_hours)
 
     async def get_all_audited_tips(self) -> List[Dict[str, Any]]:
-        """
-        Returns all audited tips from the database.
-        """
         return await self.db.get_all_audited_tips()
 
     async def get_recent_tips(self, limit: int = 15) -> List[Dict[str, Any]]:
-        """
-        Returns the absolute latest tips recorded.
-        """
         return await self.db.get_recent_tips(limit)
 
-    async def close(self):
-        """Cleanup resources."""
+    async def close(self) -> None:
         await self.db.close()
 
-    async def audit_races(self, results: List[ResultRace]) -> List[Dict[str, Any]]:
-        """
-        Match results to history and update audit status.
-        """
-        # Build single lookup map with both keys pointing to same object
-        results_map: Dict[str, ResultRace] = {}
-        for r in results:
-            results_map[r.canonical_key] = r
-            # Store relaxed key only if different from canonical
-            if r.relaxed_key != r.canonical_key:
-                results_map[r.relaxed_key] = r
+    # -- audit pipeline ----------------------------------------------------
 
+    async def audit_races(
+        self, results: List[ResultRace],
+    ) -> List[Dict[str, Any]]:
+        results_map = self._build_results_map(results)
         self.logger.debug("Built results map", count=len(results_map))
 
-        unverified = await self.get_unverified_tips()
-        audited_tips = []
-
-        for tip in unverified:
+        audited: List[Dict[str, Any]] = []
+        for tip in await self.get_unverified_tips():
             try:
-                race_id = tip.get("race_id")
-                if not race_id:
-                    self.logger.warning("Tip missing race_id", tip=tip)
-                    continue
-
-                tip_key = self._get_tip_canonical_key(tip)
-                if not tip_key:
-                    continue
-
-                result = results_map.get(tip_key)
-                if not result:
-                    # Lenient fallback 1: try matching without time (relaxed key)
-                    key_parts = tip_key.split("|")
-                    if len(key_parts) >= 5:
-                        # tip_key is venue|race|date|time|disc
-                        relaxed_tip_key = f"{key_parts[0]}|{key_parts[1]}|{key_parts[2]}|{key_parts[4]}"
-                        result = results_map.get(relaxed_tip_key)
-                        if result:
-                            self.logger.info("Matched tip with time-relaxed fallback", race_id=race_id, tip_key=tip_key, match_key=result.canonical_key)
-
-                if not result:
-                    # Lenient fallback 2: try matching without discipline
-                    key_parts = tip_key.split("|")
-                    if len(key_parts) >= 4:
-                        # Match venue|race|date|time
-                        key_no_disc = "|".join(key_parts[:4])
-                        for res_key, res_obj in results_map.items():
-                            if res_key.startswith(key_no_disc):
-                                result = res_obj
-                                self.logger.info("Matched tip with discipline fallback", race_id=race_id, tip_key=tip_key, match_key=res_key)
-                                break
-
-                if not result:
-                    continue
-                self.logger.info(
-                    "Auditing tip",
-                    venue=tip.get('venue'),
-                    race=tip.get('race_number')
-                )
-
-                outcome = self._evaluate_tip(tip, result)
-                await self.db.update_audit_result(race_id, outcome)
-
-                # Create a copy to avoid mutating the original tip object
-                audited_tip = {**tip, **outcome, "audit_completed": True}
-                audited_tips.append(audited_tip)
-
-            except Exception as e:
+                audited_tip = await self._audit_single_tip(tip, results_map)
+                if audited_tip:
+                    audited.append(audited_tip)
+            except Exception as exc:
                 self.logger.error(
                     "Error during audit",
                     tip_id=tip.get("race_id"),
-                    error=str(e),
-                    exc_info=True
+                    error=str(exc),
+                    exc_info=True,
                 )
+        return audited
 
-        return audited_tips
+    @staticmethod
+    def _build_results_map(
+        results: List[ResultRace],
+    ) -> Dict[str, ResultRace]:
+        mapping: Dict[str, ResultRace] = {}
+        for r in results:
+            mapping[r.canonical_key] = r
+            if r.relaxed_key != r.canonical_key:
+                mapping[r.relaxed_key] = r
+        return mapping
 
-    def _get_tip_canonical_key(self, tip: Dict[str, Any]) -> Optional[str]:
-        """Generate canonical key for a tip, matching discovery format."""
-        venue = tip.get("venue")
-        race_number = tip.get("race_number")
-        start_time_raw = tip.get("start_time")
-        discipline = tip.get("discipline") or "T"
-
-        if not all([venue, race_number, start_time_raw]):
+    async def _audit_single_tip(
+        self,
+        tip: Dict[str, Any],
+        results_map: Dict[str, ResultRace],
+    ) -> Optional[Dict[str, Any]]:
+        race_id = tip.get("race_id")
+        if not race_id:
+            self.logger.warning("Tip missing race_id", tip=tip)
             return None
 
+        tip_key = self._tip_canonical_key(tip)
+        if not tip_key:
+            return None
+
+        result = self._match_tip_to_result(tip_key, results_map, race_id)
+        if not result:
+            return None
+
+        self.logger.info(
+            "Auditing tip",
+            venue=tip.get("venue"),
+            race=tip.get("race_number"),
+        )
+        outcome = self._evaluate_tip(tip, result)
+        await self.db.update_audit_result(race_id, outcome)
+        return {**tip, **outcome, "audit_completed": True}
+
+    def _match_tip_to_result(
+        self,
+        tip_key: str,
+        results_map: Dict[str, ResultRace],
+        race_id: str,
+    ) -> Optional[ResultRace]:
+        # Exact match
+        result = results_map.get(tip_key)
+        if result:
+            return result
+
+        parts = tip_key.split("|")
+
+        # Fallback 1: drop time (keep discipline)
+        if len(parts) >= 5:
+            relaxed = f"{parts[0]}|{parts[1]}|{parts[2]}|{parts[4]}"
+            result = results_map.get(relaxed)
+            if result:
+                self.logger.info(
+                    "Time-relaxed fallback match",
+                    race_id=race_id,
+                    match_key=result.canonical_key,
+                )
+                return result
+
+        # Fallback 2: drop discipline (keep time)
+        if len(parts) >= 4:
+            prefix = "|".join(parts[:4])
+            for key, obj in results_map.items():
+                if key.startswith(prefix):
+                    self.logger.info(
+                        "Discipline fallback match",
+                        race_id=race_id,
+                        match_key=key,
+                    )
+                    return obj
+
+        return None
+
+    # -- key generation ----------------------------------------------------
+
+    @staticmethod
+    def _tip_canonical_key(tip: Dict[str, Any]) -> Optional[str]:
+        venue = tip.get("venue")
+        race_number = tip.get("race_number")
+        start_raw = tip.get("start_time")
+        disc = (tip.get("discipline") or "T")[:1].upper()
+
+        if not all([venue, race_number, start_raw]):
+            return None
         try:
-            st = datetime.fromisoformat(str(start_time_raw).replace('Z', '+00:00'))
-            date_str = st.strftime('%Y%m%d')
-            time_str = st.strftime('%H%M')
-            disc = discipline[:1].upper()
-            return f"{fortuna.get_canonical_venue(venue)}|{race_number}|{date_str}|{time_str}|{disc}"
+            st = datetime.fromisoformat(
+                str(start_raw).replace("Z", "+00:00"),
+            )
+            return (
+                f"{fortuna.get_canonical_venue(venue)}"
+                f"|{race_number}"
+                f"|{st.strftime('%Y%m%d')}"
+                f"|{st.strftime('%H%M')}"
+                f"|{disc}"
+            )
         except (ValueError, TypeError):
             return None
 
-    def _evaluate_tip(self, tip: Dict[str, Any], result: ResultRace) -> Dict[str, Any]:
-        """
-        Compare predicted selection with actual result.
+    # -- evaluation --------------------------------------------------------
 
-        Returns dict with audit outcome fields.
-        """
-        # Determine selection number and name
+    def _evaluate_tip(
+        self, tip: Dict[str, Any], result: ResultRace,
+    ) -> Dict[str, Any]:
         selection_num = self._extract_selection_number(tip)
-        selection_name = tip.get("selection_name") # May not be present in all tip sources
+        selection_name = tip.get("selection_name")
 
-        # Get sorted finishers
         top_finishers = result.get_top_finishers(5)
         actual_top_5 = [str(r.number) for r in top_finishers]
 
-        # Capture place payouts for top 2 finishers
-        top1_place_payout = top_finishers[0].place_payout if len(top_finishers) >= 1 else None
-        top2_place_payout = top_finishers[1].place_payout if len(top_finishers) >= 2 else None
+        top1_place = (
+            top_finishers[0].place_payout if len(top_finishers) >= 1 else None
+        )
+        top2_place = (
+            top_finishers[1].place_payout if len(top_finishers) >= 2 else None
+        )
 
-        # Find 2nd favorite by final odds (Memory Directive Fix)
-        runners_with_odds = [
-            r for r in result.runners
-            if r.final_win_odds is not None and r.final_win_odds > 0 and not r.scratched
-        ]
-        runners_with_odds.sort(key=lambda x: x.final_win_odds)
+        actual_2nd_fav_odds = self._find_actual_2nd_fav_odds(result)
 
-        # We want the 2nd unique odds or 2nd runner
-        actual_2nd_fav_odds = None
-        if len(runners_with_odds) >= 2:
-            # Check if many are joint favorites
-            fav_odds = runners_with_odds[0].final_win_odds
-            next_odds_runners = [r for r in runners_with_odds if r.final_win_odds > fav_odds]
-            if next_odds_runners:
-                actual_2nd_fav_odds = next_odds_runners[0].final_win_odds
-            else:
-                # Everyone is joint favorite, so 2nd fav odds = fav odds
-                actual_2nd_fav_odds = fav_odds
+        # Find our selection in result runners
+        sel_result = self._find_selection_runner(
+            result, selection_num, selection_name,
+        )
 
-        # Default outcome
-        verdict = "BURNED"
-        profit = -2.00  # Standard 1 unit loss ($2.00)
-
-        # Find our selection in results - try number first, then name
-        selection_result = None
-        if selection_num:
-            selection_result = next(
-                (r for r in result.runners if r.number == selection_num),
-                None
-            )
-
-        if selection_result is None and selection_name:
-            selection_result = next(
-                (r for r in result.runners if r.name.lower() == selection_name.lower()),
-                None
-            )
-
-        if selection_result is None:
-            # Selection not found (likely scratched)
-            verdict = "VOID"
-            profit = 0.0
-        elif selection_result.position_numeric is not None:
-            # Calculate places paid based on field size
-            active_runners = [r for r in result.runners if not r.scratched]
-            places_paid = get_places_paid(len(active_runners))
-
-            if selection_result.position_numeric <= places_paid:
-                verdict = "CASHED"
-
-                # Calculate profit
-                if selection_result.place_payout and selection_result.place_payout > 0:
-                    # Use official payout (usually for $2 bet)
-                    profit = selection_result.place_payout - 2.00
-                else:
-                    # Heuristic: ~1/5 of win odds for place (capped at reasonable ROI)
-                    # Configurable fallback if needed, but 1/5 is standard for EW
-                    odds = selection_result.final_win_odds or 2.75 # Default fallback odds
-                    place_roi = max(0.1, (odds - 1.0) / 5.0)
-                    profit = place_roi * 2.0
+        verdict, profit = self._compute_verdict(sel_result, result)
 
         return {
             "actual_top_5": ", ".join(actual_top_5),
@@ -428,29 +354,87 @@ class AuditorEngine:
             "verdict": verdict,
             "net_profit": round(profit, 2),
             "selection_position": (
-                selection_result.position_numeric
-                if selection_result else None
+                sel_result.position_numeric if sel_result else None
             ),
             "audit_timestamp": datetime.now(EASTERN).isoformat(),
             "trifecta_payout": result.trifecta_payout,
             "trifecta_combination": result.trifecta_combination,
             "superfecta_payout": result.superfecta_payout,
             "superfecta_combination": result.superfecta_combination,
-            "top1_place_payout": top1_place_payout,
-            "top2_place_payout": top2_place_payout,
+            "top1_place_payout": top1_place,
+            "top2_place_payout": top2_place,
         }
 
-    def _extract_selection_number(self, tip: Dict[str, Any]) -> Optional[int]:
-        """Extract selection number from tip data."""
-        # Direct selection_number field
-        selection = tip.get("selection_number")
-        if selection is not None:
+    @staticmethod
+    def _find_actual_2nd_fav_odds(result: ResultRace) -> Optional[float]:
+        runners = sorted(
+            (
+                r for r in result.runners
+                if r.final_win_odds and r.final_win_odds > 0 and not r.scratched
+            ),
+            key=lambda r: r.final_win_odds,
+        )
+        if len(runners) < 2:
+            return None
+        fav_odds = runners[0].final_win_odds
+        higher = [r for r in runners if r.final_win_odds > fav_odds]
+        return higher[0].final_win_odds if higher else fav_odds
+
+    @staticmethod
+    def _find_selection_runner(
+        result: ResultRace,
+        number: Optional[int],
+        name: Optional[str],
+    ) -> Optional[ResultRunner]:
+        if number is not None:
+            by_num = next(
+                (r for r in result.runners if r.number == number), None,
+            )
+            if by_num:
+                return by_num
+        if name:
+            return next(
+                (
+                    r for r in result.runners
+                    if r.name.lower() == name.lower()
+                ),
+                None,
+            )
+        return None
+
+    @staticmethod
+    def _compute_verdict(
+        sel: Optional[ResultRunner],
+        result: ResultRace,
+    ) -> Tuple[str, float]:
+        if sel is None:
+            return "VOID", 0.0
+        if sel.position_numeric is None:
+            return "BURNED", -2.00
+
+        active = [r for r in result.runners if not r.scratched]
+        places_paid = get_places_paid(len(active))
+
+        if sel.position_numeric > places_paid:
+            return "BURNED", -2.00
+
+        # CASHED — calculate profit
+        if sel.place_payout and sel.place_payout > 0:
+            return "CASHED", sel.place_payout - 2.00
+
+        # Heuristic: ~1/5 of win odds for place
+        odds = sel.final_win_odds or 2.75
+        place_roi = max(0.1, (odds - 1.0) / 5.0)
+        return "CASHED", place_roi * 2.0
+
+    @staticmethod
+    def _extract_selection_number(tip: Dict[str, Any]) -> Optional[int]:
+        sel = tip.get("selection_number")
+        if sel is not None:
             try:
-                return int(selection)
+                return int(sel)
             except (ValueError, TypeError):
                 pass
-
-        # Fallback to first in top_five
         top_five = tip.get("top_five", "")
         if top_five:
             first = str(top_five).split(",")[0].strip()
@@ -458,847 +442,747 @@ class AuditorEngine:
                 return int(first)
             except (ValueError, TypeError):
                 pass
-
         return None
 
 
-# --- RESULTS ADAPTERS ---
+# -- SHARED RESULT-PARSING UTILITIES ------------------------------------------
 
-class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.BaseAdapterV3):
+def parse_fractional_odds(text: str) -> float:
+    """``'5/2'`` ? 3.5, ``'2.5'`` ? 2.5, anything else ? 0.0."""
+    text = str(text).strip()
+    if not text:
+        return 0.0
+    try:
+        if "/" in text:
+            n, d = text.split("/", 1)
+            return (int(n) / int(d)) + 1.0
+        return float(text)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def build_start_time(
+    date_str: str,
+    time_str: Optional[str] = None,
+    *,
+    tz: ZoneInfo = EASTERN,
+) -> datetime:
+    """Build a tz-aware datetime from ``YYYY-MM-DD`` + optional ``HH:MM``."""
+    try:
+        base = datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        return datetime.now(tz)
+    hour, minute = 12, 0
+    if time_str:
+        try:
+            parts = time_str.strip().split(":")
+            hour, minute = int(parts[0]), int(parts[1])
+        except (ValueError, IndexError):
+            pass
+    return base.replace(hour=hour, minute=minute, tzinfo=tz)
+
+
+def find_nested_value(
+    obj: Any,
+    key_fragment: str,
+    *,
+    _depth: int = 0,
+    _max_depth: int = 20,
+) -> Optional[float]:
+    """Recursively search dicts/lists for a key containing *key_fragment*
+    whose value is numeric.  Depth-guarded."""
+    if _depth > _max_depth:
+        return None
+    frag = key_fragment.lower()
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if frag in k.lower() and isinstance(v, (int, float, str)):
+                parsed = (
+                    parse_currency_value(str(v))
+                    if isinstance(v, str)
+                    else float(v)
+                )
+                if parsed:
+                    return parsed
+            found = find_nested_value(
+                v, key_fragment, _depth=_depth + 1, _max_depth=_max_depth,
+            )
+            if found is not None:
+                return found
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            found = find_nested_value(
+                item, key_fragment, _depth=_depth + 1, _max_depth=_max_depth,
+            )
+            if found is not None:
+                return found
+    return None
+
+
+_BET_ALIASES: Final[Dict[str, List[str]]] = {
+    "superfecta": ["superfecta", "first 4", "first four"],
+    "trifecta":   ["trifecta", "tricast"],
+    "exacta":     ["exacta", "forecast"],
+}
+
+
+def extract_exotic_payouts(
+    tables: list[Node],
+) -> Dict[str, Tuple[Optional[float], Optional[str]]]:
+    """Scan *tables* for exotic-bet dividend rows.
+
+    Returns ``{"trifecta": (payout, combination), ...}`` for each found type.
+    Callers with an ``HTMLParser`` pass ``parser.css("table")``.
+    Equibase passes a slice of tables between race boundaries.
     """
-    Adapter for Equibase Results / Summary Charts.
-    Primary source for US thoroughbred race results.
+    results: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
+    for table in tables:
+        text = table.text().lower()
+        for bet_type, aliases in _BET_ALIASES.items():
+            if bet_type in results:
+                continue
+            if not any(a in text for a in aliases):
+                continue
+            for row in table.css("tr"):
+                row_text = row.text().lower()
+                if not any(a in row_text for a in aliases):
+                    continue
+                cols = row.css("td")
+                combo: Optional[str] = None
+                payout = 0.0
+                if len(cols) >= 3:
+                    combo  = fortuna.clean_text(cols[1].text())
+                    payout = parse_currency_value(cols[2].text())
+                elif len(cols) >= 2:
+                    combo  = fortuna.clean_text(cols[0].text())
+                    payout = parse_currency_value(cols[1].text())
+                if payout > 0:
+                    results[bet_type] = (payout, combo)
+                    break
+    return results
+
+
+def _extract_race_number_from_text(
+    parser: HTMLParser,
+    url: str = "",
+) -> int:
+    """Best-effort race-number from page text or URL."""
+    m = re.search(r"Race\s+(\d+)", parser.text(), re.I)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"/R(\d+)(?:[/?#]|$)", url)
+    if m:
+        return int(m.group(1))
+    return 1
+
+
+# -- PageFetchingResultsAdapter BASE ------------------------------------------
+
+class PageFetchingResultsAdapter(
+    fortuna.BrowserHeadersMixin,
+    fortuna.DebugMixin,
+    fortuna.RacePageFetcherMixin,
+    fortuna.BaseAdapterV3,
+):
+    """Common base for results adapters that:
+
+    1. Fetch an index / listing page for a date
+    2. Extract links to individual result pages
+    3. Fetch all pages concurrently
+    4. Parse each page into one or more :class:`ResultRace`
+
+    **Subclasses must set** ``SOURCE_NAME``, ``BASE_URL``, ``HOST``
+    and implement :meth:`_discover_result_links`.
+
+    For single-race pages override :meth:`_parse_race_page`.
+    For multi-race pages (e.g. Equibase) override :meth:`_parse_page`.
     """
 
-    ADAPTER_TYPE = "results"
-    SOURCE_NAME = "EquibaseResults"
-    BASE_URL = "https://www.equibase.com"
+    ADAPTER_TYPE: Final[str] = "results"
 
-    def __init__(self, **kwargs):
+    # -- subclass must set -------------------------------------------------
+    SOURCE_NAME: str
+    BASE_URL: str
+    HOST: str
+
+    # -- subclass may override ---------------------------------------------
+    TIMEOUT: int = 60
+    IMPERSONATE: Optional[str] = None
+
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(
             source_name=self.SOURCE_NAME,
             base_url=self.BASE_URL,
-            **kwargs
+            **kwargs,
         )
-        self._semaphore = asyncio.Semaphore(5)
+        self._target_venues: Optional[set] = None
+
+    # -- target venues property --------------------------------------------
+
+    @property
+    def target_venues(self) -> Optional[set]:
+        return self._target_venues
+
+    @target_venues.setter
+    def target_venues(self, value: Optional[set]) -> None:
+        self._target_venues = value
+
+    # -- framework hooks (identical across every legacy adapter) -----------
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # Use CURL_CFFI for better reliability in GHA environments
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=60,
+            timeout=self.TIMEOUT,
         )
 
-    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
+    async def make_request(
+        self, method: str, url: str, **kwargs: Any,
+    ) -> Any:
+        if self.IMPERSONATE:
+            kwargs.setdefault("impersonate", self.IMPERSONATE)
         return await super().make_request(method, url, **kwargs)
 
     def _get_headers(self) -> dict:
-        return self._get_browser_headers(host="www.equibase.com")
+        return self._get_browser_headers(host=self.HOST)
 
     def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
-        """Skip the default RaceValidator as results use ResultRace model."""
         return self._parse_races(raw_data)
 
-    async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        """Fetch results index and all track pages for a date."""
+    # -- fetch pipeline ----------------------------------------------------
+
+    async def _fetch_data(
+        self, date_str: str,
+    ) -> Optional[Dict[str, Any]]:
+        links = await self._discover_result_links(date_str)
+        if not links:
+            self.logger.warning(
+                "No result links found",
+                source=self.SOURCE_NAME,
+                date=date_str,
+            )
+            return None
+        return await self._fetch_link_pages(links, date_str)
+
+    async def _discover_result_links(self, date_str: str) -> set:
+        """Return URLs for individual result pages.  **Must be overridden.**"""
+        raise NotImplementedError
+
+    async def _fetch_link_pages(
+        self, links: set, date_str: str,
+    ) -> Optional[Dict[str, Any]]:
+        absolute = list(dict.fromkeys(
+            lnk if lnk.startswith("http") else f"{self.BASE_URL}{lnk}"
+            for lnk in links
+        ))
+        self.logger.info(
+            "Fetching result pages",
+            source=self.SOURCE_NAME,
+            count=len(absolute),
+        )
+        metadata = [{"url": u, "race_number": 0} for u in absolute]
+        pages = await self._fetch_race_pages_concurrent(
+            metadata, self._get_headers(),
+        )
+        return {"pages": pages, "date": date_str}
+
+    # -- parse pipeline ----------------------------------------------------
+
+    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
+        if not raw_data:
+            return []
+        date_str = raw_data.get(
+            "date", datetime.now(EASTERN).strftime("%Y-%m-%d"),
+        )
+        races: List[ResultRace] = []
+        for item in raw_data.get("pages", []):
+            html = item.get("html") if isinstance(item, dict) else None
+            url  = item.get("url", "") if isinstance(item, dict) else ""
+            if not html:
+                continue
+            try:
+                races.extend(self._parse_page(html, date_str, url))
+            except Exception as exc:
+                self.logger.warning(
+                    "Failed to parse result page",
+                    source=self.SOURCE_NAME,
+                    url=url,
+                    error=str(exc),
+                )
+        return races
+
+    def _parse_page(
+        self, html: str, date_str: str, url: str,
+    ) -> List[ResultRace]:
+        """Parse a page into one or more races.
+
+        Default delegates to :meth:`_parse_race_page` (single race per page).
+        Override for multi-race pages (e.g. Equibase track summaries).
+        """
+        race = self._parse_race_page(html, date_str, url)
+        return [race] if race else []
+
+    def _parse_race_page(
+        self, html: str, date_str: str, url: str,
+    ) -> Optional[ResultRace]:
+        """Parse a single-race page.  Override for most adapters."""
+        raise NotImplementedError
+
+    # -- shared helpers ----------------------------------------------------
+
+    def _venue_matches(self, text: str, href: str = "") -> bool:
+        """Check whether a link matches target venue filters."""
+        if not self.target_venues:
+            return True
+        if fortuna.get_canonical_venue(text) in self.target_venues:
+            return True
+        href_clean = href.lower().replace("-", "")
+        return any(v in href_clean for v in self.target_venues)
+
+    def _make_race_id(
+        self,
+        prefix: str,
+        venue: str,
+        date_str: str,
+        race_num: int,
+    ) -> str:
+        canon = fortuna.get_canonical_venue(venue)
+        return f"{prefix}_{canon}_{date_str.replace('-', '')}_R{race_num}"
+
+
+# -- EQUIBASE RESULTS ADAPTER ------------------------------------------------
+#
+# Special case: index ? track summary pages ? multiple race tables per page.
+# Overrides _parse_page (multi-race) instead of _parse_race_page.
+# -----------------------------------------------------------------------------
+
+class EquibaseResultsAdapter(PageFetchingResultsAdapter):
+    """Equibase summary charts — primary US thoroughbred results source."""
+
+    SOURCE_NAME = "EquibaseResults"
+    BASE_URL    = "https://www.equibase.com"
+    HOST        = "www.equibase.com"
+    IMPERSONATE = "chrome120"
+    TIMEOUT     = 60
+
+    # -- link discovery (complex: multiple index URL patterns) -------------
+
+    async def _discover_result_links(self, date_str: str) -> set:
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
         except ValueError:
             self.logger.error("Invalid date format", date=date_str)
-            return None
+            return set()
 
-        # Try multiple index URL patterns (Memory Directive Fix)
-        urls = [
+        index_urls = [
             f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}",
             f"/static/chart/summary/{dt.strftime('%m%d%y')}sum.html",
             f"/static/chart/summary/{dt.strftime('%Y%m%d')}sum.html",
         ]
 
         resp = None
-        for url in urls:
+        for url in index_urls:
             try:
-                resp = await self.make_request("GET", url, headers=self._get_headers())
+                resp = await self.make_request(
+                    "GET", url, headers=self._get_headers(),
+                )
                 if resp and resp.text and len(resp.text) > 1000:
                     break
             except Exception:
                 continue
 
         if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
-            else: self.logger.warning("No response from Equibase index", url=url)
-            return None
+            self.logger.warning("No response from Equibase index", date=date_str)
+            return set()
 
         self._save_debug_snapshot(resp.text, f"eqb_results_index_{date_str}")
-        parser = HTMLParser(resp.text)
-        links = set()
-        date_short = dt.strftime('%m%d%y')
+        return self._extract_track_links(resp.text, dt)
 
-        # New: Look for links in JSON data within scripts
-        script_json_matches = re.findall(r'"URL":"([^"]+)"', resp.text)
-        for url in script_json_matches:
-            url_norm = url.replace("\\/", "/").replace("\\", "/")
-            if "sum.html" in url_norm and date_short in url_norm:
-                links.add(url_norm)
+    def _extract_track_links(self, html: str, dt: datetime) -> set:
+        """Pull track-summary URLs from the index page."""
+        parser = HTMLParser(html)
+        raw_links: set = set()
+        date_short = dt.strftime("%m%d%y")
 
-        # Extract track-specific result page links
-        # Try multiple patterns for robust detection (Memory Directive Fix)
+        # Source 1 — inline JSON in <script> tags
+        for url_match in re.findall(r'"URL":"([^"]+)"', html):
+            normalised = url_match.replace("\\/", "/").replace("\\", "/")
+            if "sum.html" in normalised and date_short in normalised:
+                raw_links.add(normalised)
 
-        target_venues = getattr(self, "target_venues", None)
+        # Source 2 — <a> tags matching known patterns
+        selectors_and_patterns = [
+            ('table.display a[href*="sum.html"]', None),
+            ('a[href*="/static/chart/summary/"]', lambda h: "index.html" not in h),
+            ("a", lambda h: (
+                re.search(r"[A-Z]{3}\d{6}sum\.html", h)
+                or (date_short in h and "sum.html" in h.lower())
+            ) and "index.html" not in h),
+        ]
+        for selector, extra_filter in selectors_and_patterns:
+            for a in parser.css(selector):
+                href = (a.attributes.get("href") or "").replace("\\", "/")
+                if not href:
+                    continue
+                if extra_filter and not extra_filter(href):
+                    continue
+                if not self._venue_matches(a.text(), href):
+                    continue
+                raw_links.add(href)
 
-        target_venues = getattr(self, "target_venues", None)
+        if not raw_links:
+            self.logger.warning("No track links found in index", date=str(dt.date()))
+            return set()
 
-        # Pattern 1: Links inside the central content table
-        for a in parser.css('table.display a[href*="sum.html"]'):
-            venue = fortuna.get_canonical_venue(a.text())
-            if not target_venues or venue in target_venues:
-                links.add(a.attributes.get("href"))
+        self.logger.info("Track links extracted", count=len(raw_links))
+        return {self._normalise_eqb_link(lnk) for lnk in raw_links}
 
-        # Pattern 2: Any link with /static/chart/summary/
-        for a in parser.css('a[href*="/static/chart/summary/"]'):
-            href = a.attributes.get("href", "").replace("\\", "/")
-            if "index.html" not in href:
-                venue = fortuna.get_canonical_venue(a.text())
-                if not target_venues or venue in target_venues or any(v in href.lower() for v in target_venues):
-                    links.add(href)
+    def _normalise_eqb_link(self, link: str) -> str:
+        """Turn a relative Equibase link into an absolute URL."""
+        if link.startswith("http"):
+            return link
+        path = link.lstrip("/")
+        if "static/chart/summary/" not in path:
+            if path.startswith("../"):
+                path = "static/chart/" + path.replace("../", "")
+            elif not path.startswith("static/"):
+                path = f"static/chart/summary/{path}"
+        path = re.sub(r"/+", "/", path)
+        return f"{self.BASE_URL}/{path}"
 
-        # Pattern 3: Broad pattern matching for result filenames
-        for a in parser.css("a"):
-            href = a.attributes.get("href") or ""
-            href = href.replace("\\", "/")
-            # Matches strings like 'AQU020826sum.html'
-            if re.search(r'[A-Z]{3}\d{6}sum\.html', href) or \
-               (date_short in href and "sum.html" in href.lower()):
-                if "index.html" not in href:
-                    venue = fortuna.get_canonical_venue(a.text())
-                    if not target_venues or venue in target_venues or any(v in href.lower() for v in target_venues):
-                        links.add(href)
+    # -- multi-race page parsing -------------------------------------------
 
-        # Fallback: look for track names in text that might be clickable but not <a>
-        # (Though usually Equibase uses <a>)
-
-        if not links:
-            self.logger.warning("No track result links found", date=date_str)
-            return None
-
-        self.logger.info("Found track result pages", count=len(links))
-
-        # Filter and absolute-ize links
-        final_links = set()
-        for link in links:
-            if link.startswith("http"):
-                final_links.add(link)
-            else:
-                # Handle relative links more robustly (Memory Directive Fix)
-                path = link.lstrip("/")
-                if "static/chart/summary/" not in path:
-                    if path.startswith("../"):
-                        path = "static/chart/" + path.replace("../", "")
-                    elif not path.startswith("static/"):
-                        path = f"static/chart/summary/{path}"
-                final_links.add(f"{self.BASE_URL}/{path.replace('//', '/')}")
-
-        if not final_links:
-            self.logger.warning("No track result links found after expansion", date=date_str)
-            return None
-
-        self.logger.info("Found track result pages", count=len(final_links))
-
-        # Fetch all track pages concurrently
-        async def fetch_track_page(link: str) -> Tuple[str, str]:
-            async with self._semaphore:
-                try:
-                    r = await self.make_request("GET", link, headers=self._get_headers())
-                    if not r or not r.text:
-                        self.logger.warning("Skipping track page (empty or error)", url=link, status=getattr(r, 'status', 'N/A'))
-                    return (link, r.text if r else "")
-                except Exception as e:
-                    self.logger.warning("Failed to fetch track page", link=link, error=str(e))
-                    return (link, "")
-
-        tasks = [fetch_track_page(link) for link in final_links]
-        pages = await asyncio.gather(*tasks)
-
-        valid_pages = [(link, html) for link, html in pages if html]
-        return {"pages": valid_pages, "date": date_str}
-
-    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        """Parse all track pages into ResultRace objects."""
-        if not raw_data or not raw_data.get("pages"):
-            return []
-
-        races = []
-        for link, html_content in raw_data["pages"]:
-            if not html_content:
-                continue
-            try:
-                parsed = self._parse_track_page(html_content, raw_data["date"], link)
-                races.extend(parsed)
-            except Exception as e:
-                self.logger.warning(
-                    "Failed to parse track page",
-                    link=link,
-                    error=str(e),
-                    exc_info=True
-                )
-        return races
-
-    def _parse_track_page(
-        self,
-        html_content: str,
-        date_str: str,
-        source_url: str
+    def _parse_page(
+        self, html: str, date_str: str, url: str,
     ) -> List[ResultRace]:
-        """Parse a single track's results page."""
-        parser = HTMLParser(html_content)
-        races = []
+        """A track summary page contains multiple race tables."""
+        parser = HTMLParser(html)
 
-        # Get venue from header
+        # Venue from page header
         track_node = parser.css_first("h3") or parser.css_first("h2")
         if not track_node:
-            self.logger.debug("No track header found", url=source_url)
+            self.logger.debug("No track header found", url=url)
             return []
-
         venue = fortuna.normalize_venue_name(track_node.text(strip=True))
         if not venue:
             return []
 
-        # Find all race tables - they typically have "Race X" in the header
+        # Identify race tables and their indices among ALL tables
         all_tables = parser.css("table")
-        race_tables = []
-
-        for table in all_tables:
+        indexed_race_tables: List[Tuple[int, Node]] = []
+        for i, table in enumerate(all_tables):
             header = table.css_first("thead tr th")
             if header and "Race" in header.text():
-                race_tables.append(table)
+                indexed_race_tables.append((i, table))
 
-        for race_table in race_tables:
+        races: List[ResultRace] = []
+        for j, (idx, race_table) in enumerate(indexed_race_tables):
             try:
-                race = self._parse_race_table(race_table, venue, date_str, parser)
+                # Dividend tables sit between this race and the next
+                next_idx = (
+                    indexed_race_tables[j + 1][0]
+                    if j + 1 < len(indexed_race_tables)
+                    else len(all_tables)
+                )
+                dividend_tables = all_tables[idx + 1 : next_idx]
+                exotics = extract_exotic_payouts(dividend_tables)
+
+                race = self._parse_race_table(
+                    race_table, venue, date_str, exotics,
+                )
                 if race:
                     races.append(race)
-            except Exception as e:
-                self.logger.debug("Failed to parse race table", error=str(e))
-
+            except Exception as exc:
+                self.logger.debug(
+                    "Failed to parse race table", error=str(exc),
+                )
         return races
 
     def _parse_race_table(
         self,
-        race_table: Node,
+        table: Node,
         venue: str,
         date_str: str,
-        page_parser: HTMLParser
+        exotics: Dict[str, Tuple[Optional[float], Optional[str]]],
     ) -> Optional[ResultRace]:
-        """Parse a single race table into a ResultRace."""
-        header = race_table.css_first("thead tr th")
+        header = table.css_first("thead tr th")
         if not header:
             return None
-
         header_text = header.text()
-        race_num_match = re.search(r"Race\s+(\d+)", header_text)
-        if not race_num_match:
+
+        race_match = re.search(r"Race\s+(\d+)", header_text)
+        if not race_match:
             return None
+        race_num = int(race_match.group(1))
 
-        race_num = int(race_num_match.group(1))
+        # Start time from header or fallback
+        start_time = self._parse_header_time(header_text, date_str)
 
-        # Build start time - try to extract from header or chart
-        start_time = None
-        # Heuristic: Often "Post Time: 1:30 PM" is in the header or nearby
-        time_match = re.search(r'(\d{1,2}:\d{2})\s*([APM]{2})', header_text, re.I)
-        if time_match:
-            try:
-                time_val = f"{time_match.group(1)} {time_match.group(2).upper()}"
-                dt_part = datetime.strptime(time_val, "%I:%M %p").time()
-                race_date = datetime.strptime(date_str, "%Y-%m-%d")
-                start_time = datetime.combine(race_date, dt_part).replace(tzinfo=EASTERN)
-            except Exception: pass
-
-        if not start_time:
-            try:
-                race_date = datetime.strptime(date_str, "%Y-%m-%d")
-                start_time = race_date.replace(hour=12, minute=0, tzinfo=EASTERN)
-            except ValueError:
-                start_time = datetime.now(EASTERN)
-
-        # Parse runners
-        runners = []
-        for row in race_table.css("tbody tr"):
-            runner = self._parse_runner_row(row)
-            if runner:
-                runners.append(runner)
-
+        runners = [
+            r for row in table.css("tbody tr")
+            if (r := self._parse_runner_row(row)) is not None
+        ]
         if not runners:
             return None
 
-        # Parse exotic payouts from the dividends section
-        # The dividends are typically in a separate table following the race results
-        trifecta_payout, trifecta_combo = self._find_exotic_payout(
-            race_table, page_parser, "trifecta"
-        )
-        exacta_payout, exacta_combo = self._find_exotic_payout(
-            race_table, page_parser, "exacta"
-        )
-        superfecta_payout, superfecta_combo = self._find_exotic_payout(
-            race_table, page_parser, "superfecta"
-        )
+        tri = exotics.get("trifecta", (None, None))
+        exa = exotics.get("exacta", (None, None))
+        sup = exotics.get("superfecta", (None, None))
 
         return ResultRace(
-            id=f"eqb_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=self._make_race_id("eqb_res", venue, date_str, race_num),
             venue=venue,
             race_number=race_num,
             start_time=start_time,
             runners=runners,
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
-            trifecta_payout=trifecta_payout,
-            trifecta_combination=trifecta_combo,
-            exacta_payout=exacta_payout,
-            exacta_combination=exacta_combo,
-            superfecta_payout=superfecta_payout,
-            superfecta_combination=superfecta_combo,
+            trifecta_payout=tri[0],
+            trifecta_combination=tri[1],
+            exacta_payout=exa[0],
+            exacta_combination=exa[1],
+            superfecta_payout=sup[0],
+            superfecta_combination=sup[1],
         )
+
+    @staticmethod
+    def _parse_header_time(header_text: str, date_str: str) -> datetime:
+        m = re.search(r"(\d{1,2}:\d{2})\s*([APM]{2})", header_text, re.I)
+        if m:
+            try:
+                t = datetime.strptime(
+                    f"{m.group(1)} {m.group(2).upper()}", "%I:%M %p",
+                ).time()
+                d = datetime.strptime(date_str, "%Y-%m-%d")
+                return datetime.combine(d, t).replace(tzinfo=EASTERN)
+            except ValueError:
+                pass
+        return build_start_time(date_str)
 
     def _parse_runner_row(self, row: Node) -> Optional[ResultRunner]:
-        """Parse a single runner row from results table."""
-        cols = row.css("td")
-        if len(cols) < 3:
-            return None
-
-        pos_text = fortuna.clean_text(cols[0].text())
-        num_text = fortuna.clean_text(cols[1].text())
-        name = fortuna.clean_text(cols[2].text())
-
-        # Skip header-like rows
-        if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
-            return None
-
-        # Parse number
         try:
+            cols = row.css("td")
+            if len(cols) < 3:
+                return None
+
+            name = fortuna.clean_text(cols[2].text())
+            if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
+                return None
+
+            pos_text = fortuna.clean_text(cols[0].text())
+            num_text = fortuna.clean_text(cols[1].text())
             number = int(num_text) if num_text.isdigit() else 0
-        except ValueError:
-            number = 0
 
-        # Parse odds
-        odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
-        final_odds = fortuna.parse_odds_to_decimal(odds_text)
+            odds_text = (
+                fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
+            )
+            final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
-        # Parse payouts (columns 4, 5, 6 typically)
-        win_pay = place_pay = show_pay = 0.0
-        if len(cols) >= 7:
-            win_pay = parse_currency_value(cols[4].text())
-            place_pay = parse_currency_value(cols[5].text())
-            show_pay = parse_currency_value(cols[6].text())
+            win_pay = place_pay = show_pay = 0.0
+            if len(cols) >= 7:
+                win_pay   = parse_currency_value(cols[4].text())
+                place_pay = parse_currency_value(cols[5].text())
+                show_pay  = parse_currency_value(cols[6].text())
 
-        return ResultRunner(
-            name=name,
-            number=number,
-            position=pos_text,
-            final_win_odds=final_odds,
-            win_payout=win_pay,
-            place_payout=place_pay,
-            show_payout=show_pay,
-        )
-
-    def _find_exotic_payout(
-        self,
-        race_table: Node,
-        page_parser: HTMLParser,
-        bet_type: str
-    ) -> Tuple[Optional[float], Optional[str]]:
-        """
-        Find exotic bet payout from dividend tables.
-
-        This looks for a table following the race table that contains
-        the specified bet type (e.g., "trifecta", "exacta").
-        """
-        # Get all tables and find the race table's position
-        all_tables = page_parser.css("table")
-        race_table_html = race_table.html if hasattr(race_table, 'html') else str(race_table)
-
-        found_race_table = False
-        for table in all_tables:
-            table_html = table.html if hasattr(table, 'html') else str(table)
-
-            if not found_race_table:
-                # Check if this is our race table
-                if table_html == race_table_html:
-                    found_race_table = True
-                continue
-
-            # We're now past the race table - look for dividends
-            table_text = table.text().lower()
-            if bet_type.lower() not in table_text:
-                continue
-
-            # Found a table with our bet type - extract payout
-            for row in table.css("tr"):
-                row_text = row.text().lower()
-                if bet_type.lower() in row_text:
-                    cols = row.css("td")
-                    if len(cols) >= 3:
-                        # 3-column format: Bet Type | Combination | Payout
-                        combination = fortuna.clean_text(cols[1].text())
-                        payout = parse_currency_value(cols[2].text())
-                        if payout > 0:
-                            return payout, combination
-                    elif len(cols) == 2:
-                        # 2-column format: Combination | Payout
-                        combination = fortuna.clean_text(cols[0].text())
-                        payout = parse_currency_value(cols[1].text())
-                        if payout > 0:
-                            return payout, combination
-
-            # Only check the next table after race results
-            break
-
-        return None, None
-
-
-class RacingPostResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
-    """Adapter for Racing Post UK/IRE results."""
-
-    ADAPTER_TYPE = "results"
-    SOURCE_NAME = "RacingPostResults"
-    BASE_URL = "https://www.racingpost.com"
-
-    def __init__(self, **kwargs):
-        super().__init__(
-            source_name=self.SOURCE_NAME,
-            base_url=self.BASE_URL,
-            **kwargs
-        )
-
-    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=60, # Increased timeout for ATR
-        )
-
-    def _get_headers(self) -> dict:
-        return self._get_browser_headers(host="www.racingpost.com")
-
-    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
-        """Skip the default RaceValidator as results use ResultRace model."""
-        return self._parse_races(raw_data)
-
-    async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        url = f"/results/{date_str}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
+            return ResultRunner(
+                name=name,
+                number=number,
+                position=pos_text,
+                final_win_odds=final_odds,
+                win_payout=win_pay,
+                place_payout=place_pay,
+                show_payout=show_pay,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "Failed parsing runner row", error=str(exc),
+            )
             return None
+
+
+# -- RACING POST RESULTS ADAPTER ---------------------------------------------
+
+class RacingPostResultsAdapter(PageFetchingResultsAdapter):
+    """Racing Post results — UK / IRE thoroughbred and jumps."""
+
+    SOURCE_NAME = "RacingPostResults"
+    BASE_URL    = "https://www.racingpost.com"
+    HOST        = "www.racingpost.com"
+    TIMEOUT     = 60
+
+    # RP doesn't need IMPERSONATE (no make_request override in original)
+
+    # -- link discovery ----------------------------------------------------
+
+    async def _discover_result_links(self, date_str: str) -> set:
+        resp = await self.make_request(
+            "GET", f"/results/{date_str}", headers=self._get_headers(),
+        )
+        if not resp or not resp.text:
+            return set()
 
         parser = HTMLParser(resp.text)
+        links: set = set()
 
-        # Find individual race result links
-        links = set()
-        # Fallback selectors from successful discovery code
-        selectors = [
+        _SELECTORS = [
             'a[data-test-selector="RC-meetingItem__link_race"]',
             'a[href*="/results/"]',
-            '.ui-link.rp-raceCourse__panel__race__time',
-            'a.rp-raceCourse__panel__race__time'
+            ".ui-link.rp-raceCourse__panel__race__time",
+            "a.rp-raceCourse__panel__race__time",
         ]
-
-        target_venues = getattr(self, "target_venues", None)
-        for s in selectors:
-            for a in parser.css(s):
+        for selector in _SELECTORS:
+            for a in parser.css(selector):
                 href = a.attributes.get("href", "")
-                if not href: continue
-
-                # Filter by venue in URL if possible
-                if target_venues:
-                    match_found = False
-                    for v in target_venues:
-                        if v in href.lower().replace("-", ""):
-                            match_found = True
-                            break
-                    if not match_found:
-                        # Also check text
-                        v_text = fortuna.get_canonical_venue(a.text())
-                        if v_text in target_venues:
-                            match_found = True
-                    if not match_found:
-                        continue
-
-                # Broaden regex to match various RP result link patterns (Memory Directive Fix)
-                # Matches: /results/393/lingfield-aw/2026-02-07/4803548
-                # Matches: /results/2026-02-07/ascot/901234
-                if re.search(r"/results/.*?\d{5,}", href) or \
-                   re.search(r"/results/\d+/", href) or \
-                   re.search(r"/\d{4}-\d{2}-\d{2}/", href):
-                    links.add(href)
-                elif "/results/" in href and len(href.split("/")) >= 4:
+                if not href:
+                    continue
+                if not self._venue_matches(a.text(), href):
+                    continue
+                if self._is_rp_race_link(href):
                     links.add(href)
 
+        # Last-resort fallback
         if not links:
-            self.logger.warning("No result links found with standard selectors", date=date_str)
-            # Last ditch effort: any /results/ link
+            self.logger.warning(
+                "Standard selectors found nothing, broadening",
+                date=date_str,
+            )
             for a in parser.css('a[href*="/results/"]'):
                 href = a.attributes.get("href", "")
                 if len(href.split("/")) >= 3:
                     links.add(href)
 
-        if not links:
-            self.logger.warning("Total failure finding result links", date=date_str)
-            return None
+        return links
 
-        # Deduplicate and normalize
-        unique_links = []
-        for l in links:
-            full_url = l if l.startswith("http") else f"{self.BASE_URL}{l}"
-            if full_url not in unique_links:
-                unique_links.append(full_url)
-        self.logger.info("Found result links", count=len(unique_links))
+    @staticmethod
+    def _is_rp_race_link(href: str) -> bool:
+        return bool(
+            re.search(r"/results/.*?\d{5,}", href)
+            or re.search(r"/results/\d+/", href)
+            or re.search(r"/\d{4}-\d{2}-\d{2}/", href)
+            or ("/results/" in href and len(href.split("/")) >= 4)
+        )
 
-        # Fetch race pages
-        metadata = [{"url": link, "race_number": 0} for link in unique_links]
-        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
-
-        return {"pages": pages, "date": date_str}
-
-    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        if not raw_data:
-            return []
-
-        races = []
-        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
-
-        for item in raw_data.get("pages", []):
-            html_content = item.get("html")
-            if not html_content:
-                continue
-
-            try:
-                race = self._parse_race_page(html_content, date_str, item.get("url", ""))
-                if race:
-                    races.append(race)
-            except Exception as e:
-                self.logger.warning("Failed to parse RP result", error=str(e))
-
-        return races
+    # -- single-race page parsing ------------------------------------------
 
     def _parse_race_page(
-        self,
-        html_content: str,
-        date_str: str,
-        url: str
+        self, html: str, date_str: str, url: str,
     ) -> Optional[ResultRace]:
-        """Parse a Racing Post result page."""
-        parser = HTMLParser(html_content)
+        parser = HTMLParser(html)
 
-        # Get venue
         venue_node = parser.css_first(".rp-raceTimeCourseName__course")
         if not venue_node:
             return None
         venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
 
-        # Extract dividends
-        dividends = {}
-        tote_container = parser.css_first('div[data-test-selector="RC-toteReturns"]')
-        if not tote_container:
-             tote_container = parser.css_first('.rp-toteReturns')
+        dividends = self._parse_tote_dividends(parser)
+        trifecta_pay, trifecta_combo = self._exotic_from_dividends(
+            dividends, "trifecta",
+        )
+        superfecta_pay, superfecta_combo = self._exotic_from_dividends(
+            dividends, "superfecta",
+        )
 
-        if tote_container:
-            for row in (tote_container.css('div.rp-toteReturns__row') or tote_container.css('.rp-toteReturns__row')):
-                try:
-                    label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
-                    val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
-                    if label_node and val_node:
-                        label = fortuna.clean_text(label_node.text())
-                        value = fortuna.clean_text(val_node.text())
-                        if label and value:
-                            dividends[label] = value
-                except Exception as e:
-                    self.logger.debug("Failed parsing RP tote row", error=str(e))
+        race_num = self._extract_rp_race_number(parser)
 
-        # Extract exotic payouts
-        trifecta_pay = trifecta_combo = None
-        superfecta_pay = superfecta_combo = None
-
-        for label, val in dividends.items():
-            l_lower = label.lower()
-            # Prioritize Superfecta
-            if "superfecta" in l_lower or "first 4" in l_lower:
-                superfecta_pay = parse_currency_value(val)
-                superfecta_combo = val.split("£")[-1].strip() if "£" in val else None
-            elif "trifecta" in l_lower or "tricast" in l_lower:
-                trifecta_pay = parse_currency_value(val)
-                trifecta_combo = val.split("£")[-1].strip() if "£" in val else None
-
-        # Extract race number from header or navigation
-        race_num = 1
-        # Priority 1: Navigation bar active time (most reliable on RP)
-        time_links = parser.css('a[data-test-selector="RC-raceTime"]')
-        found_in_nav = False
-        for i, link in enumerate(time_links):
-            cls = link.attributes.get("class", "")
-            if "active" in cls or "rp-raceTimeCourseName__time" in cls:
-                race_num = i + 1
-                found_in_nav = True
-                break
-
-        if not found_in_nav:
-            # Priority 2: Text search for "Race X"
-            race_num_match = re.search(r'Race\s+(\d+)', parser.text())
-            if race_num_match:
-                race_num = int(race_num_match.group(1))
-
-        # Parse runners
-        runners = []
-        for row in parser.css(".rp-horseTable__table__row"):
-            try:
-                name_node = row.css_first(".rp-horseTable__horse__name")
-                pos_node = row.css_first(".rp-horseTable__pos__number")
-
-                if not name_node:
-                    continue
-
-                name = fortuna.clean_text(name_node.text())
-                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
-
-                # Try to get saddle number
-                number_node = row.css_first(".rp-horseTable__saddleClothNo")
-                number = 0
-                if number_node:
-                    num_text = fortuna.clean_text(number_node.text())
-                    try:
-                        number = int(num_text)
-                    except ValueError:
-                        pass
-
-                # Check for place dividend in dividends map
-                place_payout = None
-                for label, val in dividends.items():
-                    if "place" in label.lower() and name.lower() in label.lower():
-                        place_payout = parse_currency_value(val)
-                        break
-
-                # SP / Odds
-                sp_node = row.css_first(".rp-horseTable__horse__sp")
-                final_odds = 0.0
-                if sp_node:
-                    sp_text = fortuna.clean_text(sp_node.text())
-                    try:
-                        if "/" in sp_text:
-                            n, d = map(int, sp_text.split("/"))
-                            final_odds = (n / d) + 1.0
-                        else:
-                            final_odds = float(sp_text)
-                    except Exception: pass
-
-                runners.append(ResultRunner(
-                    name=name,
-                    number=number,
-                    position=pos,
-                    place_payout=place_payout,
-                    final_win_odds=final_odds
-                ))
-            except Exception:
-                continue
-
+        runners = self._parse_rp_runners(parser, dividends)
         if not runners:
             return None
 
-        try:
-            race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=12, minute=0, tzinfo=EASTERN)
-        except ValueError:
-            start_time = datetime.now(EASTERN)
-
         return ResultRace(
-            id=f"rp_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=self._make_race_id("rp_res", venue, date_str, race_num),
             venue=venue,
             race_number=race_num,
-            start_time=start_time,
+            start_time=build_start_time(date_str),
             runners=runners,
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
             superfecta_payout=superfecta_pay,
             superfecta_combination=superfecta_combo,
-            official_dividends={k: parse_currency_value(v) for k, v in dividends.items()}
+            official_dividends={
+                k: parse_currency_value(v) for k, v in dividends.items()
+            },
         )
 
+    # -- RP-specific helpers -----------------------------------------------
 
-class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
-    """Adapter for At The Races results (UK/IRE)."""
-
-    ADAPTER_TYPE = "results"
-    SOURCE_NAME = "AtTheRacesResults"
-    BASE_URL = "https://www.attheraces.com"
-
-    def __init__(self, **kwargs):
-        super().__init__(
-            source_name=self.SOURCE_NAME,
-            base_url=self.BASE_URL,
-            **kwargs
+    @staticmethod
+    def _parse_tote_dividends(parser: HTMLParser) -> Dict[str, str]:
+        """Extract label?value pairs from the Tote Returns panel."""
+        container = (
+            parser.css_first('div[data-test-selector="RC-toteReturns"]')
+            or parser.css_first(".rp-toteReturns")
         )
+        if not container:
+            return {}
 
-    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=60,
-        )
+        dividends: Dict[str, str] = {}
+        for row in (
+            container.css("div.rp-toteReturns__row")
+            or container.css(".rp-toteReturns__row")
+        ):
+            label_node = (
+                row.css_first("div.rp-toteReturns__label")
+                or row.css_first(".rp-toteReturns__label")
+            )
+            val_node = (
+                row.css_first("div.rp-toteReturns__value")
+                or row.css_first(".rp-toteReturns__value")
+            )
+            if label_node and val_node:
+                label = fortuna.clean_text(label_node.text())
+                value = fortuna.clean_text(val_node.text())
+                if label and value:
+                    dividends[label] = value
+        return dividends
 
-    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
-        return await super().make_request(method, url, **kwargs)
+    @staticmethod
+    def _exotic_from_dividends(
+        dividends: Dict[str, str],
+        bet_type: str,
+    ) -> Tuple[Optional[float], Optional[str]]:
+        aliases = _BET_ALIASES.get(bet_type, [bet_type])
+        for label, val in dividends.items():
+            if any(a in label.lower() for a in aliases):
+                payout = parse_currency_value(val)
+                combo = (
+                    val.split("£")[-1].strip() if "£" in val else None
+                )
+                return payout, combo
+        return None, None
 
-    def _get_headers(self) -> dict:
-        return self._get_browser_headers(host="www.attheraces.com")
+    @staticmethod
+    def _extract_rp_race_number(parser: HTMLParser) -> int:
+        # Priority 1 — navigation bar active item
+        for i, link in enumerate(
+            parser.css('a[data-test-selector="RC-raceTime"]'),
+        ):
+            cls = link.attributes.get("class", "")
+            if "active" in cls or "rp-raceTimeCourseName__time" in cls:
+                return i + 1
+        # Priority 2 — text fallback
+        return _extract_race_number_from_text(parser)
 
-    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
-        """Skip the default RaceValidator as results use ResultRace model."""
-        return self._parse_races(raw_data)
-
-    async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-
-        # ATR uses multiple URL formats for results
-        # Format 1: YYYY-MM-DD
-        # Format 2: DD-Month-YYYY (e.g., 05-February-2026)
-        # Format 3: International results
-        urls = [
-            f"/results/{date_str}",
-            f"/results/{dt.strftime('%d-%B-%Y')}",
-            f"/results/international/{date_str}",
-            f"/results/international/{dt.strftime('%d-%B-%Y')}"
-        ]
-
-        links = set()
-        for url in urls:
-            try:
-                resp = await self.make_request("GET", url, headers=self._get_headers())
-                if not resp or not resp.text:
-                    if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
-                    continue
-
-                self._save_debug_snapshot(resp.text, f"atr_results_index_{date_str}_{url.replace('/','_')}")
-                parser = HTMLParser(resp.text)
-
-                # Find result page links with multiple selectors
-                target_venues = getattr(self, "target_venues", None)
-                for s in ["a[href*='/results/']", "a[data-test-selector*='result']", ".meeting-summary a"]:
-                    for a in parser.css(s):
-                        href = a.attributes.get("href") or ""
-
-                        # Filter by venue in URL or text if possible
-                        if target_venues:
-                            match_found = False
-                            for v in target_venues:
-                                if v in href.lower().replace("-", ""):
-                                    match_found = True
-                                    break
-                            if not match_found:
-                                v_text = fortuna.get_canonical_venue(a.text())
-                                if v_text in target_venues:
-                                    match_found = True
-                            if not match_found:
-                                continue
-
-                        # Format: /results/Venue/DD-Month-YYYY/HHMM or /results/DD-Month-YYYY/Venue/ID
-                        if re.search(r"/results/.*?/\d{4}", href) or \
-                           re.search(r"/results/\d{2}-.*?-\d{4}/", href) or \
-                           "/results/" in href and len(href.split("/")) >= 4:
-                            links.add(href if href.startswith("http") else f"{self.BASE_URL}{href}")
-            except Exception as e:
-                self.logger.debug(f"ATR fetch failed for {url}: {e}")
-
-        if not links:
-            self.logger.warning("No metadata found", context="ATR Results Index Parsing", date=date_str)
-            return None
-
-        unique_links = list(links)
-        self.logger.info("Found ATR result links", count=len(unique_links))
-        metadata = [{"url": link, "race_number": 0} for link in unique_links]
-        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
-
-        return {"pages": pages, "date": date_str}
-
-    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        if not raw_data:
-            return []
-
-        races = []
-        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
-
-        for item in raw_data.get("pages", []):
-            html_content = item.get("html")
-            if not html_content:
-                continue
-
-            try:
-                race = self._parse_race_page(html_content, date_str, item.get("url", ""))
-                if race:
-                    races.append(race)
-            except Exception as e:
-                self.logger.warning("Failed to parse ATR result", error=str(e))
-
-        return races
-
-    def _parse_race_page(
+    def _parse_rp_runners(
         self,
-        html_content: str,
-        date_str: str,
-        url: str
-    ) -> Optional[ResultRace]:
-        """Parse an ATR result page."""
-        parser = HTMLParser(html_content)
-
-        header = parser.css_first(".race-header__details--primary") or \
-                 parser.css_first(".racecard-header") or \
-                 parser.css_first(".race-header")
-        if not header:
-            self.logger.debug("No header found on ATR result page")
-            return None
-
-        venue_node = header.css_first("h2") or header.css_first("h1") or header.css_first(".track-name")
-        if not venue_node:
-            self.logger.debug("No venue name found on ATR result page")
-            return None
-        venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
-
-        # Extract race number from URL: /results/Venue/Date/R1 or just time
-        race_num = 1
-        url_match = re.search(r'/R(\d+)$', url)
-        if url_match:
-            race_num = int(url_match.group(1))
-
-        # Parse runners
-        runners = []
-        # Broaden selectors for result rows
-        rows = parser.css(".result-racecard__row") or \
-               parser.css(".card-cell--horse") or \
-               parser.css("atr-result-horse") or \
-               parser.css("div[class*='RacecardResultItem']") or \
-               parser.css(".p-results__item")
-
-        for row in rows:
+        parser: HTMLParser,
+        dividends: Dict[str, str],
+    ) -> List[ResultRunner]:
+        runners: List[ResultRunner] = []
+        for row in parser.css(".rp-horseTable__table__row"):
             try:
-                name_node = row.css_first(".result-racecard__horse-name a") or \
-                            row.css_first(".horse-name a") or \
-                            row.css_first("a[href*='/horse/']") or \
-                            row.css_first("[class*='HorseName']")
-                pos_node = row.css_first(".result-racecard__pos") or \
-                           row.css_first(".pos") or \
-                           row.css_first(".position") or \
-                           row.css_first("[class*='Position']")
-
+                name_node = row.css_first(".rp-horseTable__horse__name")
                 if not name_node:
                     continue
-
                 name = fortuna.clean_text(name_node.text())
-                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
 
-                # Saddle number
-                num_node = row.css_first(".result-racecard__saddle-cloth")
+                pos_node = row.css_first(".rp-horseTable__pos__number")
+                pos = (
+                    fortuna.clean_text(pos_node.text()) if pos_node else None
+                )
+
+                num_node = row.css_first(".rp-horseTable__saddleClothNo")
                 number = 0
                 if num_node:
                     try:
@@ -1306,328 +1190,448 @@ class AtTheRacesResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, 
                     except ValueError:
                         pass
 
-                # Odds / SP
-                odds_node = row.css_first(".result-racecard__odds")
+                # Place payout from dividends map
+                place_payout: Optional[float] = None
+                for lbl, val in dividends.items():
+                    if (
+                        "place" in lbl.lower()
+                        and name.lower() in lbl.lower()
+                    ):
+                        place_payout = parse_currency_value(val)
+                        break
+
+                sp_node = row.css_first(".rp-horseTable__horse__sp")
                 final_odds = 0.0
-                if odds_node:
-                    sp = fortuna.clean_text(odds_node.text())
-                    try:
-                        if "/" in sp:
-                            n, d = map(int, sp.split("/"))
-                            final_odds = (n / d) + 1.0
-                        else:
-                            final_odds = float(sp)
-                    except Exception: pass
+                if sp_node:
+                    final_odds = parse_fractional_odds(
+                        fortuna.clean_text(sp_node.text()),
+                    )
 
                 runners.append(ResultRunner(
                     name=name,
                     number=number,
                     position=pos,
-                    final_win_odds=final_odds
+                    place_payout=place_payout,
+                    final_win_odds=final_odds,
                 ))
             except Exception:
                 continue
+        return runners
 
-        # Parse exotic payouts from dividends table
-        trifecta_pay = None
-        trifecta_combo = None
-        superfecta_pay = None
-        superfecta_combo = None
 
+# -- AT THE RACES RESULTS ADAPTER ---------------------------------------------
+
+class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
+    """At The Races results — UK / IRE."""
+
+    SOURCE_NAME = "AtTheRacesResults"
+    BASE_URL    = "https://www.attheraces.com"
+    HOST        = "www.attheraces.com"
+    IMPERSONATE = "chrome120"
+    TIMEOUT     = 60
+
+    # -- link discovery (multi-URL index) ----------------------------------
+
+    async def _discover_result_links(self, date_str: str) -> set:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        index_urls = [
+            f"/results/{date_str}",
+            f"/results/{dt.strftime('%d-%B-%Y')}",
+            f"/results/international/{date_str}",
+            f"/results/international/{dt.strftime('%d-%B-%Y')}",
+        ]
+
+        links: set = set()
+        for url in index_urls:
+            try:
+                resp = await self.make_request(
+                    "GET", url, headers=self._get_headers(),
+                )
+                if not resp or not resp.text:
+                    continue
+                self._save_debug_snapshot(
+                    resp.text,
+                    f"atr_index_{date_str}_{url.replace('/', '_')}",
+                )
+                links.update(self._extract_atr_links(resp.text))
+            except Exception as exc:
+                self.logger.debug(
+                    "ATR index fetch failed", url=url, error=str(exc),
+                )
+
+        return links
+
+    def _extract_atr_links(self, html: str) -> set:
+        parser = HTMLParser(html)
+        links: set = set()
+        for selector in [
+            "a[href*='/results/']",
+            "a[data-test-selector*='result']",
+            ".meeting-summary a",
+        ]:
+            for a in parser.css(selector):
+                href = a.attributes.get("href", "")
+                if not href:
+                    continue
+                if not self._venue_matches(a.text(), href):
+                    continue
+                if self._is_atr_race_link(href):
+                    links.add(
+                        href if href.startswith("http")
+                        else f"{self.BASE_URL}{href}"
+                    )
+        return links
+
+    @staticmethod
+    def _is_atr_race_link(href: str) -> bool:
+        return bool(
+            re.search(r"/results/.*?/\d{4}", href)
+            or re.search(r"/results/\d{2}-.*?-\d{4}/", href)
+            or ("/results/" in href and len(href.split("/")) >= 4)
+        )
+
+    # -- single-race page parsing ------------------------------------------
+
+    def _parse_race_page(
+        self, html: str, date_str: str, url: str,
+    ) -> Optional[ResultRace]:
+        parser = HTMLParser(html)
+
+        venue = self._extract_atr_venue(parser)
+        if not venue:
+            return None
+
+        race_num = 1
+        url_match = re.search(r"/R(\d+)$", url)
+        if url_match:
+            race_num = int(url_match.group(1))
+
+        runners = self._parse_atr_runners(parser)
+
+        # Dividends — use the shared exotic extractor on the
+        # dedicated dividends table, then enrich with place payouts
         div_table = parser.css_first(".result-racecard__dividends-table")
+        exotics: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
         if div_table:
-            for row in div_table.css("tr"):
-                try:
-                    row_text = row.text().lower()
-                    cols = row.css("td")
-                    if len(cols) < 2: continue
-
-                    # Prioritize Superfecta
-                    if "superfecta" in row_text or "first 4" in row_text:
-                        superfecta_combo = fortuna.clean_text(cols[0].text())
-                        superfecta_pay = parse_currency_value(cols[1].text())
-                    elif "trifecta" in row_text:
-                        trifecta_combo = fortuna.clean_text(cols[0].text())
-                        trifecta_pay = parse_currency_value(cols[1].text())
-                    elif "place" in row_text:
-                        # Map place dividends to runners if possible
-                        p_name = fortuna.clean_text(cols[0].text().replace("Place", "").strip())
-                        p_val = parse_currency_value(cols[1].text())
-                        for r in runners:
-                            if r.name.lower() in p_name.lower() or p_name.lower() in r.name.lower():
-                                r.place_payout = p_val
-                except Exception as e:
-                    self.logger.debug("Failed parsing dividend row", error=str(e))
+            exotics = extract_exotic_payouts([div_table])
+            self._map_place_payouts(div_table, runners)
 
         if not runners:
             return None
 
-        try:
-            race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=12, minute=0, tzinfo=EASTERN)
-        except ValueError:
-            start_time = datetime.now(EASTERN)
+        tri = exotics.get("trifecta", (None, None))
+        sup = exotics.get("superfecta", (None, None))
 
         return ResultRace(
-            id=f"atr_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=self._make_race_id("atr_res", venue, date_str, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=build_start_time(date_str),
+            runners=runners,
+            trifecta_payout=tri[0],
+            trifecta_combination=tri[1],
+            superfecta_payout=sup[0],
+            superfecta_combination=sup[1],
+            source=self.SOURCE_NAME,
+        )
+
+    # -- ATR-specific helpers ----------------------------------------------
+
+    @staticmethod
+    def _extract_atr_venue(parser: HTMLParser) -> Optional[str]:
+        header = (
+            parser.css_first(".race-header__details--primary")
+            or parser.css_first(".racecard-header")
+            or parser.css_first(".race-header")
+        )
+        if not header:
+            return None
+        venue_node = (
+            header.css_first("h2")
+            or header.css_first("h1")
+            or header.css_first(".track-name")
+        )
+        if not venue_node:
+            return None
+        return fortuna.normalize_venue_name(venue_node.text(strip=True))
+
+    def _parse_atr_runners(
+        self, parser: HTMLParser,
+    ) -> List[ResultRunner]:
+        rows = (
+            parser.css(".result-racecard__row")
+            or parser.css(".card-cell--horse")
+            or parser.css("atr-result-horse")
+            or parser.css("div[class*='RacecardResultItem']")
+            or parser.css(".p-results__item")
+        )
+
+        runners: List[ResultRunner] = []
+        for row in rows:
+            try:
+                name_node = (
+                    row.css_first(".result-racecard__horse-name a")
+                    or row.css_first(".horse-name a")
+                    or row.css_first("a[href*='/horse/']")
+                    or row.css_first("[class*='HorseName']")
+                )
+                if not name_node:
+                    continue
+                name = fortuna.clean_text(name_node.text())
+
+                pos_node = (
+                    row.css_first(".result-racecard__pos")
+                    or row.css_first(".pos")
+                    or row.css_first(".position")
+                    or row.css_first("[class*='Position']")
+                )
+                pos = (
+                    fortuna.clean_text(pos_node.text()) if pos_node else None
+                )
+
+                num_node = row.css_first(
+                    ".result-racecard__saddle-cloth",
+                )
+                number = 0
+                if num_node:
+                    try:
+                        number = int(fortuna.clean_text(num_node.text()))
+                    except ValueError:
+                        pass
+
+                odds_node = row.css_first(".result-racecard__odds")
+                final_odds = 0.0
+                if odds_node:
+                    final_odds = parse_fractional_odds(
+                        fortuna.clean_text(odds_node.text()),
+                    )
+
+                runners.append(ResultRunner(
+                    name=name,
+                    number=number,
+                    position=pos,
+                    final_win_odds=final_odds,
+                ))
+            except Exception:
+                continue
+        return runners
+
+    @staticmethod
+    def _map_place_payouts(
+        div_table: Node,
+        runners: List[ResultRunner],
+    ) -> None:
+        """Enrich runners with place payouts from the dividends table."""
+        for row in div_table.css("tr"):
+            try:
+                row_text = row.text().lower()
+                if "place" not in row_text:
+                    continue
+                cols = row.css("td")
+                if len(cols) < 2:
+                    continue
+                p_name = fortuna.clean_text(
+                    cols[0].text().replace("Place", "").strip(),
+                )
+                p_val = parse_currency_value(cols[1].text())
+                for runner in runners:
+                    if (
+                        runner.name.lower() in p_name.lower()
+                        or p_name.lower() in runner.name.lower()
+                    ):
+                        runner.place_payout = p_val
+            except Exception:
+                continue
+
+
+# -- Part 2: SportingLifeResultsAdapter ? main()
+# -- Continues from Part 1's final line
+# -----------------------------------------------------------------------------
+
+
+class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
+    """Sporting Life results (UK / IRE / International)."""
+
+    SOURCE_NAME = "SportingLifeResults"
+    BASE_URL    = "https://www.sportinglife.com"
+    HOST        = "www.sportinglife.com"
+    TIMEOUT     = 45
+
+    # -- link discovery ----------------------------------------------------
+
+    async def _discover_result_links(self, date_str: str) -> set:
+        resp = await self.make_request(
+            "GET",
+            f"/racing/results/{date_str}",
+            headers=self._get_headers(),
+        )
+        if not resp or not resp.text:
+            return set()
+
+        links: set = set()
+        for a in HTMLParser(resp.text).css("a[href*='/racing/results/']"):
+            href = a.attributes.get("href", "")
+            if not self._venue_matches(a.text(), href):
+                continue
+            # /racing/results/2026-02-04/ludlow/901676/race-name
+            if re.search(r"/results/\d{4}-\d{2}-\d{2}/.+/\d+/", href):
+                links.add(href)
+        return links
+
+    # -- page parsing (two strategies) -------------------------------------
+
+    def _parse_race_page(
+        self, html: str, date_str: str, url: str,
+    ) -> Optional[ResultRace]:
+        parser = HTMLParser(html)
+
+        # Strategy 1 — Next.js JSON payload (most reliable)
+        script = parser.css_first("script#__NEXT_DATA__")
+        if script:
+            race = self._parse_from_next_data(script.text(), date_str)
+            if race:
+                return race
+
+        # Strategy 2 — HTML scrape fallback
+        return self._parse_from_html(parser, date_str)
+
+    # -- Strategy 1: JSON -------------------------------------------------
+
+    def _parse_from_next_data(
+        self, script_text: str, date_str: str,
+    ) -> Optional[ResultRace]:
+        try:
+            data = json.loads(script_text)
+        except json.JSONDecodeError as exc:
+            self.logger.debug("Invalid __NEXT_DATA__", error=str(exc))
+            return None
+
+        race_data = (
+            data.get("props", {}).get("pageProps", {}).get("race", {})
+        )
+        if not race_data:
+            return None
+
+        summary    = race_data.get("race_summary", {})
+        venue      = fortuna.normalize_venue_name(
+            summary.get("course_name", "Unknown"),
+        )
+        race_num   = (
+            race_data.get("race_number")
+            or summary.get("race_number")
+            or 1
+        )
+        date_val   = summary.get("date", date_str)
+        start_time = build_start_time(date_val, summary.get("time"))
+
+        runners = self._runners_from_json(race_data)
+        if not runners:
+            return None
+
+        # Exotic payouts via recursive search
+        trifecta_pay   = find_nested_value(race_data, "trifecta")
+        superfecta_pay = find_nested_value(race_data, "superfecta")
+
+        # Place payouts from CSV field
+        self._apply_place_payouts_from_csv(
+            race_data.get("place_win", ""), runners,
+        )
+
+        return ResultRace(
+            id=self._make_race_id("sl_res", venue, date_val, race_num),
             venue=venue,
             race_number=race_num,
             start_time=start_time,
             runners=runners,
             trifecta_payout=trifecta_pay,
-            trifecta_combination=trifecta_combo,
             superfecta_payout=superfecta_pay,
-            superfecta_combination=superfecta_combo,
             source=self.SOURCE_NAME,
         )
 
-
-# Placeholder adapters - implement as needed
-class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
-    """Adapter for Sporting Life results."""
-
-    ADAPTER_TYPE = "results"
-    SOURCE_NAME = "SportingLifeResults"
-    BASE_URL = "https://www.sportinglife.com"
-
-    def __init__(self, **kwargs):
-        super().__init__(
-            source_name=self.SOURCE_NAME,
-            base_url=self.BASE_URL,
-            **kwargs
-        )
-
-    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=45,
-        )
-
-    def _get_headers(self) -> dict:
-        return self._get_browser_headers(host="www.sportinglife.com")
-
-    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
-        """Skip the default RaceValidator as results use ResultRace model."""
-        return self._parse_races(raw_data)
-
-    async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        url = f"/racing/results/{date_str}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
-            return None
-
-        parser = HTMLParser(resp.text)
-        links = []
-        target_venues = getattr(self, "target_venues", None)
-        for a in parser.css("a[href*='/racing/results/']"):
-            href = a.attributes.get("href", "")
-
-            # Filter by venue
-            if target_venues:
-                match_found = False
-                for v in target_venues:
-                    if v in href.lower().replace("-", ""):
-                        match_found = True
-                        break
-                if not match_found:
-                    v_text = fortuna.get_canonical_venue(a.text())
-                    if v_text in target_venues:
-                        match_found = True
-                if not match_found:
-                    continue
-
-            # Example: /racing/results/2026-02-04/ludlow/901676/racing-to-school-juvenile-hurdle-gbb-race
-            if re.search(r"/results/\d{4}-\d{2}-\d{2}/.+/\d+/", href):
-                links.append(href)
-
-        unique_links = list(set(links))
-        if not unique_links:
-            self.logger.warning("No metadata found", context="SportingLife Results Index Parsing", url=url)
-            return None
-
-        self.logger.info("Found Sporting Life result links", count=len(unique_links))
-        metadata = [{"url": link, "race_number": 0} for link in unique_links]
-        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
-
-        return {"pages": pages, "date": date_str}
-
-    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        if not raw_data:
-            return []
-
-        races = []
-        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
-
-        for item in raw_data.get("pages", []):
-            html_content = item.get("html")
-            if not html_content:
+    @staticmethod
+    def _runners_from_json(race_data: dict) -> List[ResultRunner]:
+        """Extract runners from ``rides`` (result pages) or ``runners``."""
+        items = race_data.get("rides") or race_data.get("runners", [])
+        runners: List[ResultRunner] = []
+        for item in items:
+            horse = item.get("horse", {})
+            name  = horse.get("name") or item.get("name")
+            if not name:
                 continue
+            sp_raw = item.get("starting_price") or item.get("sp", "")
+            runners.append(ResultRunner(
+                name=name,
+                number=(
+                    item.get("cloth_number")
+                    or item.get("saddle_cloth_number", 0)
+                ),
+                position=str(
+                    item.get("finish_position")
+                    or item.get("position", ""),
+                ),
+                final_win_odds=parse_fractional_odds(str(sp_raw)),
+            ))
+        return runners
 
-            try:
-                race = self._parse_race_page(html_content, date_str, item.get("url", ""))
-                if race:
-                    races.append(race)
-            except Exception as e:
-                self.logger.warning("Failed to parse Sporting Life result", error=str(e))
+    @staticmethod
+    def _apply_place_payouts_from_csv(
+        place_csv: str,
+        runners: List[ResultRunner],
+    ) -> None:
+        """Map comma-separated place payouts to runners by finishing position."""
+        if not isinstance(place_csv, str) or not place_csv:
+            return
+        pays = [parse_currency_value(p) for p in place_csv.split(",")]
+        for runner in runners:
+            pos = runner.position_numeric
+            if pos and 1 <= pos <= len(pays):
+                runner.place_payout = pays[pos - 1]
 
-        return races
+    # -- Strategy 2: HTML fallback ----------------------------------------
 
-    def _parse_race_page(
-        self,
-        html_content: str,
-        date_str: str,
-        url: str
+    def _parse_from_html(
+        self, parser: HTMLParser, date_str: str,
     ) -> Optional[ResultRace]:
-        """Parse a Sporting Life result page using JSON data or HTML fallback."""
-        parser = HTMLParser(html_content)
-
-        # Try JSON extraction first (highly reliable for Next.js sites)
-        script = parser.css_first("script#__NEXT_DATA__")
-        if script:
-            try:
-                data = json.loads(script.text())
-                self.logger.debug("Parsing Sporting Life JSON", keys=list(data.keys()))
-                pp = data.get("props", {}).get("pageProps", {})
-                self.logger.debug("Sporting Life PageProps keys", keys=list(pp.keys()))
-                race_data = pp.get("race", {})
-                if race_data:
-                    self.logger.debug("Sporting Life Race data found", name=race_data.get("name"))
-                    race_summary = race_data.get("race_summary", {})
-                    venue = fortuna.normalize_venue_name(race_summary.get("course_name", "Unknown"))
-                    time_str = race_summary.get("time", "00:00")
-                    date_val = race_summary.get("date", date_str)
-                    race_num = race_data.get("race_number") or race_summary.get("race_number") or 1
-
-                    runners = []
-                    # Try 'rides' first (typical for result pages)
-                    items = race_data.get("rides", [])
-                    if items:
-                        for r in items:
-                            horse = r.get("horse", {})
-                            sp = r.get("starting_price") or r.get("sp")
-                            final_odds = 0.0
-                            if sp:
-                                try:
-                                    if "/" in str(sp):
-                                        num, den = map(int, str(sp).split("/"))
-                                        final_odds = (num / den) + 1.0
-                                    else:
-                                        final_odds = float(sp)
-                                except Exception: pass
-
-                            runners.append(ResultRunner(
-                                name=horse.get("name") or r.get("name"),
-                                number=r.get("cloth_number") or r.get("saddle_cloth_number", 0),
-                                position=str(r.get("finish_position") or r.get("position", "")),
-                                final_win_odds=final_odds
-                            ))
-                    else:
-                        # Fallback to 'runners'
-                        for r in race_data.get("runners", []):
-                            runners.append(ResultRunner(
-                                name=r.get("name"),
-                                number=r.get("saddle_cloth_number", 0),
-                                position=str(r.get("position")) if r.get("position") else None
-                            ))
-
-                    if runners:
-                        # Recursive search for payouts in JSON
-                        def find_payout(obj, key_part):
-                            if isinstance(obj, dict):
-                                for k, v in obj.items():
-                                    if key_part.lower() in k.lower() and (isinstance(v, (int, float, str))):
-                                        return parse_currency_value(str(v))
-                                    res = find_payout(v, key_part)
-                                    if res: return res
-                            elif isinstance(obj, list):
-                                for item in obj:
-                                    res = find_payout(item, key_part)
-                                    if res: return res
-                            return None
-
-                        trifecta_pay = find_payout(race_data, "trifecta")
-                        superfecta_pay = find_payout(race_data, "superfecta")
-
-                        # Extract place payouts if available (often as "place_win")
-                        place_wins = race_data.get("place_win", "")
-                        if place_wins and isinstance(place_wins, str):
-                            pays = [parse_currency_value(p) for p in place_wins.split(",")]
-                            # Map them to the runners based on position
-                            for r in runners:
-                                try:
-                                    pos = r.position_numeric
-                                    if pos and 1 <= pos <= len(pays):
-                                        r.place_payout = pays[pos-1]
-                                except Exception: continue
-
-                        try:
-                            dt = datetime.strptime(date_val, "%Y-%m-%d")
-                            start_time = dt.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
-                        except Exception:
-                            start_time = datetime.now(EASTERN)
-
-                        return ResultRace(
-                            id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_val.replace('-', '')}_R{race_num}",
-                            venue=venue,
-                            race_number=race_num,
-                            start_time=start_time,
-                            runners=runners,
-                            trifecta_payout=trifecta_pay,
-                            superfecta_payout=superfecta_pay,
-                            source=self.SOURCE_NAME,
-                        )
-            except Exception as e:
-                self.logger.warning("Failed to parse Sporting Life JSON", error=str(e))
-        else:
-            self.logger.debug("No __NEXT_DATA__ found in Sporting Life page", url=url)
-
-        # Fallback to HTML parsing
         header = parser.css_first("h1")
         if not header:
             return None
 
-        header_text = fortuna.clean_text(header.text())
-        match = re.match(r"(\d{1,2}:\d{2})\s+(.+)\s+Result", header_text)
+        match = re.match(
+            r"(\d{1,2}:\d{2})\s+(.+)\s+Result",
+            fortuna.clean_text(header.text()),
+        )
         if not match:
             return None
 
-        time_str = match.group(1)
-        venue = fortuna.normalize_venue_name(match.group(2))
+        time_str   = match.group(1)
+        venue      = fortuna.normalize_venue_name(match.group(2))
+        start_time = build_start_time(date_str, time_str)
 
-        runners = []
-        for row in parser.css('div[class*="ResultRunner__StyledResultRunnerWrapper"]'):
-            try:
-                name_node = row.css_first('a[class*="ResultRunner__StyledHorseName"]')
-                pos_node = row.css_first('div[class*="ResultRunner__StyledRunnerPositionContainer"]')
-
-                if not name_node:
-                    continue
-
-                name = fortuna.clean_text(name_node.text())
-                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
-
-                runners.append(ResultRunner(
-                    name=name,
-                    number=0,
-                    position=pos,
-                ))
-            except Exception:
+        runners: List[ResultRunner] = []
+        for row in parser.css(
+            'div[class*="ResultRunner__StyledResultRunnerWrapper"]',
+        ):
+            name_node = row.css_first(
+                'a[class*="ResultRunner__StyledHorseName"]',
+            )
+            if not name_node:
                 continue
+            pos_node = row.css_first(
+                'div[class*="ResultRunner__StyledRunnerPositionContainer"]',
+            )
+            runners.append(ResultRunner(
+                name=fortuna.clean_text(name_node.text()),
+                number=0,
+                position=(
+                    fortuna.clean_text(pos_node.text()) if pos_node else None
+                ),
+            ))
 
         if not runners:
             return None
 
-        try:
-            race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
-        except Exception:
-            start_time = datetime.now(EASTERN)
-
         return ResultRace(
-            id=f"sl_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_{time_str.replace(':', '')}",
+            id=self._make_race_id("sl_res", venue, date_str, 1),
             venue=venue,
             race_number=1,
             start_time=start_time,
@@ -1636,424 +1640,392 @@ class SportingLifeResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin
         )
 
 
-class SkySportsResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fortuna.RacePageFetcherMixin, fortuna.BaseAdapterV3):
-    """Adapter for Sky Sports results."""
+class SkySportsResultsAdapter(PageFetchingResultsAdapter):
+    """Sky Sports Racing results (UK / IRE)."""
 
-    ADAPTER_TYPE = "results"
     SOURCE_NAME = "SkySportsResults"
-    BASE_URL = "https://www.skysports.com"
+    BASE_URL    = "https://www.skysports.com"
+    HOST        = "www.skysports.com"
+    TIMEOUT     = 45
 
-    def __init__(self, **kwargs):
-        super().__init__(
-            source_name=self.SOURCE_NAME,
-            base_url=self.BASE_URL,
-            **kwargs
-        )
+    # -- link discovery ----------------------------------------------------
 
-    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=45,
-        )
-
-    def _get_headers(self) -> dict:
-        return self._get_browser_headers(host="www.skysports.com")
-
-    def _validate_and_parse_races(self, raw_data: Any) -> List[ResultRace]:
-        """Skip the default RaceValidator as results use ResultRace model."""
-        return self._parse_races(raw_data)
-
-    async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
-        # Sky Sports uses DD-MM-YYYY in results URL
+    async def _discover_result_links(self, date_str: str) -> set:
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             url_date = dt.strftime("%d-%m-%Y")
-        except Exception:
+        except ValueError:
             url_date = date_str
 
-        url = f"/racing/results/{url_date}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
+        resp = await self.make_request(
+            "GET",
+            f"/racing/results/{url_date}",
+            headers=self._get_headers(),
+        )
         if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
-            return None
+            return set()
 
         parser = HTMLParser(resp.text)
-        links = []
-        target_venues = getattr(self, "target_venues", None)
-        # Sky Sports links can be full-result or have meeting IDs
+        links: set = set()
+
         for a in parser.css("a[href*='/racing/results/']"):
-            href = a.attributes.get("href") or ""
-
-            # Filter by venue
-            if target_venues:
-                match_found = False
-                for v in target_venues:
-                    if v in href.lower().replace("-", ""):
-                        match_found = True
-                        break
-                if not match_found:
-                    v_text = fortuna.get_canonical_venue(a.text())
-                    if v_text in target_venues:
-                        match_found = True
-                if not match_found:
-                    continue
-
-            if any(p in href for p in ["/full-result/", "/race-result/"]) or re.search(r"/\d+/", href):
-                if date_str in href or url_date in href:
-                    links.append(href)
-
-        unique_links = list(set(links))
-        if not unique_links:
-            # Fallback: look for any link with a digit ID that isn't a date-only result
-            for a in parser.css("a[href*='/racing/results/']"):
-                href = a.attributes.get("href") or ""
-                if re.search(r"/\d{6,}/", href): # Likely a race ID
-                     links.append(href)
-            unique_links = list(set(links))
-
-        if not unique_links:
-            return None
-
-        self.logger.info("Found Sky Sports result links", count=len(unique_links))
-        metadata = [{"url": link, "race_number": 0} for link in unique_links]
-        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
-
-        return {"pages": pages, "date": date_str}
-
-    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
-        if not raw_data:
-            return []
-
-        races = []
-        date_str = raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d"))
-
-        for item in raw_data.get("pages", []):
-            html_content = item.get("html")
-            if not html_content:
+            href = a.attributes.get("href", "")
+            if not self._venue_matches(a.text(), href):
                 continue
+            has_race_path = any(
+                p in href for p in ("/full-result/", "/race-result/")
+            ) or re.search(r"/\d+/", href)
+            has_date = date_str in href or url_date in href
+            if has_race_path and has_date:
+                links.add(href)
 
-            try:
-                race = self._parse_race_page(html_content, date_str, item.get("url", ""))
-                if race:
-                    races.append(race)
-            except Exception as e:
-                self.logger.warning("Failed to parse Sky Sports result", error=str(e))
+        # Fallback: long numeric ID likely means a specific race
+        if not links:
+            for a in parser.css("a[href*='/racing/results/']"):
+                href = a.attributes.get("href", "")
+                if re.search(r"/\d{6,}/", href):
+                    links.add(href)
 
-        return races
+        return links
+
+    # -- page parsing ------------------------------------------------------
 
     def _parse_race_page(
-        self,
-        html_content: str,
-        date_str: str,
-        url: str
+        self, html: str, date_str: str, url: str,
     ) -> Optional[ResultRace]:
-        """Parse a Sky Sports result page."""
-        parser = HTMLParser(html_content)
+        parser = HTMLParser(html)
 
-        # Get venue and time
         header = parser.css_first(".sdc-site-racing-header__name")
         if not header:
             return None
 
-        header_text = fortuna.clean_text(header.text())
-        # Format: "13:30 Lingfield"
-        match = re.match(r"(\d{1,2}:\d{2})\s+(.+)", header_text)
+        match = re.match(
+            r"(\d{1,2}:\d{2})\s+(.+)",
+            fortuna.clean_text(header.text()),
+        )
         if not match:
             return None
 
-        time_str = match.group(1)
-        venue = fortuna.normalize_venue_name(match.group(2))
+        time_str   = match.group(1)
+        venue      = fortuna.normalize_venue_name(match.group(2))
+        start_time = build_start_time(date_str, time_str)
 
-        # Parse runners
-        runners = []
-        for row in parser.css(".sdc-site-racing-card__item"):
-            try:
-                name_node = row.css_first(".sdc-site-racing-card__name")
-                pos_node = row.css_first(".sdc-site-racing-card__position")
-
-                if not name_node:
-                    continue
-
-                name = fortuna.clean_text(name_node.text())
-                pos = fortuna.clean_text(pos_node.text()) if pos_node else None
-
-                # Saddle number
-                number_node = row.css_first(".sdc-site-racing-card__number")
-                number = 0
-                if number_node:
-                    try:
-                        number = int(re.sub(r"\D", "", number_node.text()))
-                    except Exception:
-                        pass
-
-                # Final Odds / SP
-                odds_node = row.css_first(".sdc-site-racing-card__odds")
-                final_odds = 0.0
-                if odds_node:
-                    sp = fortuna.clean_text(odds_node.text())
-                    try:
-                        if "/" in sp:
-                            num, den = map(int, sp.split("/"))
-                            final_odds = (num / den) + 1.0
-                        else:
-                            final_odds = float(sp)
-                    except Exception: pass
-
-                runners.append(ResultRunner(
-                    name=name,
-                    number=number,
-                    position=pos,
-                    final_win_odds=final_odds
-                ))
-            except Exception:
-                continue
-
+        runners = self._parse_sky_runners(parser)
         if not runners:
             return None
 
-        # Exotic payouts
-        trifecta_pay = None
-        superfecta_pay = None
+        exotics  = extract_exotic_payouts(parser.css("table"))
+        race_num = self._extract_sky_race_number(parser, url)
 
-        for table in parser.css("table"):
-            table_text = table.text().lower()
-            # Prioritize Superfecta check
-            if "superfecta" in table_text or "first 4" in table_text:
-                for row in table.css("tr"):
-                    row_text = row.text().lower()
-                    if "superfecta" in row_text or "first 4" in row_text:
-                        cols = row.css("td")
-                        if len(cols) >= 2:
-                            superfecta_pay = parse_currency_value(cols[1].text())
-
-            # Secondary Trifecta check
-            if "trifecta" in table_text or "tricast" in table_text:
-                for row in table.css("tr"):
-                    if "trifecta" in row.text().lower() or "tricast" in row.text().lower():
-                        cols = row.css("td")
-                        if len(cols) >= 2:
-                            trifecta_pay = parse_currency_value(cols[1].text())
-
-        try:
-            race_date = datetime.strptime(date_str, "%Y-%m-%d")
-            start_time = race_date.replace(hour=int(time_str.split(":")[0]), minute=int(time_str.split(":")[1]), tzinfo=EASTERN)
-        except Exception:
-            start_time = datetime.now(EASTERN)
-
-        # Extract race number from URL or page
-        race_num = 1
-        url_match = re.search(r'/(\d+)/', url)
-        if url_match:
-            # Check if this ID appears in navigation to find its index
-            nav_links = parser.css("a[href*='/racing/results/']")
-            for i, link in enumerate(nav_links):
-                if url_match.group(0) in (link.attributes.get("href") or ""):
-                    race_num = i + 1
-                    break
-
-        # Fallback to searching text
-        if race_num == 1:
-            txt_match = re.search(r'Race\s+(\d+)', parser.text(), re.I)
-            if txt_match:
-                race_num = int(txt_match.group(1))
+        tri = exotics.get("trifecta", (None, None))
+        sup = exotics.get("superfecta", (None, None))
 
         return ResultRace(
-            id=f"sky_res_{fortuna.get_canonical_venue(venue)}_{date_str.replace('-', '')}_R{race_num}",
+            id=self._make_race_id("sky_res", venue, date_str, race_num),
             venue=venue,
             race_number=race_num,
             start_time=start_time,
             runners=runners,
-            trifecta_payout=trifecta_pay,
-            superfecta_payout=superfecta_pay,
+            trifecta_payout=tri[0],
+            superfecta_payout=sup[0],
             source=self.SOURCE_NAME,
         )
 
+    @staticmethod
+    def _parse_sky_runners(parser: HTMLParser) -> List[ResultRunner]:
+        runners: List[ResultRunner] = []
+        for row in parser.css(".sdc-site-racing-card__item"):
+            name_node = row.css_first(".sdc-site-racing-card__name")
+            if not name_node:
+                continue
 
-# --- REPORT GENERATION ---
+            pos_node    = row.css_first(".sdc-site-racing-card__position")
+            number_node = row.css_first(".sdc-site-racing-card__number")
+            odds_node   = row.css_first(".sdc-site-racing-card__odds")
+
+            number = 0
+            if number_node:
+                try:
+                    number = int(re.sub(r"\D", "", number_node.text()))
+                except (ValueError, TypeError):
+                    pass
+
+            runners.append(ResultRunner(
+                name=fortuna.clean_text(name_node.text()),
+                number=number,
+                position=(
+                    fortuna.clean_text(pos_node.text()) if pos_node else None
+                ),
+                final_win_odds=parse_fractional_odds(
+                    fortuna.clean_text(odds_node.text()) if odds_node else "",
+                ),
+            ))
+        return runners
+
+    @staticmethod
+    def _extract_sky_race_number(parser: HTMLParser, url: str) -> int:
+        """Try navigation index, then URL ID, then text fallback."""
+        url_match = re.search(r"/(\d+)/", url)
+        if url_match:
+            nav_links = parser.css("a[href*='/racing/results/']")
+            for i, link in enumerate(nav_links):
+                if url_match.group(0) in (
+                    link.attributes.get("href") or ""
+                ):
+                    return i + 1
+
+        return _extract_race_number_from_text(parser, url)
+
+
+# -- REPORT GENERATION --------------------------------------------------------
+
+_REPORT_WIDTH: Final[int] = 80
+_REPORT_SEP:   Final[str] = "=" * _REPORT_WIDTH
+_REPORT_DOT:   Final[str] = "." * _REPORT_WIDTH
+_SECTION_SEP:  Final[str] = "-" * 40
+
+
+def _format_tip_time(tip: Dict[str, Any]) -> str:
+    """Best-effort ET time string from a tip's ``start_time``."""
+    raw = tip.get("start_time", "")
+    try:
+        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        return to_eastern(dt).strftime("%Y-%m-%d %H:%M ET")
+    except (ValueError, TypeError):
+        return str(raw)[:16].replace("T", " ")
+
 
 def generate_analytics_report(
     audited_tips: List[Dict[str, Any]],
-    recent_tips: List[Dict[str, Any]] = None,
-    harvest_summary: Dict[str, Any] = None
+    recent_tips: Optional[List[Dict[str, Any]]] = None,
+    harvest_summary: Optional[Dict[str, Any]] = None,
+    *,
+    include_lifetime_stats: bool = False,
 ) -> str:
-    """Generate a high-impact human-readable performance audit report."""
-    now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET')
-    lines = [
-        "=" * 80,
-        "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(80),
-        f"Generated: {now_str}".center(80),
-        "=" * 80,
+    """Build the human-readable performance audit report."""
+    now_str = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M ET")
+    lines: list[str] = [
+        _REPORT_SEP,
+        "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(
+            _REPORT_WIDTH,
+        ),
+        f"Generated: {now_str}".center(_REPORT_WIDTH),
+        _REPORT_SEP,
         "",
     ]
 
-    # --- 1. PROOF OF HARVESTING ---
     if harvest_summary:
-        lines.extend([
-            "🔎 LIVE ADAPTER HARVEST PROOF",
-            "-" * 40,
-        ])
-        for adapter, data in harvest_summary.items():
-            if isinstance(data, dict):
-                count = data.get("count", 0)
-                max_odds = data.get("max_odds", 0.0)
-            else:
-                count = data
-                max_odds = 0.0
+        _append_harvest_proof(lines, harvest_summary)
 
-            status = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
-            odds_str = f"MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else "Odds: N/A"
-            lines.append(f"{adapter:<25} | {status:<15} | Records: {count:<4} | {odds_str}")
-        lines.append("")
-
-    # --- 2. PENDING VERIFICATION (THE "WATCH" LIST) ---
     if recent_tips:
-        lines.extend([
-            "⏳ PENDING VERIFICATION - RECENT DISCOVERIES",
-            "-" * 40,
-            f"{'RACE TIME':<18} | {'VENUE':<20} | {'R#':<3} | {'GM?':<4} | {'STATUS'}",
-            "." * 80
-        ])
-        for tip in recent_tips[:25]:
-            st_raw = tip.get("start_time", "N/A")
-            try:
-                st = datetime.fromisoformat(str(st_raw).replace('Z', '+00:00'))
-                st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
-            except Exception:
-                try:
-                    import dateutil.parser
-                    st = dateutil.parser.parse(str(st_raw))
-                    st_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
-                except Exception:
-                    st_str = str(st_raw)[:16].replace("T", " ")
+        _append_pending_section(lines, recent_tips)
 
-            venue = str(tip.get("venue", "Unknown"))[:20]
-            rnum = tip.get("race_number", "?")
-            gm = "GOLD" if tip.get("is_goldmine") else "----"
-            status = tip.get("verdict") if tip.get("audit_completed") else "WATCHING"
-            lines.append(f"{st_str:<18} | {venue:<20} | {rnum:<3} | {gm:<4} | {status}")
-        lines.append("")
+    audited_sorted = sorted(
+        audited_tips,
+        key=lambda t: t.get("start_time", ""),
+        reverse=True,
+    )
+    if audited_sorted:
+        _append_recent_performance(lines, audited_sorted[:15])
 
-    # --- 3. RECENT PERFORMANCE PROOF ---
-    audited_recent = sorted(audited_tips, key=lambda x: x.get("start_time", ""), reverse=True)
-    if audited_recent:
-        lines.extend([
-            "💰 RECENT PERFORMANCE PROOF (MATCHED RESULTS)",
-            "-" * 40,
-            f"{'RESULT':<6} | {'RACE':<25} | {'PROFIT':<8} | {'PAYOUT/DETAILS'}",
-            "." * 80
-        ])
-        for tip in audited_recent[:15]:
-            verdict = tip.get("verdict", "?")
-            emoji = "✅ WIN " if verdict == "CASHED" else "❌ LOSS" if verdict == "BURNED" else "⚪ VOID"
-            venue = f"{tip.get('venue', 'Unknown')[:18]} R{tip.get('race_number', '?')}"
-            profit = f"${tip.get('net_profit', 0.0):+.2f}"
+    _append_exotic_tracking(lines, audited_tips)
 
-            payout_info = ""
-            p1 = tip.get("top1_place_payout")
-            p2 = tip.get("top2_place_payout")
-            if p1 or p2:
-                payout_info = f"P: {p1 or 0:.2f}/{p2 or 0:.2f} | "
-
-            # Add Odds Stability Check (Memory Directive Fix)
-            po = tip.get("predicted_2nd_fav_odds")
-            ao = tip.get("actual_2nd_fav_odds")
-            if po is not None or ao is not None:
-                p1_s = f"{po:.1f}" if po is not None else "?"
-                p2_s = f"{ao:.1f}" if ao is not None else "?"
-                payout_info += f"Odds: {p1_s}->{p2_s} | "
-
-            if tip.get("superfecta_payout"):
-                payout_info += f"Super: ${tip['superfecta_payout']:.2f}"
-            elif tip.get("trifecta_payout"):
-                payout_info += f"Tri: ${tip['trifecta_payout']:.2f}"
-            elif tip.get("actual_top_5"):
-                payout_info += f"Top 5: [{tip['actual_top_5']}]"
-
-            lines.append(f"{emoji:<6} | {venue:<25} | {profit:>8} | {payout_info}")
-        lines.append("")
-
-    # --- 4. SUPERFECTA PERFORMANCE TRACKING ---
-    super_races = [t for t in audited_tips if t.get("superfecta_payout")]
-    tri_races = [t for t in audited_tips if t.get("trifecta_payout")]
-
-    if super_races:
-        lines.extend([
-            "🎯 SUPERFECTA PERFORMANCE PROOF",
-            "-" * 40,
-        ])
-        avg_super = sum(t["superfecta_payout"] for t in super_races) / len(super_races)
-        max_super = max(t["superfecta_payout"] for t in super_races)
-        lines.extend([
-            f"Superfecta Matches: {len(super_races)}",
-            f"  Average Payout:   ${avg_super:.2f}",
-            f"  Maximum Payout:   ${max_super:.2f}",
-        ])
-        lines.append("")
-    elif tri_races:
-        # Secondary fallback if no Superfectas found yet
-        lines.extend([
-            "🎯 SECONDARY EXOTIC TRACKING (TRIFECTA)",
-            "-" * 40,
-        ])
-        avg_tri = sum(t["trifecta_payout"] for t in tri_races) / len(tri_races)
-        lines.append(f"Trifecta Matches:   {len(tri_races)} (Avg: ${avg_tri:.2f})")
-        lines.append("")
-
-    # --- 5. SUMMARY STATISTICS ---
-    # Disabled for fine-tuning fetching/matching accuracy
-    # if audited_tips:
-    #     total = len(audited_tips)
-    #     cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
-    #     total_profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
-    #     strike_rate = (cashed / total * 100) if total > 0 else 0.0
-    #     roi = (total_profit / (total * 2.0) * 100) if total > 0 else 0.0
-
-    #     lines.extend([
-    #         "📊 SUMMARY METRICS (LIFETIME)",
-    #         "-" * 40,
-    #         f"Total Verified Races: {total}",
-    #         f"Overall Strike Rate:   {strike_rate:.1f}%",
-    #         f"Total Net Profit:     ${total_profit:+.2f} (Using $2.00 Base Unit)",
-    #         f"Return on Investment:  {roi:+.1f}%",
-    #         ""
-    #     ])
+    if include_lifetime_stats and audited_tips:
+        _append_lifetime_stats(lines, audited_tips)
 
     return "\n".join(lines)
 
 
-# --- MAIN ORCHESTRATOR ---
+def _append_harvest_proof(
+    lines: list[str],
+    harvest_summary: Dict[str, Any],
+) -> None:
+    lines.extend(["🔎 LIVE ADAPTER HARVEST PROOF", _SECTION_SEP])
+    for adapter, data in harvest_summary.items():
+        if isinstance(data, dict):
+            count    = data.get("count", 0)
+            max_odds = data.get("max_odds", 0.0)
+        else:
+            count, max_odds = data, 0.0
+
+        status   = "✅ SUCCESS" if count > 0 else "⏳ PENDING/NO DATA"
+        odds_str = (
+            f"MaxOdds: {max_odds:>5.1f}" if max_odds > 0 else "Odds: N/A"
+        )
+        lines.append(
+            f"{adapter:<25} | {status:<15} | Records: {count:<4} | {odds_str}",
+        )
+    lines.append("")
+
+
+def _append_pending_section(
+    lines: list[str],
+    recent_tips: List[Dict[str, Any]],
+) -> None:
+    lines.extend([
+        "⏳ PENDING VERIFICATION - RECENT DISCOVERIES",
+        _SECTION_SEP,
+        f"{'RACE TIME':<18} | {'VENUE':<20} | {'R#':<3} | {'GM?':<4} | STATUS",
+        _REPORT_DOT,
+    ])
+    for tip in recent_tips[:25]:
+        st_str = _format_tip_time(tip)
+        venue  = str(tip.get("venue", "Unknown"))[:20]
+        rnum   = tip.get("race_number", "?")
+        gm     = "GOLD" if tip.get("is_goldmine") else "----"
+        status = (
+            tip.get("verdict") if tip.get("audit_completed") else "WATCHING"
+        )
+        lines.append(
+            f"{st_str:<18} | {venue:<20} | {rnum:<3} | {gm:<4} | {status}",
+        )
+    lines.append("")
+
+
+def _append_recent_performance(
+    lines: list[str],
+    tips: List[Dict[str, Any]],
+) -> None:
+    lines.extend([
+        "💰 RECENT PERFORMANCE PROOF (MATCHED RESULTS)",
+        _SECTION_SEP,
+        f"{'RESULT':<6} | {'RACE':<25} | {'PROFIT':<8} | PAYOUT/DETAILS",
+        _REPORT_DOT,
+    ])
+    for tip in tips:
+        verdict = tip.get("verdict", "?")
+        emoji   = {"CASHED": "✅ WIN ", "BURNED": "❌ LOSS"}.get(
+            verdict, "⚪ VOID",
+        )
+        venue  = (
+            f"{tip.get('venue', 'Unknown')[:18]} "
+            f"R{tip.get('race_number', '?')}"
+        )
+        profit = f"${tip.get('net_profit', 0.0):+.2f}"
+
+        detail_parts: list[str] = []
+
+        # Place payouts
+        p1 = tip.get("top1_place_payout")
+        p2 = tip.get("top2_place_payout")
+        if p1 or p2:
+            detail_parts.append(f"P: {p1 or 0:.2f}/{p2 or 0:.2f}")
+
+        # Odds drift
+        po = tip.get("predicted_2nd_fav_odds")
+        ao = tip.get("actual_2nd_fav_odds")
+        if po is not None or ao is not None:
+            po_s = f"{po:.1f}" if po is not None else "?"
+            ao_s = f"{ao:.1f}" if ao is not None else "?"
+            detail_parts.append(f"Odds: {po_s}->{ao_s}")
+
+        # Exotics
+        if tip.get("superfecta_payout"):
+            detail_parts.append(f"Super: ${tip['superfecta_payout']:.2f}")
+        elif tip.get("trifecta_payout"):
+            detail_parts.append(f"Tri: ${tip['trifecta_payout']:.2f}")
+        elif tip.get("actual_top_5"):
+            detail_parts.append(f"Top 5: [{tip['actual_top_5']}]")
+
+        payout_info = " | ".join(detail_parts)
+        lines.append(
+            f"{emoji:<6} | {venue:<25} | {profit:>8} | {payout_info}",
+        )
+    lines.append("")
+
+
+def _append_exotic_tracking(
+    lines: list[str],
+    audited_tips: List[Dict[str, Any]],
+) -> None:
+    super_races = [t for t in audited_tips if t.get("superfecta_payout")]
+    tri_races   = [t for t in audited_tips if t.get("trifecta_payout")]
+
+    if super_races:
+        payouts = [t["superfecta_payout"] for t in super_races]
+        lines.extend([
+            "🎯 SUPERFECTA PERFORMANCE PROOF",
+            _SECTION_SEP,
+            f"Superfecta Matches: {len(super_races)}",
+            f"  Average Payout:   ${sum(payouts) / len(payouts):.2f}",
+            f"  Maximum Payout:   ${max(payouts):.2f}",
+            "",
+        ])
+    elif tri_races:
+        payouts = [t["trifecta_payout"] for t in tri_races]
+        lines.extend([
+            "🎯 SECONDARY EXOTIC TRACKING (TRIFECTA)",
+            _SECTION_SEP,
+            f"Trifecta Matches:   {len(tri_races)} "
+            f"(Avg: ${sum(payouts) / len(payouts):.2f})",
+            "",
+        ])
+
+
+def _append_lifetime_stats(
+    lines: list[str],
+    audited_tips: List[Dict[str, Any]],
+) -> None:
+    total  = len(audited_tips)
+    cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
+    sr     = (cashed / total * 100) if total else 0.0
+    roi    = (profit / (total * 2.0) * 100) if total else 0.0
+
+    lines.extend([
+        "📊 SUMMARY METRICS (LIFETIME)",
+        _SECTION_SEP,
+        f"Total Verified Races: {total}",
+        f"Overall Strike Rate:   {sr:.1f}%",
+        f"Total Net Profit:     ${profit:+.2f} (Using $2.00 Base Unit)",
+        f"Return on Investment:  {roi:+.1f}%",
+        "",
+    ])
+
+
+# -- ADAPTER REGISTRY & LIFECYCLE ---------------------------------------------
 
 def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
-    """Returns all non-abstract results adapter classes."""
-    def get_all_subclasses(cls):
-        return set(cls.__subclasses__()).union(
-            [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
-        )
+    """All concrete adapter classes with ``ADAPTER_TYPE == 'results'``."""
+
+    def _all_subclasses(cls: type) -> set:
+        subs = set(cls.__subclasses__())
+        return subs.union(s for c in subs for s in _all_subclasses(c))
 
     return [
-        c for c in get_all_subclasses(fortuna.BaseAdapterV3)
+        c
+        for c in _all_subclasses(fortuna.BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
         and getattr(c, "ADAPTER_TYPE", "discovery") == "results"
     ]
 
 
 @asynccontextmanager
-async def managed_adapters(region: Optional[str] = None, target_venues: Optional[set] = None):
-    """Context manager for adapter lifecycle using auto-discovery."""
-    adapter_classes = get_results_adapter_classes()
+async def managed_adapters(
+    region: Optional[str] = None,
+    target_venues: Optional[set] = None,
+):
+    """Instantiate, optionally filter, yield, then tear down all results
+    adapters."""
+    classes = get_results_adapter_classes()
 
     if region:
-        target_set = fortuna.USA_RESULTS_ADAPTERS if region == "USA" else fortuna.INT_RESULTS_ADAPTERS
-        adapter_classes = [c for c in adapter_classes if getattr(c, "SOURCE_NAME", "") in target_set]
+        allowed = (
+            fortuna.USA_RESULTS_ADAPTERS
+            if region == "USA"
+            else fortuna.INT_RESULTS_ADAPTERS
+        )
+        classes = [
+            c for c in classes
+            if getattr(c, "SOURCE_NAME", "") in allowed
+        ]
 
-    adapters = []
-    for cls in adapter_classes:
-        a = cls()
+    adapters: list[fortuna.BaseAdapterV3] = []
+    for cls in classes:
+        adapter = cls()
         if target_venues:
-            setattr(a, "target_venues", target_venues)
-        adapters.append(a)
+            adapter.target_venues = target_venues  # type: ignore[attr-defined]
+        adapters.append(adapter)
 
     try:
         yield adapters
@@ -2069,227 +2041,365 @@ async def managed_adapters(region: Optional[str] = None, target_venues: Optional
             pass
 
 
-async def run_analytics(target_dates: List[str], region: Optional[str] = None) -> None:
-    """Main analytics orchestration function."""
-    logger = structlog.get_logger("run_analytics")
-    logger.info("Starting Analytics Audit", dates=target_dates)
+# -- ORCHESTRATION HELPERS ----------------------------------------------------
 
-    # Validate dates
-    valid_dates = [d for d in target_dates if validate_date_format(d)]
-    if not valid_dates:
-        logger.error("No valid dates provided", input_dates=target_dates)
+_analytics_logger = structlog.get_logger("run_analytics")
+_MAX_CONCURRENT_FETCHES: Final[int] = 10
+
+
+async def _harvest_results(
+    adapters: List[fortuna.BaseAdapterV3],
+    valid_dates: List[str],
+    harvest_summary: Dict[str, Dict[str, Any]],
+) -> List[ResultRace]:
+    """Fetch results from all adapters × dates; populate *harvest_summary*."""
+    sem = asyncio.Semaphore(_MAX_CONCURRENT_FETCHES)
+
+    async def _fetch_one(
+        adapter: fortuna.BaseAdapterV3,
+        date_str: str,
+    ) -> Tuple[str, List[ResultRace]]:
+        async with sem:
+            try:
+                races = await adapter.get_races(date_str)
+                _analytics_logger.debug(
+                    "Fetched results",
+                    adapter=adapter.source_name,
+                    date=date_str,
+                    count=len(races),
+                )
+                return adapter.source_name, races
+            except Exception as exc:
+                _analytics_logger.warning(
+                    "Adapter fetch failed",
+                    adapter=adapter.source_name,
+                    date=date_str,
+                    error=str(exc),
+                )
+                return adapter.source_name, []
+
+    tasks = [
+        _fetch_one(adapter, d)
+        for d in valid_dates
+        for adapter in adapters
+    ]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    all_races: List[ResultRace] = []
+    for res in raw_results:
+        if isinstance(res, Exception):
+            _analytics_logger.warning("Task raised exception", error=str(res))
+            continue
+
+        name, races = res
+        all_races.extend(races)
+
+        # Track harvest metrics
+        max_odds = max(
+            (
+                float(r.final_win_odds)
+                for race in races
+                for r in race.runners
+                if getattr(r, "final_win_odds", None)
+            ),
+            default=0.0,
+        )
+        entry = harvest_summary.setdefault(
+            name, {"count": 0, "max_odds": 0.0},
+        )
+        entry["count"] += len(races)
+        entry["max_odds"] = max(entry["max_odds"], max_odds)
+
+    return all_races
+
+
+async def _save_harvest_summary(
+    harvest_summary: Dict[str, Dict[str, Any]],
+    auditor: AuditorEngine,
+    region: Optional[str],
+) -> None:
+    """Persist harvest summary to JSON file and database."""
+    try:
+        with open("results_harvest.json", "w") as f:
+            json.dump(harvest_summary, f)
+    except OSError as exc:
+        _analytics_logger.debug(
+            "Failed to write results_harvest.json", error=str(exc),
+        )
+
+    if harvest_summary:
+        try:
+            await auditor.db.log_harvest(harvest_summary, region=region)
+        except Exception as exc:
+            _analytics_logger.debug(
+                "Failed to log harvest to DB", error=str(exc),
+            )
+
+
+async def _write_gha_summary(
+    auditor: AuditorEngine,
+    harvest_summary: dict,
+) -> None:
+    """Build and write the GitHub Actions Job Summary."""
+    if "GITHUB_STEP_SUMMARY" not in os.environ:
         return
 
-    harvest_summary: Dict[str, Dict[str, Any]] = {}
+    try:
+        pending_tips = await auditor.db.get_unverified_tips(lookback_hours=48)
+        qualified: list[fortuna.Race] = []
+
+        for tip in pending_tips:
+            try:
+                race = fortuna.Race(
+                    id=tip["race_id"],
+                    venue=tip["venue"],
+                    race_number=tip["race_number"],
+                    start_time=datetime.fromisoformat(
+                        tip["start_time"].replace("Z", "+00:00"),
+                    ),
+                    runners=[],
+                    source="Database",
+                )
+                race.metadata = {
+                    "is_goldmine": bool(tip.get("is_goldmine")),
+                    "selection_number": tip.get("selection_number"),
+                    "selection_name": tip.get("selection_name"),
+                    "predicted_2nd_fav_odds": tip.get(
+                        "predicted_2nd_fav_odds",
+                    ),
+                }
+                race.top_five_numbers = tip.get("top_five")
+                qualified.append(race)
+            except (KeyError, ValueError):
+                continue
+
+        predictions_md = fortuna.format_predictions_section(qualified)
+        proof_md       = await fortuna.format_proof_section(auditor.db)
+        harvest_md     = fortuna.build_harvest_table(
+            harvest_summary, "🛰️ Results Harvest Performance",
+        )
+        artifacts_md   = fortuna.format_artifact_links()
+        fortuna.write_job_summary(
+            predictions_md, harvest_md, proof_md, artifacts_md,
+        )
+        _analytics_logger.info("GHA Job Summary written")
+    except Exception as exc:
+        _analytics_logger.error(
+            "Failed to write GHA summary", error=str(exc),
+        )
+
+
+async def _generate_and_save_report(
+    auditor: AuditorEngine,
+    harvest_summary: Dict[str, Any],
+) -> None:
+    """Fetch all audited data, generate report, print and persist."""
+    all_audited = await auditor.get_all_audited_tips()
+    recent_tips = await auditor.get_recent_tips(limit=20)
+
+    report = generate_analytics_report(
+        audited_tips=all_audited,
+        recent_tips=recent_tips,
+        harvest_summary=harvest_summary,
+    )
+    print(report)
+
+    try:
+        Path("analytics_report.txt").write_text(report, encoding="utf-8")
+        _analytics_logger.info("Report saved", path="analytics_report.txt")
+    except OSError as exc:
+        _analytics_logger.error("Failed to save report", error=str(exc))
+
+    if all_audited:
+        _analytics_logger.info(
+            "Analytics complete", total_audited=len(all_audited),
+        )
+    else:
+        _analytics_logger.info("No audited tips found in history")
+
+
+# -- TOP-LEVEL ORCHESTRATION --------------------------------------------------
+
+async def run_analytics(
+    target_dates: List[str],
+    region: Optional[str] = None,
+) -> None:
+    """Main analytics entry: harvest ? audit ? report ? GHA summary."""
+    valid_dates = [d for d in target_dates if validate_date_format(d)]
+    if not valid_dates:
+        _analytics_logger.error("No valid dates", input_dates=target_dates)
+        return
+
+    target_region = region or get_optimal_region_at_time(now_eastern())
+    _analytics_logger.info(
+        "Starting analytics audit",
+        dates=valid_dates,
+        region=target_region,
+    )
+
+    # Pre-populate harvest summary for regional visibility
+    expected = (
+        fortuna.USA_RESULTS_ADAPTERS
+        if target_region == "USA"
+        else fortuna.INT_RESULTS_ADAPTERS
+    )
+    harvest_summary: Dict[str, Dict[str, Any]] = {
+        name: {"count": 0, "max_odds": 0.0} for name in expected
+    }
+
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
 
         if not unverified:
-            logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
-            # Always ensure results_harvest.json exists for GHA workflow (Memory Directive Fix)
-            try:
-                with open("results_harvest.json", "w") as f:
-                    json.dump({}, f)
-            except Exception as e:
-                logger.debug("Failed to create results_harvest.json", error=str(e))
+            _analytics_logger.info(
+                "No unverified tips — skipping harvest, "
+                "showing lifetime report",
+            )
+            await _save_harvest_summary(harvest_summary, auditor, region)
         else:
-            logger.info("Tips to audit", count=len(unverified))
-            target_venues = {fortuna.get_canonical_venue(t.get("venue")) for t in unverified}
-            logger.info("Targeting venues", venues=list(target_venues))
+            _analytics_logger.info("Tips to audit", count=len(unverified))
+            target_venues = {
+                fortuna.get_canonical_venue(t.get("venue"))
+                for t in unverified
+            }
+            _analytics_logger.info(
+                "Targeting venues", venues=list(target_venues),
+            )
 
-            all_results: List[ResultRace] = []
-            try:
-                async with managed_adapters(region=region, target_venues=target_venues) as adapters:
-                    # Create fetch tasks for all date/adapter combinations
-                    async def fetch_with_adapter(adapter: fortuna.BaseAdapterV3, date_str: str) -> Tuple[str, List[ResultRace]]:
-                        try:
-                            races = await adapter.get_races(date_str)
-                            logger.debug(
-                                "Fetched results",
-                                adapter=adapter.source_name,
-                                date=date_str,
-                                count=len(races)
-                            )
-                            return adapter.source_name, races
-                        except Exception as e:
-                            logger.warning(
-                                "Adapter fetch failed",
-                                adapter=adapter.source_name,
-                                date=date_str,
-                                error=str(e)
-                            )
-                            return adapter.source_name, []
-
-                    # Use a semaphore to limit concurrent adapter fetches (Performance Optimization)
-                    sem = asyncio.Semaphore(10)
-
-                    async def fetch_limited(a, d):
-                        async with sem:
-                            return await fetch_with_adapter(a, d)
-
-                    tasks = [
-                        fetch_limited(adapter, date_str)
-                        for date_str in valid_dates
-                        for adapter in adapters
-                    ]
-
-                    fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                    for res in fetch_results:
-                        if isinstance(res, tuple):
-                            adapter_name, r_list = res
-                            all_results.extend(r_list)
-
-                            # Track count and MaxOdds
-                            m_odds = 0.0
-                            for r in r_list:
-                                for run in r.runners:
-                                    if getattr(run, 'final_win_odds', None) and run.final_win_odds > m_odds:
-                                        m_odds = float(run.final_win_odds)
-
-                            if adapter_name not in harvest_summary:
-                                harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
-
-                            harvest_summary[adapter_name]["count"] += len(r_list)
-                            if m_odds > harvest_summary[adapter_name]["max_odds"]:
-                                harvest_summary[adapter_name]["max_odds"] = m_odds
-                        elif isinstance(res, Exception):
-                            logger.warning("Task raised exception", error=str(res))
-
-                logger.info("Total results harvested", count=len(all_results))
-
-                if not all_results:
-                    logger.warning("No results harvested from any source")
-                    # We continue to show report if we have previous audits
-                else:
-                    # Perform audit
-                    await auditor.audit_races(all_results)
-
-            finally:
-                # Save results harvest summary for GHA reporting and DB persistence
+            async with managed_adapters(
+                region=region, target_venues=target_venues,
+            ) as adapters:
                 try:
-                    if harvest_summary or not os.path.exists("results_harvest.json"):
-                        with open("results_harvest.json", "w") as f:
-                            json.dump(harvest_summary, f)
+                    all_results = await _harvest_results(
+                        adapters, valid_dates, harvest_summary,
+                    )
+                    _analytics_logger.info(
+                        "Total results harvested",
+                        count=len(all_results),
+                    )
+                    if all_results:
+                        await auditor.audit_races(all_results)
+                    else:
+                        _analytics_logger.warning(
+                            "No results harvested from any source",
+                        )
+                finally:
+                    await _save_harvest_summary(
+                        harvest_summary, auditor, region,
+                    )
 
-                    if harvest_summary:
-                        await auditor.db.log_harvest(harvest_summary, region=region)
-                except Exception as e:
-                    logger.debug("Failed to log results harvest", error=str(e))
+        await _generate_and_save_report(auditor, harvest_summary)
+        await _write_gha_summary(auditor, harvest_summary)
 
-        # Generate and save comprehensive report
-        all_audited = await auditor.get_all_audited_tips()
-        recent_tips = await auditor.get_recent_tips(limit=20)
-
-        report = generate_analytics_report(
-            audited_tips=all_audited,
-            recent_tips=recent_tips,
-            harvest_summary=harvest_summary
-        )
-        print(report)
-
-        report_path = Path("analytics_report.txt")
-        try:
-            report_path.write_text(report, encoding="utf-8")
-            logger.info("Report saved", path=str(report_path))
-        except IOError as e:
-            logger.error("Failed to save report", error=str(e))
-
-        # Summary
-        if all_audited:
-            logger.info("Analytics audit summary generated", total_audited=len(all_audited))
-        else:
-            logger.info("No audited tips found in history")
     finally:
         await auditor.close()
+
+
+# -- CLI ENTRY POINT ----------------------------------------------------------
+
+def _build_target_dates(
+    explicit_date: Optional[str],
+    lookback_days: int,
+) -> List[str]:
+    """Return a list of ``YYYY-MM-DD`` date strings."""
+    if explicit_date:
+        if not validate_date_format(explicit_date):
+            raise ValueError(
+                f"Invalid date format '{explicit_date}'.  Use YYYY-MM-DD.",
+            )
+        return [explicit_date]
+    now = datetime.now(EASTERN)
+    return [
+        (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        for i in range(lookback_days)
+    ]
 
 
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Fortuna Analytics Engine - Race result auditing and performance analysis"
+        description=(
+            "Fortuna Analytics Engine — "
+            "Race result auditing and performance analysis"
+        ),
     )
     parser.add_argument(
-        "--date",
-        type=str,
-        help="Target date (YYYY-MM-DD format)"
+        "--date", type=str, help="Target date (YYYY-MM-DD)",
     )
     parser.add_argument(
         "--region",
         type=str,
         choices=["USA", "INT"],
-        help="Filter results by region (USA or INT)"
+        help="Filter results by region",
     )
     parser.add_argument(
         "--days",
         type=int,
         default=2,
-        help="Number of days to look back (default: 2)"
+        help="Number of days to look back (default: 2)",
     )
     parser.add_argument(
         "--db-path",
         type=str,
         default=DEFAULT_DB_PATH,
-        help=f"Path to tip history database (default: {DEFAULT_DB_PATH})"
+        help=f"Path to tip database (default: {DEFAULT_DB_PATH})",
     )
     parser.add_argument(
-        "--verbose",
-        "-v",
+        "-v", "--verbose",
         action="store_true",
-        help="Enable verbose logging"
+        help="Enable verbose logging",
     )
     parser.add_argument(
         "--migrate",
         action="store_true",
-        help="Migrate data from legacy JSON to SQLite"
+        help="Migrate data from legacy JSON to SQLite",
     )
-
+    parser.add_argument(
+        "--include-lifetime-stats",
+        action="store_true",
+        help="Include lifetime summary statistics in report",
+    )
     args = parser.parse_args()
 
-    # Set DB path BEFORE any initialization
+    # Set DB path before any initialization
     if args.db_path != DEFAULT_DB_PATH:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
 
-    # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
     structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(log_level)
+        wrapper_class=structlog.make_filtering_bound_logger(log_level),
     )
 
+    # Handle migration sub-command
     if args.migrate:
-        async def do_migrate():
+        async def _do_migrate() -> None:
             db = fortuna.FortunaDB(args.db_path)
             try:
                 await db.migrate_from_json()
                 print("Migration complete.")
-            except Exception as e:
-                print(f"Migration failed: {e}")
+            except Exception as exc:
+                print(f"Migration failed: {exc}")
             finally:
                 await db.close()
 
-        asyncio.run(do_migrate())
+        asyncio.run(_do_migrate())
         return
 
-    # Build target dates list
-    target_dates = []
-    if args.date:
-        if not validate_date_format(args.date):
-            print(f"Error: Invalid date format '{args.date}'. Use YYYY-MM-DD.")
-            return
-        target_dates = [args.date]
-    else:
-        now = datetime.now(EASTERN)
-        for i in range(args.days):
-            d = now - timedelta(days=i)
-            target_dates.append(d.strftime("%Y-%m-%d"))
+    # Build target dates
+    try:
+        target_dates = _build_target_dates(args.date, args.days)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return
 
     # Auto-select region if not specified
     if not args.region:
         args.region = get_optimal_region_at_time(datetime.now(EASTERN))
-        structlog.get_logger().info("Auto-selected region", region=args.region)
+        structlog.get_logger().info(
+            "Auto-selected region", region=args.region,
+        )
 
-    # Run
     asyncio.run(run_analytics(target_dates, region=args.region))
 
 
