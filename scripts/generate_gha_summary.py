@@ -1,534 +1,547 @@
 #!/usr/bin/env python3
 """
-Enhanced GitHub Actions Job Summary Generator for Fortuna
-Builds on existing structure with rich predictions, adapter performance, and verified results
+Enhanced GitHub Actions Job Summary Generator for Fortuna.
+Builds on existing structure with rich predictions, adapter performance, and verified results.
 """
+
+from __future__ import annotations
+
 import json
-import sys
+import logging
 import os
-import re
 import sqlite3
-from datetime import datetime, timedelta
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, TextIO
 
-def get_summary_file():
-    return os.environ.get('GITHUB_STEP_SUMMARY')
+# ── Constants ──────────────────────────────────────────────────────────────────
 
-def write_to_summary(text):
-    summary_file = get_summary_file()
-    if summary_file:
-        with open(summary_file, 'a', encoding='utf-8') as f:
-            f.write(text + '\n')
+MAX_PREDICTIONS    = 12
+MAX_RECENT_TIPS    = 15
+MIN_INSIGHTS_TIPS  = 3
+RECENT_FORM_COUNT  = 10
+NAME_TRUNCATE      = 15
+NAME_MAX_DISPLAY   = 18
+TOP5_TRUNCATE      = 12
+TOP5_MAX_DISPLAY   = 15
+
+VENUE_FLAGS: list[tuple[list[str], str]] = [
+    (['kentucky', 'churchill', 'oaklawn', 'tampa', 'gulfstream',
+      'santa', 'golden', 'belmont'], '🇺🇸'),
+    (['ascot', 'cheltenham', 'newmarket', 'york', 'aintree', 'doncaster'], '🇬🇧'),
+    (['longchamp', 'chantilly', 'deauville'], '🇫🇷'),
+    (['flemington', 'randwick', 'moonee', 'caulfield'], '🇦🇺'),
+    (['woodbine', 'mohawk'], '🇨🇦'),
+]
+
+DISCIPLINE_EMOJIS = {
+    'greyhound': '🐕',
+    'harness':   '🏇',
+}
+
+POSITION_EMOJIS = {1: '🥇', 2: '🥈', 3: '🥉', 4: '4️⃣', 5: '5️⃣'}
+
+DISCOVERY_HARVEST_FILES = [
+    'discovery_harvest.json',
+    'discovery_harvest_usa.json',
+    'discovery_harvest_int.json',
+]
+
+RESULTS_HARVEST_FILES = [
+    'results_harvest.json',
+    'results_harvest_audit.json',
+]
+
+logger = logging.getLogger(__name__)
+
+# ── Data structures ────────────────────────────────────────────────────────────
+
+@dataclass
+class TipStats:
+    total_tips: int = 0
+    cashed: int = 0
+    burned: int = 0
+    pending: int = 0
+    total_profit: float = 0.0
+    recent_tips: list[tuple] = field(default_factory=list)
+
+    @property
+    def win_rate(self) -> float:
+        return (self.cashed / self.total_tips * 100) if self.total_tips > 0 else 0.0
+
+    @property
+    def avg_profit(self) -> float:
+        return (self.total_profit / self.total_tips) if self.total_tips > 0 else 0.0
+
+    @property
+    def profit_emoji(self) -> str:
+        if self.total_profit > 0:
+            return '🟢'
+        return '🔴' if self.total_profit < 0 else '⚪'
+
+
+# ── Summary writer ─────────────────────────────────────────────────────────────
+
+class SummaryWriter:
+    """Holds an open file handle (or falls back to stdout) for the entire run."""
+
+    def __init__(self, stream: TextIO):
+        self._stream = stream
+
+    def write(self, text: str = '') -> None:
+        self._stream.write(text + '\n')
+
+    def write_lines(self, lines: list[str]) -> None:
+        self._stream.write('\n'.join(lines) + '\n')
+
+
+@contextmanager
+def open_summary():
+    """Open the summary file once for the whole generation pass."""
+    path = os.environ.get('GITHUB_STEP_SUMMARY')
+    if path:
+        with open(path, 'a', encoding='utf-8') as fh:
+            yield SummaryWriter(fh)
     else:
-        print(text)
+        import sys
+        yield SummaryWriter(sys.stdout)
 
-def get_venue_emoji(venue, discipline=None):
-    """Get emoji based on venue or discipline."""
-    venue_lower = venue.lower() if venue else ""
 
-    if discipline == "Greyhound":
-        return "🐕"
-    elif discipline == "Harness":
-        return "🏇"
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
-    # Geographic emojis
-    if any(x in venue_lower for x in ['kentucky', 'churchill', 'oaklawn', 'tampa', 'gulfstream', 'santa', 'golden', 'belmont']):
-        return "🇺🇸"
-    elif any(x in venue_lower for x in ['ascot', 'cheltenham', 'newmarket', 'york', 'aintree', 'doncaster']):
-        return "🇬🇧"
-    elif any(x in venue_lower for x in ['longchamp', 'chantilly', 'deauville']):
-        return "🇫🇷"
-    elif any(x in venue_lower for x in ['flemington', 'randwick', 'moonee', 'caulfield']):
-        return "🇦🇺"
-    elif any(x in venue_lower for x in ['woodbine', 'mohawk']):
-        return "🇨🇦"
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
-    return "🏇"
 
-def parse_time_to_minutes(start_time_str):
-    """Parse start_time to minutes from now."""
+def _read_json(path: str | Path) -> dict | None:
+    """Return parsed JSON or None on any failure."""
+    p = Path(path)
+    if not p.exists():
+        return None
     try:
-        # Handle ISO format
+        return json.loads(p.read_text(encoding='utf-8'))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning('Failed to read %s: %s', path, exc)
+        return None
+
+
+def _read_text(path: str | Path) -> str | None:
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        return p.read_text(encoding='utf-8')
+    except OSError as exc:
+        logger.warning('Failed to read %s: %s', path, exc)
+        return None
+
+
+def get_venue_emoji(venue: str | None, discipline: str | None = None) -> str:
+    if discipline:
+        emoji = DISCIPLINE_EMOJIS.get(discipline.lower())
+        if emoji:
+            return emoji
+
+    venue_lower = (venue or '').lower()
+    for keywords, flag in VENUE_FLAGS:
+        if any(kw in venue_lower for kw in keywords):
+            return flag
+    return '🏇'
+
+
+def parse_time_to_minutes(start_time_str: str) -> float:
+    try:
         if 'T' in start_time_str:
             st = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
         else:
-            # Try simple date parsing
-            st = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S')
-
-        now = datetime.utcnow()
-        delta = (st - now).total_seconds() / 60
-        return delta
-    except Exception:
+            st = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S').replace(
+                tzinfo=timezone.utc,
+            )
+        return (st - _now_utc()).total_seconds() / 60.0
+    except (ValueError, TypeError):
         return 9999.0
 
-def format_time_remaining(minutes):
-    """Format minutes into readable time remaining."""
+
+def format_time_remaining(minutes: float) -> str:
     if minutes < 0:
-        return "🏁"
-    elif minutes < 15:
-        return f"⚡{int(minutes)}m"
-    elif minutes < 60:
-        return f"🕐{int(minutes)}m"
-    else:
-        hours = int(minutes / 60)
-        mins = int(minutes % 60)
-        return f"🕐{hours}h{mins}m"
+        return '🏁'
+    if minutes < 15:
+        return f'⚡{int(minutes)}m'
+    if minutes < 60:
+        return f'🕐{int(minutes)}m'
+    hours, mins = divmod(int(minutes), 60)
+    return f'🕐{hours}h{mins}m'
 
-def get_db_stats():
-    """Get statistics from the fortuna.db database."""
-    stats = {
-        'total_tips': 0,
-        'cashed': 0,
-        'burned': 0,
-        'pending': 0,
-        'total_profit': 0.0,
-        'recent_tips': []
-    }
 
-    if not os.path.exists('fortuna.db'):
+def _truncate(text: str, limit: int, display_max: int) -> str:
+    return text[:limit] + '...' if len(text) > display_max else text
+
+
+# ── Database ───────────────────────────────────────────────────────────────────
+
+def get_db_stats(db_path: str = 'fortuna.db') -> TipStats:
+    stats = TipStats()
+    if not Path(db_path).exists():
         return stats
 
     try:
-        conn = sqlite3.connect('fortuna.db')
-        cursor = conn.cursor()
+        with sqlite3.connect(db_path) as conn:
+            cur = conn.cursor()
 
-        # Get overall stats
-        cursor.execute("""
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN verdict = 'CASHED' THEN 1 ELSE 0 END) as cashed,
-                SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END) as burned,
-                SUM(CASE WHEN audit_completed = 0 THEN 1 ELSE 0 END) as pending,
-                SUM(COALESCE(net_profit, 0.0)) as profit
-            FROM tips
-        """)
-        row = cursor.fetchone()
-        if row:
-            stats['total_tips'] = row[0] or 0
-            stats['cashed'] = row[1] or 0
-            stats['burned'] = row[2] or 0
-            stats['pending'] = row[3] or 0
-            stats['total_profit'] = row[4] or 0.0
+            cur.execute("""
+                SELECT COUNT(*),
+                       SUM(CASE WHEN verdict = 'CASHED' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN audit_completed = 0 THEN 1 ELSE 0 END),
+                       SUM(COALESCE(net_profit, 0.0))
+                FROM tips
+            """)
+            row = cur.fetchone()
+            if row:
+                stats.total_tips   = row[0] or 0
+                stats.cashed       = row[1] or 0
+                stats.burned       = row[2] or 0
+                stats.pending      = row[3] or 0
+                stats.total_profit = row[4] or 0.0
 
-        # Get recent audited tips (last 15)
-        cursor.execute("""
-            SELECT
-                venue, race_number, selection_number,
-                predicted_2nd_fav_odds, verdict, net_profit,
-                selection_position, actual_top_5, actual_2nd_fav_odds,
-                superfecta_payout, trifecta_payout, top1_place_payout,
-                discipline
-            FROM tips
-            WHERE audit_completed = 1
-            ORDER BY audit_timestamp DESC
-            LIMIT 15
-        """)
-        stats['recent_tips'] = cursor.fetchall()
-
-        conn.close()
-    except Exception as e:
-        print(f"Error reading database: {e}")
+            cur.execute("""
+                SELECT venue, race_number, selection_number,
+                       predicted_2nd_fav_odds, verdict, net_profit,
+                       selection_position, actual_top_5, actual_2nd_fav_odds,
+                       superfecta_payout, trifecta_payout, top1_place_payout,
+                       discipline
+                FROM tips
+                WHERE audit_completed = 1
+                ORDER BY audit_timestamp DESC
+                LIMIT ?
+            """, (MAX_RECENT_TIPS,))
+            stats.recent_tips = cur.fetchall()
+    except sqlite3.Error as exc:
+        logger.error('Error reading database: %s', exc)
 
     return stats
 
-def build_enhanced_harvest_table(summary, title):
-    """Enhanced harvest table with quality scores."""
-    if not summary:
-        return f"#### {title}\n| Adapter | 🏇 Races | 💰 Max Odds | 📊 Quality | ✅ Status |\n| :--- | ---: | ---: | ---: | :---: |\n| *No data* | 0 | 0.0 | — | ⚠️ |\n"
 
-    lines = [
-        f"#### {title}",
-        "",
-        "| Adapter | 🏇 Races | 💰 Max Odds | 📊 Quality | ✅ Status |",
-        "| :--- | ---: | ---: | ---: | :---: |"
+# ── Harvest merging ────────────────────────────────────────────────────────────
+
+def _merge_harvest_files(paths: list[str]) -> dict[str, dict]:
+    """Merge multiple harvest JSON files, keeping max counts/odds per adapter."""
+    merged: dict[str, dict] = {}
+    for path in paths:
+        data = _read_json(path)
+        if data is None:
+            continue
+        for adapter, value in data.items():
+            incoming = (
+                value if isinstance(value, dict) else {'count': value, 'max_odds': 0.0}
+            )
+            if adapter not in merged:
+                merged[adapter] = dict(incoming)
+            else:
+                existing = merged[adapter]
+                existing['count']    = max(existing.get('count', 0),    incoming.get('count', 0))
+                existing['max_odds'] = max(existing.get('max_odds', 0), incoming.get('max_odds', 0.0))
+    return merged
+
+
+# ── Section builders ───────────────────────────────────────────────────────────
+
+def build_harvest_table(summary: dict[str, dict], title: str) -> list[str]:
+    header = [
+        f'#### {title}',
+        '',
+        '| Adapter | 🏇 Races | 💰 Max Odds | 📊 Quality | ✅ Status |',
+        '| :--- | ---: | ---: | ---: | :---: |',
     ]
 
-    def sort_key(item):
-        adapter, data = item
-        count = data.get('count', 0) if isinstance(data, dict) else data
-        return (-count, adapter)
+    if not summary:
+        return header + ['| *No data* | 0 | 0.0 | — | ⚠️ |', '']
 
-    sorted_adapters = sorted(summary.items(), key=sort_key)
+    sorted_adapters = sorted(
+        summary.items(),
+        key=lambda item: (-item[1].get('count', 0), item[0]),
+    )
 
+    rows: list[str] = []
     total_races = 0
     total_max_odds = 0.0
 
     for adapter, data in sorted_adapters:
-        if isinstance(data, dict):
-            count = data.get('count', 0)
-            max_odds = data.get('max_odds', 0.0)
-        else:
-            count = data
-            max_odds = 0.0
-
+        count    = data.get('count', 0)
+        max_odds = data.get('max_odds', 0.0)
         total_races += count
-        if max_odds > total_max_odds:
-            total_max_odds = max_odds
+        total_max_odds = max(total_max_odds, max_odds)
 
-        # Quality assessment
         if count == 0:
-            quality = "—"
-            status = "⚠️ No Data"
+            quality, status = '—', '⚠️ No Data'
         elif count < 5:
-            quality = "⚠️ Low"
-            status = "🟡 Partial"
+            quality, status = '⚠️ Low', '🟡 Partial'
         elif max_odds < 10:
-            quality = "🟢 Good"
-            status = "✅ Active"
+            quality, status = '🟢 Good', '✅ Active'
         else:
-            quality = "🔥 Excel"
-            status = "✅ Active"
+            quality, status = '🔥 Excel', '✅ Active'
 
-        lines.append(f"| **{adapter}** | {count} | {max_odds:.1f} | {quality} | {status} |")
+        rows.append(
+            f'| **{adapter}** | {count} | {max_odds:.1f} | {quality} | {status} |'
+        )
 
-    # Add totals
     if total_races > 0:
-        lines.extend([
-            "| | | | | |",
-            f"| **TOTAL** | **{total_races}** | **{total_max_odds:.1f}** | — | — |"
-        ])
+        rows.append('| | | | | |')
+        rows.append(
+            f'| **TOTAL** | **{total_races}** | **{total_max_odds:.1f}** | — | — |'
+        )
 
-    return "\n".join(lines) + "\n"
+    return header + rows + ['']
 
-def format_enhanced_predictions():
-    """Enhanced predictions table with time-to-post and emojis."""
+
+def build_predictions_section() -> list[str]:
     lines = [
-        "### 🔮 Top Goldmine Predictions",
-        "",
-        "*Sorted by time to post - Imminent races first!*",
-        "",
-        "| ⏰ MTP | 🏇 Venue | R# | 🎯 Selection | 💰 Odds | 📊 Gap | ⭐ Type | 🔝 Top 5 |",
-        "| :---: | :--- | :---: | :--- | ---: | ---: | :---: | :--- |"
+        '### 🔮 Top Goldmine Predictions',
+        '',
+        '*Sorted by time to post — imminent races first!*',
+        '',
+        '| ⏰ MTP | 🏇 Venue | R# | 🎯 Selection | 💰 Odds | 📊 Gap | ⭐ Type | 🔝 Top 5 |',
+        '| :---: | :--- | :---: | :--- | ---: | ---: | :---: | :--- |',
     ]
 
-    if not os.path.exists('race_data.json'):
-        lines.append("| | | | *Awaiting discovery predictions* | | | | |")
-        return "\n".join(lines)
+    data = _read_json('race_data.json')
+    if data is None:
+        lines.append('| | | | *Awaiting discovery predictions* | | | | |')
+        return lines
 
-    try:
-        with open('race_data.json', 'r', encoding='utf-8') as f:
-            d = json.load(f)
+    races = data.get('bet_now_races', []) + data.get('you_might_like_races', [])
+    if not races:
+        lines.append('| | | | *No goldmine predictions available* | | | | |')
+        return lines
 
-        races = d.get('bet_now_races', []) + d.get('you_might_like_races', [])
+    races_sorted = sorted(
+        races,
+        key=lambda r: parse_time_to_minutes(r.get('start_time', '')),
+    )
 
-        if not races:
-            lines.append("| | | | *No goldmine predictions available* | | | | |")
-            return "\n".join(lines)
+    for race in races_sorted[:MAX_PREDICTIONS]:
+        mtp        = parse_time_to_minutes(race.get('start_time', ''))
+        venue      = race.get('track', 'Unknown')
+        discipline = race.get('discipline', 'Thoroughbred')
+        emoji      = get_venue_emoji(venue, discipline)
+        race_num   = race.get('race_number', '?')
+        time_str   = format_time_remaining(mtp)
 
-        # Sort by time to post
-        races_with_time = []
-        for r in races:
-            mtp = parse_time_to_minutes(r.get('start_time', ''))
-            races_with_time.append((mtp, r))
+        sel_name = race.get('second_fav_name', '')
+        sel_num  = race.get('selection_number', '?')
+        sel_name = _truncate(sel_name, NAME_TRUNCATE, NAME_MAX_DISPLAY)
+        selection = f'**#{sel_num}** {sel_name}'.strip()
 
-        races_with_time.sort(key=lambda x: x[0])
+        odds     = race.get('second_fav_odds', 0.0)
+        odds_str = f'**{odds:.2f}**' if odds else 'N/A'
 
-        # Take top 12
-        for mtp, r in races_with_time[:12]:
-            venue = r.get('track', 'Unknown')
-            discipline = r.get('discipline', 'Thoroughbred')
-            emoji = get_venue_emoji(venue, discipline)
+        gap      = race.get('gap12', 0.0)
+        gap_str  = f'{gap:.2f}' if gap else '—'
 
-            race_num = r.get('race_number', '?')
+        type_str = '💎' if race.get('is_goldmine') else '🎯'
 
-            # Time formatting
-            time_str = format_time_remaining(mtp)
+        top5 = race.get('top_five_numbers', 'TBD')
+        if isinstance(top5, str):
+            top5 = _truncate(top5, TOP5_TRUNCATE, TOP5_MAX_DISPLAY)
 
-            # Selection
-            sel_name = r.get('second_fav_name', '')
-            sel_num = r.get('selection_number', '?')
-            if len(sel_name) > 18:
-                sel_name = sel_name[:15] + "..."
-            selection = f"**#{sel_num}** {sel_name}" if sel_name else f"**#{sel_num}**"
+        lines.append(
+            f'| {time_str} | {emoji} {venue} | **{race_num}** '
+            f'| {selection} | {odds_str} | {gap_str} | {type_str} | `{top5}` |'
+        )
 
-            # Odds and gap
-            odds = r.get('second_fav_odds', 0.0)
-            odds_str = f"**{odds:.2f}**" if odds else "N/A"
+    return lines
 
-            gap = r.get('gap12', 0.0)
-            gap_str = f"{gap:.2f}" if gap else "—"
 
-            # Type
-            is_gold = r.get('is_goldmine', False)
-            type_str = "💎" if is_gold else "🎯"
+def build_audit_section(stats: TipStats) -> list[str]:
+    lines = ['', '### 💰 Verified Performance Results', '']
 
-            # Top 5
-            top5 = r.get('top_five_numbers', 'TBD')
-            if isinstance(top5, str) and len(top5) > 15:
-                top5 = top5[:12] + "..."
-
-            lines.append(
-                f"| {time_str} | {emoji} {venue} | **{race_num}** | {selection} | {odds_str} | {gap_str} | {type_str} | `{top5}` |"
-            )
-
-    except Exception as e:
-        lines.append(f"| | | | *Error loading predictions: {e}* | | | | |")
-
-    return "\n".join(lines)
-
-def format_enhanced_audit_results(stats):
-    """Enhanced audit results with detailed breakdown."""
-    lines = [
-        "",
-        "### 💰 Verified Performance Results",
-        ""
-    ]
-
-    if stats['total_tips'] == 0:
-        lines.append("⏳ *No tips audited yet. Results will appear after races complete.*")
-        return "\n".join(lines)
-
-    # Summary statistics
-    win_rate = (stats['cashed'] / stats['total_tips'] * 100) if stats['total_tips'] > 0 else 0
-    profit_color = "🟢" if stats['total_profit'] > 0 else "🔴" if stats['total_profit'] < 0 else "⚪"
+    if stats.total_tips == 0:
+        lines.append('⏳ *No tips audited yet. Results will appear after races complete.*')
+        return lines
 
     lines.extend([
-        "#### 📊 Overall Statistics",
-        "",
-        f"- **Total Bets:** {stats['total_tips']}",
-        f"- **Cashed:** ✅ {stats['cashed']} ({win_rate:.1f}%)",
-        f"- **Burned:** ❌ {stats['burned']}",
-        f"- **Pending:** ⏳ {stats['pending']}",
-        f"- **Net P/L:** {profit_color} **${stats['total_profit']:+.2f}**",
-        ""
+        '#### 📊 Overall Statistics',
+        '',
+        f'- **Total Bets:** {stats.total_tips}',
+        f'- **Cashed:** ✅ {stats.cashed} ({stats.win_rate:.1f}%)',
+        f'- **Burned:** ❌ {stats.burned}',
+        f'- **Pending:** ⏳ {stats.pending}',
+        f'- **Net P/L:** {stats.profit_emoji} **${stats.total_profit:+.2f}**',
+        '',
     ])
 
-    # Recent results detail
-    if stats['recent_tips']:
-        lines.extend([
-            "#### 🎯 Recent Results (Last 15 Audited)",
-            "",
-            "| Verdict | 💵 P/L | 🏇 Venue | R# | 🎯 Pick | 🏁 Finish | 💰 Payouts |",
-            "| :---: | ---: | :--- | :---: | :---: | :--- | :--- |"
-        ])
+    if not stats.recent_tips:
+        return lines
 
-        for tip in stats['recent_tips']:
-            venue, race_num, sel_num, pred_odds, verdict, profit, sel_pos, actual_top5, actual_odds, sf_payout, tri_payout, pl_payout, discipline = tip
+    lines.extend([
+        f'#### 🎯 Recent Results (Last {MAX_RECENT_TIPS} Audited)',
+        '',
+        '| Verdict | 💵 P/L | 🏇 Venue | R# | 🎯 Pick | 🏁 Finish | 💰 Payouts |',
+        '| :---: | ---: | :--- | :---: | :---: | :--- | :--- |',
+    ])
 
-            # Verdict emoji
-            if verdict == 'CASHED':
-                v_emoji = "✅"
-                v_text = "WIN"
-            elif verdict == 'BURNED':
-                v_emoji = "❌"
-                v_text = "LOSS"
-            else:
-                v_emoji = "⏳"
-                v_text = "PEND"
+    for tip in stats.recent_tips:
+        (venue, race_num, sel_num, pred_odds, verdict, profit,
+         sel_pos, actual_top5, _actual_odds,
+         sf_payout, tri_payout, pl_payout, discipline) = tip
 
-            # Profit
-            profit = profit or 0.0
-            p_color = "🟢" if profit > 0 else "🔴" if profit < 0 else "⚪"
-            p_str = f"${profit:+.2f}"
+        v_emoji, v_text = {
+            'CASHED': ('✅', 'WIN'),
+            'BURNED': ('❌', 'LOSS'),
+        }.get(verdict, ('⏳', 'PEND'))
 
-            # Venue
-            emoji = get_venue_emoji(venue, discipline)
+        profit = profit or 0.0
+        p_color = '🟢' if profit > 0 else ('🔴' if profit < 0 else '⚪')
 
-            # Pick
-            pick_str = f"**#{sel_num}**"
-            if pred_odds:
-                pick_str += f" @ {pred_odds:.2f}"
+        emoji = get_venue_emoji(venue, discipline)
 
-            # Finish
-            if sel_pos:
-                pos_emojis = {1: "🥇", 2: "🥈", 3: "🥉", 4: "4️⃣", 5: "5️⃣"}
-                pos_emoji = pos_emojis.get(sel_pos, "❌")
-                finish_str = f"{pos_emoji} {sel_pos}"
-                if actual_top5:
-                    finish_str += f" of `{actual_top5}`"
-            else:
-                finish_str = f"`{actual_top5}`" if actual_top5 else "—"
+        pick_str = f'**#{sel_num}**'
+        if pred_odds:
+            pick_str += f' @ {pred_odds:.2f}'
 
-            # Payouts
-            payouts = []
-            if sf_payout:
-                payouts.append(f"SF ${sf_payout:.2f}")
-            if tri_payout:
-                payouts.append(f"Tri ${tri_payout:.2f}")
-            if pl_payout:
-                payouts.append(f"Pl ${pl_payout:.2f}")
-            payout_str = " • ".join(payouts) if payouts else "—"
+        if sel_pos:
+            pos_e = POSITION_EMOJIS.get(sel_pos, '❌')
+            finish_str = f'{pos_e} {sel_pos}'
+            if actual_top5:
+                finish_str += f' of `{actual_top5}`'
+        else:
+            finish_str = f'`{actual_top5}`' if actual_top5 else '—'
 
-            lines.append(
-                f"| {v_emoji} **{v_text}** | {p_color} {p_str} | {emoji} {venue} | **{race_num}** | {pick_str} | {finish_str} | {payout_str} |"
-            )
+        payouts = []
+        if sf_payout:
+            payouts.append(f'SF ${sf_payout:.2f}')
+        if tri_payout:
+            payouts.append(f'Tri ${tri_payout:.2f}')
+        if pl_payout:
+            payouts.append(f'Pl ${pl_payout:.2f}')
+        payout_str = ' • '.join(payouts) or '—'
 
-    return "\n".join(lines)
+        lines.append(
+            f'| {v_emoji} **{v_text}** | {p_color} ${profit:+.2f} '
+            f'| {emoji} {venue} | **{race_num}** | {pick_str} '
+            f'| {finish_str} | {payout_str} |'
+        )
 
-def format_performance_insights(stats):
-    """Add performance insights section."""
-    if stats['total_tips'] < 3:
-        return ""
+    return lines
 
-    lines = [
-        "",
-        "### 📈 Performance Insights",
-        ""
-    ]
 
-    # Calculate recent form (last 10 bets)
-    recent_tips = stats['recent_tips'][:10]
-    if recent_tips:
-        recent_profit = sum(tip[5] or 0.0 for tip in recent_tips)
-        recent_cashed = sum(1 for tip in recent_tips if tip[4] == 'CASHED')
-        recent_wr = (recent_cashed / len(recent_tips) * 100) if recent_tips else 0
+def build_insights_section(stats: TipStats) -> list[str]:
+    if stats.total_tips < MIN_INSIGHTS_TIPS:
+        return []
 
-        trend_emoji = "📈" if recent_profit > 0 else "📉"
+    lines = ['', '### 📈 Performance Insights', '']
+
+    recent = stats.recent_tips[:RECENT_FORM_COUNT]
+    if recent:
+        recent_profit = sum(tip[5] or 0.0 for tip in recent)
+        recent_cashed = sum(1 for tip in recent if tip[4] == 'CASHED')
+        recent_wr     = (recent_cashed / len(recent) * 100) if recent else 0
+        trend         = '📈' if recent_profit > 0 else '📉'
 
         lines.extend([
-            "#### 🔥 Recent Form (Last 10 Bets)",
-            "",
-            f"- {trend_emoji} **Trend:** ${recent_profit:+.2f}",
-            f"- **Hit Rate:** {recent_wr:.0f}% ({recent_cashed}/{len(recent_tips)})",
-            ""
+            f'#### 🔥 Recent Form (Last {len(recent)} Bets)',
+            '',
+            f'- {trend} **Trend:** ${recent_profit:+.2f}',
+            f'- **Hit Rate:** {recent_wr:.0f}% ({recent_cashed}/{len(recent)})',
+            '',
         ])
 
-    # Average profit per bet
-    if stats['total_tips'] > 0:
-        avg_profit = stats['total_profit'] / stats['total_tips']
-        lines.append(f"**Average per Bet:** ${avg_profit:+.2f}")
+    lines.append(f'**Average per Bet:** ${stats.avg_profit:+.2f}')
+    return lines
 
-    return "\n".join(lines)
 
-def generate_summary():
-    """Main summary generation function."""
-    # Header
-    now_str = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-    write_to_summary("# 🎯 Fortuna Intelligence Report")
-    write_to_summary("")
-    write_to_summary(f"*Executive Intelligence Briefing - {now_str} UTC*")
-    write_to_summary("")
+def build_intelligence_grids() -> list[str]:
+    grid_files = {
+        'summary_grid.txt': ('🏁 Race Analysis Grid', True),
+        'field_matrix.txt':  ('📊 Field Matrix (3–11 Runners)', False),
+    }
+    lines: list[str] = []
+    any_exist = any(Path(p).exists() for p in grid_files)
+    if not any_exist:
+        return lines
 
-    # 1. Enhanced Predictions
-    write_to_summary(format_enhanced_predictions())
-    write_to_summary("")
+    lines.extend(['', '### 📋 Intelligence Grids', ''])
 
-    # 2. Harvest Performance with Enhanced Tables
-    write_to_summary("### 🛰️ Harvest Performance & Adapter Health")
-    write_to_summary("")
+    for path, (label, always_code) in grid_files.items():
+        content = _read_text(path)
+        if content is None:
+            continue
+        lines.append('<details>')
+        lines.append(f'<summary><b>{label}</b> (click to expand)</summary>')
+        lines.append('')
+        use_code = always_code or '|' not in content
+        if use_code:
+            lines.append('```')
+        lines.append(content)
+        if use_code:
+            lines.append('```')
+        lines.extend(['</details>', ''])
 
-    discovery_harvest = {}
-    # Merge all discovery harvest files
-    for hf in ['discovery_harvest.json', 'discovery_harvest_usa.json', 'discovery_harvest_int.json']:
-        if os.path.exists(hf):
-            try:
-                with open(hf, 'r') as f:
-                    data = json.load(f)
-                    for k, v in data.items():
-                        if k not in discovery_harvest:
-                            discovery_harvest[k] = v
-                        else:
-                            if isinstance(v, dict) and isinstance(discovery_harvest[k], dict):
-                                discovery_harvest[k]['count'] = max(discovery_harvest[k].get('count', 0), v.get('count', 0))
-                                discovery_harvest[k]['max_odds'] = max(discovery_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
-            except Exception:
-                pass
+    return lines
 
-    if not proof_found:
-        write_to_summary("Awaiting race results; nothing audited in this cycle.")
 
-    # 2. Harvest Performance
-    write_to_summary("")
-    write_to_summary("### 🛰️ Harvest Performance & Adapter Health")
+# ── Main ───────────────────────────────────────────────────────────────────────
 
-    discovery_harvest = {}
-    # Look for all possible discovery harvest files from parallel runs (Memory Directive Fix)
-    for hf in ['discovery_harvest.json', 'discovery_harvest_usa.json', 'discovery_harvest_int.json']:
-        if os.path.exists(hf):
-            try:
-                with open(hf, 'r') as f:
-                    data = json.load(f)
-                    for k, v in data.items():
-                        if k not in discovery_harvest:
-                            discovery_harvest[k] = v
-                        else:
-                            # Merge: take highest count and max_odds
-                            if isinstance(v, dict) and isinstance(discovery_harvest[k], dict):
-                                discovery_harvest[k]['count'] = max(discovery_harvest[k].get('count', 0), v.get('count', 0))
-                                discovery_harvest[k]['max_odds'] = max(discovery_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
-            except Exception: pass
+def generate_summary() -> None:
+    now_str = _now_utc().strftime('%Y-%m-%d %H:%M:%S')
 
-    results_harvest = {}
-    # Merge all results harvest files
-    for hf in ['results_harvest.json', 'results_harvest_audit.json']:
-        if os.path.exists(hf):
-            try:
-                with open(hf, 'r') as f:
-                    data = json.load(f)
-                    for k, v in data.items():
-                        if k not in results_harvest:
-                            results_harvest[k] = v
-                        else:
-                            if isinstance(v, dict) and isinstance(results_harvest[k], dict):
-                                results_harvest[k]['count'] = max(results_harvest[k].get('count', 0), v.get('count', 0))
-                                results_harvest[k]['max_odds'] = max(results_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
-            except Exception:
-                pass
+    with open_summary() as out:
+        out.write('# 🎯 Fortuna Intelligence Report')
+        out.write()
+        out.write(f'*Executive Intelligence Briefing — {now_str} UTC*')
+        out.write()
 
-    write_to_summary(build_enhanced_harvest_table(discovery_harvest, "🔍 Discovery Adapters"))
+        # Predictions
+        out.write_lines(build_predictions_section())
+        out.write()
 
-    if results_harvest:
-        write_to_summary(build_enhanced_harvest_table(results_harvest, "🏁 Results Adapters"))
+        # Harvest performance
+        out.write('### 🛰️ Harvest Performance & Adapter Health')
+        out.write()
 
-    # 3. Enhanced Audit Results
-    stats = get_db_stats()
-    write_to_summary(format_enhanced_audit_results(stats))
+        discovery = _merge_harvest_files(DISCOVERY_HARVEST_FILES)
+        out.write_lines(build_harvest_table(discovery, '🔍 Discovery Adapters'))
 
-    # 4. Performance Insights
-    write_to_summary(format_performance_insights(stats))
+        results = _merge_harvest_files(RESULTS_HARVEST_FILES)
+        if results:
+            out.write_lines(build_harvest_table(results, '🏁 Results Adapters'))
 
-    # 5. Intelligence Grids (if available)
-    if os.path.exists('summary_grid.txt') or os.path.exists('field_matrix.txt'):
-        write_to_summary("")
-        write_to_summary("### 📋 Intelligence Grids")
-        write_to_summary("")
+        # Audit results
+        stats = get_db_stats()
+        out.write_lines(build_audit_section(stats))
 
-        if os.path.exists('summary_grid.txt'):
-            write_to_summary("<details>")
-            write_to_summary("<summary><b>🏁 Race Analysis Grid</b> (click to expand)</summary>")
-            write_to_summary("")
-            write_to_summary("```")
-            with open('summary_grid.txt', 'r', encoding='utf-8') as f:
-                write_to_summary(f.read())
-            write_to_summary("```")
-            write_to_summary("</details>")
-            write_to_summary("")
+        # Performance insights
+        out.write_lines(build_insights_section(stats))
 
-        if os.path.exists('field_matrix.txt'):
-            write_to_summary("<details>")
-            write_to_summary("<summary><b>📊 Field Matrix</b> (3-11 Runners, click to expand)</summary>")
-            write_to_summary("")
-            with open('field_matrix.txt', 'r', encoding='utf-8') as f:
-                content = f.read()
-                # Check if it's markdown table or plain text
-                if '|' in content:
-                    write_to_summary(content)
-                else:
-                    write_to_summary("```")
-                    write_to_summary(content)
-                    write_to_summary("```")
-            write_to_summary("</details>")
-            write_to_summary("")
+        # Intelligence grids
+        out.write_lines(build_intelligence_grids())
 
-    # 6. Report Artifacts
-    write_to_summary("### 📁 Detailed Reports")
-    write_to_summary("")
-    write_to_summary("Download full reports for deeper analysis:")
-    write_to_summary("")
-    write_to_summary("- 📊 [Summary Grid](summary_grid.txt)")
-    write_to_summary("- 🎯 [Field Matrix](field_matrix.txt)")
-    write_to_summary("- 💎 [Goldmine Report](goldmine_report.txt)")
-    write_to_summary("- 🌐 [HTML Report](fortuna_report.html)")
-    write_to_summary("- 📈 [Analytics Log](analytics_report.txt)")
-    write_to_summary("- 🗄️ [Database](fortuna.db)")
+        # Report artifacts
+        out.write('### Detailed Reports')
+        out.write()
+        out.write('Download full reports for deeper analysis:')
+        out.write()
+        for emoji, label, fname in [
+            ('📊', 'Summary Grid',    'summary_grid.txt'),
+            ('🎯', 'Field Matrix',    'field_matrix.txt'),
+            ('💎', 'Goldmine Report', 'goldmine_report.txt'),
+            ('🌐', 'HTML Report',     'fortuna_report.html'),
+            ('📈', 'Analytics Log',   'analytics_report.txt'),
+            ('🗄️', 'Database',        'fortuna.db'),
+        ]:
+            out.write(f'- {emoji} [{label}]({fname})')
 
-    # Footer
-    write_to_summary("")
-    write_to_summary("---")
-    write_to_summary("")
-    write_to_summary("*🤖 Fortuna Intelligence Engine - Automated Racing Analysis System*")
-    write_to_summary("")
-    write_to_summary("💡 Artifacts retained for 30 days")
+        # Footer
+        out.write()
+        out.write('---')
+        out.write()
+        out.write('*🤖 Fortuna Intelligence Engine — Automated Racing Analysis System*')
+        out.write()
+        out.write('💡 Artifacts retained for 30 days')
 
-if __name__ == "__main__":
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     generate_summary()
