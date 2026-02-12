@@ -3324,9 +3324,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.sort()
                     fav, sec = all_odds[0], all_odds[1]
                     gap12 = round(float(sec - fav), 2)
-                    if gap12 == 0:
-                        log.debug("Zero gap detected (1Gap2=0), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number)
-                    if len(active_runners) <= 11 and sec >= Decimal("4.5") and gap12 > 0:
+                    if gap12 <= 0.25:
+                        log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                    if len(active_runners) <= 11 and sec >= Decimal("4.5") and gap12 > 0.25:
                         is_goldmine = True
 
                 # Calculate Top 5 for all races
@@ -3358,9 +3358,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.append(Decimal(str(DEFAULT_ODDS_FALLBACK)))
 
             # Best Bet Detection:
-            # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0
-            # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0
-            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5") and gap12 > 0)
+            # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
+            # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
+            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5") and gap12 > 0.25)
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -5239,13 +5239,13 @@ class FavoriteToPlaceMonitor:
         # 1. MTP <= 120 (Broadened for yield)
         # 2. 2nd Fav Odds >= 4.0
         # 3. Field size <= 11 (User Directive)
-        # 4. Gap > 0 (User Directive)
+        # 4. Gap > 0.25 (User Directive)
         bet_now = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 120
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
             and r.field_size <= 11
-            and r.gap12 > 0
+            and r.gap12 > 0.25
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -5254,14 +5254,14 @@ class FavoriteToPlaceMonitor:
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
         # Criteria: Not in BET NOW, but -10 < MTP <= 240 (4h) and 2nd Fav Odds >= 3.0
-        # and field size <= 11 and Gap > 0
+        # and field size <= 11 and Gap > 0.25
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 240
             and r.second_fav_odds is not None and r.second_fav_odds >= 3.0
             and r.field_size <= 11
-            and r.gap12 > 0
+            and r.gap12 > 0.25
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc

@@ -66,7 +66,7 @@ def generate_summary():
                 for r in races[:10]:
                     odds = r.get('second_fav_odds') or 0.0
                     gap = r.get('gap12', 0.0)
-                    gold = '✅' if odds >= 4.5 and gap > 0 else '—'
+                    gold = '✅' if odds >= 4.5 and gap > 0.25 else '—'
                     selection = r.get('second_fav_name') or f"#{r.get('selection_number', '?')}"
                     top5 = r.get('top_five_numbers') or 'TBD'
 
