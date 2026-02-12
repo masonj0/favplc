@@ -2196,6 +2196,44 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
         except IOError as e:
             logger.error("Failed to save report", error=str(e))
 
+        # NEW: Write GHA Job Summary
+        if 'GITHUB_STEP_SUMMARY' in os.environ:
+            try:
+                # Reconstruct minimal Race objects for pending tips to populate the predictions section
+                pending_tips = await auditor.db.get_unverified_tips(lookback_hours=48)
+                qualified_from_db = []
+                for tip in pending_tips:
+                    try:
+                        # Create a minimal Race object for formatting
+                        r = fortuna.Race(
+                            id=tip['race_id'],
+                            venue=tip['venue'],
+                            race_number=tip['race_number'],
+                            start_time=datetime.fromisoformat(tip['start_time'].replace('Z', '+00:00')),
+                            runners=[],
+                            source="Database"
+                        )
+                        # Populate metadata for format_prediction_row
+                        r.metadata = {
+                            'is_goldmine': bool(tip.get('is_goldmine')),
+                            'selection_number': tip.get('selection_number'),
+                            'selection_name': tip.get('selection_name'),
+                            'predicted_2nd_fav_odds': tip.get('predicted_2nd_fav_odds')
+                        }
+                        r.top_five_numbers = tip.get('top_five')
+                        qualified_from_db.append(r)
+                    except Exception:
+                        continue
+
+                predictions_md = fortuna.format_predictions_section(qualified_from_db)
+                proof_md = await fortuna.format_proof_section(auditor.db)
+                harvest_md = fortuna.build_harvest_table(harvest_summary, "🛰️ Results Harvest Performance")
+                artifacts_md = fortuna.format_artifact_links()
+                fortuna.write_job_summary(predictions_md, harvest_md, proof_md, artifacts_md)
+                logger.info("GHA Job Summary written")
+            except Exception as e:
+                logger.error("Failed to write GHA summary", error=str(e))
+
         # Summary
         if all_audited:
             logger.info("Analytics audit summary generated", total_audited=len(all_audited))
