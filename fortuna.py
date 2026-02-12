@@ -4218,7 +4218,7 @@ def format_prediction_row(race: Race) -> str:
             payouts.append(f"{display_label}: ${float(val):.2f}")
 
     payout_text = ' | '.join(payouts) or 'Awaiting Results'
-    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
+    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gold} | {top5} | {payout_text} |"
 
 
 def format_predictions_section(qualified_races: List[Race]) -> str:
