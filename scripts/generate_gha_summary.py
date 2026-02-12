@@ -59,20 +59,21 @@ def generate_summary():
             races = d.get('bet_now_races', []) + d.get('you_might_like_races', [])
 
             if races:
-                write_to_summary("| Venue | Race# | Selection | Odds | Goldmine? | Pred Top 5 | Payout Proof |")
-                write_to_summary("| --- | --- | --- | --- | --- | --- | --- |")
+                write_to_summary("| Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |")
+                write_to_summary("| --- | --- | --- | --- | --- | --- | --- | --- |")
 
                 # Take top 10
                 for r in races[:10]:
                     odds = r.get('second_fav_odds') or 0.0
-                    gold = '✅' if odds >= 4.5 else '—'
+                    gap = r.get('gap12', 0.0)
+                    gold = '✅' if odds >= 4.5 and gap > 0.25 else '—'
                     selection = r.get('second_fav_name') or f"#{r.get('selection_number', '?')}"
                     top5 = r.get('top_five_numbers') or 'TBD'
 
                     # Try to find payout info if available (merged from analytics maybe)
                     payout_text = 'Awaiting Results'
 
-                    write_to_summary(f"| {r['track']} | {r['race_number']} | {selection} | {odds:.2f} | {gold} | {top5} | {payout_text} |")
+                    write_to_summary(f"| {r['track']} | {r['race_number']} | {selection} | {odds:.2f} | {gap:.2f} | {gold} | {top5} | {payout_text} |")
             else:
                 write_to_summary("No immediate Goldmine predictions available for this run.")
         except Exception as e:

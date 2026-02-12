@@ -3324,7 +3324,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.sort()
                     fav, sec = all_odds[0], all_odds[1]
                     gap12 = round(float(sec - fav), 2)
-                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
+                    if gap12 <= 0.25:
+                        log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                    if len(active_runners) <= 11 and sec >= Decimal("4.5") and gap12 > 0.25:
                         is_goldmine = True
 
                 # Calculate Top 5 for all races
@@ -3356,9 +3358,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     all_odds.append(Decimal(str(DEFAULT_ODDS_FALLBACK)))
 
             # Best Bet Detection:
-            # Goldmine = 2nd Fav >= 4.5, Field <= 11
-            # You Might Like = 2nd Fav >= 3.5, Field <= 11
-            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5"))
+            # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
+            # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
+            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5") and gap12 > 0.25)
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -4204,6 +4206,8 @@ def format_prediction_row(race: Race) -> str:
     odds = metadata.get('predicted_2nd_fav_odds')
     odds_str = f"{odds:.2f}" if odds else 'N/A'
     top5 = getattr(race, 'top_five_numbers', 'TBD')
+    gap = metadata.get('1Gap2', 0.0)
+    gap_str = f"{gap:.2f}"
 
     payouts = []
     # Check both metadata and attributes for payouts
@@ -4243,8 +4247,8 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
     top_10 = sorted_races[:10]
 
     lines.extend([
-        "| Venue | Race# | Selection | Odds | Goldmine? | Pred Top 5 | Payout Proof |",
-        "| --- | --- | --- | --- | --- | --- | --- |"
+        "| Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |"
     ])
     for r in top_10:
         lines.append(format_prediction_row(r))
@@ -4962,6 +4966,7 @@ class RaceSummary:
     favorite_odds: Optional[float] = None
     favorite_name: Optional[str] = None
     top_five_numbers: Optional[str] = None
+    gap12: float = 0.0
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -4979,6 +4984,7 @@ class RaceSummary:
             "favorite_odds": self.favorite_odds,
             "favorite_name": self.favorite_name,
             "top_five_numbers": self.top_five_numbers,
+            "gap12": self.gap12,
         }
 
 
@@ -5133,7 +5139,10 @@ class FavoriteToPlaceMonitor:
         top_runners = self._get_top_runners(race, limit=5)
         favorite = top_runners[0] if len(top_runners) >= 1 else None
         second_fav = top_runners[1] if len(top_runners) >= 2 else None
-        top_five_str = "|".join([str(r.number) for r in top_runners if r.number is not None])
+
+        gap12 = 0.0
+        if favorite and second_fav and favorite.win_odds and second_fav.win_odds:
+            gap12 = round(second_fav.win_odds - favorite.win_odds, 2)
 
         return RaceSummary(
             discipline=self._get_discipline_code(race),
@@ -5149,6 +5158,7 @@ class FavoriteToPlaceMonitor:
             favorite_odds=favorite.win_odds if favorite else None,
             favorite_name=favorite.name if favorite else None,
             top_five_numbers=self._get_top_n_runners(race, 5),
+            gap12=gap12
         )
 
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):
@@ -5229,11 +5239,13 @@ class FavoriteToPlaceMonitor:
         # 1. MTP <= 120 (Broadened for yield)
         # 2. 2nd Fav Odds >= 4.0
         # 3. Field size <= 11 (User Directive)
+        # 4. Gap > 0.25 (User Directive)
         bet_now = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 120
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
             and r.field_size <= 11
+            and r.gap12 > 0.25
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -5242,13 +5254,14 @@ class FavoriteToPlaceMonitor:
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
         # Criteria: Not in BET NOW, but -10 < MTP <= 240 (4h) and 2nd Fav Odds >= 3.0
-        # and field size <= 11
+        # and field size <= 11 and Gap > 0.25
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 240
             and r.second_fav_odds is not None and r.second_fav_odds >= 3.0
             and r.field_size <= 11
+            and r.gap12 > 0.25
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
