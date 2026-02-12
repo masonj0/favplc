@@ -35,7 +35,7 @@ import fortuna
 EASTERN = ZoneInfo("America/New_York")
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
-    4: 1,    # =4 runners: win only
+    4: 1,    # ≤4 runners: win only
     7: 2,    # 5-7 runners: top 2
     999: 3,  # 8+: top 3
 }
@@ -62,7 +62,7 @@ def get_optimal_region_at_time(dt: datetime) -> str:
 
 
 def parse_position(pos_str: Optional[str]) -> Optional[int]:
-    """``'1st'`` ? 1, ``'2/12'`` ? 2, ``'W'`` ? 1, etc."""
+    """``'1st'`` → 1, ``'2/12'`` → 2, ``'W'`` → 1, etc."""
     if not pos_str:
         return None
     s = str(pos_str).upper().strip()
@@ -87,7 +87,7 @@ def get_places_paid(field_size: int) -> int:
 
 
 def parse_currency_value(value_str: str) -> float:
-    """``'$1,234.56'`` ? 1234.56"""
+    """``'$1,234.56'`` → 1234.56"""
     if not value_str:
         return 0.0
     try:
@@ -199,13 +199,18 @@ class AuditorEngine:
     # -- audit pipeline ----------------------------------------------------
 
     async def audit_races(
-        self, results: List[ResultRace],
+        self,
+        results: List[ResultRace],
+        unverified: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         results_map = self._build_results_map(results)
         self.logger.debug("Built results map", count=len(results_map))
 
+        if unverified is None:
+            unverified = await self.get_unverified_tips()
+
         audited: List[Dict[str, Any]] = []
-        for tip in await self.get_unverified_tips():
+        for tip in unverified:
             try:
                 audited_tip = await self._audit_single_tip(tip, results_map)
                 if audited_tip:
@@ -448,7 +453,7 @@ class AuditorEngine:
 # -- SHARED RESULT-PARSING UTILITIES ------------------------------------------
 
 def parse_fractional_odds(text: str) -> float:
-    """``'5/2'`` ? 3.5, ``'2.5'`` ? 2.5, anything else ? 0.0."""
+    """``'5/2'`` → 3.5, ``'2.5'`` → 2.5, anything else → 0.0."""
     text = str(text).strip()
     if not text:
         return 0.0
@@ -753,7 +758,7 @@ class PageFetchingResultsAdapter(
 
 # -- EQUIBASE RESULTS ADAPTER ------------------------------------------------
 #
-# Special case: index ? track summary pages ? multiple race tables per page.
+# Special case: index → track summary pages → multiple race tables per page.
 # Overrides _parse_page (multi-race) instead of _parse_race_page.
 # -----------------------------------------------------------------------------
 
@@ -1109,7 +1114,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
 
     @staticmethod
     def _parse_tote_dividends(parser: HTMLParser) -> Dict[str, str]:
-        """Extract label?value pairs from the Tote Returns panel."""
+        """Extract label→value pairs from the Tote Returns panel."""
         container = (
             parser.css_first('div[data-test-selector="RC-toteReturns"]')
             or parser.css_first(".rp-toteReturns")
@@ -1444,7 +1449,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
                 continue
 
 
-# -- Part 2: SportingLifeResultsAdapter ? main()
+# -- Part 2: SportingLifeResultsAdapter → main()
 # -- Continues from Part 1's final line
 # -----------------------------------------------------------------------------
 
@@ -2100,7 +2105,7 @@ async def _harvest_results(
                 float(r.final_win_odds)
                 for race in races
                 for r in race.runners
-                if getattr(r, "final_win_odds", None)
+                if r.final_win_odds
             ),
             default=0.0,
         )
@@ -2120,7 +2125,7 @@ async def _save_harvest_summary(
 ) -> None:
     """Persist harvest summary to JSON file and database."""
     try:
-        with open("results_harvest.json", "w") as f:
+        with open("results_harvest.json", "w", encoding="utf-8") as f:
             json.dump(harvest_summary, f)
     except OSError as exc:
         _analytics_logger.debug(
@@ -2192,6 +2197,8 @@ async def _write_gha_summary(
 async def _generate_and_save_report(
     auditor: AuditorEngine,
     harvest_summary: Dict[str, Any],
+    *,
+    include_lifetime_stats: bool = False,
 ) -> None:
     """Fetch all audited data, generate report, print and persist."""
     all_audited = await auditor.get_all_audited_tips()
@@ -2201,6 +2208,7 @@ async def _generate_and_save_report(
         audited_tips=all_audited,
         recent_tips=recent_tips,
         harvest_summary=harvest_summary,
+        include_lifetime_stats=include_lifetime_stats,
     )
     print(report)
 
@@ -2223,8 +2231,10 @@ async def _generate_and_save_report(
 async def run_analytics(
     target_dates: List[str],
     region: Optional[str] = None,
+    *,
+    include_lifetime_stats: bool = False,
 ) -> None:
-    """Main analytics entry: harvest ? audit ? report ? GHA summary."""
+    """Main analytics entry: harvest → audit → report → GHA summary."""
     valid_dates = [d for d in target_dates if validate_date_format(d)]
     if not valid_dates:
         _analytics_logger.error("No valid dates", input_dates=target_dates)
@@ -2279,7 +2289,7 @@ async def run_analytics(
                         count=len(all_results),
                     )
                     if all_results:
-                        await auditor.audit_races(all_results)
+                        await auditor.audit_races(all_results, unverified=unverified)
                     else:
                         _analytics_logger.warning(
                             "No results harvested from any source",
@@ -2289,7 +2299,11 @@ async def run_analytics(
                         harvest_summary, auditor, region,
                     )
 
-        await _generate_and_save_report(auditor, harvest_summary)
+        await _generate_and_save_report(
+            auditor,
+            harvest_summary,
+            include_lifetime_stats=include_lifetime_stats,
+        )
         await _write_gha_summary(auditor, harvest_summary)
 
     finally:
@@ -2400,7 +2414,13 @@ def main() -> None:
             "Auto-selected region", region=args.region,
         )
 
-    asyncio.run(run_analytics(target_dates, region=args.region))
+    asyncio.run(
+        run_analytics(
+            target_dates,
+            region=args.region,
+            include_lifetime_stats=args.include_lifetime_stats,
+        )
+    )
 
 
 if __name__ == "__main__":

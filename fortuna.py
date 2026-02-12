@@ -4474,6 +4474,7 @@ class FortunaDB:
                         gap12 TEXT,
                         top_five TEXT,
                         selection_number INTEGER,
+                        selection_name TEXT,
                         audit_completed INTEGER DEFAULT 0,
                         verdict TEXT,
                         net_profit REAL,
@@ -4532,6 +4533,16 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN predicted_2nd_fav_odds REAL")
                 if "actual_2nd_fav_odds" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN actual_2nd_fav_odds REAL")
+                if "selection_name" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_name TEXT")
+
+                # Maintenance: Purge garbage data (Memory Directive Fix)
+                try:
+                    res = conn.execute("DELETE FROM tips WHERE selection_name = 'Runner 2' OR predicted_2nd_fav_odds = 2.75")
+                    if res.rowcount > 0:
+                        self.logger.info("Garbage data purged", count=res.rowcount)
+                except Exception as e:
+                    self.logger.error("Failed to purge garbage data", error=str(e))
 
         await self._run_in_executor(_init)
 
@@ -4706,7 +4717,7 @@ class FortunaDB:
                         tip.get("discipline"), tip.get("start_time"), report_date,
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
-                        tip.get("top_five"), tip.get("selection_number"),
+                        tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
                         float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
@@ -4716,8 +4727,8 @@ class FortunaDB:
                     conn.executemany("""
                         INSERT OR IGNORE INTO tips (
                             race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number, predicted_2nd_fav_odds
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
