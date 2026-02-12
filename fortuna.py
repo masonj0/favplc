@@ -4218,7 +4218,7 @@ def format_prediction_row(race: Race) -> str:
             payouts.append(f"{display_label}: ${float(val):.2f}")
 
     payout_text = ' | '.join(payouts) or 'Awaiting Results'
-    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gold} | {top5} | {payout_text} |"
+    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
 
 
 def format_predictions_section(qualified_races: List[Race]) -> str:
@@ -6277,6 +6277,19 @@ async def run_discovery(
         all_races_raw = []
         harvest_summary = {}
 
+        # Pre-populate harvest_summary based on region/filter for visibility
+        target_region = region or get_optimal_region_at_time(now_eastern())
+        target_set = USA_DISCOVERY_ADAPTERS if target_region == "USA" else INT_DISCOVERY_ADAPTERS
+
+        # Determine which adapters should be visible in the harvest summary
+        if adapter_names:
+            visible_adapters = [n for n in adapter_names if n in target_set]
+        else:
+            visible_adapters = list(target_set)
+
+        for adapter_name in visible_adapters:
+            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
         if loaded_races is not None:
             logger.info("Using loaded races", count=len(loaded_races))
             all_races_raw = loaded_races
@@ -6285,7 +6298,7 @@ async def run_discovery(
             try:
                 if not os.path.exists("discovery_harvest.json"):
                     with open("discovery_harvest.json", "w") as f:
-                        json.dump({}, f)
+                        json.dump(harvest_summary, f)
             except Exception: pass
         else:
             # Auto-discover discovery adapter classes

@@ -108,18 +108,38 @@ def generate_summary():
     write_to_summary("### 🛰️ Harvest Performance & Adapter Health")
 
     discovery_harvest = {}
-    if os.path.exists('discovery_harvest.json'):
-        try:
-            with open('discovery_harvest.json', 'r') as f:
-                discovery_harvest = json.load(f)
-        except Exception: pass
+    # Look for all possible discovery harvest files from parallel runs (Memory Directive Fix)
+    for hf in ['discovery_harvest.json', 'discovery_harvest_usa.json', 'discovery_harvest_int.json']:
+        if os.path.exists(hf):
+            try:
+                with open(hf, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if k not in discovery_harvest:
+                            discovery_harvest[k] = v
+                        else:
+                            # Merge: take highest count and max_odds
+                            if isinstance(v, dict) and isinstance(discovery_harvest[k], dict):
+                                discovery_harvest[k]['count'] = max(discovery_harvest[k].get('count', 0), v.get('count', 0))
+                                discovery_harvest[k]['max_odds'] = max(discovery_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
+            except Exception: pass
 
     results_harvest = {}
-    if os.path.exists('results_harvest.json'):
-        try:
-            with open('results_harvest.json', 'r') as f:
-                results_harvest = json.load(f)
-        except Exception: pass
+    # Look for all possible results harvest files from parallel runs (Memory Directive Fix)
+    for hf in ['results_harvest.json', 'results_harvest_audit.json']:
+        if os.path.exists(hf):
+            try:
+                with open(hf, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if k not in results_harvest:
+                            results_harvest[k] = v
+                        else:
+                            # Merge: take highest count and max_odds
+                            if isinstance(v, dict) and isinstance(results_harvest[k], dict):
+                                results_harvest[k]['count'] = max(results_harvest[k].get('count', 0), v.get('count', 0))
+                                results_harvest[k]['max_odds'] = max(results_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
+            except Exception: pass
 
     write_to_summary(build_harvest_table(discovery_harvest, "Discovery Harvest"))
     write_to_summary(build_harvest_table(results_harvest, "Results Harvest"))

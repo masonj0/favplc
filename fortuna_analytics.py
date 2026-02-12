@@ -2081,16 +2081,23 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
         return
 
     harvest_summary: Dict[str, Dict[str, Any]] = {}
+
+    # Pre-populate harvest_summary for regional visibility (Memory Directive Fix)
+    target_region = region or get_optimal_region_at_time(now_eastern())
+    expected_adapters = fortuna.USA_RESULTS_ADAPTERS if target_region == "USA" else fortuna.INT_RESULTS_ADAPTERS
+    for adapter_name in expected_adapters:
+        harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
 
         if not unverified:
             logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
-            # Always ensure results_harvest.json exists for GHA workflow (Memory Directive Fix)
+            # Always ensure results_harvest.json exists with pre-populated summary (Memory Directive Fix)
             try:
                 with open("results_harvest.json", "w") as f:
-                    json.dump({}, f)
+                    json.dump(harvest_summary, f)
             except Exception as e:
                 logger.debug("Failed to create results_harvest.json", error=str(e))
         else:
