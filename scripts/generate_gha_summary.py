@@ -424,6 +424,30 @@ def generate_summary():
             except Exception:
                 pass
 
+    if not proof_found:
+        write_to_summary("Awaiting race results; nothing audited in this cycle.")
+
+    # 2. Harvest Performance
+    write_to_summary("")
+    write_to_summary("### 🛰️ Harvest Performance & Adapter Health")
+
+    discovery_harvest = {}
+    # Look for all possible discovery harvest files from parallel runs (Memory Directive Fix)
+    for hf in ['discovery_harvest.json', 'discovery_harvest_usa.json', 'discovery_harvest_int.json']:
+        if os.path.exists(hf):
+            try:
+                with open(hf, 'r') as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if k not in discovery_harvest:
+                            discovery_harvest[k] = v
+                        else:
+                            # Merge: take highest count and max_odds
+                            if isinstance(v, dict) and isinstance(discovery_harvest[k], dict):
+                                discovery_harvest[k]['count'] = max(discovery_harvest[k].get('count', 0), v.get('count', 0))
+                                discovery_harvest[k]['max_odds'] = max(discovery_harvest[k].get('max_odds', 0.0), v.get('max_odds', 0.0))
+            except Exception: pass
+
     results_harvest = {}
     # Merge all results harvest files
     for hf in ['results_harvest.json', 'results_harvest_audit.json']:
