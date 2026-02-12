@@ -404,7 +404,11 @@ def ensure_eastern(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
     if dt.tzinfo is not EASTERN:
-        return dt.astimezone(EASTERN)
+        try:
+            return dt.astimezone(EASTERN)
+        except Exception:
+            # Fallback for rare cases where conversion fails (e.g. invalid times during DST transitions)
+            return dt.replace(tzinfo=EASTERN)
     return dt
 
 
@@ -3312,60 +3316,65 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Goldmine Detection: 2nd favorite >= 4.5 decimal
             # A race cannot be a goldmine if field size is over 11
             is_goldmine = False
+            is_best_bet = False
             active_runners = [r for r in race.runners if not r.scratched]
             gap12 = 0.0
             all_odds = []
-            if active_runners:
-                for runner in active_runners:
-                    odds = _get_best_win_odds(runner)
-                    if odds is not None:
-                        all_odds.append(odds)
-                if len(all_odds) >= 2:
-                    all_odds.sort()
-                    fav, sec = all_odds[0], all_odds[1]
-                    gap12 = round(float(sec - fav), 2)
-                    if gap12 <= 0.25:
-                        log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
-                    if len(active_runners) <= 11 and sec >= Decimal("4.5") and gap12 > 0.25:
-                        is_goldmine = True
 
-                # Calculate Top 5 for all races
-                # Collect valid odds once to avoid repetitive calculation/conversion
-                valid_r_with_odds = []
-                for r in active_runners:
-                    wo = _get_best_win_odds(r)
-                    if wo is not None:
-                        # Propagate fresh odds to runner object for reporting
-                        r.win_odds = float(wo)
-                        valid_r_with_odds.append((r, wo))
+            # 1. Collect and Enrich Odds
+            for runner in active_runners:
+                odds = _get_best_win_odds(runner)
+                if odds is not None:
+                    # Propagate fresh odds to runner object for reporting
+                    runner.win_odds = float(odds)
+                    all_odds.append(odds)
 
-                r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
-                race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
-
-                if len(r_with_odds) >= 2:
-                    sec_fav = r_with_odds[1][0]
-                    race.metadata['selection_number'] = sec_fav.number
-                    race.metadata['selection_name'] = sec_fav.name
+            # Sort odds ascending
+            all_odds.sort()
 
             # Stability Check: Ensure we have at least 2 active runners to compare
             if len(active_runners) < 2:
                 log.debug("Excluding race with < 2 runners", venue=race.venue)
                 continue
 
-            if len(all_odds) < 2:
-                # If we still don't have enough odds despite enrichment, use fallback
-                while len(all_odds) < 2:
-                    all_odds.append(Decimal(str(DEFAULT_ODDS_FALLBACK)))
+            # 2. Derive Selection (2nd favorite) and Top 5
+            # Collect valid runners with their enriched odds
+            valid_r_with_odds = sorted(
+                [(r, Decimal(str(r.win_odds))) for r in active_runners if r.win_odds is not None],
+                key=lambda x: x[1]
+            )
+            race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in valid_r_with_odds[:5]])
 
-            # Best Bet Detection:
-            # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
-            # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
-            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5") and gap12 > 0.25)
+            if len(valid_r_with_odds) >= 2:
+                sec_fav = valid_r_with_odds[1][0]
+                race.metadata['selection_number'] = sec_fav.number
+                race.metadata['selection_name'] = sec_fav.name
+
+            # 3. Apply Best Bet Logic
+            if len(all_odds) >= 2:
+                fav, sec = all_odds[0], all_odds[1]
+                gap12 = round(float(sec - fav), 2)
+
+                # Enforce gap requirement
+                if gap12 <= 0.25:
+                    log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                else:
+                    # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
+                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
+                        is_goldmine = True
+
+                    # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
+                    if len(active_runners) <= 11 and sec >= Decimal("3.5"):
+                        is_best_bet = True
+
+                race.metadata['predicted_2nd_fav_odds'] = float(sec)
+            else:
+                # Fallback if insufficient odds data
+                race.metadata['predicted_2nd_fav_odds'] = DEFAULT_ODDS_FALLBACK
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
-            race.metadata['predicted_2nd_fav_odds'] = float(all_odds[1])
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -4581,30 +4590,37 @@ class FortunaDB:
             rows = cursor.fetchall()
             if not rows: return
 
-            self.logger.info("Migrating legacy UTC timestamps to Eastern", count=len(rows))
+            total = len(rows)
+            self.logger.info("Migrating legacy UTC timestamps to Eastern", count=total)
             converted = 0
             errors = 0
-            with conn:
-                for row in rows:
-                    updates = {}
-                    for col in ["start_time", "report_date", "audit_timestamp"]:
-                        if col not in row.keys(): continue
-                        val = row[col]
-                        if val:
+
+            # Process in chunks of 1000 for safety (Memory Directive Fix)
+            for i in range(0, total, 1000):
+                chunk = rows[i:i+1000]
+                with conn:
+                    for row in chunk:
+                        updates = {}
+                        for col in ["start_time", "report_date", "audit_timestamp"]:
+                            if col not in row.keys(): continue
+                            val = row[col]
+                            if val:
+                                try:
+                                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                                    dt_eastern = ensure_eastern(dt)
+                                    updates[col] = dt_eastern.isoformat()
+                                except Exception: pass
+                        if updates:
                             try:
-                                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                                dt_eastern = ensure_eastern(dt)
-                                updates[col] = dt_eastern.isoformat()
-                            except Exception: pass
-                    if updates:
-                        try:
-                            set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-                            conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
-                            converted += 1
-                        except Exception as e:
-                            errors += 1
-                            self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
-            self.logger.info("Migration complete", total=len(rows), converted=converted, errors=errors)
+                                set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+                                conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+                                converted += 1
+                            except Exception as e:
+                                errors += 1
+                                self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
+                self.logger.info("Migration progress", processed=min(i + 1000, total), total=total)
+
+            self.logger.info("Migration complete", total=total, converted=converted, errors=errors)
         await self._run_in_executor(_migrate)
 
     async def log_harvest(self, harvest_summary: Dict[str, Any], region: Optional[str] = None):
@@ -4967,6 +4983,8 @@ class RaceSummary:
     favorite_name: Optional[str] = None
     top_five_numbers: Optional[str] = None
     gap12: float = 0.0
+    is_goldmine: bool = False
+    is_best_bet: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -4985,6 +5003,8 @@ class RaceSummary:
             "favorite_name": self.favorite_name,
             "top_five_numbers": self.top_five_numbers,
             "gap12": self.gap12,
+            "is_goldmine": self.is_goldmine,
+            "is_best_bet": self.is_best_bet,
         }
 
 
@@ -5158,7 +5178,9 @@ class FavoriteToPlaceMonitor:
             favorite_odds=favorite.win_odds if favorite else None,
             favorite_name=favorite.name if favorite else None,
             top_five_numbers=self._get_top_n_runners(race, 5),
-            gap12=gap12
+            gap12=gap12,
+            is_goldmine=race.metadata.get('is_goldmine', False),
+            is_best_bet=race.metadata.get('is_best_bet', False)
         )
 
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):
@@ -6700,12 +6722,15 @@ async def start_desktop_app():
     server_thread.start()
 
     # Wait a moment for server to initialize
-    time.sleep(1.5)
+    time.sleep(2.0)
 
-    # Create and start the webview window
-    print("Launching Fortuna Desktop Window...")
-    webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
-    webview.start()
+    # Create and start the webview window if server is up
+    if server_thread.is_alive():
+        print("Launching Fortuna Desktop Window...")
+        webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
+        webview.start()
+    else:
+        print("⚠️ Error: GUI Server failed to start.")
 
 async def ensure_browsers():
     """Ensure browser dependencies are available for scraping."""

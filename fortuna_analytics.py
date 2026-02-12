@@ -132,7 +132,18 @@ def parse_currency_value(value_str: str) -> float:
         if re.search(r'[^\d.,$£€\s]', str(value_str)):
             _currency_logger.debug("unexpected_currency_format", value=value_str)
 
-        cleaned = re.sub(r'[^\d.]', '', str(value_str).replace(',', ''))
+        raw = str(value_str).strip()
+        # If there's both a comma and a dot, comma is likely thousands separator
+        if ',' in raw and '.' in raw:
+            cleaned = raw.replace(',', '')
+        # If there's only a comma and it looks like a decimal (e.g. 2 digits after)
+        elif ',' in raw and re.search(r',\d{2}$', raw):
+            cleaned = raw.replace(',', '.')
+        else:
+            cleaned = raw.replace(',', '')
+
+        # Remove remaining non-numeric/non-dot characters
+        cleaned = re.sub(r'[^\d.]', '', cleaned)
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
         _currency_logger.warning("failed_parsing_currency", value=value_str)
@@ -762,44 +773,48 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 
     def _parse_runner_row(self, row: Node) -> Optional[ResultRunner]:
         """Parse a single runner row from results table."""
-        cols = row.css("td")
-        if len(cols) < 3:
-            return None
-
-        pos_text = fortuna.clean_text(cols[0].text())
-        num_text = fortuna.clean_text(cols[1].text())
-        name = fortuna.clean_text(cols[2].text())
-
-        # Skip header-like rows
-        if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
-            return None
-
-        # Parse number
         try:
-            number = int(num_text) if num_text.isdigit() else 0
-        except ValueError:
-            number = 0
+            cols = row.css("td")
+            if len(cols) < 3:
+                return None
 
-        # Parse odds
-        odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
-        final_odds = fortuna.parse_odds_to_decimal(odds_text)
+            pos_text = fortuna.clean_text(cols[0].text())
+            num_text = fortuna.clean_text(cols[1].text())
+            name = fortuna.clean_text(cols[2].text())
 
-        # Parse payouts (columns 4, 5, 6 typically)
-        win_pay = place_pay = show_pay = 0.0
-        if len(cols) >= 7:
-            win_pay = parse_currency_value(cols[4].text())
-            place_pay = parse_currency_value(cols[5].text())
-            show_pay = parse_currency_value(cols[6].text())
+            # Skip header-like rows
+            if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
+                return None
 
-        return ResultRunner(
-            name=name,
-            number=number,
-            position=pos_text,
-            final_win_odds=final_odds,
-            win_payout=win_pay,
-            place_payout=place_pay,
-            show_payout=show_pay,
-        )
+            # Parse number
+            try:
+                number = int(num_text) if num_text.isdigit() else 0
+            except ValueError:
+                number = 0
+
+            # Parse odds
+            odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
+            final_odds = fortuna.parse_odds_to_decimal(odds_text)
+
+            # Parse payouts (columns 4, 5, 6 typically)
+            win_pay = place_pay = show_pay = 0.0
+            if len(cols) >= 7:
+                win_pay = parse_currency_value(cols[4].text())
+                place_pay = parse_currency_value(cols[5].text())
+                show_pay = parse_currency_value(cols[6].text())
+
+            return ResultRunner(
+                name=name,
+                number=number,
+                position=pos_text,
+                final_win_odds=final_odds,
+                win_payout=win_pay,
+                place_payout=place_pay,
+                show_payout=show_pay,
+            )
+        except Exception as e:
+            self.logger.warning("failed_parsing_equibase_runner_row", error=str(e))
+            return None
 
     def _find_exotic_payout(
         self,
