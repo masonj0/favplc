@@ -4979,6 +4979,7 @@ class RaceSummary:
     mtp: Optional[int] = None  # Minutes to post
     second_fav_odds: Optional[float] = None
     second_fav_name: Optional[str] = None
+    selection_number: Optional[int] = None
     favorite_odds: Optional[float] = None
     favorite_name: Optional[str] = None
     top_five_numbers: Optional[str] = None
@@ -4999,6 +5000,7 @@ class RaceSummary:
             "mtp": self.mtp,
             "second_fav_odds": self.second_fav_odds,
             "second_fav_name": self.second_fav_name,
+            "selection_number": self.selection_number,
             "favorite_odds": self.favorite_odds,
             "favorite_name": self.favorite_name,
             "top_five_numbers": self.top_five_numbers,
@@ -5175,6 +5177,7 @@ class FavoriteToPlaceMonitor:
             mtp=self._calculate_mtp(race.start_time),
             second_fav_odds=second_fav.win_odds if second_fav else None,
             second_fav_name=second_fav.name if second_fav else None,
+            selection_number=second_fav.number if second_fav else None,
             favorite_odds=favorite.win_odds if favorite else None,
             favorite_name=favorite.name if favorite else None,
             top_five_numbers=self._get_top_n_runners(race, 5),

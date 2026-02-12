@@ -507,6 +507,11 @@ def generate_summary() -> None:
         results = _merge_harvest_files(RESULTS_HARVEST_FILES)
         if results:
             out.write_lines(build_harvest_table(results, '🏁 Results Adapters'))
+        else:
+            out.write('#### 🏁 Results Adapters')
+            out.write()
+            out.write('⏳ *No results harvested in this cycle.*')
+            out.write()
 
         # Audit results
         stats = get_db_stats()
