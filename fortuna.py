@@ -404,7 +404,11 @@ def ensure_eastern(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
     if dt.tzinfo is not EASTERN:
-        return dt.astimezone(EASTERN)
+        try:
+            return dt.astimezone(EASTERN)
+        except Exception:
+            # Fallback for rare cases where conversion fails (e.g. invalid times during DST transitions)
+            return dt.replace(tzinfo=EASTERN)
     return dt
 
 
@@ -3312,58 +3316,65 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Goldmine Detection: 2nd favorite >= 4.5 decimal
             # A race cannot be a goldmine if field size is over 11
             is_goldmine = False
+            is_best_bet = False
             active_runners = [r for r in race.runners if not r.scratched]
             gap12 = 0.0
             all_odds = []
-            if active_runners:
-                for runner in active_runners:
-                    odds = _get_best_win_odds(runner)
-                    if odds is not None:
-                        all_odds.append(odds)
-                if len(all_odds) >= 2:
-                    all_odds.sort()
-                    fav, sec = all_odds[0], all_odds[1]
-                    gap12 = round(float(sec - fav), 2)
-                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
-                        is_goldmine = True
 
-                # Calculate Top 5 for all races
-                # Collect valid odds once to avoid repetitive calculation/conversion
-                valid_r_with_odds = []
-                for r in active_runners:
-                    wo = _get_best_win_odds(r)
-                    if wo is not None:
-                        # Propagate fresh odds to runner object for reporting
-                        r.win_odds = float(wo)
-                        valid_r_with_odds.append((r, wo))
+            # 1. Collect and Enrich Odds
+            for runner in active_runners:
+                odds = _get_best_win_odds(runner)
+                if odds is not None:
+                    # Propagate fresh odds to runner object for reporting
+                    runner.win_odds = float(odds)
+                    all_odds.append(odds)
 
-                r_with_odds = sorted(valid_r_with_odds, key=lambda x: x[1])
-                race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in r_with_odds[:5]])
-
-                if len(r_with_odds) >= 2:
-                    sec_fav = r_with_odds[1][0]
-                    race.metadata['selection_number'] = sec_fav.number
-                    race.metadata['selection_name'] = sec_fav.name
+            # Sort odds ascending
+            all_odds.sort()
 
             # Stability Check: Ensure we have at least 2 active runners to compare
             if len(active_runners) < 2:
                 log.debug("Excluding race with < 2 runners", venue=race.venue)
                 continue
 
-            if len(all_odds) < 2:
-                # If we still don't have enough odds despite enrichment, use fallback
-                while len(all_odds) < 2:
-                    all_odds.append(Decimal(str(DEFAULT_ODDS_FALLBACK)))
+            # 2. Derive Selection (2nd favorite) and Top 5
+            # Collect valid runners with their enriched odds
+            valid_r_with_odds = sorted(
+                [(r, Decimal(str(r.win_odds))) for r in active_runners if r.win_odds is not None],
+                key=lambda x: x[1]
+            )
+            race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in valid_r_with_odds[:5]])
 
-            # Best Bet Detection:
-            # Goldmine = 2nd Fav >= 4.5, Field <= 11
-            # You Might Like = 2nd Fav >= 3.5, Field <= 11
-            is_best_bet = (len(active_runners) <= 11 and all_odds[1] >= Decimal("3.5"))
+            if len(valid_r_with_odds) >= 2:
+                sec_fav = valid_r_with_odds[1][0]
+                race.metadata['selection_number'] = sec_fav.number
+                race.metadata['selection_name'] = sec_fav.name
+
+            # 3. Apply Best Bet Logic
+            if len(all_odds) >= 2:
+                fav, sec = all_odds[0], all_odds[1]
+                gap12 = round(float(sec - fav), 2)
+
+                # Enforce gap requirement
+                if gap12 <= 0.25:
+                    log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                else:
+                    # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
+                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
+                        is_goldmine = True
+
+                    # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
+                    if len(active_runners) <= 11 and sec >= Decimal("3.5"):
+                        is_best_bet = True
+
+                race.metadata['predicted_2nd_fav_odds'] = float(sec)
+            else:
+                # Fallback if insufficient odds data
+                race.metadata['predicted_2nd_fav_odds'] = DEFAULT_ODDS_FALLBACK
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
-            race.metadata['predicted_2nd_fav_odds'] = float(all_odds[1])
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -4196,6 +4207,183 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
+def format_prediction_row(race: Race) -> str:
+    """Formats a single race prediction for the GHA Job Summary table."""
+    metadata = getattr(race, 'metadata', {})
+    gold = '✅' if metadata.get('is_goldmine') else '—'
+    selection = metadata.get('selection_name') or f"#{metadata.get('selection_number', '?')}"
+    odds = metadata.get('predicted_2nd_fav_odds')
+    odds_str = f"{odds:.2f}" if odds else 'N/A'
+    top5 = getattr(race, 'top_five_numbers', 'TBD')
+    gap = metadata.get('1Gap2', 0.0)
+    gap_str = f"{gap:.2f}"
+
+    payouts = []
+    # Check both metadata and attributes for payouts
+    for label in ('top1_place_payout', 'trifecta_payout', 'superfecta_payout'):
+        val = metadata.get(label) or getattr(race, label, None)
+        if val:
+            display_label = label.replace('_', ' ').title().replace('Top1 ', '')
+            payouts.append(f"{display_label}: ${float(val):.2f}")
+
+    payout_text = ' | '.join(payouts) or 'Awaiting Results'
+    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
+
+
+def format_predictions_section(qualified_races: List[Race]) -> str:
+    """Generates the Predictions & Proof section for the GHA Job Summary."""
+    lines = ["### 🔮 Fortuna Predictions & Proof", ""]
+    if not qualified_races:
+        lines.append("No Goldmine predictions available for this run.")
+        return "\n".join(lines)
+
+    now = datetime.now(EASTERN)
+
+    def get_mtp(r):
+        st = r.start_time
+        if isinstance(st, str):
+            try:
+                st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            except Exception:
+                return 9999
+        if st and st.tzinfo is None:
+            st = st.replace(tzinfo=EASTERN)
+        return (st - now).total_seconds() / 60 if st else 9999
+
+    # Sort by MTP ascending
+    sorted_races = sorted(qualified_races, key=get_mtp)
+    # Take top 10 opportunities
+    top_10 = sorted_races[:10]
+
+    lines.extend([
+        "| Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |"
+    ])
+    for r in top_10:
+        lines.append(format_prediction_row(r))
+    return "\n".join(lines)
+
+
+async def format_proof_section(db: FortunaDB) -> str:
+    """Generates the Recent Audited Proof subsection for the GHA Job Summary."""
+    lines = ["", "#### 💰 Recent Audited Proof", ""]
+    try:
+        # First attempt to get recent goldmines
+        tips = await db.get_recent_audited_goldmines(limit=10)
+        # Fallback to any audited tips if no goldmines found
+        if not tips:
+            tips = await db.get_all_audited_tips()
+            tips = tips[:10]
+
+        if not tips:
+            lines.append("Awaiting race results; nothing audited yet.")
+            return "\n".join(lines)
+
+        lines.extend([
+            "| Verdict | Profit | Venue | R# | Actual Top 5 | Actual 2nd Fav Odds | Payout Details |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+        ])
+        for tip in tips:
+            payouts = []
+            if tip.get('superfecta_payout'):
+                payouts.append(f"Superfecta ${tip['superfecta_payout']:.2f}")
+            if tip.get('trifecta_payout'):
+                payouts.append(f"Trifecta ${tip['trifecta_payout']:.2f}")
+            if tip.get('top1_place_payout'):
+                payouts.append(f"Place ${tip['top1_place_payout']:.2f}")
+
+            payout_text = ' / '.join(payouts) if payouts else 'No payout data'
+
+            verdict = tip.get("verdict", "?")
+            emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+            profit = tip.get('net_profit', 0.0)
+            actual_odds = tip.get('actual_2nd_fav_odds')
+            actual_odds_str = f"{actual_odds:.2f}" if actual_odds else "N/A"
+
+            lines.append(
+                f"| {emoji} {verdict} | ${profit:+.2f} | {tip['venue']} | {tip['race_number']} | {tip.get('actual_top_5', 'N/A')} | {actual_odds_str} | {payout_text} |"
+            )
+    except Exception as e:
+        lines.append(f"Error generating audited proof: {e}")
+
+    return "\n".join(lines)
+
+
+def build_harvest_table(summary: Dict[str, Any], title: str) -> str:
+    """Generates a harvest performance table for the GHA Job Summary."""
+    lines = [f"### {title}", ""]
+    if not summary:
+        lines.extend([
+            "| Adapter | Races | Max Odds | Status |",
+            "| --- | --- | --- | --- |",
+            "| N/A | 0 | 0.0 | ⚠️ No harvest data |"
+        ])
+        return "\n".join(lines)
+
+    lines.extend([
+        "| Adapter | Races | Max Odds | Status |",
+        "| --- | --- | --- | --- |"
+    ])
+
+    # Sort by Records Found (descending), then alphabetically
+    def sort_key(item):
+        adapter, data = item
+        count = data.get('count', 0) if isinstance(data, dict) else data
+        return (-count, adapter)
+
+    sorted_adapters = sorted(summary.items(), key=sort_key)
+
+    for adapter, data in sorted_adapters:
+        if isinstance(data, dict):
+            count = data.get('count', 0)
+            max_odds = data.get('max_odds', 0.0)
+        else:
+            count = data
+            max_odds = 0.0
+
+        status = '✅' if count > 0 else '⚠️ No Data'
+        lines.append(f"| {adapter} | {count} | {max_odds:.1f} | {status} |")
+    return "\n".join(lines)
+
+
+def format_artifact_links() -> str:
+    """Generates the report artifacts links for the GHA Job Summary."""
+    return '\n'.join([
+        "### 📁 Report Artifacts",
+        "",
+        "- [Summary Grid](summary_grid.txt)",
+        "- [Field Matrix](field_matrix.txt)",
+        "- [Goldmine Report](goldmine_report.txt)",
+        "- [HTML Report](fortuna_report.html)",
+        "- [Analytics Log](analytics_report.txt)"
+    ])
+
+
+def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artifacts_md: str) -> None:
+    """Writes the consolidated sections to $GITHUB_STEP_SUMMARY."""
+    path = os.environ.get('GITHUB_STEP_SUMMARY')
+    if not path:
+        return
+
+    # Narrate the entire workflow
+    summary = '\n'.join([
+        '## 🔔 Fortuna Intelligence Job Summary',
+        '',
+        predictions_md,
+        '',
+        harvest_md,
+        '',
+        proof_md,
+        '',
+        artifacts_md,
+    ])
+
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(summary + '\n')
+    except Exception:
+        # Silently fail if writing summary fails
+        pass
 
 
 def get_db_path() -> str:
@@ -4402,30 +4590,37 @@ class FortunaDB:
             rows = cursor.fetchall()
             if not rows: return
 
-            self.logger.info("Migrating legacy UTC timestamps to Eastern", count=len(rows))
+            total = len(rows)
+            self.logger.info("Migrating legacy UTC timestamps to Eastern", count=total)
             converted = 0
             errors = 0
-            with conn:
-                for row in rows:
-                    updates = {}
-                    for col in ["start_time", "report_date", "audit_timestamp"]:
-                        if col not in row.keys(): continue
-                        val = row[col]
-                        if val:
+
+            # Process in chunks of 1000 for safety (Memory Directive Fix)
+            for i in range(0, total, 1000):
+                chunk = rows[i:i+1000]
+                with conn:
+                    for row in chunk:
+                        updates = {}
+                        for col in ["start_time", "report_date", "audit_timestamp"]:
+                            if col not in row.keys(): continue
+                            val = row[col]
+                            if val:
+                                try:
+                                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                                    dt_eastern = ensure_eastern(dt)
+                                    updates[col] = dt_eastern.isoformat()
+                                except Exception: pass
+                        if updates:
                             try:
-                                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                                dt_eastern = ensure_eastern(dt)
-                                updates[col] = dt_eastern.isoformat()
-                            except Exception: pass
-                    if updates:
-                        try:
-                            set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
-                            conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
-                            converted += 1
-                        except Exception as e:
-                            errors += 1
-                            self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
-            self.logger.info("Migration complete", total=len(rows), converted=converted, errors=errors)
+                                set_clause = ", ".join([f"{k} = ?" for k in updates.keys()])
+                                conn.execute(f"UPDATE tips SET {set_clause} WHERE id = ?", (*updates.values(), row["id"]))
+                                converted += 1
+                            except Exception as e:
+                                errors += 1
+                                self.logger.warning("Failed to migrate row", row_id=row["id"], error=str(e))
+                self.logger.info("Migration progress", processed=min(i + 1000, total), total=total)
+
+            self.logger.info("Migration complete", total=total, converted=converted, errors=errors)
         await self._run_in_executor(_migrate)
 
     async def log_harvest(self, harvest_summary: Dict[str, Any], region: Optional[str] = None):
@@ -4787,6 +4982,9 @@ class RaceSummary:
     favorite_odds: Optional[float] = None
     favorite_name: Optional[str] = None
     top_five_numbers: Optional[str] = None
+    gap12: float = 0.0
+    is_goldmine: bool = False
+    is_best_bet: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -4804,6 +5002,9 @@ class RaceSummary:
             "favorite_odds": self.favorite_odds,
             "favorite_name": self.favorite_name,
             "top_five_numbers": self.top_five_numbers,
+            "gap12": self.gap12,
+            "is_goldmine": self.is_goldmine,
+            "is_best_bet": self.is_best_bet,
         }
 
 
@@ -4958,7 +5159,10 @@ class FavoriteToPlaceMonitor:
         top_runners = self._get_top_runners(race, limit=5)
         favorite = top_runners[0] if len(top_runners) >= 1 else None
         second_fav = top_runners[1] if len(top_runners) >= 2 else None
-        top_five_str = "|".join([str(r.number) for r in top_runners if r.number is not None])
+
+        gap12 = 0.0
+        if favorite and second_fav and favorite.win_odds and second_fav.win_odds:
+            gap12 = round(second_fav.win_odds - favorite.win_odds, 2)
 
         return RaceSummary(
             discipline=self._get_discipline_code(race),
@@ -4974,6 +5178,9 @@ class FavoriteToPlaceMonitor:
             favorite_odds=favorite.win_odds if favorite else None,
             favorite_name=favorite.name if favorite else None,
             top_five_numbers=self._get_top_n_runners(race, 5),
+            gap12=gap12,
+            is_goldmine=race.metadata.get('is_goldmine', False),
+            is_best_bet=race.metadata.get('is_best_bet', False)
         )
 
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):
@@ -5054,11 +5261,13 @@ class FavoriteToPlaceMonitor:
         # 1. MTP <= 120 (Broadened for yield)
         # 2. 2nd Fav Odds >= 4.0
         # 3. Field size <= 11 (User Directive)
+        # 4. Gap > 0.25 (User Directive)
         bet_now = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 120
             and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
             and r.field_size <= 11
+            and r.gap12 > 0.25
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -5067,13 +5276,14 @@ class FavoriteToPlaceMonitor:
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
         # Criteria: Not in BET NOW, but -10 < MTP <= 240 (4h) and 2nd Fav Odds >= 3.0
-        # and field size <= 11
+        # and field size <= 11 and Gap > 0.25
         bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
         yml = [
             r for r in self.golden_zone_races
             if r.mtp is not None and -10 < r.mtp <= 240
             and r.second_fav_odds is not None and r.second_fav_odds >= 3.0
             and r.field_size <= 11
+            and r.gap12 > 0.25
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
@@ -6087,6 +6297,20 @@ async def run_discovery(
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
 
         all_races_raw = []
+        harvest_summary = {}
+
+        # Pre-populate harvest_summary based on region/filter for visibility
+        target_region = region or get_optimal_region_at_time(now_eastern())
+        target_set = USA_DISCOVERY_ADAPTERS if target_region == "USA" else INT_DISCOVERY_ADAPTERS
+
+        # Determine which adapters should be visible in the harvest summary
+        if adapter_names:
+            visible_adapters = [n for n in adapter_names if n in target_set]
+        else:
+            visible_adapters = list(target_set)
+
+        for adapter_name in visible_adapters:
+            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
 
         if loaded_races is not None:
             logger.info("Using loaded races", count=len(loaded_races))
@@ -6096,7 +6320,7 @@ async def run_discovery(
             try:
                 if not os.path.exists("discovery_harvest.json"):
                     with open("discovery_harvest.json", "w") as f:
-                        json.dump({}, f)
+                        json.dump(harvest_summary, f)
             except Exception: pass
         else:
             # Auto-discover discovery adapter classes
@@ -6123,7 +6347,6 @@ async def run_discovery(
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
-            harvest_summary = {}
             try:
                 async def fetch_one(a, date_str):
                     try:
@@ -6399,6 +6622,19 @@ async def run_discovery(
         except Exception as e:
             logger.error("failed_saving_qualified_races", error=str(e))
 
+        # NEW: Write GHA Job Summary
+        if 'GITHUB_STEP_SUMMARY' in os.environ:
+            try:
+                predictions_md = format_predictions_section(qualified)
+                # We need a db instance for format_proof_section
+                proof_md = await format_proof_section(tracker.db)
+                harvest_md = build_harvest_table(harvest_summary, "🛰️ Discovery Harvest Performance")
+                artifacts_md = format_artifact_links()
+                write_job_summary(predictions_md, harvest_md, proof_md, artifacts_md)
+                logger.info("GHA Job Summary written")
+            except Exception as e:
+                logger.error("Failed to write GHA summary", error=str(e))
+
     finally:
         await GlobalResourceManager.cleanup()
 async def start_desktop_app():
@@ -6486,12 +6722,15 @@ async def start_desktop_app():
     server_thread.start()
 
     # Wait a moment for server to initialize
-    time.sleep(1.5)
+    time.sleep(2.0)
 
-    # Create and start the webview window
-    print("Launching Fortuna Desktop Window...")
-    webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
-    webview.start()
+    # Create and start the webview window if server is up
+    if server_thread.is_alive():
+        print("Launching Fortuna Desktop Window...")
+        webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
+        webview.start()
+    else:
+        print("⚠️ Error: GUI Server failed to start.")
 
 async def ensure_browsers():
     """Ensure browser dependencies are available for scraping."""

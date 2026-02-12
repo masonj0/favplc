@@ -132,7 +132,18 @@ def parse_currency_value(value_str: str) -> float:
         if re.search(r'[^\d.,$£€\s]', str(value_str)):
             _currency_logger.debug("unexpected_currency_format", value=value_str)
 
-        cleaned = re.sub(r'[^\d.]', '', str(value_str).replace(',', ''))
+        raw = str(value_str).strip()
+        # If there's both a comma and a dot, comma is likely thousands separator
+        if ',' in raw and '.' in raw:
+            cleaned = raw.replace(',', '')
+        # If there's only a comma and it looks like a decimal (e.g. 2 digits after)
+        elif ',' in raw and re.search(r',\d{2}$', raw):
+            cleaned = raw.replace(',', '.')
+        else:
+            cleaned = raw.replace(',', '')
+
+        # Remove remaining non-numeric/non-dot characters
+        cleaned = re.sub(r'[^\d.]', '', cleaned)
         return float(cleaned) if cleaned else 0.0
     except (ValueError, TypeError):
         _currency_logger.warning("failed_parsing_currency", value=value_str)
@@ -762,44 +773,48 @@ class EquibaseResultsAdapter(fortuna.BrowserHeadersMixin, fortuna.DebugMixin, fo
 
     def _parse_runner_row(self, row: Node) -> Optional[ResultRunner]:
         """Parse a single runner row from results table."""
-        cols = row.css("td")
-        if len(cols) < 3:
-            return None
-
-        pos_text = fortuna.clean_text(cols[0].text())
-        num_text = fortuna.clean_text(cols[1].text())
-        name = fortuna.clean_text(cols[2].text())
-
-        # Skip header-like rows
-        if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
-            return None
-
-        # Parse number
         try:
-            number = int(num_text) if num_text.isdigit() else 0
-        except ValueError:
-            number = 0
+            cols = row.css("td")
+            if len(cols) < 3:
+                return None
 
-        # Parse odds
-        odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
-        final_odds = fortuna.parse_odds_to_decimal(odds_text)
+            pos_text = fortuna.clean_text(cols[0].text())
+            num_text = fortuna.clean_text(cols[1].text())
+            name = fortuna.clean_text(cols[2].text())
 
-        # Parse payouts (columns 4, 5, 6 typically)
-        win_pay = place_pay = show_pay = 0.0
-        if len(cols) >= 7:
-            win_pay = parse_currency_value(cols[4].text())
-            place_pay = parse_currency_value(cols[5].text())
-            show_pay = parse_currency_value(cols[6].text())
+            # Skip header-like rows
+            if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
+                return None
 
-        return ResultRunner(
-            name=name,
-            number=number,
-            position=pos_text,
-            final_win_odds=final_odds,
-            win_payout=win_pay,
-            place_payout=place_pay,
-            show_payout=show_pay,
-        )
+            # Parse number
+            try:
+                number = int(num_text) if num_text.isdigit() else 0
+            except ValueError:
+                number = 0
+
+            # Parse odds
+            odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
+            final_odds = fortuna.parse_odds_to_decimal(odds_text)
+
+            # Parse payouts (columns 4, 5, 6 typically)
+            win_pay = place_pay = show_pay = 0.0
+            if len(cols) >= 7:
+                win_pay = parse_currency_value(cols[4].text())
+                place_pay = parse_currency_value(cols[5].text())
+                show_pay = parse_currency_value(cols[6].text())
+
+            return ResultRunner(
+                name=name,
+                number=number,
+                position=pos_text,
+                final_win_odds=final_odds,
+                win_payout=win_pay,
+                place_payout=place_pay,
+                show_payout=show_pay,
+            )
+        except Exception as e:
+            self.logger.warning("failed_parsing_equibase_runner_row", error=str(e))
+            return None
 
     def _find_exotic_payout(
         self,
@@ -2081,16 +2096,23 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
         return
 
     harvest_summary: Dict[str, Dict[str, Any]] = {}
+
+    # Pre-populate harvest_summary for regional visibility (Memory Directive Fix)
+    target_region = region or get_optimal_region_at_time(now_eastern())
+    expected_adapters = fortuna.USA_RESULTS_ADAPTERS if target_region == "USA" else fortuna.INT_RESULTS_ADAPTERS
+    for adapter_name in expected_adapters:
+        harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
 
         if not unverified:
             logger.info("No unverified tips found in history. Skipping harvest, showing lifetime report.")
-            # Always ensure results_harvest.json exists for GHA workflow (Memory Directive Fix)
+            # Always ensure results_harvest.json exists with pre-populated summary (Memory Directive Fix)
             try:
                 with open("results_harvest.json", "w") as f:
-                    json.dump({}, f)
+                    json.dump(harvest_summary, f)
             except Exception as e:
                 logger.debug("Failed to create results_harvest.json", error=str(e))
         else:
@@ -2195,6 +2217,44 @@ async def run_analytics(target_dates: List[str], region: Optional[str] = None) -
             logger.info("Report saved", path=str(report_path))
         except IOError as e:
             logger.error("Failed to save report", error=str(e))
+
+        # NEW: Write GHA Job Summary
+        if 'GITHUB_STEP_SUMMARY' in os.environ:
+            try:
+                # Reconstruct minimal Race objects for pending tips to populate the predictions section
+                pending_tips = await auditor.db.get_unverified_tips(lookback_hours=48)
+                qualified_from_db = []
+                for tip in pending_tips:
+                    try:
+                        # Create a minimal Race object for formatting
+                        r = fortuna.Race(
+                            id=tip['race_id'],
+                            venue=tip['venue'],
+                            race_number=tip['race_number'],
+                            start_time=datetime.fromisoformat(tip['start_time'].replace('Z', '+00:00')),
+                            runners=[],
+                            source="Database"
+                        )
+                        # Populate metadata for format_prediction_row
+                        r.metadata = {
+                            'is_goldmine': bool(tip.get('is_goldmine')),
+                            'selection_number': tip.get('selection_number'),
+                            'selection_name': tip.get('selection_name'),
+                            'predicted_2nd_fav_odds': tip.get('predicted_2nd_fav_odds')
+                        }
+                        r.top_five_numbers = tip.get('top_five')
+                        qualified_from_db.append(r)
+                    except Exception:
+                        continue
+
+                predictions_md = fortuna.format_predictions_section(qualified_from_db)
+                proof_md = await fortuna.format_proof_section(auditor.db)
+                harvest_md = fortuna.build_harvest_table(harvest_summary, "🛰️ Results Harvest Performance")
+                artifacts_md = fortuna.format_artifact_links()
+                fortuna.write_job_summary(predictions_md, harvest_md, proof_md, artifacts_md)
+                logger.info("GHA Job Summary written")
+            except Exception as e:
+                logger.error("Failed to write GHA summary", error=str(e))
 
         # Summary
         if all_audited:
