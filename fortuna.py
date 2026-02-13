@@ -140,7 +140,7 @@ INT_DISCOVERY_ADAPTERS: Final[set] = {
     "SportingLife", "SkySports"
 }
 
-USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults"}
+USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults"}
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
     "SportingLifeResults", "SkySportsResults"
@@ -433,6 +433,7 @@ RACING_KEYWORDS = [
 
 VENUE_MAP = {
 "ABU DHABI": "Abu Dhabi",
+"AQU": "Aqueduct",
 "AQUEDUCT": "Aqueduct",
 "ARGENTAN": "Argentan",
 "ASCOT": "Ascot",
@@ -441,11 +442,13 @@ VENUE_MAP = {
 "BANGOR ON DEE": "Bangor-on-Dee",
 "CATTERICK": "Catterick",
 "CATTERICK BRIDGE": "Catterick",
+"CT": "Charles Town",
 "CENTRAL PARK": "Central Park",
 "CHELMSFORD": "Chelmsford",
 "CHELMSFORD CITY": "Chelmsford",
 "CURRAGH": "Curragh",
 "DEAUVILLE": "Deauville",
+"DED": "Delta Downs",
 "DELTA DOWNS": "Delta Downs",
 "DONCASTER": "Doncaster",
 "DOVER DOWNS": "Dover Downs",
@@ -454,10 +457,12 @@ VENUE_MAP = {
 "DUNSTALL PARK": "Wolverhampton",
 "EPSOM": "Epsom",
 "EPSOM DOWNS": "Epsom",
+"FG": "Fair Grounds",
 "FAIR GROUNDS": "Fair Grounds",
 "FONTWELL": "Fontwell Park",
 "FONTWELL PARK": "Fontwell Park",
 "GREAT YARMOUTH": "Great Yarmouth",
+"GP": "Gulfstream Park",
 "GULFSTREAM": "Gulfstream Park",
 "GULFSTREAM PARK": "Gulfstream Park",
 "HAYDOCK": "Haydock Park",
@@ -466,6 +471,7 @@ VENUE_MAP = {
 "HOVE": "Hove",
 "KEMPTON": "Kempton Park",
 "KEMPTON PARK": "Kempton Park",
+"LRL": "Laurel Park",
 "LAUREL PARK": "Laurel Park",
 "LINGFIELD": "Lingfield Park",
 "LINGFIELD PARK": "Lingfield Park",
@@ -475,6 +481,7 @@ VENUE_MAP = {
 "MEYDAN": "Meydan",
 "MIAMI VALLEY": "Miami Valley",
 "MIAMI VALLEY RACEWAY": "Miami Valley",
+"MVR": "Mahoning Valley",
 "MOHAWK": "Mohawk",
 "MOHAWK PARK": "Mohawk",
 "MUSSELBURGH": "Musselburgh",
@@ -484,20 +491,27 @@ VENUE_MAP = {
 "NORTHFIELD PARK": "Northfield Park",
 "OXFORD": "Oxford",
 "PAU": "Pau",
+"OP": "Oaklawn Park",
+"PEN": "Penn National",
 "POCONO DOWNS": "Pocono Downs",
 "SAM HOUSTON": "Sam Houston",
 "SAM HOUSTON RACE PARK": "Sam Houston",
 "SANDOWN": "Sandown Park",
 "SANDOWN PARK": "Sandown Park",
+"SA": "Santa Anita",
 "SANTA ANITA": "Santa Anita",
 "SARATOGA": "Saratoga",
 "SARATOGA HARNESS": "Saratoga Harness",
 "SCIOTO DOWNS": "Scioto Downs",
 "SHEFFIELD": "Sheffield",
 "STRATFORD": "Stratford-on-Avon",
+"SUN": "Sunland Park",
 "SUNLAND PARK": "Sunland Park",
+"TAM": "Tampa Bay Downs",
 "TAMPA BAY DOWNS": "Tampa Bay Downs",
 "THURLES": "Thurles",
+"TP": "Turfway Park",
+"TUP": "Turf Paradise",
 "TURF PARADISE": "Turf Paradise",
 "TURFFONTEIN": "Turffontein",
 "UTTOXETER": "Uttoxeter",
@@ -505,6 +519,7 @@ VENUE_MAP = {
 "WARWICK": "Warwick",
 "WETHERBY": "Wetherby",
 "WOLVERHAMPTON": "Wolverhampton",
+"WO": "Woodbine",
 "WOODBINE": "Woodbine",
 "WOODBINE MOHAWK": "Mohawk",
 "WOODBINE MOHAWK PARK": "Mohawk",
@@ -806,6 +821,8 @@ class FetchStrategy(FortunaBaseModel):
     max_retries: int = Field(3, ge=0, le=10)
     timeout: int = Field(DEFAULT_REQUEST_TIMEOUT, ge=1, le=300)
     page_load_strategy: str = "domcontentloaded"
+    wait_until: Optional[str] = None
+    network_idle: bool = False
     wait_for_selector: Optional[str] = None
 
 
@@ -843,10 +860,12 @@ class SmartFetcher:
             self.logger.error("no_fetch_engines_available", url=url)
             raise FetchError("No fetch engines available (install curl_cffi or scrapling)")
 
+        strategy = kwargs.get("strategy", self.strategy)
         engines = sorted(available_engines, key=lambda e: self._engine_health[e], reverse=True)
-        if self.strategy.primary_engine in engines:
-            engines.remove(self.strategy.primary_engine)
-            engines.insert(0, self.strategy.primary_engine)
+        if strategy.primary_engine in engines:
+            engines.remove(strategy.primary_engine)
+            engines.insert(0, strategy.primary_engine)
+        self.logger.debug("Fetch engines ordered", url=url, engines=[e.value for e in engines], primary=strategy.primary_engine.value)
         last_error: Optional[Exception] = None
         for engine in engines:
             try:
@@ -865,28 +884,38 @@ class SmartFetcher:
 
     
     async def _fetch_with_engine(self, engine: BrowserEngine, url: str, method: str, **kwargs: Any) -> Any:
-        # Generate browserforge headers if available and not explicitly provided
-        if BROWSERFORGE_AVAILABLE and "headers" not in kwargs:
+        # Generate browserforge headers if available
+        if BROWSERFORGE_AVAILABLE:
             try:
                 # Generate headers and a corresponding user agent
                 fingerprint = self.fingerprint_gen.generate()
-                headers = self.header_gen.generate()
+                bf_headers = self.header_gen.generate()
                 # Ensure User-Agent is consistent between fingerprint and headers
-                headers['User-Agent'] = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
-                kwargs["headers"] = headers
-                self.logger.debug("Generated browserforge headers", engine=engine.value)
+                ua = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
+                bf_headers['User-Agent'] = ua
+
+                if "headers" in kwargs:
+                    # Merge - browserforge headers complement provided ones
+                    for k, v in bf_headers.items():
+                        if k not in kwargs["headers"]:
+                            kwargs["headers"][k] = v
+                else:
+                    kwargs["headers"] = bf_headers
+                self.logger.debug("Applied browserforge headers", engine=engine.value)
             except Exception as e:
                 self.logger.warning("Failed to generate browserforge headers", error=str(e))
 
         # Define browser-specific arguments to strip for non-browser engines
         BROWSER_SPECIFIC_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "impersonate",
-            "stealth", "block_resources", "wait_for_selector", "stealth_mode"
+            "stealth", "block_resources", "wait_for_selector", "stealth_mode",
+            "strategy"
         ]
 
+        strategy = kwargs.get("strategy", self.strategy)
         if engine == BrowserEngine.HTTPX:
             # Pass strategy timeout if present in kwargs or use default
-            timeout = kwargs.get("timeout", self.strategy.timeout)
+            timeout = kwargs.get("timeout", strategy.timeout)
             client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
 
             # Remove timeout and browser-specific keys from kwargs
@@ -903,7 +932,7 @@ class SmartFetcher:
                 raise ImportError("curl_cffi is not available")
             
             self.logger.debug(f"Using curl_cffi for {url}")
-            timeout = kwargs.get("timeout", self.strategy.timeout)
+            timeout = kwargs.get("timeout", strategy.timeout)
 
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
@@ -934,8 +963,20 @@ class SmartFetcher:
         # Scrapling specific kwargs
         SCRAPLING_KWARGS = ["network_idle", "wait_selector", "wait_until", "stealth_mode", "block_resources", "timeout"]
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
+
+        # Propagate strategy values to scrapling if not explicitly overridden in kwargs
         if "timeout" not in scrapling_kwargs:
-             scrapling_kwargs["timeout"] = kwargs.get("timeout", self.strategy.timeout)
+            timeout_val = kwargs.get("timeout", strategy.timeout)
+            # Scrapling/Playwright uses milliseconds for timeout
+            scrapling_kwargs["timeout"] = timeout_val * 1000
+        if "wait_until" not in scrapling_kwargs:
+            scrapling_kwargs["wait_until"] = strategy.wait_until or strategy.page_load_strategy
+        if "network_idle" not in scrapling_kwargs:
+            scrapling_kwargs["network_idle"] = strategy.network_idle
+        if "stealth_mode" not in scrapling_kwargs:
+            scrapling_kwargs["stealth_mode"] = strategy.stealth_mode
+        if "block_resources" not in scrapling_kwargs:
+            scrapling_kwargs["block_resources"] = strategy.block_resources
             
         # For other engines, we use AsyncFetcher from scrapling
         if engine == BrowserEngine.CAMOUFOX:
@@ -1250,6 +1291,8 @@ class BaseAdapterV3(ABC):
         # Apply global concurrency limit (Memory Directive Fix)
         async with GlobalResourceManager.get_global_semaphore():
             try:
+                # Use adapter-specific strategy
+                kwargs.setdefault("strategy", self.smart_fetcher.strategy)
                 resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
                 status = get_resp_status(resp)
                 self.logger.debug("Response received", method=method, url=full_url, status=status)

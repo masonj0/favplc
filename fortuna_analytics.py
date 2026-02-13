@@ -640,6 +640,7 @@ class PageFetchingResultsAdapter(
             enable_js=True,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
+            network_idle=True,
         )
 
     async def make_request(
@@ -742,6 +743,13 @@ class PageFetchingResultsAdapter(
             return True
         if fortuna.get_canonical_venue(text) in self.target_venues:
             return True
+
+        # Check components of the href (e.g. short codes like 'GP')
+        # We look for alphanumeric chunks that might be track codes
+        for chunk in re.findall(r'[A-Za-z0-9]+', href):
+            if fortuna.get_canonical_venue(chunk) in self.target_venues:
+                return True
+
         href_clean = href.lower().replace("-", "")
         return any(v in href_clean for v in self.target_venues)
 
@@ -770,6 +778,19 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     HOST        = "www.equibase.com"
     IMPERSONATE = "chrome120"
     TIMEOUT     = 60
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # Equibase works well with curl_cffi + browserforge headers
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=False,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+        )
+
+    def _get_headers(self) -> dict:
+        # Equibase is sensitive to header order/content; let SmartFetcher handle it via browserforge
+        return {}
 
     # -- link discovery (complex: multiple index URL patterns) -------------
 
@@ -813,17 +834,19 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         # Source 1 — inline JSON in <script> tags
         for url_match in re.findall(r'"URL":"([^"]+)"', html):
             normalised = url_match.replace("\\/", "/").replace("\\", "/")
-            if "sum.html" in normalised and date_short in normalised:
+            if date_short in normalised and (
+                "sum.html" in normalised or "EQB.html" in normalised or "RaceCardIndex" in normalised
+            ):
                 raw_links.add(normalised)
 
         # Source 2 — <a> tags matching known patterns
         selectors_and_patterns = [
             ('table.display a[href*="sum.html"]', None),
-            ('a[href*="/static/chart/summary/"]', lambda h: "index.html" not in h),
+            ('a[href*="/static/chart/summary/"]', lambda h: "index.html" not in h and "calendar.html" not in h),
             ("a", lambda h: (
-                re.search(r"[A-Z]{3}\d{6}sum\.html", h)
-                or (date_short in h and "sum.html" in h.lower())
-            ) and "index.html" not in h),
+                re.search(r"[A-Z]{3}\d{6}(?:sum|EQB)\.html", h)
+                or (date_short in h and ("sum.html" in h.lower() or "eqb.html" in h.lower()))
+            ) and "index.html" not in h and "calendar.html" not in h),
         ]
         for selector, extra_filter in selectors_and_patterns:
             for a in parser.css(selector):
