@@ -105,7 +105,7 @@ async def test_hot_tips_tracker(tmp_path):
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[],
-        metadata={"is_goldmine": True, "1Gap2": 1.5},
+        metadata={"is_goldmine": True, "1Gap2": 1.5, "predicted_2nd_fav_odds": 4.5},
         top_five_numbers="1, 2, 3"
     )
 
