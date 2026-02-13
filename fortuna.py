@@ -140,7 +140,7 @@ INT_DISCOVERY_ADAPTERS: Final[set] = {
     "SportingLife", "SkySports"
 }
 
-USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults"}
+USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults"}
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
     "SportingLifeResults", "SkySportsResults"
@@ -843,10 +843,12 @@ class SmartFetcher:
             self.logger.error("no_fetch_engines_available", url=url)
             raise FetchError("No fetch engines available (install curl_cffi or scrapling)")
 
+        strategy = kwargs.get("strategy", self.strategy)
         engines = sorted(available_engines, key=lambda e: self._engine_health[e], reverse=True)
-        if self.strategy.primary_engine in engines:
-            engines.remove(self.strategy.primary_engine)
-            engines.insert(0, self.strategy.primary_engine)
+        if strategy.primary_engine in engines:
+            engines.remove(strategy.primary_engine)
+            engines.insert(0, strategy.primary_engine)
+        self.logger.debug("Fetch engines ordered", url=url, engines=[e.value for e in engines], primary=strategy.primary_engine.value)
         last_error: Optional[Exception] = None
         for engine in engines:
             try:
@@ -881,12 +883,14 @@ class SmartFetcher:
         # Define browser-specific arguments to strip for non-browser engines
         BROWSER_SPECIFIC_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "impersonate",
-            "stealth", "block_resources", "wait_for_selector", "stealth_mode"
+            "stealth", "block_resources", "wait_for_selector", "stealth_mode",
+            "strategy"
         ]
 
+        strategy = kwargs.get("strategy", self.strategy)
         if engine == BrowserEngine.HTTPX:
             # Pass strategy timeout if present in kwargs or use default
-            timeout = kwargs.get("timeout", self.strategy.timeout)
+            timeout = kwargs.get("timeout", strategy.timeout)
             client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
 
             # Remove timeout and browser-specific keys from kwargs
@@ -903,7 +907,7 @@ class SmartFetcher:
                 raise ImportError("curl_cffi is not available")
             
             self.logger.debug(f"Using curl_cffi for {url}")
-            timeout = kwargs.get("timeout", self.strategy.timeout)
+            timeout = kwargs.get("timeout", strategy.timeout)
 
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
@@ -935,7 +939,9 @@ class SmartFetcher:
         SCRAPLING_KWARGS = ["network_idle", "wait_selector", "wait_until", "stealth_mode", "block_resources", "timeout"]
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
         if "timeout" not in scrapling_kwargs:
-             scrapling_kwargs["timeout"] = kwargs.get("timeout", self.strategy.timeout)
+             timeout_val = kwargs.get("timeout", strategy.timeout)
+             # Scrapling/Playwright uses milliseconds for timeout
+             scrapling_kwargs["timeout"] = timeout_val * 1000
             
         # For other engines, we use AsyncFetcher from scrapling
         if engine == BrowserEngine.CAMOUFOX:
@@ -1250,6 +1256,8 @@ class BaseAdapterV3(ABC):
         # Apply global concurrency limit (Memory Directive Fix)
         async with GlobalResourceManager.get_global_semaphore():
             try:
+                # Use adapter-specific strategy
+                kwargs.setdefault("strategy", self.smart_fetcher.strategy)
                 resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
                 status = get_resp_status(resp)
                 self.logger.debug("Response received", method=method, url=full_url, status=status)

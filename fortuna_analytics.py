@@ -771,6 +771,15 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     IMPERSONATE = "chrome120"
     TIMEOUT     = 60
 
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # Equibase results often block curl_cffi; use Playwright
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+        )
+
     # -- link discovery (complex: multiple index URL patterns) -------------
 
     async def _discover_result_links(self, date_str: str) -> set:
@@ -813,17 +822,19 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         # Source 1 — inline JSON in <script> tags
         for url_match in re.findall(r'"URL":"([^"]+)"', html):
             normalised = url_match.replace("\\/", "/").replace("\\", "/")
-            if "sum.html" in normalised and date_short in normalised:
+            if date_short in normalised and (
+                "sum.html" in normalised or "EQB.html" in normalised or "RaceCardIndex" in normalised
+            ):
                 raw_links.add(normalised)
 
         # Source 2 — <a> tags matching known patterns
         selectors_and_patterns = [
             ('table.display a[href*="sum.html"]', None),
-            ('a[href*="/static/chart/summary/"]', lambda h: "index.html" not in h),
+            ('a[href*="/static/chart/summary/"]', lambda h: "index.html" not in h and "calendar.html" not in h),
             ("a", lambda h: (
-                re.search(r"[A-Z]{3}\d{6}sum\.html", h)
-                or (date_short in h and "sum.html" in h.lower())
-            ) and "index.html" not in h),
+                re.search(r"[A-Z]{3}\d{6}(?:sum|EQB)\.html", h)
+                or (date_short in h and ("sum.html" in h.lower() or "eqb.html" in h.lower()))
+            ) and "index.html" not in h and "calendar.html" not in h),
         ]
         for selector, extra_filter in selectors_and_patterns:
             for a in parser.css(selector):
