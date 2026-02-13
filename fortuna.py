@@ -149,6 +149,7 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
+COMMON_PLACEHOLDERS: Final[set] = {2.75, 1.8}
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -625,16 +626,32 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
     return None
 
 
+def is_placeholder_odds(value: Optional[Union[float, Decimal]]) -> bool:
+    """Detects if odds value is a known placeholder or default."""
+    if value is None:
+        return True
+    try:
+        val_float = round(float(value), 2)
+        return val_float in COMMON_PLACEHOLDERS
+    except (ValueError, TypeError):
+        return True
+
+
 def is_valid_odds(odds: Any) -> bool:
     if odds is None: return False
     try:
         odds_float = float(odds)
-        return MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS
+        if not (MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS):
+            return False
+        return not is_placeholder_odds(odds_float)
     except Exception: return False
 
 
 def create_odds_data(source_name: str, win_odds: Any, place_odds: Any = None) -> Optional[OddsData]:
-    if not is_valid_odds(win_odds): return None
+    if not is_valid_odds(win_odds):
+        if win_odds is not None and is_placeholder_odds(win_odds):
+            structlog.get_logger().warning("placeholder_odds_detected", source=source_name, odds=win_odds)
+        return None
     return OddsData(win=float(win_odds), place=float(place_odds) if is_valid_odds(place_odds) else None, source=source_name)
 
 
@@ -1280,6 +1297,9 @@ class BaseAdapterV3(ABC):
                 if not runner.scratched:
                     # Explicitly enrich win_odds using all available sources (including fallbacks)
                     best = _get_best_win_odds(runner)
+                    # Untrustworthy odds should be flagged (Memory Directive Fix)
+                    is_trustworthy = best is not None
+                    runner.metadata["odds_source_trustworthy"] = is_trustworthy
                     if best:
                         runner.win_odds = float(best)
         valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
@@ -3153,7 +3173,7 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
     """Gets the best win odds for a runner, filtering out invalid or placeholder values."""
     if not runner.odds:
         # Fallback to win_odds if available
-        if runner.win_odds and 0 < runner.win_odds < 999:
+        if runner.win_odds and is_valid_odds(runner.win_odds):
             return Decimal(str(runner.win_odds))
 
     valid_odds = []
@@ -3166,19 +3186,15 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
         else:
             win = source_data
 
-        if win is not None and 0 < win < 999:
+        if is_valid_odds(win):
             valid_odds.append(Decimal(str(win)))
 
     if valid_odds:
         return min(valid_odds)
 
     # Final fallback to win_odds if present
-    if runner.win_odds and 0 < runner.win_odds < 999:
+    if runner.win_odds and is_valid_odds(runner.win_odds):
         return Decimal(str(runner.win_odds))
-
-    # Absolute fallback to prevent empty results if requested (heuristics)
-    if DEFAULT_ODDS_FALLBACK > 0:
-        return Decimal(str(DEFAULT_ODDS_FALLBACK))
 
     return None
 
@@ -3413,7 +3429,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['predicted_2nd_fav_odds'] = float(sec)
             else:
                 # Fallback if insufficient odds data
-                race.metadata['predicted_2nd_fav_odds'] = DEFAULT_ODDS_FALLBACK
+                race.metadata['predicted_2nd_fav_odds'] = None
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -4963,6 +4979,10 @@ class HotTipsTracker:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
             # These are marked in metadata by the analyzer.
             if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
+                continue
+
+            # Ensure trustworthy odds exist before logging (Memory Directive Fix)
+            if r.metadata.get('predicted_2nd_fav_odds') is None:
                 continue
 
             st = r.start_time
