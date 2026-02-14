@@ -7,8 +7,8 @@ from datetime import datetime
 async def test_equibase_results_adapter_parsing():
     adapter = EquibaseResultsAdapter()
 
-    # Mock HTML response for index - MUST BE > 1000 chars to satisfy the check
-    index_html = '<html><table class="display"><tr><td><a href="AQU020826sum.html">Aqueduct</a></td></tr></table>' + (' ' * 1000) + '</html>'
+    # Mock HTML response for index - MUST BE > 2000 chars to satisfy the check
+    index_html = '<html><table class="display"><tr><td><a href="AQU020826sum.html">Aqueduct</a></td></tr></table>' + (' ' * 2100) + '</html>'
 
     # Mock HTML response for track page (minimal chart)
     track_html = """
@@ -44,11 +44,12 @@ async def test_equibase_results_adapter_parsing():
             return json.loads(self.text)
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. Index page fetch, 2. Track page fetch
+        # 1. Index page fetch (loop tries multiple impersonations/URLs)
+        # 2. Track page fetch
         mock_fetch.side_effect = [
             MockResponse(index_html, 200, "/static/chart/summary/index.html"),
             MockResponse(track_html, 200, "/static/chart/summary/AQU020826sum.html")
-        ]
+        ] + [MockResponse("Blocked", 403)] * 20
 
         races = await adapter.get_races("2026-02-08")
 
