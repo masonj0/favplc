@@ -21,8 +21,14 @@ The intended architecture is for the backend to create API endpoints (e.g., `/ap
 
 Our primary goal is to ensure a continuous stream of predictions by maintaining active fetchers across **3 or more continents**, including crucial contributions from North America, Europe, Australia/Asia, and **South Africa**.
 
+### Ultimate Targets
+- **High-Fidelity Integration**: The extreme ultimate targets for the engine are **TwinSpires**, **TVG**, and **FanDuel Racing**. These are the primary platforms for user betting, and ensuring perfect synchronization with their live odds is the project's highest ambition.
+
 ### Categories of Success
 - **Entries**: Mission-critical discovery data that generates predictions.
 - **Results**: Vital validation data that proves our performance and refines strategies.
+
+### Impossible Challenge
+- **Extra Credit**: Successfully fetching from `https://www.racingandsports.com.au/form-guide` to further solidify our Australian data stream.
 
 This dual approach ensures the "Faucet" never runs dry and the quality of predictions remains high.
