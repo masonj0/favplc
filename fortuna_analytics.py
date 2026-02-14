@@ -92,7 +92,8 @@ def parse_currency_value(value_str: str) -> float:
         return 0.0
     try:
         raw = str(value_str).strip()
-        if re.search(r"[^\d.,$£€\s]", raw):
+        # Allow standard currency symbols and codes (GBP, EUR, USD, ZAR)
+        if re.search(r"[^\d.,$£€\sA-Z]", raw):
             _currency_logger.debug("unexpected_currency_format", value=raw)
 
         if "," in raw and "." in raw:
@@ -454,16 +455,8 @@ class AuditorEngine:
 
 def parse_fractional_odds(text: str) -> float:
     """``'5/2'`` → 3.5, ``'2.5'`` → 2.5, anything else → 0.0."""
-    text = str(text).strip()
-    if not text:
-        return 0.0
-    try:
-        if "/" in text:
-            n, d = text.split("/", 1)
-            return (int(n) / int(d)) + 1.0
-        return float(text)
-    except (ValueError, ZeroDivisionError):
-        return 0.0
+    val = fortuna.parse_odds_to_decimal(text)
+    return float(val) if val is not None else 0.0
 
 
 def build_start_time(
@@ -780,17 +773,18 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT     = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # Equibase works well with curl_cffi + browserforge headers
+        # Equibase uses Instart Logic / Imperva; PLAYWRIGHT_LEGACY with network_idle is robust
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            enable_js=False,
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT_LEGACY,
+            enable_js=True,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
+            network_idle=True,
         )
 
     def _get_headers(self) -> dict:
         # Equibase is sensitive to header order/content; let SmartFetcher handle it via browserforge
-        return {}
+        return {"Referer": "https://www.equibase.com/"}
 
     # -- link discovery (complex: multiple index URL patterns) -------------
 
@@ -802,6 +796,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return set()
 
         index_urls = [
+            f"/static/chart/summary/index.html?SAP=TN",
             f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}",
             f"/static/chart/summary/{dt.strftime('%m%d%y')}sum.html",
             f"/static/chart/summary/{dt.strftime('%Y%m%d')}sum.html",
@@ -809,21 +804,60 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
 
         resp = None
         for url in index_urls:
-            try:
-                resp = await self.make_request(
-                    "GET", url, headers=self._get_headers(),
-                )
-                if resp and resp.text and len(resp.text) > 1000:
-                    break
-            except Exception:
-                continue
+            # Try multiple impersonations to bypass Imperva/Cloudflare
+            for imp in ["chrome120", "chrome110", "safari15_5"]:
+                try:
+                    resp = await self.make_request(
+                        "GET", url, headers=self._get_headers(), impersonate=imp
+                    )
+                    if (
+                        resp and resp.text
+                        and len(resp.text) > 1000
+                        and "Pardon Our Interruption" not in resp.text
+                    ):
+                        break
+                    else:
+                        resp = None
+                except Exception:
+                    continue
+            if resp:
+                break
 
         if not resp or not resp.text:
             self.logger.warning("No response from Equibase index", date=date_str)
             return set()
 
         self._save_debug_snapshot(resp.text, f"eqb_results_index_{date_str}")
-        return self._extract_track_links(resp.text, dt)
+        initial_links = self._extract_track_links(resp.text, dt)
+
+        # Resolve any RaceCardIndex links to actual sum.html files
+        resolved_links = set()
+        index_links = [ln for ln in initial_links if "RaceCardIndex" in ln]
+        sum_links = [ln for ln in initial_links if "RaceCardIndex" not in ln]
+
+        resolved_links.update(sum_links)
+
+        if index_links:
+            self.logger.info("Resolving track indices", count=len(index_links))
+            metadata = [{"url": ln, "race_number": 0} for ln in index_links]
+            index_pages = await self._fetch_race_pages_concurrent(
+                metadata, self._get_headers(),
+            )
+            for p in index_pages:
+                html = p.get("html")
+                if not html: continue
+                # Extract all sum.html links from this track index
+                date_short = dt.strftime("%m%d%y")
+                for m in re.findall(r'href="([^"]+)"', html):
+                    normalised = m.replace("\\/", "/").replace("\\", "/")
+                    if date_short in normalised and "sum.html" in normalised:
+                        resolved_links.add(self._normalise_eqb_link(normalised))
+                for m in re.findall(r'"URL":"([^"]+)"', html):
+                    normalised = m.replace("\\/", "/").replace("\\", "/")
+                    if date_short in normalised and "sum.html" in normalised:
+                        resolved_links.add(self._normalise_eqb_link(normalised))
+
+        return resolved_links
 
     def _extract_track_links(self, html: str, dt: datetime) -> set:
         """Pull track-summary URLs from the index page."""
@@ -1586,7 +1620,11 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             name  = horse.get("name") or item.get("name")
             if not name:
                 continue
-            sp_raw = item.get("starting_price") or item.get("sp", "")
+            sp_raw = (
+                item.get("starting_price")
+                or item.get("sp")
+                or item.get("betting", {}).get("current_odds", "")
+            )
             runners.append(ResultRunner(
                 name=name,
                 number=(
@@ -1834,9 +1872,6 @@ def generate_analytics_report(
     now_str = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M ET")
     lines: list[str] = [
         _REPORT_SEP,
-        "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(
-            _REPORT_WIDTH,
-        ),
         f"Generated: {now_str}".center(_REPORT_WIDTH),
         _REPORT_SEP,
         "",

@@ -93,19 +93,19 @@ def merge_databases(primary_db, secondary_dbs):
             cursor.execute("""
                 INSERT OR IGNORE INTO tips (
                     race_id, venue, race_number, discipline, start_time, report_date,
-                    is_goldmine, gap12, top_five, selection_number, predicted_2nd_fav_odds,
-                    audit_completed, verdict, net_profit, selection_position,
-                    actual_top_5, actual_2nd_fav_odds, trifecta_payout,
-                    trifecta_combination, superfecta_payout,
+                    is_goldmine, gap12, top_five, selection_number, selection_name,
+                    predicted_2nd_fav_odds, audit_completed, verdict, net_profit,
+                    selection_position, actual_top_5, actual_2nd_fav_odds,
+                    trifecta_payout, trifecta_combination, superfecta_payout,
                     superfecta_combination, top1_place_payout,
                     top2_place_payout, audit_timestamp
                 )
                 SELECT
                     race_id, venue, race_number, discipline, start_time, report_date,
-                    is_goldmine, gap12, top_five, selection_number, predicted_2nd_fav_odds,
-                    audit_completed, verdict, net_profit, selection_position,
-                    actual_top_5, actual_2nd_fav_odds, trifecta_payout,
-                    trifecta_combination, superfecta_payout,
+                    is_goldmine, gap12, top_five, selection_number, selection_name,
+                    predicted_2nd_fav_odds, audit_completed, verdict, net_profit,
+                    selection_position, actual_top_5, actual_2nd_fav_odds,
+                    trifecta_payout, trifecta_combination, superfecta_payout,
                     superfecta_combination, top1_place_payout,
                     top2_place_payout, audit_timestamp
                 FROM sec.tips
@@ -131,13 +131,14 @@ def merge_harvest_jsons(pattern, output_file):
                 for k, v in data.items():
                     if isinstance(v, dict):
                         if k not in merged:
-                            merged[k] = {"count": 0, "max_odds": 0.0}
+                            merged[k] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
                         elif not isinstance(merged[k], dict):
                             # Fallback if mixed types
-                            merged[k] = {"count": int(merged[k]), "max_odds": 0.0}
+                            merged[k] = {"count": int(merged[k]), "max_odds": 0.0, "trust_ratio": 0.0}
 
                         merged[k]["count"] += v.get("count", 0)
                         merged[k]["max_odds"] = max(merged[k].get("max_odds", 0.0), v.get("max_odds", 0.0))
+                        merged[k]["trust_ratio"] = max(merged[k].get("trust_ratio", 0.0), v.get("trust_ratio", 0.0))
                     else:
                         if k not in merged:
                             merged[k] = v
