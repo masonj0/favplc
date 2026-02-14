@@ -67,7 +67,7 @@ requests==2.31.0
 scrapling==0.3.14
 secretstorage==3.3.3
 selectolax==0.3.20
-six==1.16.0
+six==1.17.0
 slowapi==0.1.9
 sniffio==1.3.0
 soupsieve==2.5
