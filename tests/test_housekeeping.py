@@ -19,7 +19,7 @@ async def test_hot_tips_tracker_45min_limit(tmp_path):
         start_time=now + timedelta(minutes=10),
         source="Test",
         runners=[],
-        metadata={"is_best_bet": True, "1Gap2": 1.5}
+            metadata={"is_best_bet": True, "1Gap2": 1.5, "predicted_2nd_fav_odds": 4.5}
     )
 
     # 2. Race in 60 mins (should be rejected - current limit is 45)
@@ -30,7 +30,7 @@ async def test_hot_tips_tracker_45min_limit(tmp_path):
         start_time=now + timedelta(minutes=60),
         source="Test",
         runners=[],
-        metadata={"is_best_bet": True, "1Gap2": 2.0}
+            metadata={"is_best_bet": True, "1Gap2": 2.0, "predicted_2nd_fav_odds": 5.0}
     )
 
     await tracker.log_tips([race_ok, race_too_far])

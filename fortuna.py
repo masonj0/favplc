@@ -149,6 +149,7 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
+COMMON_PLACEHOLDERS: Final[set] = {2.75}
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -625,16 +626,32 @@ def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
     return None
 
 
+def is_placeholder_odds(value: Optional[Union[float, Decimal]]) -> bool:
+    """Detects if odds value is a known placeholder or default."""
+    if value is None:
+        return True
+    try:
+        val_float = round(float(value), 2)
+        return val_float in COMMON_PLACEHOLDERS
+    except (ValueError, TypeError):
+        return True
+
+
 def is_valid_odds(odds: Any) -> bool:
     if odds is None: return False
     try:
         odds_float = float(odds)
-        return MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS
+        if not (MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS):
+            return False
+        return not is_placeholder_odds(odds_float)
     except Exception: return False
 
 
 def create_odds_data(source_name: str, win_odds: Any, place_odds: Any = None) -> Optional[OddsData]:
-    if not is_valid_odds(win_odds): return None
+    if not is_valid_odds(win_odds):
+        if win_odds is not None and is_placeholder_odds(win_odds):
+            structlog.get_logger().warning("placeholder_odds_detected", source=source_name, odds=win_odds)
+        return None
     return OddsData(win=float(win_odds), place=float(place_odds) if is_valid_odds(place_odds) else None, source=source_name)
 
 
@@ -1280,6 +1297,9 @@ class BaseAdapterV3(ABC):
                 if not runner.scratched:
                     # Explicitly enrich win_odds using all available sources (including fallbacks)
                     best = _get_best_win_odds(runner)
+                    # Untrustworthy odds should be flagged (Memory Directive Fix)
+                    is_trustworthy = best is not None
+                    runner.metadata["odds_source_trustworthy"] = is_trustworthy
                     if best:
                         runner.win_odds = float(best)
         valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
@@ -1555,9 +1575,6 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False)
-
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
 
@@ -1619,26 +1636,18 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         now_site = datetime.now(site_tz)
 
         for track, race_infos in track_map.items():
-            # Sort by time if possible
-            sorted_races = sorted(race_infos, key=lambda x: x["time_str"] or "9999")
-
-            next_race = None
-            for r in sorted_races:
+            # Broaden window to capture multiple races (Memory Directive Fix)
+            for r in race_infos:
                 if r["time_str"]:
                     try:
                         rt = datetime.strptime(r["time_str"], "%H%M").replace(
                             year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        # Optimization: Skip if race is more than 5 mins in the past (Only for today's races)
-                        if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
+                        diff = (rt - now_site).total_seconds() / 60
+                        if not (-45 < diff <= 1080):
                             continue
-                        next_race = r
-                        break
+                        meta.append({"url": r["url"], "race_number": 1, "venue_raw": track})
                     except Exception: pass
-
-            # Only append if we found an upcoming race (Optimization: Skip finished meetings)
-            if next_race:
-                meta.append({"url": next_race["url"], "race_number": 1, "venue_raw": track})
 
         if not meta:
             for meeting in (parser.css(".meeting-summary") or parser.css(".p-meetings__item")):
@@ -1818,10 +1827,9 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
             modules = json.loads(html.unescape(items_raw))
             for module in modules:
                 for meeting in module.get("data", {}).get("items", []):
-                    # Only take the "next" race for each meeting (Memory Directive Fix)
+                    # Broaden window to capture multiple races (Memory Directive Fix)
                     races = [r for r in meeting.get("items", []) if r.get("type") == "racecard"]
 
-                    next_race = None
                     for race in races:
                         r_time_str = race.get("time") # Usually HH:MM
                         if r_time_str:
@@ -1829,19 +1837,15 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                                 rt = datetime.strptime(r_time_str, "%H:%M").replace(
                                     year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                                 )
-                                # Skip if in past (Today only)
-                                if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
+                                diff = (rt - now_site).total_seconds() / 60
+                                if not (-45 < diff <= 1080):
                                     continue
-                                next_race = race
-                                break
-                            except Exception: pass
 
-                    # No fallback to first race - skip if meeting is likely finished
-                    if next_race:
-                        r_num = next_race.get("raceNumber") or next_race.get("number") or 1
-                        if u := next_race.get("cta", {}).get("href"):
-                            if "/racecard/" in u:
-                                meta.append({"url": u, "race_number": r_num})
+                                r_num = race.get("raceNumber") or race.get("number") or 1
+                                if u := race.get("cta", {}).get("href"):
+                                    if "/racecard/" in u:
+                                        meta.append({"url": u, "race_number": r_num})
+                            except Exception: pass
         except Exception: pass
         return meta
 
@@ -2049,9 +2053,8 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
 
         if data:
             for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
-                # Only take the "next" race for each meeting (Memory Directive Fix)
+                # Broaden window to capture multiple races (Memory Directive Fix)
                 races = meeting.get("races", [])
-                next_race_info = None
                 for i, race in enumerate(races):
                     r_time_str = race.get("time") # Usually HH:MM
                     if r_time_str:
@@ -2059,17 +2062,13 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                             rt = datetime.strptime(r_time_str, "%H:%M").replace(
                                 year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            # Skip if in past (Today only)
-                            if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
+                            diff = (rt - now_site).total_seconds() / 60
+                            if not (-45 < diff <= 1080):
                                 continue
-                            next_race_info = (race, i + 1)
-                            break
-                        except Exception: pass
 
-                if next_race_info:
-                    race, r_num = next_race_info
-                    if url := race.get("racecard_url"):
-                        meta.append({"url": url, "race_number": r_num})
+                            if url := race.get("racecard_url"):
+                                meta.append({"url": url, "race_number": i + 1})
+                        except Exception: pass
         if not meta:
             meetings = parser.css('section[class^="MeetingSummary"]') or parser.css(".meeting-summary")
             for meeting in meetings:
@@ -2217,21 +2216,39 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             vr = clean_text(hn.text()) or ""
             if "ABD:" in vr: continue
 
-            for link in meeting.css('a[href*="/racecards/"]'):
-                if h := link.attributes.get("href"):
-                    txt = node_text(link)
-                    if re.match(r"\d{1,2}:\d{2}", txt):
-                        try:
-                            rt = datetime.strptime(txt, "%H:%M").replace(
-                                year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
-                            )
-                            # Skip if in past (Today only)
-                            if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
-                                continue
-                        except Exception: pass
-
-                    metadata.append({"url": h, "venue_raw": vr, "race_number": 1})
-                    break
+            # Updated Sky Sports event discovery logic
+            events = meeting.css(".sdc-site-racing-meetings__event") or meeting.css(".racing-meetings__event")
+            if events:
+                for i, event in enumerate(events):
+                    tn = event.css_first(".sdc-site-racing-meetings__event-time") or event.css_first(".racing-meetings__event-time")
+                    ln = event.css_first(".sdc-site-racing-meetings__event-link") or event.css_first(".racing-meetings__event-link")
+                    if tn and ln:
+                        txt, h = clean_text(tn.text()), ln.attributes.get("href")
+                        if h and re.match(r"\d{1,2}:\d{2}", txt):
+                            try:
+                                rt = datetime.strptime(txt, "%H:%M").replace(
+                                    year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
+                                )
+                                diff = (rt - now_site).total_seconds() / 60
+                                if not (-45 < diff <= 1080):
+                                    continue
+                                metadata.append({"url": h, "venue_raw": vr, "race_number": i + 1})
+                            except Exception: pass
+            else:
+                # Fallback to older anchor-based discovery
+                for i, link in enumerate(meeting.css('a[href*="/racecards/"]')):
+                    if h := link.attributes.get("href"):
+                        txt = node_text(link)
+                        if re.match(r"\d{1,2}:\d{2}", txt):
+                            try:
+                                rt = datetime.strptime(txt, "%H:%M").replace(
+                                    year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
+                                )
+                                diff = (rt - now_site).total_seconds() / 60
+                                if not (-45 < diff <= 1080):
+                                    continue
+                                metadata.append({"url": h, "venue_raw": vr, "race_number": i + 1})
+                            except Exception: pass
 
         if not metadata:
             self.logger.warning("No metadata found", context="SkySports Index Parsing", url=index_url)
@@ -2336,7 +2353,17 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         if not all([rid, rnum, dts]): return None
         try: st = datetime.fromisoformat(dts.replace("Z", "+00:00"))
         except Exception: return None
-        runners = [Runner(number=i + 1, name=f"Runner {i + 1}", scratched=False, odds={}) for i in range(nr)]
+        # Only return race if we have real runners (avoid placeholder generic runners)
+        runners = []
+        if runners_raw := rd.get("runners"):
+            for i, run_data in enumerate(runners_raw):
+                name = run_data.get("name") or f"Runner {i+1}"
+                num = run_data.get("number") or i + 1
+                runners.append(Runner(number=num, name=name))
+
+        if not runners:
+            return None
+
         return Race(discipline="Thoroughbred", id=f"rpb2b_{rid.replace('-', '')[:16]}", venue=normalize_venue_name(vn), race_number=rnum, start_time=st, runners=runners, source=self.source_name, metadata={"original_race_id": rid, "country_code": cc, "num_runners": nr})
 
 
@@ -2352,8 +2379,8 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         self._semaphore = asyncio.Semaphore(3)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        engine = BrowserEngine.PLAYWRIGHT if ASYNC_SESSIONS_AVAILABLE else BrowserEngine.HTTPX
-        return FetchStrategy(primary_engine=engine, enable_js=(engine != BrowserEngine.HTTPX), stealth_mode="fast", timeout=45)
+        # Use CURL_CFFI for robust HTTPS and connection handling
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
@@ -2489,8 +2516,8 @@ class TabAdapter(BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, rate_limit=2.0)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        engine = BrowserEngine.PLAYWRIGHT if ASYNC_SESSIONS_AVAILABLE else BrowserEngine.HTTPX
-        return FetchStrategy(primary_engine=engine, enable_js=(engine != BrowserEngine.HTTPX), stealth_mode="fast", timeout=45)
+        # Switch to CURL_CFFI for TAB API to avoid DNS and TLS issues common in cloud environments
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         url = f"{self.base_url}/dates/{date}/meetings"
@@ -2647,18 +2674,22 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Equibase uses Instart Logic / Imperva; try CURL_CFFI first as it's often more successful if Playwright is detected as headless
+        # Equibase uses Instart Logic / Imperva; Playwright with network_idle and high timeout is robust
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=60
+            timeout=120,
+            network_idle=True
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # For Equibase, sometimes a simple curl_cffi with chrome120 works better if Playwright is detected
-        # but let's try to be consistent with headers
-        kwargs.setdefault("headers", self._get_browser_headers(host="www.equibase.com", referer="https://www.equibase.com/"))
+        # Force chrome120 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
+        kwargs.setdefault("impersonate", "chrome120")
+        # Let SmartFetcher/curl_cffi handle headers mostly, but provide minimal essentials if not already set
+        h = kwargs.get("headers", {})
+        if "Referer" not in h: h["Referer"] = "https://www.equibase.com/"
+        kwargs["headers"] = h
         return await super().make_request(method, url, **kwargs)
 
     def _get_headers(self) -> Dict[str, str]:
@@ -2678,17 +2709,20 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         resp = None
         for url in index_urls:
-            try:
-                # dt = datetime.strptime(date, "%Y-%m-%d")
-                resp = await self.make_request("GET", url, headers=self._get_headers(), impersonate="chrome120")
-                if resp and resp.status == 200 and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
-                    self.logger.info("Found Equibase index", url=url)
-                    break
-                else:
-                    self.logger.debug("Equibase index candidate failed", url=url, status=getattr(resp, 'status', 'N/A'))
-            except Exception as e:
-                self.logger.debug("Equibase request exception", url=url, error=str(e))
-                continue
+            # Try multiple impersonations to bypass block (Memory Directive Fix)
+            for imp in ["chrome120", "chrome110", "safari15_5"]:
+                try:
+                    resp = await self.make_request("GET", url, impersonate=imp)
+                    if resp and resp.status == 200 and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
+                        self.logger.info("Found Equibase index", url=url, impersonate=imp)
+                        break
+                    else:
+                        self.logger.debug("Equibase candidate blocked or invalid", url=url, impersonate=imp)
+                        resp = None
+                except Exception as e:
+                    self.logger.debug("Equibase request exception", url=url, impersonate=imp, error=str(e))
+                    resp = None
+            if resp: break
 
         if not resp or not resp.text or resp.status != 200:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=getattr(resp, 'url', 'Unknown'))
@@ -2703,17 +2737,23 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         for url in script_json_matches:
             # Normalizing backslashes and escaped slashes in found URLs
             url_norm = url.replace("\\/", "/").replace("\\", "/")
-            if "/static/entry/" in url_norm and date_str in url_norm:
+            if "/static/entry/" in url_norm:
                 links.append(url_norm)
 
         for a in parser.css("a"):
             h = a.attributes.get("href") or ""
             c = a.attributes.get("class") or ""
+            txt = node_text(a).lower()
             # Normalize backslashes (Project fix for Equibase path separators)
             h_norm = h.replace("\\", "/")
-            if "/static/entry/" in h_norm and date_str in h_norm:
+            if "/static/entry/" in h_norm and (date_str in h_norm or "RaceCardIndex" in h_norm):
+                self.logger.debug("Equibase link matched", href=h_norm)
                 links.append(h_norm)
             elif "entry-race-level" in c:
+                links.append(h_norm)
+            elif "race-link" in c or "track-link" in c:
+                links.append(h_norm)
+            elif "entries" in txt and "/static/entry/" in h_norm:
                 links.append(h_norm)
 
         if not links:
@@ -2873,18 +2913,22 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Try CURL_CFFI for TwinSpires as well, sometimes it's less aggressive than Playwright detection
+        # TwinSpires is heavily JS-dependent; Playwright is essential
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=60
+            timeout=90,
+            network_idle=True
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome120 for TwinSpires to bypass basic bot checks
         kwargs.setdefault("impersonate", "chrome120")
-        kwargs.setdefault("headers", {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"})
+        # Provide common browser-like headers for TwinSpires
+        h = kwargs.get("headers", {})
+        if "Referer" not in h: h["Referer"] = "https://www.google.com/"
+        kwargs["headers"] = h
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -5514,12 +5558,12 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Oddschecker is heavily protected by Cloudflare; try Playwright with high wait time
+        # Oddschecker is heavily protected by Cloudflare; Playwright with high timeout and network idle
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=90,
+            timeout=120,
             network_idle=True
         )
 
@@ -5574,22 +5618,19 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         track_map[track].append({"url": full_url, "time_txt": txt})
 
         for track, races in track_map.items():
-            next_race = None
             for r in races:
                 if re.match(r"\d{1,2}:\d{2}", r["time_txt"]):
                     try:
                         rt = datetime.strptime(r["time_txt"], "%H:%M").replace(
                             year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        # Skip if in past (Today only)
-                        if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
+                        # Broaden window to capture multiple races (Memory Directive Fix)
+                        diff = (rt - now_site).total_seconds() / 60
+                        if not (-45 < diff <= 1080):
                             continue
-                        next_race = r
-                        break
-                    except Exception: pass
 
-            if next_race:
-                metadata.append(next_race["url"])
+                        metadata.append(r["url"])
+                    except Exception: pass
 
         if not metadata:
             self.logger.warning("No metadata found", context="Oddschecker Index Parsing", url=index_url)
@@ -5724,12 +5765,13 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         self._semaphore = asyncio.Semaphore(5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Timeform often blocks basic requests; try Playwright
+        # Timeform often blocks basic requests; Playwright is robust
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=60
+            timeout=90,
+            network_idle=True
         )
 
     def _get_headers(self) -> dict:
@@ -5763,35 +5805,42 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         now_site = datetime.now(site_tz)
 
         track_map = defaultdict(list)
-        for selector in ["a[href*='/racecards/'][href*='/20']", ".rf__link", "a.rf-meeting-race__time"]:
+        # Broaden selectors for Timeform race links
+        for selector in ["a[href*='/racecards/']", ".rf__link", "a.rf-meeting-race__time", ".rp-meetingItem__race__time"]:
             for a in parser.css(selector):
                 href = a.attributes.get("href")
-                if href and not href.endswith("/racecards"):
-                    # URL: /horse-racing/racecards/venue/date/time/...
+                if href and "/racecards/" in href and not href.endswith("/racecards"):
+                    # URL usually: /horse-racing/racecards/venue/date/time/...
+                    # or: /racecards/venue/date/time
                     parts = href.split("/")
-                    if len(parts) >= 6:
-                        track = parts[3]
-                        txt = node_text(a)
-                        track_map[track].append({"url": href, "time_txt": txt})
+                    # Handle both relative and absolute-ish paths
+                    track = "unknown"
+                    for i, p in enumerate(parts):
+                        if p == "racecards" and i + 1 < len(parts):
+                            track = parts[i+1]
+                            break
+
+                    txt = node_text(a)
+                    track_map[track].append({"url": href, "time_txt": txt})
 
         links = []
         for track, races in track_map.items():
-            next_race = None
             for r in races:
-                if re.match(r"\d{1,2}:\d{2}", r["time_txt"]):
+                # Timeform often uses HH:MM in text
+                time_match = re.search(r"(\d{1,2}:\d{2})", r["time_txt"])
+                if time_match:
                     try:
-                        rt = datetime.strptime(r["time_txt"], "%H:%M").replace(
+                        rt = datetime.strptime(time_match.group(1), "%H:%M").replace(
                             year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        # Skip if in past (Today only)
-                        if target_date == now_site.date() and rt < now_site - timedelta(minutes=5):
+                        # Broaden window to capture multiple races (Memory Directive Fix)
+                        diff = (rt - now_site).total_seconds() / 60
+                        if not (-45 < diff <= 1080):
                             continue
-                        next_race = r
-                        break
-                    except Exception: pass
 
-            if next_race:
-                links.append(next_race["url"])
+                        full_url = r["url"] if r["url"].startswith("http") else f"{self.BASE_URL}{r['url']}"
+                        links.append(full_url)
+                    except Exception: pass
 
         if not links:
             self.logger.warning("No metadata found", context="Timeform Index Parsing", url=index_url)
@@ -5965,13 +6014,14 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # RacingPost has strong anti-bot measures. Playwright is most reliable.
+        # RacingPost has strong anti-bot measures. Playwright with stealth is usually the best bet.
         return FetchStrategy(
             primary_engine=BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
-            timeout=60,
+            timeout=90,
             block_resources=False,
+            network_idle=True
         )
 
     def _get_headers(self) -> dict:
@@ -5982,10 +6032,21 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         Fetches the raw HTML content for all races on a given date, including international.
         """
         index_url = f"/racecards/{date}"
-        intl_url = f"/racecards/international/{date}"
+        # RacingPost international URL sometimes varies
+        intl_urls = [
+            f"/racecards/international/{date}",
+            f"/racecards/{date}/international",
+            "/racecards/international"
+        ]
 
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
-        intl_response = await self.make_request("GET", intl_url, headers=self._get_headers())
+
+        intl_response = None
+        for url in intl_urls:
+            resp = await self.make_request("GET", url, headers=self._get_headers())
+            if resp and resp.status == 200:
+                intl_response = resp
+                break
 
         race_card_urls = []
         try:
@@ -6000,22 +6061,33 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self._save_debug_html(index_response.text, f"racingpost_index_{date}")
             index_parser = HTMLParser(index_response.text)
 
-            # Group by meeting to pick "next" race (Memory Directive Fix)
-            meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('.RC-meetingItem') or index_parser.css('.rp-meetingItem')
+            # Broaden window to capture multiple races (Memory Directive Fix)
+            meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('.RC-meetingItem') or index_parser.css('.rp-meetingItem') or index_parser.css('.RC-courseCards')
             for meeting in meetings:
-                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time, a.RC-meetingItem__race__time'):
-                    txt = node_text(link)
-                    if re.match(r"\d{1,2}:\d{2}", txt):
+                # Broaden a tag selectors to catch new Racing Post structures
+                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time, a.RC-meetingItem__race__time, a.RC-meetingItem__link, a[href*="/racecards/"]'):
+                    href = link.attributes.get("href", "")
+                    if not href or "/results/" in href:
+                        continue
+
+                    txt = clean_text(node_text(link))
+                    time_match = re.search(r"(\d{1,2}:\d{2})", txt)
+                    if time_match:
                         try:
-                            rt = datetime.strptime(txt, "%H:%M").replace(
+                            time_str = time_match.group(1)
+                            tm = datetime.strptime(time_str, "%H:%M")
+                            if tm.hour < 9:
+                                tm = tm.replace(hour=tm.hour + 12)
+
+                            rt = tm.replace(
                                 year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            if rt < now_site - timedelta(minutes=5):
+                            diff = (rt - now_site).total_seconds() / 60
+                            if not (-45 < diff <= 1080):
                                 continue
                         except Exception: pass
 
-                    race_card_urls.append(link.attributes["href"])
-                    break
+                    race_card_urls.append(href)
 
         elif index_response:
             self.logger.warning("Unexpected status", status=index_response.status, url=index_url)
@@ -6024,23 +6096,49 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self._save_debug_html(intl_response.text, f"racingpost_intl_index_{date}")
             intl_parser = HTMLParser(intl_response.text)
 
-            meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('.RC-meetingItem') or intl_parser.css('.rp-meetingItem')
+            meetings = intl_parser.css('.rp-raceCourse__panel') or intl_parser.css('.RC-meetingItem') or intl_parser.css('.rp-meetingItem') or intl_parser.css('.RC-courseCards')
             for meeting in meetings:
-                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time, a.RC-meetingItem__race__time'):
-                    txt = node_text(link)
-                    if re.match(r"\d{1,2}:\d{2}", txt):
+                for link in meeting.css('a[data-test-selector^="RC-meetingItem__link_race"], a.rp-raceCourse__panel__race__time, a.rp-meetingItem__race__time, a.RC-meetingItem__race__time, a.RC-meetingItem__link, a[href*="/racecards/"]'):
+                    href = link.attributes.get("href", "")
+                    if not href or "/results/" in href:
+                        continue
+
+                    txt = clean_text(node_text(link))
+                    time_match = re.search(r"(\d{1,2}:\d{2})", txt)
+                    if time_match:
                         try:
-                            rt = datetime.strptime(txt, "%H:%M").replace(
+                            time_str = time_match.group(1)
+                            tm = datetime.strptime(time_str, "%H:%M")
+                            if tm.hour < 9:
+                                tm = tm.replace(hour=tm.hour + 12)
+
+                            rt = tm.replace(
                                 year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                             )
-                            if rt < now_site - timedelta(minutes=5):
+                            diff = (rt - now_site).total_seconds() / 60
+                            if not (-45 < diff <= 1080):
                                 continue
                         except Exception: pass
 
-                    race_card_urls.append(link.attributes["href"])
-                    break
+                    race_card_urls.append(href)
         elif intl_response:
             self.logger.warning("Unexpected status", status=intl_response.status, url=intl_url)
+
+        if not race_card_urls:
+            self.logger.warning("Standard RacingPost link discovery failed, trying aggressive fallback", date=date)
+            if index_response and index_response.text:
+                index_parser = HTMLParser(index_response.text)
+                for a in index_parser.css('a[href*="/racecards/"]'):
+                    href = a.attributes.get("href", "")
+                    if re.search(r"/\d+/.*/\d{4}-\d{2}-\d{2}/\d+", href):
+                        race_card_urls.append(href)
+
+            if intl_response and intl_response.text:
+                intl_parser = HTMLParser(intl_response.text)
+                for a in intl_parser.css('a[href*="/racecards/"]'):
+                    href = a.attributes.get("href", "")
+                    if re.search(r"/\d+/.*/\d{4}-\d{2}-\d{2}/\d+", href):
+                        race_card_urls.append(href)
 
         if not race_card_urls:
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)

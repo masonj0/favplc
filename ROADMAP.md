@@ -16,3 +16,13 @@ The Auditor is designed to have its data displayed on the frontend. The `Auditor
 The intended architecture is for the backend to create API endpoints (e.g., `/api/auditor/metrics`, `/api/auditor/activity`) that expose these functions. The frontend would then call these endpoints to fetch and display the data.
 
 **Note:** As of the last update, the web scraping component of the Auditor is non-functional. The description above outlines the intended design and capabilities, which are not yet fully operational.
+
+## Mission Critical: 24/7 Global Fetching
+
+Our primary goal is to ensure a continuous stream of predictions by maintaining active fetchers across **3 or more continents**, including crucial contributions from North America, Europe, Australia/Asia, and **South Africa**.
+
+### Categories of Success
+- **Entries**: Mission-critical discovery data that generates predictions.
+- **Results**: Vital validation data that proves our performance and refines strategies.
+
+This dual approach ensures the "Faucet" never runs dry and the quality of predictions remains high.
