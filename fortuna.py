@@ -2674,9 +2674,9 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Equibase uses Instart Logic / Imperva; Playwright with network_idle and high timeout is robust
+        # Equibase uses Instart Logic / Imperva; PLAYWRIGHT_LEGACY with network_idle is robust
         return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
+            primary_engine=BrowserEngine.PLAYWRIGHT_LEGACY,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=120,
@@ -2717,7 +2717,9 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                         self.logger.info("Found Equibase index", url=url, impersonate=imp)
                         break
                     else:
-                        self.logger.debug("Equibase candidate blocked or invalid", url=url, impersonate=imp)
+                        text_len = len(resp.text) if resp and resp.text else 0
+                        has_pardon = "Pardon Our Interruption" in resp.text if resp and resp.text else False
+                        self.logger.debug("Equibase candidate blocked or invalid", url=url, impersonate=imp, len=text_len, has_pardon=has_pardon)
                         resp = None
                 except Exception as e:
                     self.logger.debug("Equibase request exception", url=url, impersonate=imp, error=str(e))

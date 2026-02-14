@@ -773,9 +773,9 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT     = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # Equibase uses Instart Logic / Imperva; Playwright with network_idle and high timeout is robust
+        # Equibase uses Instart Logic / Imperva; PLAYWRIGHT_LEGACY with network_idle is robust
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT_LEGACY,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
@@ -812,7 +812,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
                     )
                     if (
                         resp and resp.text
-                        and len(resp.text) > 2000
+                        and len(resp.text) > 1000
                         and "Pardon Our Interruption" not in resp.text
                     ):
                         break
@@ -828,7 +828,36 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return set()
 
         self._save_debug_snapshot(resp.text, f"eqb_results_index_{date_str}")
-        return self._extract_track_links(resp.text, dt)
+        initial_links = self._extract_track_links(resp.text, dt)
+
+        # Resolve any RaceCardIndex links to actual sum.html files
+        resolved_links = set()
+        index_links = [ln for ln in initial_links if "RaceCardIndex" in ln]
+        sum_links = [ln for ln in initial_links if "RaceCardIndex" not in ln]
+
+        resolved_links.update(sum_links)
+
+        if index_links:
+            self.logger.info("Resolving track indices", count=len(index_links))
+            metadata = [{"url": ln, "race_number": 0} for ln in index_links]
+            index_pages = await self._fetch_race_pages_concurrent(
+                metadata, self._get_headers(),
+            )
+            for p in index_pages:
+                html = p.get("html")
+                if not html: continue
+                # Extract all sum.html links from this track index
+                date_short = dt.strftime("%m%d%y")
+                for m in re.findall(r'href="([^"]+)"', html):
+                    normalised = m.replace("\\/", "/").replace("\\", "/")
+                    if date_short in normalised and "sum.html" in normalised:
+                        resolved_links.add(self._normalise_eqb_link(normalised))
+                for m in re.findall(r'"URL":"([^"]+)"', html):
+                    normalised = m.replace("\\/", "/").replace("\\", "/")
+                    if date_short in normalised and "sum.html" in normalised:
+                        resolved_links.add(self._normalise_eqb_link(normalised))
+
+        return resolved_links
 
     def _extract_track_links(self, html: str, dt: datetime) -> set:
         """Pull track-summary URLs from the index page."""
