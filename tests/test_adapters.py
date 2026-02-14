@@ -45,9 +45,9 @@ async def test_at_the_races_adapter_parsing():
     # Use a date/time that passes the window check (-45m to +18h)
     from zoneinfo import ZoneInfo
     now_site = datetime.now(ZoneInfo("Europe/London"))
-    target_date_str = now_site.strftime("%Y-%m-%d")
     # Set time to 2 hours from now to be safe
     future_time = (now_site + timedelta(hours=2))
+    target_date_str = future_time.strftime("%Y-%m-%d")
     time_str = future_time.strftime("%H%M")
     index_html = f'<html><a href="/racecard/newmarket/{time_str}">Newmarket</a></html>'
 
