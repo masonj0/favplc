@@ -852,6 +852,7 @@ class SmartFetcher:
             BrowserEngine.CAMOUFOX: 0.9,
             BrowserEngine.CURL_CFFI: 0.8,
             BrowserEngine.PLAYWRIGHT: 0.7,
+            BrowserEngine.PLAYWRIGHT_LEGACY: 0.6,
             BrowserEngine.HTTPX: 0.5
         }
         self.last_engine: str = "unknown"
@@ -1000,6 +1001,38 @@ class SmartFetcher:
             async with AsyncStealthySession(headless=True) as s:
                 resp = await s.fetch(url, method=method, **scrapling_kwargs)
             return resp
+
+        elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
+            # Direct Playwright usage for cases where scrapling/camoufox fail
+            from playwright.async_api import async_playwright
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                # Apply impersonation via context
+                ua = kwargs.get("headers", {}).get("User-Agent", CHROME_USER_AGENT)
+                context = await browser.new_context(user_agent=ua)
+                page = await context.new_page()
+
+                timeout = kwargs.get("timeout", strategy.timeout) * 1000
+                wait_until = "networkidle" if strategy.network_idle else "domcontentloaded"
+
+                # Apply headers
+                if "headers" in kwargs:
+                    await context.set_extra_http_headers(kwargs["headers"])
+
+                resp_obj = await page.goto(url, wait_until=wait_until, timeout=timeout)
+                content = await page.content()
+                status = resp_obj.status if resp_obj else 0
+
+                await browser.close()
+
+                class LegacyResponse:
+                    def __init__(self, text, status_code, url):
+                        self.text = text
+                        self.status = status_code
+                        self.status_code = status_code
+                        self.url = url
+
+                return LegacyResponse(content, status, url)
         elif engine == BrowserEngine.PLAYWRIGHT:
             async with AsyncDynamicSession(headless=True) as s:
                 resp = await s.fetch(url, method=method, **scrapling_kwargs)
@@ -1194,7 +1227,13 @@ class RacePageFetcherMixin:
                         if hasattr(self, 'logger'):
                             self.logger.debug("fetching_race_page", url=url)
                         # make_request handles global_sem internally
-                        resp = await self.make_request("GET", url, headers=headers)
+                        resp = None
+                        for attempt in range(2): # 1 retry
+                            resp = await self.make_request("GET", url, headers=headers)
+                            if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 500:
+                                break
+                            await asyncio.sleep(1 * (attempt + 1))
+
                         if resp and hasattr(resp, "text") and resp.text:
                             if hasattr(self, 'logger'):
                                 self.logger.debug("fetched_race_page", url=url, status=getattr(resp, 'status', 'unknown'))
@@ -1221,6 +1260,7 @@ class BaseAdapterV3(ABC):
         self.config = config or {}
         # Merge kwargs into config
         self.config.update(kwargs)
+        self.trust_ratio = 0.0 # Tracking odds quality ratio (0.0 to 1.0)
 
         # Override rate_limit from config if present
         actual_rate_limit = float(self.config.get("rate_limit", rate_limit))
@@ -1272,6 +1312,9 @@ class BaseAdapterV3(ABC):
 
     def _validate_and_parse_races(self, raw_data: Any) -> List[Race]:
         races = self._parse_races(raw_data)
+        total_runners = 0
+        trustworthy_runners = 0
+
         for r in races:
             # Global heuristic for runner numbers (addressing "impossible" high numbers)
             active_runners = [run for run in r.runners if not run.scratched]
@@ -1302,6 +1345,13 @@ class BaseAdapterV3(ABC):
                     runner.metadata["odds_source_trustworthy"] = is_trustworthy
                     if best:
                         runner.win_odds = float(best)
+                        trustworthy_runners += 1
+                    total_runners += 1
+
+        if total_runners > 0:
+            self.trust_ratio = round(trustworthy_runners / total_runners, 2)
+            self.logger.info("adapter_odds_quality", ratio=self.trust_ratio, source=self.source_name)
+
         valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
         return valid
 
@@ -3387,6 +3437,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         qualified = []
         now = datetime.now(EASTERN)
 
+        PLACEHOLDER_THRESHOLD = 0.5 # Playbook Recommendation
+
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
             st = race.start_time
@@ -3403,6 +3455,15 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             is_goldmine = False
             is_best_bet = False
             active_runners = [r for r in race.runners if not r.scratched]
+            total_active = len(active_runners)
+
+            # Trustworthiness Airlock (Success Playbook Item)
+            if total_active > 0:
+                trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
+                if trustworthy_count / total_active < (1 - PLACEHOLDER_THRESHOLD):
+                    self.logger.warning("Race lacks trustworthy odds profile; skipping qualification", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
+                    continue
+
             gap12 = 0.0
             all_odds = []
 
@@ -5005,6 +5066,15 @@ class HotTipsTracker:
             if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
                 continue
 
+            # Trustworthiness Airlock Safeguard (Success Playbook Item)
+            active_runners = [run for run in r.runners if not run.scratched]
+            total_active = len(active_runners)
+            if total_active > 0:
+                trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
+                if trustworthy_count / total_active < 0.5:
+                    self.logger.warning("Rejecting race with poor odds profile for DB logging", venue=r.venue, race=r.race_number)
+                    continue
+
             # Ensure trustworthy odds exist before logging (Memory Directive Fix)
             if r.metadata.get('predicted_2nd_fav_odds') is None:
                 continue
@@ -6465,7 +6535,7 @@ async def run_discovery(
             visible_adapters = list(target_set)
 
         for adapter_name in visible_adapters:
-            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
+            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
 
         if loaded_races is not None:
             logger.info("Using loaded races", count=len(loaded_races))
@@ -6533,6 +6603,14 @@ async def run_discovery(
                     harvest_summary[adapter_name]["count"] += len(r_list)
                     if m_odds > harvest_summary[adapter_name]["max_odds"]:
                         harvest_summary[adapter_name]["max_odds"] = m_odds
+
+                    # Find the adapter instance to extract its trust_ratio
+                    matching_adapter = next((a for a in adapters if a.source_name == adapter_name), None)
+                    if matching_adapter:
+                        harvest_summary[adapter_name]["trust_ratio"] = max(
+                            harvest_summary[adapter_name].get("trust_ratio", 0.0),
+                            getattr(matching_adapter, "trust_ratio", 0.0)
+                        )
 
                 logger.info("Fetched total races", count=len(all_races_raw))
             finally:

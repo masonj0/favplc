@@ -29,7 +29,9 @@ TOP5_MAX_DISPLAY   = 15
 
 VENUE_FLAGS: list[tuple[list[str], str]] = [
     (['kentucky', 'churchill', 'oaklawn', 'tampa', 'gulfstream',
-      'santa', 'golden', 'belmont'], '🇺🇸'),
+      'santa', 'golden', 'belmont', 'aqueduct', 'parx', 'turfway',
+      'delta', 'fair grounds', 'laurel', 'santa anita', 'sam houston',
+      'charles town', 'penn national', 'sunland', 'mahoning', 'turf paradise'], '🇺🇸'),
     (['ascot', 'cheltenham', 'newmarket', 'york', 'aintree', 'doncaster'], '🇬🇧'),
     (['longchamp', 'chantilly', 'deauville'], '🇫🇷'),
     (['flemington', 'randwick', 'moonee', 'caulfield'], '🇦🇺'),
@@ -243,6 +245,7 @@ def _merge_harvest_files(paths: list[str]) -> dict[str, dict]:
                 existing = merged[adapter]
                 existing['count']    = max(existing.get('count', 0),    incoming.get('count', 0))
                 existing['max_odds'] = max(existing.get('max_odds', 0), incoming.get('max_odds', 0.0))
+                existing['trust_ratio'] = max(existing.get('trust_ratio', 0.0), incoming.get('trust_ratio', 0.0))
     return merged
 
 
@@ -251,7 +254,9 @@ def _merge_harvest_files(paths: list[str]) -> dict[str, dict]:
 def build_harvest_table(summary: dict[str, dict], title: str) -> list[str]:
     header = [
         f'#### {title}',
-        '',
+        "<details>",
+        f"<summary><b>View {title}</b> (click to expand)</summary>",
+        "",
         '| Adapter | 🏇 Races | 💰 Max Odds | 📊 Quality | ✅ Status |',
         '| :--- | ---: | ---: | ---: | :---: |',
     ]
@@ -271,20 +276,23 @@ def build_harvest_table(summary: dict[str, dict], title: str) -> list[str]:
     for adapter, data in sorted_adapters:
         count    = data.get('count', 0)
         max_odds = data.get('max_odds', 0.0)
+        trust    = data.get('trust_ratio', 0.0)
         total_races += count
         total_max_odds = max(total_max_odds, max_odds)
 
         if count == 0:
             quality, status = '—', '⚠️ No Data'
-        elif count < 5:
-            quality, status = '⚠️ Low', '🟡 Partial'
-        elif max_odds < 10:
-            quality, status = '🟢 Good', '✅ Active'
+        elif trust < 0.3:
+            quality, status = '❌ Poor', '🔴 Garbage'
+        elif trust < 0.7:
+            quality, status = '⚠️ Fair', '🟡 Mixed'
+        elif max_odds < 5 and trust > 0.9:
+             quality, status = '🟢 Clean', '✅ Active'
         else:
-            quality, status = '🔥 Excel', '✅ Active'
+            quality, status = '🔥 High', '✅ Active'
 
         rows.append(
-            f'| **{adapter}** | {count} | {max_odds:.1f} | {quality} | {status} |'
+            f'| **{adapter}** | {count} | {max_odds:.1f} | {quality} ({int(trust*100)}%) | {status} |'
         )
 
     if total_races > 0:
@@ -293,31 +301,53 @@ def build_harvest_table(summary: dict[str, dict], title: str) -> list[str]:
             f'| **TOTAL** | **{total_races}** | **{total_max_odds:.1f}** | — | — |'
         )
 
+    rows.append("</details>")
     return header + rows + ['']
 
 
-def build_predictions_section() -> list[str]:
+def build_predictions_section(region_filter: str | None = None) -> list[str]:
+    title = "🔮 Top Goldmine Predictions"
+    if region_filter == "USA":
+        title = "🇺🇸 USA Goldmine Predictions"
+    elif region_filter == "INT":
+        title = "🌐 International Goldmine Predictions"
+
     lines = [
-        '### 🔮 Top Goldmine Predictions',
-        '',
-        '*Sorted by time to post — imminent races first!*',
-        '',
-        '| ⏰ MTP | 🏇 Venue | R# | 🎯 Selection | 💰 Odds | 📊 Gap | ⭐ Type | 🔝 Top 5 |',
-        '| :---: | :--- | :---: | :--- | ---: | ---: | :---: | :--- |',
+        f"### {title}",
+        "<details>",
+        f"<summary><b>View {title}</b> (click to expand)</summary>",
+        "",
+        "*Sorted by time to post — imminent races first!*",
+        "",
+        "| ⏰ MTP | 🏇 Venue | R# | 🎯 Selection | 💰 Odds | 📊 Gap | ⭐ Type | 🔝 Top 5 |",
+        "| :---: | :--- | :---: | :--- | ---: | ---: | :---: | :--- |",
     ]
 
     data = _read_json('race_data.json')
     if data is None:
         lines.append('| | | | *Awaiting discovery predictions* | | | | |')
+        lines.append("</details>")
         return lines
 
     races = data.get('bet_now_races', []) + data.get('you_might_like_races', [])
-    if not races:
-        lines.append('| | | | *No goldmine predictions available* | | | | |')
+
+    # Filter by region if requested
+    filtered_races = []
+    for r in races:
+        emoji = get_venue_emoji(r.get('track'), r.get('discipline'))
+        if region_filter == "USA" and emoji != "🇺🇸":
+            continue
+        if region_filter == "INT" and emoji == "🇺🇸":
+            continue
+        filtered_races.append(r)
+
+    if not filtered_races:
+        lines.append('| | | | *No predictions available for this region* | | | | |')
+        lines.append("</details>")
         return lines
 
     races_sorted = sorted(
-        races,
+        filtered_races,
         key=lambda r: parse_time_to_minutes(r.get('start_time', '')),
     )
 
@@ -351,14 +381,16 @@ def build_predictions_section() -> list[str]:
             f'| {selection} | {odds_str} | {gap_str} | {type_str} | `{top5}` |'
         )
 
+    lines.append("</details>")
     return lines
 
 
 def build_audit_section(stats: TipStats) -> list[str]:
-    lines = ['', '### 💰 Verified Performance Results', '']
+    lines = ['', '### 💰 Verified Performance Results', '', '<details>', '<summary><b>View Verified Results</b> (click to expand)</summary>', '']
 
     if stats.total_tips == 0:
         lines.append('⏳ *No tips audited yet. Results will appear after races complete.*')
+        lines.append('</details>')
         return lines
 
     lines.extend([
@@ -424,6 +456,7 @@ def build_audit_section(stats: TipStats) -> list[str]:
             f'| {finish_str} | {payout_str} |'
         )
 
+    lines.append('</details>')
     return lines
 
 
@@ -491,22 +524,35 @@ def generate_summary() -> None:
         out.write(f'*Executive Intelligence Briefing — {now_str} UTC*')
         out.write()
 
-        # Predictions
-        out.write_lines(build_predictions_section())
+        # --- USA SECTION ---
+        out.write("## 🇺🇸 USA Intelligence")
+        out.write()
+        out.write_lines(build_predictions_section(region_filter="USA"))
         out.write()
 
-        # Harvest performance
-        out.write('### 🛰️ Harvest Performance & Adapter Health')
+        discovery_usa = _merge_harvest_files(['discovery_harvest_usa.json'])
+        out.write_lines(build_harvest_table(discovery_usa, '🛰️ USA Discovery Health'))
         out.write()
 
-        discovery = _merge_harvest_files(DISCOVERY_HARVEST_FILES)
-        out.write_lines(build_harvest_table(discovery, '🔍 Discovery Adapters'))
+        # --- INT SECTION ---
+        out.write("## 🌐 International Intelligence")
+        out.write()
+        out.write_lines(build_predictions_section(region_filter="INT"))
+        out.write()
+
+        discovery_int = _merge_harvest_files(['discovery_harvest_int.json'])
+        out.write_lines(build_harvest_table(discovery_int, '🛰️ International Discovery Health'))
+        out.write()
+
+        # --- Common Sections ---
+        out.write("## 📊 Global Metrics & Audit")
+        out.write()
 
         results = _merge_harvest_files(RESULTS_HARVEST_FILES)
         if results:
-            out.write_lines(build_harvest_table(results, '🏁 Results Adapters'))
+            out.write_lines(build_harvest_table(results, '🏁 Results Adapters Performance'))
         else:
-            out.write('#### 🏁 Results Adapters')
+            out.write('#### 🏁 Results Adapters Performance')
             out.write()
             out.write('⏳ *No results harvested in this cycle.*')
             out.write()

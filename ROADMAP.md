@@ -28,4 +28,7 @@ Our primary goal is to ensure a continuous stream of predictions by maintaining 
 - **Entries**: Mission-critical discovery data that generates predictions.
 - **Results**: Vital validation data that proves our performance and refines strategies.
 
+### Impossible Challenge
+- **Extra Credit**: Successfully fetching from `https://www.racingandsports.com.au/form-guide` to further solidify our Australian data stream.
+
 This dual approach ensures the "Faucet" never runs dry and the quality of predictions remains high.
