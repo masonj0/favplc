@@ -61,7 +61,7 @@ jobs:
         run: |
           cp fortuna.db fortuna_usa.db
           mv discovery_harvest.json discovery_harvest_usa.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: results-usa
           path: |
@@ -104,7 +104,7 @@ jobs:
         run: |
           cp fortuna.db fortuna_int.db
           mv discovery_harvest.json discovery_harvest_int.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: results-int
           path: |
@@ -147,7 +147,7 @@ jobs:
         run: |
           cp fortuna.db fortuna_results.db
           mv results_harvest.json results_harvest_audit.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: results-audit
           path: |
@@ -238,7 +238,7 @@ jobs:
           key: fortuna-db-${{ github.run_number }}
       - name: Upload Final Reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: best-bet-reports-${{ github.run_number }}
           path: |

@@ -37,7 +37,7 @@ jobs:
           python build_monolith.py
 
       - name: Upload EXE
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: FortunaMonolith-Windows
           path: dist/FortunaFaucetPortableApp.exe
