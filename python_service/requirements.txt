@@ -33,7 +33,7 @@ jaraco.functools==4.0.0
 jeepney==0.9.0
 keyring==24.3.0
 limits==3.7.0
-more-itertools==10.1.0
+more-itertools==10.8.0
 mypy-extensions==1.0.0
 numpy==1.26.4
 packaging==23.2
