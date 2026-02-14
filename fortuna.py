@@ -4597,7 +4597,7 @@ class FortunaDB:
 
                 # Maintenance: Purge garbage data (Memory Directive Fix)
                 try:
-                    res = conn.execute("DELETE FROM tips WHERE selection_name = 'Runner 2' OR predicted_2nd_fav_odds = 2.75")
+                    res = conn.execute("DELETE FROM tips WHERE selection_name = 'Runner 2' OR predicted_2nd_fav_odds IN (2.75, 1.8)")
                     if res.rowcount > 0:
                         self.logger.info("Garbage data purged", count=res.rowcount)
                 except Exception as e:
