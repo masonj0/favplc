@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 from fortuna import AtTheRacesAdapter, Race, Runner, OddsData
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 @pytest.mark.asyncio
 async def test_at_the_races_adapter_parsing():
@@ -42,6 +42,15 @@ async def test_at_the_races_adapter_parsing():
             import json
             return json.loads(self.text)
 
+    # Use a date/time that passes the window check (-45m to +18h)
+    from zoneinfo import ZoneInfo
+    now_site = datetime.now(ZoneInfo("Europe/London"))
+    target_date_str = now_site.strftime("%Y-%m-%d")
+    # Set time to 2 hours from now to be safe
+    future_time = (now_site + timedelta(hours=2))
+    time_str = future_time.strftime("%H%M")
+    index_html = f'<html><a href="/racecard/newmarket/{time_str}">Newmarket</a></html>'
+
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
         # 1. Main index, 2. International index, 3. Race page
         mock_fetch.side_effect = [
@@ -50,7 +59,7 @@ async def test_at_the_races_adapter_parsing():
             MockResponse(race_html, 200)
         ]
 
-        races = await adapter.get_races("2026-02-05")
+        races = await adapter.get_races(target_date_str)
 
         assert len(races) > 0
         race = races[0]
@@ -105,7 +114,7 @@ async def test_hot_tips_tracker(tmp_path):
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[],
-        metadata={"is_goldmine": True, "1Gap2": 1.5},
+        metadata={"is_goldmine": True, "1Gap2": 1.5, "predicted_2nd_fav_odds": 4.5},
         top_five_numbers="1, 2, 3"
     )
 
