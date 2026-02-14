@@ -488,8 +488,6 @@ def generate_summary() -> None:
     now_str = _now_utc().strftime('%Y-%m-%d %H:%M:%S')
 
     with open_summary() as out:
-        out.write('# 🎯 Fortuna Intelligence Report')
-        out.write()
         out.write(f'*Executive Intelligence Briefing — {now_str} UTC*')
         out.write()
 
@@ -541,8 +539,6 @@ def generate_summary() -> None:
         # Footer
         out.write()
         out.write('---')
-        out.write()
-        out.write('*🤖 Fortuna Intelligence Engine — Automated Racing Analysis System*')
         out.write()
         out.write('💡 Artifacts retained for 30 days')
 
