@@ -68,30 +68,11 @@ def merge_databases(primary_db, secondary_dbs):
             # We want to keep the one that is audited if there is a conflict
             # Or just update the fields if sec has more info.
 
-            # 1. Update existing tips in primary if secondary has audit completed
+            # UPSERT strategy for the 'tips' table (Gemini Memo Fix)
+            # This ensures that audited rows from secondary overwrite pending rows in primary,
+            # but we also preserve audited rows in primary if secondary is pending.
             cursor.execute("""
-                UPDATE tips
-                SET
-                    audit_completed = (SELECT audit_completed FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    verdict = (SELECT verdict FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    net_profit = (SELECT net_profit FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    selection_position = (SELECT selection_position FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    actual_top_5 = (SELECT actual_top_5 FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    actual_2nd_fav_odds = (SELECT actual_2nd_fav_odds FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    trifecta_payout = (SELECT trifecta_payout FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    trifecta_combination = (SELECT trifecta_combination FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    superfecta_payout = (SELECT superfecta_payout FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    superfecta_combination = (SELECT superfecta_combination FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    top1_place_payout = (SELECT top1_place_payout FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    top2_place_payout = (SELECT top2_place_payout FROM sec.tips s WHERE s.race_id = tips.race_id),
-                    audit_timestamp = (SELECT audit_timestamp FROM sec.tips s WHERE s.race_id = tips.race_id)
-                WHERE race_id IN (SELECT race_id FROM sec.tips WHERE audit_completed = 1)
-            """)
-
-            # 2. Insert new tips from secondary that don't exist in primary
-            # We exclude 'id' to let it autoincrement
-            cursor.execute("""
-                INSERT OR IGNORE INTO tips (
+                INSERT INTO tips (
                     race_id, venue, race_number, discipline, start_time, report_date,
                     is_goldmine, gap12, top_five, selection_number, selection_name,
                     predicted_2nd_fav_odds, audit_completed, verdict, net_profit,
@@ -109,7 +90,28 @@ def merge_databases(primary_db, secondary_dbs):
                     superfecta_combination, top1_place_payout,
                     top2_place_payout, audit_timestamp
                 FROM sec.tips
-                WHERE race_id NOT IN (SELECT race_id FROM tips)
+                WHERE true
+                ON CONFLICT(race_id) DO UPDATE SET
+                    audit_completed = excluded.audit_completed,
+                    verdict = excluded.verdict,
+                    net_profit = excluded.net_profit,
+                    selection_position = excluded.selection_position,
+                    actual_top_5 = excluded.actual_top_5,
+                    actual_2nd_fav_odds = excluded.actual_2nd_fav_odds,
+                    trifecta_payout = excluded.trifecta_payout,
+                    trifecta_combination = excluded.trifecta_combination,
+                    superfecta_payout = excluded.superfecta_payout,
+                    superfecta_combination = excluded.superfecta_combination,
+                    top1_place_payout = excluded.top1_place_payout,
+                    top2_place_payout = excluded.top2_place_payout,
+                    audit_timestamp = excluded.audit_timestamp
+                WHERE excluded.audit_completed = 1 OR tips.audit_completed = 0
+            """)
+
+            # Merge harvest_logs table
+            cursor.execute("""
+                INSERT INTO harvest_logs (timestamp, region, adapter_name, race_count, max_odds)
+                SELECT timestamp, region, adapter_name, race_count, max_odds FROM sec.harvest_logs
             """)
 
             conn.commit()
