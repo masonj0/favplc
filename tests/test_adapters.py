@@ -88,8 +88,8 @@ async def test_simply_success_analyzer_1Gap2():
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[
-            Runner(name="Fav", number=1, odds=fav_odds),
-            Runner(name="Sec", number=2, odds=sec_odds)
+            Runner(name="Fav", number=1, odds=fav_odds, metadata={"odds_source_trustworthy": True}),
+            Runner(name="Sec", number=2, odds=sec_odds, metadata={"odds_source_trustworthy": True})
         ]
     )
 
