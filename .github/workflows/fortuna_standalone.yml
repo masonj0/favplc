@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - jules210
+      - jules214
   schedule:
     - cron: '0,30 * * * *' # Every 30 minutes (on the hour and half-hour)
   workflow_dispatch:
@@ -137,6 +138,7 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
+          playwright install --with-deps chromium
       - name: Run Results Audit
         env:
           PYTHONPATH: .
