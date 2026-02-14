@@ -1843,9 +1843,6 @@ def generate_analytics_report(
     now_str = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M ET")
     lines: list[str] = [
         _REPORT_SEP,
-        "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(
-            _REPORT_WIDTH,
-        ),
         f"Generated: {now_str}".center(_REPORT_WIDTH),
         _REPORT_SEP,
         "",

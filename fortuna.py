@@ -4450,8 +4450,6 @@ def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artif
 
     # Narrate the entire workflow
     summary = '\n'.join([
-        '## 🔔 Fortuna Intelligence Job Summary',
-        '',
         predictions_md,
         '',
         harvest_md,
