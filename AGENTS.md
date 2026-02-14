@@ -14,6 +14,7 @@ The engine must maintain a continuous stream of race data spanning **3 or more c
 
 1.  **Fetcher Integrity**: Never allow fetchers to remain broken. If a site changes its structure, fixing the corresponding adapter is the top priority.
 2.  **Global Coverage**: Prioritize adapters that contribute to 24/7 global coverage, including critical contributions from **South Africa**.
-3.  **Odds Hygiene**: Placeholder odds (like the default 7/4 or 2.75) must be detected and filtered out during discovery to maintain high-signal predictions.
-4.  **Database Cleanliness**: Garbage records (generic runner names, placeholder odds) should be purged from the database regularly.
-5.  **Monolithic Architecture**: Keep `fortuna.py` as a monolithic engine for high reliability and ease of deployment.
+3.  **Ultimate Targets**: The extreme ultimate targets for integration and data quality are **TwinSpires**, **TVG**, and **FanDuel Racing**, as these are the primary platforms where user betting occurs using their specific odds.
+4.  **Odds Hygiene**: Placeholder odds (like the default 7/4 or 2.75) must be detected and filtered out during discovery to maintain high-signal predictions.
+5.  **Database Cleanliness**: Garbage records (generic runner names, placeholder odds) should be purged from the database regularly.
+6.  **Monolithic Architecture**: Keep `fortuna.py` as a monolithic engine for high reliability and ease of deployment.
