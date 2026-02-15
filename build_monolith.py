@@ -52,6 +52,24 @@ def get_data_files():
     if os.path.exists("config"):
         data_files.append(("--add-data", "config;config"))
 
+    # Bundle version and config template
+    if os.path.exists("VERSION"):
+        data_files.append(("--add-data", "VERSION;."))
+    if os.path.exists("config.toml"):
+        data_files.append(("--add-data", "config.toml;."))
+
+    # Bundle recent reports if available
+    report_files = [
+        "summary_grid.txt",
+        "goldmine_report.txt",
+        "analytics_report.txt",
+        "fortuna_report.html",
+        "race_data.json"
+    ]
+    for f in report_files:
+        if os.path.exists(f):
+            data_files.append(("--add-data", f"{f};."))
+
     return data_files
 
 
@@ -134,6 +152,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "selectolax",
         "camoufox",
         "msgspec",
+        "tomli",
         "pydantic",
         "starlette",
         "rich",

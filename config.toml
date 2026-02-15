@@ -1,0 +1,23 @@
+# Fortuna Faucet Configuration
+
+[analysis]
+# Minimum trust ratio (0.0 to 1.0) for a race to be qualified
+trustworthy_ratio_min = 0.7
+# Maximum field size for standard analysis
+max_field_size = 11
+
+[region]
+# Default region: USA, INT, or GLOBAL
+default = "GLOBAL"
+
+[ui]
+# Automatically open the HTML report after discovery/audit
+auto_open_report = true
+# Show status card on startup
+show_status_card = true
+
+[logging]
+# Verbosity level: INFO, DEBUG, WARNING, ERROR
+level = "INFO"
+# Keep a local log file
+save_to_file = true

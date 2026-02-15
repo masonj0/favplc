@@ -76,6 +76,12 @@ except Exception:
     curl_requests = None
 
 try:
+    import tomli
+    HAS_TOML = True
+except ImportError:
+    HAS_TOML = False
+
+try:
     from scrapling import AsyncFetcher, Fetcher
     from scrapling.parser import Selector
     ASYNC_SESSIONS_AVAILABLE = True
@@ -108,6 +114,189 @@ def get_resp_status(resp: Any) -> Union[int, str]:
 def is_frozen() -> bool:
     """Check if running as a frozen executable (PyInstaller, cx_Freeze, etc.)"""
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+
+def get_base_path() -> Path:
+    """Returns the base path of the application (frozen or source)."""
+    if is_frozen():
+        return Path(sys._MEIPASS)
+    return Path(__file__).parent
+
+def load_config() -> Dict[str, Any]:
+    """Loads configuration from config.toml with intelligent fallback."""
+    config = {
+        "analysis": {"trustworthy_ratio_min": 0.7, "max_field_size": 11},
+        "region": {"default": "GLOBAL"},
+        "ui": {"auto_open_report": True, "show_status_card": True},
+        "logging": {"level": "INFO", "save_to_file": True}
+    }
+
+    config_paths = [Path("config.toml")]
+    if is_frozen():
+        config_paths.insert(0, Path(sys.executable).parent / "config.toml")
+        config_paths.append(Path(sys._MEIPASS) / "config.toml")
+
+    selected_config = None
+    for cp in config_paths:
+        if cp.exists():
+            selected_config = cp
+            break
+
+    if selected_config and HAS_TOML:
+        try:
+            with open(selected_config, "rb") as f:
+                toml_data = tomli.load(f)
+                # Deep merge simple dict
+                for section, values in toml_data.items():
+                    if section in config and isinstance(values, dict):
+                        config[section].update(values)
+                    else:
+                        config[section] = values
+        except Exception as e:
+            print(f"Warning: Failed to load config.toml: {e}")
+
+    return config
+
+def print_status_card(config: Dict[str, Any]):
+    """Prints a friendly status card with application health and latest metrics."""
+    if not config.get("ui", {}).get("show_status_card", True):
+        return
+
+    version = "Unknown"
+    version_file = get_base_path() / "VERSION"
+    if version_file.exists():
+        version = version_file.read_text().strip()
+
+    try:
+        from rich.console import Console
+        console = Console()
+        print_func = console.print
+    except ImportError:
+        print_func = print
+
+    print_func("\n" + "═" * 60)
+    print_func(f" 🐎 FORTUNA FAUCET INTELLIGENCE - v{version} ".center(60, "═"))
+    print_func("═" * 60)
+
+    # Region and active mode
+    region = config.get("region", {}).get("default", "GLOBAL")
+    print_func(f" 📍 Region: [bold cyan]{region}[/] | 🔍 Status: [bold green]READY[/]")
+
+    # Database status
+    db = FortunaDB()
+    # We'll use a sync helper or just run it
+    try:
+        # Simple sqlite check
+        conn = sqlite3.connect(db.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tips")
+        total_tips = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1")
+        audited = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine = 1")
+        goldmines = cursor.fetchone()[0]
+        conn.close()
+
+        print_func(f" 📊 Database: {total_tips} tips | ✅ {audited} audited | 💎 {goldmines} goldmines")
+    except Exception:
+        print_func(" 📊 Database: INITIALIZING")
+
+    # Odds Hygiene
+    trust_min = config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
+    print_func(f" 🛡️  Odds Hygiene: >{int(trust_min*100)}% trust ratio required")
+
+    # Reports
+    reports = []
+    if Path("summary_grid.txt").exists(): reports.append("Summary")
+    if Path("fortuna_report.html").exists(): reports.append("HTML")
+    if reports:
+        print_func(f" 📁 Latest Reports: {', '.join(reports)}")
+
+    print_func("═" * 60 + "\n")
+
+def print_quick_help():
+    """Prints a friendly onboarding guide for new users."""
+    try:
+        from rich.console import Console
+        from rich.panel import Panel
+        console = Console()
+        print_func = console.print
+    except ImportError:
+        print_func = print
+
+    help_text = """
+    [bold yellow]Welcome to Fortuna Faucet Intelligence![/]
+
+    This app helps you discover "Goldmine" racing opportunities where the
+    second favorite has strong odds and a significant gap from the favorite.
+
+    [bold]Common Commands:[/]
+    • [cyan]Discovery:[/]  Just run the app! It will fetch latest races and find goldmines.
+    • [cyan]Monitor:[/]    Run with [green]--monitor[/] for a live-updating dashboard.
+    • [cyan]Analytics:[/]  Run [green]fortuna_analytics.py[/] to see how past predictions performed.
+
+    [bold]Useful Flags:[/]
+    • [green]--status:[/]    See your database stats and application health.
+    • [green]--show-log:[/]  See highlights from recent fetching and auditing.
+    • [green]--region:[/]    Force a region (USA, INT, or GLOBAL).
+
+    [italic]Predictions are saved to fortuna_report.html and summary_grid.txt[/]
+    """
+    if 'Console' in globals() or 'console' in locals():
+        print_func(Panel(help_text, title="🚀 Quick Start Guide", border_style="yellow"))
+    else:
+        print_func(help_text)
+
+async def print_recent_logs():
+    """Prints recent fetch and audit highlights from the database."""
+    db = FortunaDB()
+    try:
+        # We need to use sync connection here as it's called from main which is not in loop yet
+        # Actually main_all_in_one is async and called via asyncio.run
+        conn = sqlite3.connect(db.db_path)
+        conn.row_factory = sqlite3.Row
+
+        print("\n" + "─" * 60)
+        print(" 🔍 RECENT ACTIVITY LOG ".center(60, "─"))
+        print("─" * 60)
+
+        # Recent Harvests
+        cursor = conn.execute("SELECT timestamp, adapter_name, race_count, region FROM harvest_logs ORDER BY id DESC LIMIT 5")
+        print("\n [bold]Latest Fetches:[/]")
+        for row in cursor.fetchall():
+            ts = row['timestamp'][:16].replace('T', ' ')
+            print(f"  • {ts} | {row['adapter_name']:<20} | {row['race_count']} races ({row['region']})")
+
+        # Recent Audits
+        cursor = conn.execute("SELECT audit_timestamp, venue, race_number, verdict, net_profit FROM tips WHERE audit_completed = 1 ORDER BY audit_timestamp DESC LIMIT 5")
+        rows = cursor.fetchall()
+        if rows:
+            print("\n [bold]Latest Audits:[/]")
+            for row in rows:
+                ts = row['audit_timestamp'][:16].replace('T', ' ')
+                emoji = "✅" if row['verdict'] == "CASHED" else "❌"
+                print(f"  • {ts} | {row['venue']:<15} R{row['race_number']} | {emoji} {row['verdict']} (${row['net_profit']:+.2f})")
+
+        conn.close()
+        print("\n" + "─" * 60 + "\n")
+    except Exception as e:
+        print(f"Error reading activity log: {e}")
+
+def open_report_in_browser():
+    """Opens the HTML report in the default system browser."""
+    html_path = Path("fortuna_report.html")
+    if html_path.exists():
+        print(f"Opening {html_path} in your browser...")
+        try:
+            abs_path = html_path.absolute()
+            if sys.platform == "win32":
+                os.startfile(abs_path)
+            else:
+                import webbrowser
+                webbrowser.open(f"file://{abs_path}")
+        except Exception as e:
+            print(f"Failed to open report: {e}")
+    else:
+        print("No report found. Run discovery first!")
 
 try:
     from notifications import DesktopNotifier
@@ -3339,8 +3528,9 @@ def _get_best_win_odds(runner: Runner) -> Optional[Decimal]:
 class BaseAnalyzer(ABC):
     """The abstract interface for all future analyzer plugins."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, **kwargs):
         self.logger = structlog.get_logger(self.__class__.__name__)
+        self.config = config or {}
 
     @abstractmethod
     def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
@@ -3357,13 +3547,14 @@ class TrifectaAnalyzer(BaseAnalyzer):
 
     def __init__(
         self,
-        max_field_size: int = 11,
+        max_field_size: Optional[int] = None,
         min_favorite_odds: float = 0.01,
         min_second_favorite_odds: float = 0.01,
         **kwargs
     ):
         super().__init__(**kwargs)
-        self.max_field_size = max_field_size
+        # Use config value if provided and no explicit override (GPT5 Improvement)
+        self.max_field_size = max_field_size or self.config.get("analysis", {}).get("max_field_size", 11)
         self.min_favorite_odds = Decimal(str(min_favorite_odds))
         self.min_second_favorite_odds = Decimal(str(min_second_favorite_odds))
         self.notifier = RaceNotifier()
@@ -3389,7 +3580,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
     def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
         """Scores all races and returns a dictionary with criteria and a sorted list."""
         qualified_races = []
-        TRUSTWORTHY_RATIO_MIN = 0.7
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
 
         for race in races:
             if not self.is_race_qualified(race):
@@ -3522,7 +3713,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         now = datetime.now(EASTERN)
 
         # Success Playbook Hardening (Council of Superbrains)
-        TRUSTWORTHY_RATIO_MIN = 0.7
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
 
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
@@ -3625,8 +3816,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 class AnalyzerEngine:
     """Discovers and manages all available analyzer plugins."""
 
-    def __init__(self):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.analyzers: Dict[str, Type[BaseAnalyzer]] = {}
+        self.config = config or {}
         self._discover_analyzers()
 
     def _discover_analyzers(self):
@@ -3648,7 +3840,7 @@ class AnalyzerEngine:
         if not analyzer_class:
             log.error("Requested analyzer not found", requested_analyzer=name)
             raise ValueError(f"Analyzer '{name}' not found.")
-        return analyzer_class(**kwargs)
+        return analyzer_class(config=self.config, **kwargs)
 
 
 class AudioAlertSystem:
@@ -6657,7 +6849,8 @@ async def run_discovery(
     fetch_only: bool = False,
     live_dashboard: bool = False,
     track_odds: bool = False,
-    region: Optional[str] = None
+    region: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -6876,7 +7069,7 @@ async def run_discovery(
             return
 
         # Analyze ALL unique races to ensure Grid is populated with Top 5 info (News Mode)
-        analyzer = SimplySuccessAnalyzer()
+        analyzer = SimplySuccessAnalyzer(config=config)
         result = analyzer.qualify_races(unique_races)
         qualified = result.get("races", [])
 
@@ -7164,8 +7357,9 @@ async def main_all_in_one():
     )
     # Ensure DB path env is set if passed via argument or already in environment
     # Actually, we should probably add a --db-path arg here too for parity with analytics
+    config = load_config()
     logger = structlog.get_logger("main")
-    parser = argparse.ArgumentParser(description="Fortuna All-In-One")
+    parser = argparse.ArgumentParser(description="Fortuna All-In-One - Professional Racing Intelligence")
     parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
@@ -7180,10 +7374,33 @@ async def main_all_in_one():
     parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
     parser.add_argument("--live-dashboard", action="store_true", help="Show live updating terminal dashboard")
     parser.add_argument("--track-odds", action="store_true", help="Monitor live odds and send notifications")
+    parser.add_argument("--status", action="store_true", help="Show application status card and latest metrics")
+    parser.add_argument("--show-log", action="store_true", help="Print recent fetch/audit highlights")
+    parser.add_argument("--quick-help", action="store_true", help="Show friendly onboarding guide")
+    parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
     args = parser.parse_args()
+
+    if args.quick_help:
+        print_quick_help()
+        return
+
+    if args.status:
+        print_status_card(config)
+        return
+
+    if args.show_log:
+        await print_recent_logs()
+        return
+
+    if args.open_dashboard:
+        open_report_in_browser()
+        return
 
     if args.db_path:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
+
+    # Print status card for all normal runs
+    print_status_card(config)
 
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.
@@ -7202,7 +7419,7 @@ async def main_all_in_one():
 
     # Auto-select region if not specified
     if not args.region:
-        args.region = get_optimal_region_at_time(datetime.now(EASTERN))
+        args.region = config.get("region", {}).get("default", get_optimal_region_at_time(datetime.now(EASTERN)))
         structlog.get_logger().info("Auto-selected region", region=args.region)
 
     # Region-based adapter filtering
@@ -7257,8 +7474,12 @@ async def main_all_in_one():
         monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
         # Pass region config to monitor
         monitor.config["region"] = args.region
-        if args.once: await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
-        else: await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
+        if args.once:
+            await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
+            if config.get("ui", {}).get("auto_open_report", True) and not os.getenv("GITHUB_ACTIONS"):
+                open_report_in_browser()
+        else:
+            await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
     else:
         await ensure_browsers()
         await run_discovery(
@@ -7270,13 +7491,24 @@ async def main_all_in_one():
             fetch_only=args.fetch_only,
             live_dashboard=args.live_dashboard,
             track_odds=args.track_odds,
-            region=args.region # Pass region to run_discovery
+            region=args.region, # Pass region to run_discovery
+            config=config
         )
+        # Post-run UI enhancements (Council of Superbrains Directive)
+        if config.get("ui", {}).get("auto_open_report", True) and not os.getenv("GITHUB_ACTIONS"):
+            open_report_in_browser()
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
         os.makedirs("debug_snapshots", exist_ok=True)
     
+    # Windows Selector Event Loop Policy Fix (Project Hardening)
+    if sys.platform == 'win32':
+        try:
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        except AttributeError:
+            pass # Policy not available on this version
+
     try:
         asyncio.run(main_all_in_one())
     except KeyboardInterrupt:
