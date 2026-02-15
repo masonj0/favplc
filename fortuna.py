@@ -132,12 +132,16 @@ RaceT = TypeVar("RaceT", bound="Race")
 # --- CONSTANTS ---
 EASTERN = ZoneInfo("America/New_York")
 
-# Region-based adapter lists
-USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada"}
-INT_DISCOVERY_ADAPTERS: Final[set] = {
+# Region-based adapter lists (Refined by Council of Superbrains Directive)
+# Single-continent adapters remain in USA/INT jobs.
+# Multi-continental adapters move to the GLOBAL parallel fetch job.
+# AtTheRaces is duplicated into USA as per explicit request.
+USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces"}
+INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
+GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
-    "TAB", "BetfairDataScientist", "Oddschecker", "Timeform", "BoyleSports",
-    "SportingLife", "SkySports"
+    "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
+    "RacingAndSports"
 }
 
 USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults"}
@@ -1389,58 +1393,115 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     SOURCE_NAME: ClassVar[str] = "RacingAndSports"
     BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
 
-    async def fetch_races(self, date_str: str) -> List[Race]:
-        url = f"{self.BASE_URL}/racing-index?date={date_str}"
-        headers = self.get_browser_headers()
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
-        try:
-            resp = await self.client.get(url, headers=headers)
-            if resp.status_code != 200:
-                self.logger.warning(f"RAS blocked with status {resp.status_code}")
-                return []
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=60
+        )
 
-            tree = HTMLParser(resp.text)
-            races = []
-            # RAS uses tables for different regions (Australia, UK, etc.)
-            tables = tree.css("table.table-index")
-            for table in tables:
-                for row in table.css("tbody tr"):
-                    venue_cell = row.css_first("td.venue-name")
-                    if not venue_cell: continue
-                    venue_name = venue_cell.text(strip=True)
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.racingandsports.com.au")
 
-                    for link in row.css("td a.race-link"):
-                        race_url = self.BASE_URL + link.attributes.get("href", "")
-                        r_num_match = re.search(r"R(\d+)", link.text(strip=True))
-                        if not r_num_match: continue
-                        r_num = int(r_num_match.group(1))
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        url = f"/racing-index?date={date}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            return None
 
-                        # We'll queue these for detail fetching
-                        # (In a real implementation, we'd use a pool)
-                        detail = await self._fetch_race_detail(race_url, venue_name, r_num, date_str)
-                        if detail: races.append(detail)
-            return races
-        except Exception as e:
-            self.logger.error(f"RAS Fetch Error: {e}")
-            return []
+        self._save_debug_snapshot(resp.text, f"ras_index_{date}")
+        parser = HTMLParser(resp.text)
+        metadata = []
 
-    async def _fetch_race_detail(self, url: str, venue: str, num: int, date_str: str) -> Optional[Race]:
-        try:
-            resp = await self.client.get(url, headers=self.get_browser_headers())
-            if resp.status_code != 200: return None
-            tree = HTMLParser(resp.text)
+        # RAS uses tables for different regions (Australia, UK, etc.)
+        for table in parser.css("table.table-index"):
+            for row in table.css("tbody tr"):
+                venue_cell = row.css_first("td.venue-name")
+                if not venue_cell: continue
+                venue_name = venue_cell.text(strip=True)
 
-            runners = []
-            for row in tree.css("tr.runner-row"):
-                name = row.css_first(".runner-name").text(strip=True) if row.css_first(".runner-name") else "Unknown"
-                saddle = int(row.css_first(".runner-number").text(strip=True)) if row.css_first(".runner-number") else 0
-                odds_text = row.css_first(".odds-win").text(strip=True) if row.css_first(".odds-win") else "0"
-                odds = float(odds_text) if odds_text.replace(".","").isdigit() else 0.0
-                runners.append(Runner(name=name, selection_number=saddle, win_odds=odds))
+                for link in row.css("td a.race-link"):
+                    race_url = link.attributes.get("href", "")
+                    if not race_url: continue
+                    if not race_url.startswith("http"):
+                        race_url = self.BASE_URL + race_url
 
-            if not runners: return None
-            return Race(venue=venue, race_number=num, start_time=datetime.now(EASTERN), runners=runners, source=self.SOURCE_NAME, url=url)
-        except Exception: return None
+                    r_num_match = re.search(r"R(\d+)", link.text(strip=True))
+                    r_num = int(r_num_match.group(1)) if r_num_match else 0
+
+                    metadata.append({
+                        "url": race_url,
+                        "venue": venue_name,
+                        "race_number": r_num
+                    })
+
+        if not metadata:
+            return None
+
+        # Limit for sanity
+        pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers())
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        except Exception: return []
+
+        races: List[Race] = []
+        for item in raw_data["pages"]:
+            html_content = item.get("html")
+            if not html_content: continue
+            try:
+                race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("venue"), item.get("race_number"))
+                if race: races.append(race)
+            except Exception: pass
+        return races
+
+    def _parse_single_race(self, html_content: str, url: str, race_date: date, venue: str, race_num: int) -> Optional[Race]:
+        tree = HTMLParser(html_content)
+
+        runners = []
+        for row in tree.css("tr.runner-row"):
+            name_node = row.css_first(".runner-name")
+            if not name_node: continue
+            name = clean_text(name_node.text())
+
+            num_node = row.css_first(".runner-number")
+            number = int("".join(filter(str.isdigit, num_node.text()))) if num_node else 0
+
+            odds_node = row.css_first(".odds-win")
+            win_odds = parse_odds_to_decimal(clean_text(odds_node.text())) if odds_node else None
+
+            odds_data = {}
+            if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                odds_data[self.SOURCE_NAME] = ov
+
+            runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds))
+
+        if not runners: return None
+
+        # Start time from page if available, else guess
+        start_time = datetime.combine(race_date, datetime.min.time())
+        # Try to find time in text
+        time_match = re.search(r"(\d{1,2}:\d{2})", html_content)
+        if time_match:
+            try:
+                start_time = datetime.combine(race_date, datetime.strptime(time_match.group(1), "%H:%M").time())
+            except Exception: pass
+
+        return Race(
+            id=generate_race_id("ras", venue, start_time, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=ensure_eastern(start_time),
+            runners=runners,
+            source=self.SOURCE_NAME,
+            available_bets=scrape_available_bets(html_content)
+        )
 
 class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
@@ -3328,9 +3389,32 @@ class TrifectaAnalyzer(BaseAnalyzer):
     def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
         """Scores all races and returns a dictionary with criteria and a sorted list."""
         qualified_races = []
+        TRUSTWORTHY_RATIO_MIN = 0.7
+
         for race in races:
             if not self.is_race_qualified(race):
                 continue
+
+            active_runners = [r for r in race.runners if not r.scratched]
+            total_active = len(active_runners)
+
+            # Trustworthiness Airlock (Success Playbook Item)
+            if total_active > 0:
+                trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
+                if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
+                    log.warning("Not enough trustworthy odds for Trifecta; skipping", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
+                    continue
+
+            # Uniform Odds Check
+            all_odds = []
+            for runner in active_runners:
+                odds = _get_best_win_odds(runner)
+                if odds: all_odds.append(odds)
+
+            if len(all_odds) >= 3 and len(set(all_odds)) == 1:
+                log.warning("Race contains uniform odds; likely placeholder. Skipping Trifecta.", venue=race.venue, race=race.race_number)
+                continue
+
             score = self._evaluate_race(race)
             if score > 0:
                 race.qualification_score = score
@@ -3437,7 +3521,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         qualified = []
         now = datetime.now(EASTERN)
 
-        PLACEHOLDER_THRESHOLD = 0.5 # Playbook Recommendation
+        # Success Playbook Hardening (Council of Superbrains)
+        TRUSTWORTHY_RATIO_MIN = 0.7
 
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
@@ -3445,13 +3530,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if st.tzinfo is None:
                 st = st.replace(tzinfo=EASTERN)
 
-            # 2. Chalk Filter: Exclude races with an odds-on favorite (< 2.0)
-            # if best_odds is not None and best_odds < 2.0:
-            #     log.debug("Excluding chalk race", venue=race.venue, favorite_odds=best_odds)
-            #     continue
-
             # Goldmine Detection: 2nd favorite >= 4.5 decimal
-            # A race cannot be a goldmine if field size is over 11
             is_goldmine = False
             is_best_bet = False
             active_runners = [r for r in race.runners if not r.scratched]
@@ -3460,8 +3539,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Trustworthiness Airlock (Success Playbook Item)
             if total_active > 0:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
-                if trustworthy_count / total_active < (1 - PLACEHOLDER_THRESHOLD):
-                    self.logger.warning("Race lacks trustworthy odds profile; skipping qualification", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
+                if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
+                    self.logger.warning("Not enough trustworthy odds; skipping race", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
                     continue
 
             gap12 = 0.0
@@ -3477,6 +3556,11 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
             # Sort odds ascending
             all_odds.sort()
+
+            # Uniform Odds Check: If all runners have identical odds, it's likely a placeholder card (Memory Directive Fix)
+            if len(all_odds) >= 3 and len(set(all_odds)) == 1:
+                self.logger.warning("Race contains uniform odds; likely placeholder data. Skipping.", venue=race.venue, race=race.race_number, odds=float(all_odds[0]))
+                continue
 
             # Stability Check: Ensure we have at least 2 active runners to compare
             if len(active_runners) < 2:
@@ -4086,9 +4170,18 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         is_gold = getattr(r, 'metadata', {}).get('is_goldmine', False)
         gold_badge = '<span class="badge gold">GOLD</span>' if is_gold else ''
 
+        d_str = '??/??'
+        if isinstance(st, datetime):
+            d_str = st.strftime('%m/%d')
+        elif isinstance(st, str):
+            try:
+                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                d_str = dt.strftime('%m/%d')
+            except Exception: pass
+
         rows.append(f"""
             <tr>
-                <td>{st_str}</td>
+                <td>{st_str} ({d_str})</td>
                 <td>{getattr(r, 'venue', 'Unknown')}</td>
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
@@ -4356,6 +4449,13 @@ def format_grid_code(race_info_list, wrap_width=4):
 def format_prediction_row(race: Race) -> str:
     """Formats a single race prediction for the GHA Job Summary table."""
     metadata = getattr(race, 'metadata', {})
+
+    st = race.start_time
+    if isinstance(st, str):
+        try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+        except Exception: st = None
+    date_str = st.strftime('%m/%d') if st else '??/??'
+
     gold = '✅' if metadata.get('is_goldmine') else '—'
     selection = metadata.get('selection_name') or f"#{metadata.get('selection_number', '?')}"
     odds = metadata.get('predicted_2nd_fav_odds')
@@ -4373,7 +4473,7 @@ def format_prediction_row(race: Race) -> str:
             payouts.append(f"{display_label}: ${float(val):.2f}")
 
     payout_text = ' | '.join(payouts) or 'Awaiting Results'
-    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
+    return f"| {date_str} | {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
 
 
 def format_predictions_section(qualified_races: List[Race]) -> str:
@@ -4402,8 +4502,8 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
     top_10 = sorted_races[:10]
 
     lines.extend([
-        "| Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |"
+        "| Date | Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     ])
     for r in top_10:
         lines.append(format_prediction_row(r))
@@ -4682,7 +4782,7 @@ class FortunaDB:
 
                 # Maintenance: Purge garbage data (Memory Directive Fix)
                 try:
-                    res = conn.execute("DELETE FROM tips WHERE selection_name = 'Runner 2' OR predicted_2nd_fav_odds IN (2.75, 1.8)")
+                    res = conn.execute("DELETE FROM tips WHERE selection_name = 'Runner 2' OR predicted_2nd_fav_odds IN (2.75)")
                     if res.rowcount > 0:
                         self.logger.info("Garbage data purged", count=res.rowcount)
                 except Exception as e:
@@ -5109,18 +5209,20 @@ class HotTipsTracker:
             if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
                 continue
 
-            # Trustworthiness Airlock Safeguard (Success Playbook Item)
+            # Trustworthiness Airlock Safeguard (Council of Superbrains Directive)
             active_runners = [run for run in r.runners if not run.scratched]
             total_active = len(active_runners)
-            if total_active > 0:
-                trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
-                if trustworthy_count / total_active < 0.5:
-                    self.logger.warning("Rejecting race with poor odds profile for DB logging", venue=r.venue, race=r.race_number)
-                    continue
 
             # Ensure trustworthy odds exist before logging (Memory Directive Fix)
             if r.metadata.get('predicted_2nd_fav_odds') is None:
                 continue
+
+            if total_active > 0:
+                trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
+                trust_ratio = trustworthy_count / total_active
+                if trust_ratio < 0.5:
+                    self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2))
+                    continue
 
             st = r.start_time
             if isinstance(st, str):
@@ -7068,7 +7170,7 @@ async def main_all_in_one():
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
-    parser.add_argument("--region", type=str, choices=["USA", "INT"], help="Filter by region (USA or INT)")
+    parser.add_argument("--region", type=str, choices=["USA", "INT", "GLOBAL"], help="Filter by region (USA, INT or GLOBAL)")
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
@@ -7105,7 +7207,12 @@ async def main_all_in_one():
 
     # Region-based adapter filtering
     if args.region:
-        target_set = USA_DISCOVERY_ADAPTERS if args.region == "USA" else INT_DISCOVERY_ADAPTERS
+        if args.region == "USA":
+            target_set = USA_DISCOVERY_ADAPTERS
+        elif args.region == "INT":
+            target_set = INT_DISCOVERY_ADAPTERS
+        else:
+            target_set = GLOBAL_DISCOVERY_ADAPTERS
 
         if adapter_filter:
             adapter_filter = [n for n in adapter_filter if n in target_set]
