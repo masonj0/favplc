@@ -43,7 +43,7 @@ Saves complete data to `race_data.json`:
 
 ### Prerequisites
 ```bash
-# Ensure you have adapter-anthology.py in the same directory
+# Ensure you have fortuna.py in the same directory
 # Install required packages:
 pip install httpx structlog pandas selectolax tenacity pydantic scrapling
 ```
@@ -141,7 +141,7 @@ SUPER  MTP   DISC  TRACK                R#   FIELD  2ND FAV              2ND ODD
 ## 🔧 Configuration
 
 ### Adapters Used
-The script uses these adapters (from `adapter-anthology.py`):
+The script uses these adapters (from `fortuna.py`):
 - RacingPostB2BAdapter
 - SportingLifeAdapter
 - SkySportsAdapter
@@ -233,8 +233,8 @@ python favorite_to_place_monitor.py --once
 
 ### Import errors
 ```bash
-# Make sure adapter-anthology.py is in the same directory
-ls -la adapter-anthology.py
+# Make sure fortuna.py is in the same directory
+ls -la fortuna.py
 
 # Install missing packages
 pip install httpx structlog pandas selectolax tenacity pydantic scrapling
