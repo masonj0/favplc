@@ -14,19 +14,12 @@ import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Final, List, Optional, Tuple, Type
+from typing import Any, Dict, Final, List, Optional, Set, Tuple, Type
 from zoneinfo import ZoneInfo
 
 import structlog
 from pydantic import Field, model_validator
 from selectolax.parser import HTMLParser, Node
-
-try:
-    from scrapling import AsyncFetcher
-
-    ASYNC_SESSIONS_AVAILABLE = True
-except ImportError:
-    ASYNC_SESSIONS_AVAILABLE = False
 
 import fortuna
 
@@ -37,12 +30,22 @@ DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 STANDARD_BET: Final[float] = 2.00
 
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
-    4: 1,    # ≤4 runners: win only
-    7: 2,    # 5-7 runners: top 2
-    999: 3,  # 8+: top 3
+    4: 1,           # ≤4 runners: win only
+    7: 2,           # 5-7 runners: top 2
+    10000: 3,       # 8+: top 3
 }
 
 _currency_logger = structlog.get_logger("currency_parser")
+
+_CASHED_VERDICTS: Final[frozenset] = frozenset({"CASHED", "CASHED_ESTIMATED"})
+_LOSS_VERDICTS:   Final[frozenset] = frozenset({"BURNED"})
+
+_VERDICT_DISPLAY: Final[Dict[str, str]] = {
+    "CASHED":           "✅ WIN ",
+    "CASHED_ESTIMATED": "✅ WIN~",
+    "BURNED":           "❌ LOSS",
+    "VOID":             "⚪ VOID",
+}
 
 
 # -- HELPER FUNCTIONS ---------------------------------------------------------
@@ -97,6 +100,9 @@ def parse_currency_value(value_str: str) -> float:
         # Allow standard currency symbols and codes (GBP, EUR, USD, ZAR)
         if re.search(r"[^\d.,$£€\sA-Z]", raw):
             _currency_logger.debug("unexpected_currency_format", value=raw)
+            # If it contains truly invalid characters for currency, return 0
+            if re.search(r"[^\d.,$£€\sA-Z\-]", raw):
+                 return 0.0
 
         if "," in raw and "." in raw:
             if raw.rfind(",") > raw.rfind("."):
@@ -280,6 +286,8 @@ class AuditorEngine:
                             existing=existing.canonical_key,
                             new=r.canonical_key,
                         )
+                        # Prefer existing canonical over new relaxed if collision
+                        continue
                 mapping[r.relaxed_key] = r
         return mapping
 
@@ -488,18 +496,20 @@ def build_start_time(
     time_str: Optional[str] = None,
     *,
     tz: ZoneInfo = EASTERN,
-) -> Optional[datetime]:
+) -> datetime:
     """Build a tz-aware datetime from ``YYYY-MM-DD`` + optional ``HH:MM``."""
     try:
         base = datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
-        return None
+        structlog.get_logger("build_start_time").warning("unparseable_date", date=date_str)
+        base = datetime.now(tz)
     hour, minute = 12, 0
     if time_str:
         try:
             parts = time_str.strip().split(":")
             hour, minute = int(parts[0]), int(parts[1])
         except (ValueError, IndexError):
+            structlog.get_logger("build_start_time").warning("malformed_time_string", time=time_str)
             pass
     return base.replace(hour=hour, minute=minute, tzinfo=tz)
 
@@ -637,16 +647,16 @@ class PageFetchingResultsAdapter(
             base_url=self.BASE_URL,
             **kwargs,
         )
-        self._target_venues: Optional[set] = None
+        self._target_venues: Optional[Set[str]] = None
 
     # -- target venues property --------------------------------------------
 
     @property
-    def target_venues(self) -> Optional[set]:
+    def target_venues(self) -> Optional[Set[str]]:
         return self._target_venues
 
     @target_venues.setter
-    def target_venues(self, value: Optional[set]) -> None:
+    def target_venues(self, value: Optional[Set[str]]) -> None:
         self._target_venues = value
 
     # -- framework hooks (identical across every legacy adapter) -----------
@@ -689,12 +699,12 @@ class PageFetchingResultsAdapter(
             return None
         return await self._fetch_link_pages(links, date_str)
 
-    async def _discover_result_links(self, date_str: str) -> set:
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
         """Return URLs for individual result pages.  **Must be overridden.**"""
         raise NotImplementedError
 
     async def _fetch_link_pages(
-        self, links: set, date_str: str,
+        self, links: Set[str], date_str: str,
     ) -> Optional[Dict[str, Any]]:
         absolute = list(dict.fromkeys(
             lnk if lnk.startswith("http") else f"{self.BASE_URL}{lnk}"
@@ -748,7 +758,7 @@ class PageFetchingResultsAdapter(
         return [race] if race else []
 
     def _parse_race_page(
-        self, html: str, date_str: str, url: str,
+        self, html: str, date_str: str, _url: str,
     ) -> Optional[ResultRace]:
         """Parse a single-race page.  Override for most adapters."""
         raise NotImplementedError
@@ -1120,26 +1130,15 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
 
     # -- link discovery ----------------------------------------------------
 
-    async def _discover_result_links(self, date_str: str) -> set:
-        links: set = set()
-
-        # Try multiple date formats (Council of Superbrains Directive)
-        url_dates = [date_str]
-        try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
-            url_dates.append(dt.strftime("%Y-%m-%d"))
-        except Exception: pass
-
-        for ud in url_dates:
-            resp = await self.make_request(
-                "GET", f"/results/{ud}", headers=self._get_headers(),
-            )
-            if resp and resp.text:
-                self._save_debug_snapshot(resp.text, f"rp_results_index_{ud}")
-                parser = HTMLParser(resp.text)
-                links.update(self._extract_rp_links(parser))
-
-        return links
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        resp = await self.make_request(
+            "GET", f"/results/{date_str}", headers=self._get_headers(),
+        )
+        if not resp or not resp.text:
+            return set()
+        self._save_debug_snapshot(resp.text, f"rp_results_index_{date_str}")
+        parser = HTMLParser(resp.text)
+        return self._extract_rp_links(parser)
 
     def _extract_rp_links(self, parser: HTMLParser) -> set:
         links: set = set()
@@ -1183,7 +1182,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     # -- single-race page parsing ------------------------------------------
 
     def _parse_race_page(
-        self, html: str, date_str: str, url: str,
+        self, html: str, date_str: str, _url: str,
     ) -> Optional[ResultRace]:
         parser = HTMLParser(html)
 
@@ -1279,7 +1278,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             if "active" in cls or "rp-raceTimeCourseName__time" in cls:
                 return i + 1
         # Priority 2 — text fallback
-        return _extract_race_number_from_text(parser)
+        return _extract_race_number_from_text(parser) or 1
 
     def _parse_rp_runners(
         self,
@@ -1596,24 +1595,16 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
 
     # -- link discovery ----------------------------------------------------
 
-    async def _discover_result_links(self, date_str: str) -> set:
-        links: set = set()
-
-        # Try multiple date formats and yesterday (Council of Superbrains Directive)
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
-        url_dates = [date_str, dt.strftime("%Y-%m-%d"), "yesterday"]
-
-        for ud in url_dates:
-            resp = await self.make_request(
-                "GET",
-                f"/racing/results/{ud}",
-                headers=self._get_headers(),
-            )
-            if resp and resp.text:
-                self._save_debug_snapshot(resp.text, f"sl_results_index_{ud}")
-                links.update(self._extract_sl_links(resp.text))
-
-        return links
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        resp = await self.make_request(
+            "GET",
+            f"/racing/results/{date_str}",
+            headers=self._get_headers(),
+        )
+        if not resp or not resp.text:
+            return set()
+        self._save_debug_snapshot(resp.text, f"sl_results_index_{date_str}")
+        return self._extract_sl_links(resp.text)
 
     def _extract_sl_links(self, html: str) -> set:
         links: set = set()
@@ -1718,10 +1709,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
                     item.get("cloth_number")
                     or item.get("saddle_cloth_number", 0)
                 ),
-                position=str(
-                    item.get("finish_position")
-                    or item.get("position", ""),
-                ),
+                position=str(item.get("finish_position", item.get("position", ""))),
                 final_win_odds=parse_fractional_odds(str(sp_raw)),
             ))
         return runners
@@ -1804,32 +1792,16 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
 
     # -- link discovery ----------------------------------------------------
 
-    async def _discover_result_links(self, date_str: str) -> set:
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
             url_dates = [dt.strftime("%d-%m-%Y"), (dt - timedelta(days=1)).strftime("%d-%m-%Y")]
         except ValueError:
             url_dates = [date_str]
 
-        links: set = set()
-        for url_date in url_dates:
-            resp = await self.make_request(
-                "GET",
-                f"/racing/results/{url_date}",
-                headers=self._get_headers(),
-            )
-            if resp and resp.text:
-                parser = HTMLParser(resp.text)
-                self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
-                links.update(self._extract_sky_links(parser, date_str, url_date))
-
-        # Also check the main results page for "today"
-        resp = await self.make_request("GET", "/racing/results", headers=self._get_headers())
-        if resp and resp.text:
-            parser = HTMLParser(resp.text)
-            links.update(self._extract_sky_links(parser, date_str, datetime.now(EASTERN).strftime("%d-%m-%Y")))
-
-        return links
+        parser = HTMLParser(resp.text)
+        self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
+        return self._extract_sky_links(parser, date_str, url_date)
 
     def _extract_sky_links(self, parser: HTMLParser, date_str: str, url_date: str) -> set:
         links: set = set()
@@ -1938,7 +1910,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
                 ):
                     return i + 1
 
-        return _extract_race_number_from_text(parser, url)
+        return _extract_race_number_from_text(parser, url) or 1
 
 
 # -- REPORT GENERATION --------------------------------------------------------
@@ -1970,6 +1942,7 @@ def generate_analytics_report(
     now_str = datetime.now(EASTERN).strftime("%Y-%m-%d %H:%M ET")
     lines: list[str] = [
         _REPORT_SEP,
+        "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(_REPORT_WIDTH),
         f"Generated: {now_str}".center(_REPORT_WIDTH),
         _REPORT_SEP,
         "",
@@ -2055,9 +2028,7 @@ def _append_recent_performance(
     ])
     for tip in tips:
         verdict = tip.get("verdict", "?")
-        emoji   = {"CASHED": "✅ WIN ", "BURNED": "❌ LOSS"}.get(
-            verdict, "⚪ VOID",
-        )
+        emoji = _VERDICT_DISPLAY.get(verdict, "⚪ VOID")
         venue  = (
             f"{tip.get('venue', 'Unknown')[:18]} "
             f"R{tip.get('race_number', '?')}"
@@ -2128,7 +2099,7 @@ def _append_lifetime_stats(
     audited_tips: List[Dict[str, Any]],
 ) -> None:
     total  = len(audited_tips)
-    cashed = sum(1 for t in audited_tips if t.get("verdict") == "CASHED")
+    cashed = sum(1 for t in audited_tips if t.get("verdict") in _CASHED_VERDICTS)
     profit = sum(t.get("net_profit", 0.0) for t in audited_tips)
     sr     = (cashed / total * 100) if total else 0.0
     roi    = (profit / (total * 2.0) * 100) if total else 0.0
@@ -2169,6 +2140,7 @@ async def managed_adapters(
     """Instantiate, optionally filter, yield, then tear down all results
     adapters."""
     classes = get_results_adapter_classes()
+    logger = structlog.get_logger("managed_adapters")
 
     if region:
         allowed = (
@@ -2194,12 +2166,12 @@ async def managed_adapters(
         for adapter in adapters:
             try:
                 await adapter.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Adapter cleanup failed", adapter=adapter.source_name, error=str(exc))
         try:
             await fortuna.GlobalResourceManager.cleanup()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Global resource cleanup failed", error=str(exc))
 
 
 # -- ORCHESTRATION HELPERS ----------------------------------------------------
@@ -2413,8 +2385,7 @@ async def run_analytics(
         name: {"count": 0, "max_odds": 0.0} for name in expected
     }
 
-    auditor = AuditorEngine()
-    try:
+    async with AuditorEngine() as auditor:
         unverified = await auditor.get_unverified_tips()
         target_venues = None
 
@@ -2461,8 +2432,6 @@ async def run_analytics(
         )
         await _write_gha_summary(auditor, harvest_summary)
 
-    finally:
-        await auditor.close()
 
 
 # -- CLI ENTRY POINT ----------------------------------------------------------

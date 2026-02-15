@@ -557,6 +557,7 @@ def node_text(n: Any) -> str:
     return txt().strip() if callable(txt) else str(txt).strip()
 
 
+@lru_cache(maxsize=1024)
 def get_canonical_venue(name: Optional[str]) -> str:
     """Returns a sanitized canonical form for deduplication keys."""
     if not name:
@@ -1393,7 +1394,7 @@ class BrowserHeadersMixin:
 
 class DebugMixin:
     def _save_debug_snapshot(self, content: str, context: str, url: Optional[str] = None) -> None:
-        if not content: return
+        if not content or not os.getenv("DEBUG_SNAPSHOTS"): return
         try:
             d = Path("debug_snapshots")
             d.mkdir(parents=True, exist_ok=True)
