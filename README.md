@@ -16,3 +16,17 @@ The Fortuna engine is built for 24/7 intelligence. Our primary goal is a steady 
 - **Odds Hygiene**: Real-time filtering of placeholder and default odds to ensure high-signal predictions.
 - **Performance Auditing**: Automated verification of predictions against official results.
 - **Portable App**: Fully functional as a standalone tool.
+
+## Building Windows EXE
+
+To build the standalone Windows executable:
+
+```bash
+python build_monolith.py
+```
+
+**First run requirement:**
+The app requires Playwright for some discovery adapters. On first run, you may need to install the browser binaries:
+```bash
+python -m playwright install chromium
+```

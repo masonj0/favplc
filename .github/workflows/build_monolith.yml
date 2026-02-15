@@ -4,15 +4,13 @@ on:
   push:
     branches:
       - main
-      - jules208
-      - jules209
-      - jules210
-      - jules214
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 30
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -20,8 +18,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\ms-playwright
+          key: playwright-win-${{ hashFiles('requirements.txt') }}
 
       - name: Install dependencies
         run: |
@@ -30,15 +34,38 @@ jobs:
           python -m pip install --prefer-binary pyinstaller
           python -m browserforge update
           python -m pip install playwright
-          python -m playwright install chromium
+          python -m playwright install --with-deps chromium
 
       - name: Build EXE
         run: |
           python build_monolith.py
 
+          # Verify build succeeded
+          if (!(Test-Path "dist/FortunaFaucetPortableApp.exe")) {
+            Write-Error "Build failed: EXE not found"
+            exit 1
+          }
+
+          # Report size and SHA256
+          $size = (Get-Item "dist/FortunaFaucetPortableApp.exe").Length / 1MB
+          $sha256 = (Get-FileHash "dist/FortunaFaucetPortableApp.exe" -Algorithm SHA256).Hash
+
+          Write-Host "$([char]0x2713) Build successful: $([math]::Round($size, 1)) MB" -ForegroundColor Green
+          Write-Host "SHA256: $sha256"
+
+          # Add to GITHUB_STEP_SUMMARY
+          @"
+          ## Build Results
+
+          - **Status:** Success
+          - **Size:** $([math]::Round($size, 2)) MB
+          - **SHA256:** \`$sha256\`
+          - **Built:** $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: FortunaMonolith-Windows
+          name: FortunaMonolith-Windows-${{ github.sha }}
           path: dist/FortunaFaucetPortableApp.exe
           retention-days: 7

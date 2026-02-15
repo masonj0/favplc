@@ -1,0 +1,239 @@
+
+════════════════════════════════════════════════════════════
+══════════ 🐎 FORTUNA FAUCET INTELLIGENCE - v3.0.0 ══════════
+════════════════════════════════════════════════════════════
+ 📍 Region: GLOBAL | 🔍 Status: READY
+ 📊 Database: 0 tips | ✅ 0 audited | 💎 0 goldmines
+ 🛡️  Odds Hygiene: >70% trust ratio required
+ 📁 Latest Reports: Summary, HTML
+════════════════════════════════════════════════════════════
+
+2026-02-15 21:40:01 [info     ] Auto-selected region           region=GLOBAL
+2026-02-15 21:40:02 [info     ] Initializing adapters          count=10
+2026-02-15 21:40:02 [info     ] Adapters initialization complete initialized=10
+2026-02-15 21:40:02 [info     ] Fetching races                 dates=['2026-02-15', '2026-02-16']
+2026-02-15 21:40:02 [info     ] Fetch complete                 adapter=RacingAndSportsAdapter count=0 date=2026-02-15
+2026-02-15 21:40:02 [info     ] Fetch complete                 adapter=BoyleSportsAdapter count=0 date=2026-02-15
+2026-02-15 21:40:03 [info     ] Fetch complete                 adapter=BoyleSportsAdapter count=0 date=2026-02-16
+2026-02-15 21:40:03 [warning  ] No metadata found              adapter_name=SkySports context=SkySports Index Parsing url=/racing/racecards/15-02-2026
+2026-02-15 21:40:03 [info     ] Fetch complete                 adapter=SkySportsAdapter count=0 date=2026-02-15
+2026-02-15 21:40:04 [info     ] Fetch complete                 adapter=RacingAndSportsAdapter count=0 date=2026-02-16
+2026-02-15 21:40:08 [info     ] adapter_odds_quality           adapter_name=SportingLife ratio=1.0 source=SportingLife
+2026-02-15 21:40:08 [info     ] Fetch complete                 adapter=SportingLifeAdapter count=1 date=2026-02-15
+2026-02-15 21:40:11 [info     ] adapter_odds_quality           adapter_name=SportingLife ratio=1.0 source=SportingLife
+2026-02-15 21:40:11 [info     ] Fetch complete                 adapter=SportingLifeAdapter count=1 date=2026-02-16
+2026-02-15 21:40:19 [info     ] Fetch complete                 adapter=SkyRacingWorldAdapter count=8 date=2026-02-15
+[2026-02-15 21:40:21] INFO: Fetched (302) <GET https://www.timeform.com/horse-racing/racecards/2026-02-15> (referer: https://www.google.com/search?q=timeform)
+[2026-02-15 21:40:21] INFO: Fetched (302) <GET https://www.timeform.com/horse-racing/racecards/2026-02-16> (referer: https://www.google.com/search?q=timeform)
+[2026-02-15 21:40:21] INFO: Fetched (500) <GET https://www.timeform.com/horse-racing/something-has-gone-wrong> (referer: https://www.google.com/search?q=timeform)
+[2026-02-15 21:40:21] INFO: Fetched (500) <GET https://www.timeform.com/horse-racing/something-has-gone-wrong> (referer: https://www.google.com/search?q=timeform)
+[2026-02-15 21:40:21] INFO: Fetched (200) <GET https://www.oddschecker.com/horse-racing/2026-02-15> (referer: https://www.google.com/search?q=oddschecker)
+2026-02-15 21:40:21 [warning  ] Failed to fetch Timeform index page adapter_name=Timeform url=/horse-racing/racecards/2026-02-16
+2026-02-15 21:40:21 [info     ] Fetch complete                 adapter=TimeformAdapter count=0 date=2026-02-16
+2026-02-15 21:40:22 [warning  ] Failed to fetch Timeform index page adapter_name=Timeform url=/horse-racing/racecards/2026-02-15
+2026-02-15 21:40:22 [info     ] Fetch complete                 adapter=TimeformAdapter count=0 date=2026-02-15
+2026-02-15 21:40:22 [warning  ] Failed to fetch Oddschecker index page adapter_name=Oddschecker url=/horse-racing/2026-02-15
+2026-02-15 21:40:22 [info     ] Fetch complete                 adapter=OddscheckerAdapter count=0 date=2026-02-15
+[2026-02-15 21:40:48] INFO: Fetched (200) <GET https://greyhounds.attheraces.com/result/IRE/lifford/15-February-2026/2038> (referer: https://www.google.com/search?q=attheraces)
+[2026-02-15 21:40:49] INFO: Fetched (200) <GET https://greyhounds.attheraces.com/result/IRE/clonmel/15-February-2026/1856> (referer: https://www.google.com/search?q=attheraces)
+[2026-02-15 21:40:49] INFO: Fetched (200) <GET https://greyhounds.attheraces.com/result/IRE/clonmel/15-February-2026/1804> (referer: https://www.google.com/search?q=attheraces)
+[2026-02-15 21:40:49] INFO: Fetched (200) <GET https://greyhounds.attheraces.com/result/GB/sheffield/15-February-2026/1526> (referer: https://www.google.com/search?q=attheraces)
+2026-02-15 21:40:55 [warning  ] placeholder_odds_detected      odds=2.75 source=SkyRacingWorld
+2026-02-15 21:40:56 [info     ] Fetch complete                 adapter=SkyRacingWorldAdapter count=6 date=2026-02-16
+[2026-02-15 21:40:57] INFO: Fetched (200) <GET https://www.skysports.com/racing/racecards/marseille/16-02-2026/1354555/castellane-handicap-awt> (referer: https://www.google.com/search?q=skysports)
+[2026-02-15 21:40:57] INFO: Fetched (200) <GET https://www.skysports.com/racing/racecards/marseille/16-02-2026/1354554/des-myrthes-claiming-stakes-awt> (referer: https://www.google.com/search?q=skysports)
+[2026-02-15 21:40:57] INFO: Fetched (200) <GET https://www.skysports.com/racing/racecards/marseille/16-02-2026/1354553/maquis-stakes-awt> (referer: https://www.google.com/search?q=skysports)
+2026-02-15 21:41:01 [info     ] adapter_odds_quality           adapter_name=SkySports ratio=0.73 source=SkySports
+2026-02-15 21:41:01 [info     ] Fetch complete                 adapter=SkySportsAdapter count=24 date=2026-02-16
+[2026-02-15 21:41:12] INFO: Fetched (301) <GET https://www.oddschecker.com/horse-racing/2026-02-16> (referer: https://www.google.com/search?q=oddschecker)
+[2026-02-15 21:41:12] INFO: Fetched (200) <GET https://www.oddschecker.com/horse-racing> (referer: https://www.google.com/search?q=oddschecker)
+2026-02-15 21:41:12 [warning  ] Failed to fetch Oddschecker index page adapter_name=Oddschecker url=/horse-racing/2026-02-16
+2026-02-15 21:41:12 [info     ] Fetch complete                 adapter=OddscheckerAdapter count=0 date=2026-02-16
+2026-02-15 21:41:33 [info     ] adapter_odds_quality           adapter_name=AtTheRacesGreyhound ratio=0.0 source=AtTheRacesGreyhound
+2026-02-15 21:41:33 [info     ] Fetch complete                 adapter=AtTheRacesGreyhoundAdapter count=63 date=2026-02-16
+[2026-02-15 21:41:53] INFO: Fetched (302) <GET https://www.racingpost.com/racecards/2026-02-16> (referer: https://www.google.com/search?q=racingpost)
+[2026-02-15 21:41:53] INFO: Fetched (200) <GET https://www.racingpost.com/racecards/tomorrow> (referer: https://www.google.com/search?q=racingpost)
+[2026-02-15 21:41:53] INFO: Fetched (200) <GET https://www.racingpost.com/racecards/2026-02-15> (referer: https://www.google.com/search?q=racingpost)
+2026-02-15 21:41:57 [info     ] Fetch complete                 adapter=AtTheRacesGreyhoundAdapter count=0 date=2026-02-15
+[2026-02-15 21:41:59] INFO: Fetched (404) <GET https://www.racingpost.com/racecards/international/2026-02-15> (referer: https://www.google.com/search?q=racingpost)
+[2026-02-15 21:41:59] INFO: Fetched (404) <GET https://www.racingpost.com/racecards/international/2026-02-16> (referer: https://www.google.com/search?q=racingpost)
+[2026-02-15 21:42:02] INFO: Fetched (404) <GET https://www.racingpost.com/racecards/2026-02-15/international> (referer: https://www.google.com/search?q=racingpost)
+[2026-02-15 21:42:02] INFO: Fetched (404) <GET https://www.racingpost.com/racecards/2026-02-16/international> (referer: https://www.google.com/search?q=racingpost)
+[2026-02-15 21:42:07] INFO: Fetched (404) <GET https://www.racingpost.com/racecards/international> (referer: https://www.google.com/search?q=racingpost)
+2026-02-15 21:42:07 [warning  ] Unexpected status              adapter_name=RacingPost status=200 url=/racecards/2026-02-15
+2026-02-15 21:42:07 [warning  ] Standard RacingPost link discovery failed, trying aggressive fallback adapter_name=RacingPost date=2026-02-15
+2026-02-15 21:42:07 [warning  ] Failed to fetch RacingPost racecard links adapter_name=RacingPost date=2026-02-15
+2026-02-15 21:42:07 [info     ] Fetch complete                 adapter=RacingPostAdapter count=0 date=2026-02-15
+[2026-02-15 21:42:07] INFO: Fetched (404) <GET https://www.racingpost.com/racecards/international> (referer: https://www.google.com/search?q=racingpost)
+2026-02-15 21:42:08 [warning  ] Unexpected status              adapter_name=RacingPost status=200 url=/racecards/2026-02-16
+2026-02-15 21:42:08 [warning  ] Standard RacingPost link discovery failed, trying aggressive fallback adapter_name=RacingPost date=2026-02-16
+2026-02-15 21:42:08 [warning  ] Failed to fetch RacingPost racecard links adapter_name=RacingPost date=2026-02-16
+2026-02-15 21:42:08 [info     ] Fetch complete                 adapter=RacingPostAdapter count=0 date=2026-02-16
+[2026-02-15 21:42:19] INFO: Fetched (200) <GET https://www.attheraces.com/racecard/Fairyhouse/16-February-2026/1420> (referer: https://www.google.com/search?q=attheraces)
+2026-02-15 21:43:51 [info     ] adapter_odds_quality           adapter_name=AtTheRaces ratio=0.52 source=AtTheRaces
+2026-02-15 21:43:51 [info     ] Fetch complete                 adapter=AtTheRacesAdapter count=147 date=2026-02-15
+[2026-02-15 21:43:52] INFO: Fetched (200) <GET https://www.attheraces.com/racecard/Saint-Galmier/16-February-2026/1532> (referer: https://www.google.com/search?q=attheraces)
+[2026-02-15 21:43:56] INFO: Fetched (200) <GET https://www.attheraces.com/racecard/Punchestown/15-February-2026/1532> (referer: https://www.google.com/search?q=attheraces)
+2026-02-15 21:45:11 [info     ] adapter_odds_quality           adapter_name=AtTheRaces ratio=0.24 source=AtTheRaces
+2026-02-15 21:45:11 [info     ] Fetch complete                 adapter=AtTheRacesAdapter count=135 date=2026-02-16
+2026-02-15 21:45:11 [info     ] Total races fetched            total=385
+2026-02-15 21:45:11 [info     ] ========================================================================================================================
+                                                     FULL RACE LIST
+========================================================================================================================
+DISC  TRACK                     R#   FIELD  SUPER  ADAPTER                   START TIME
+------------------------------------------------------------------------------------------------------------------------
+G     Central Park              1    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:36 ET
+G     Central Park              3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:13 ET
+G     Central Park              4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:32 ET
+G     Doncaster                 1    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:33 ET
+G     Doncaster                 2    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:52 ET
+G     Doncaster                 3    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:11 ET
+G     Doncaster                 4    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:29 ET
+G     Harlow                    1    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 10:32 ET
+G     Harlow                    2    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 10:48 ET
+G     Harlow                    3    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:04 ET
+G     Harlow                    4    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:21 ET
+G     Harlow                    5    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:38 ET
+G     Harlow                    6    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:54 ET
+G     Harlow                    7    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:12 ET
+G     Harlow                    8    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:29 ET
+G     Harlow                    9    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:46 ET
+G     Harlow                    10   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:03 ET
+G     Harlow                    11   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:19 ET
+G     Monmore                   1    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:23 ET
+G     Monmore                   2    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:41 ET
+G     Monmore                   3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:01 ET
+G     Monmore                   4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:19 ET
+G     Monmore                   5    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:38 ET
+G     Romford                   1    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:09 ET
+G     Romford                   2    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:27 ET
+G     Romford                   3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:43 ET
+G     Romford                   4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:01 ET
+G     Romford                   5    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:18 ET
+G     Romford                   6    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:34 ET
+G     Romford                   8    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:08 ET
+G     Romford                   9    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:26 ET
+G     Romford                   10   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:42 ET
+G     Romford                   11   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:59 ET
+G     Romford                   12   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:14 ET
+G     Suffolk                   1    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:26 ET
+G     Suffolk                   2    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:44 ET
+G     Suffolk                   3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:03 ET
+G     Suffolk                   4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:22 ET
+G     Sunland Park              1    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:29 ET
+G     Sunland Park              2    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:48 ET
+G     Sunland Park              3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:07 ET
+G     Sunland Park              4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 15:26 ET
+G     Wolverhampton             1    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:01 ET
+G     Wolverhampton             2    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:18 ET
+G     Wolverhampton             3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:34 ET
+G     Wolverhampton             4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:52 ET
+G     Wolverhampton             5    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:09 ET
+G     Wolverhampton             6    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:26 ET
+G     Wolverhampton             7    5      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:42 ET
+G     Wolverhampton             8    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:59 ET
+G     Wolverhampton             9    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:17 ET
+G     Wolverhampton             10   5      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:33 ET
+G     Youghal                   1    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:13 ET
+G     Youghal                   2    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:29 ET
+G     Youghal                   3    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 11:47 ET
+G     Youghal                   4    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:04 ET
+G     Youghal                   5    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:21 ET
+G     Youghal                   6    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:38 ET
+G     Youghal                   7    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 12:54 ET
+G     Youghal                   8    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:12 ET
+G     Youghal                   9    6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:29 ET
+G     Youghal                   10   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 13:47 ET
+G     Youghal                   11   6      No     AtTheRacesGreyhoundAdapt  2026-02-16 14:03 ET
+H     Adana Aw                  1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Bursa Aw                  1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Cairns                    1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Carlisle                  1    11     Yes    SkySportsAdapter          2026-02-16 13:05 ET
+H     Carlisle                  2    9      Yes    SkySportsAdapter          2026-02-16 13:35 ET
+H     Carlisle                  3    12     Yes    SkySportsAdapter          2026-02-16 14:05 ET
+H     Carlisle                  4    10     Yes    SkySportsAdapter          2026-02-16 14:35 ET
+H     Carlisle                  5    13     Yes    SkySportsAdapter          2026-02-16 15:05 ET
+H     Carlisle                  6    14     Yes    SkySportsAdapter          2026-02-16 15:35 ET
+H     Fairyhouse                1    10     Yes    SkySportsAdapter          2026-02-16 13:50 ET
+H     Fairyhouse                2    10     Yes    SkySportsAdapter          2026-02-16 14:20 ET
+H     Fairyhouse                3    6      Yes    SkySportsAdapter          2026-02-16 14:50 ET
+H     Fairyhouse                4    9      Yes    SkySportsAdapter          2026-02-16 15:20 ET
+H     Izmir Aw                  1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Jebel Ali                 1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Kembla Grange             1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Marseille                 1    8      Yes    SkySportsAdapter          2026-02-16 10:51 ET
+H     Marseille                 2    5      No     SkySportsAdapter          2026-02-16 11:23 ET
+H     Marseille                 3    9      Yes    SkySportsAdapter          2026-02-16 11:55 ET
+H     Marseille                 4    7      Yes    SkySportsAdapter          2026-02-16 12:27 ET
+H     Marseille                 5    9      Yes    SkySportsAdapter          2026-02-16 13:12 ET
+H     Marseille                 6    10     Yes    SkySportsAdapter          2026-02-16 13:47 ET
+H     Marseille                 7    12     Yes    SkySportsAdapter          2026-02-16 14:22 ET
+H     Marseille                 8    14     Yes    SkySportsAdapter          2026-02-16 14:57 ET
+H     Newcastle                 1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Palermo                   1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Queanbeyan                1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Rockhampton               1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Santa Anita               1    9      Yes    SkySportsAdapter          2026-02-16 15:32 ET
+H     Scottsville               1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Tokyo City Keiba          1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+H     Vincennes                 1    16     Yes    SkySportsAdapter          2026-02-16 12:55 ET
+H     Vincennes                 2    8      Yes    SkySportsAdapter          2026-02-16 13:30 ET
+H     Vincennes                 3    14     Yes    SkySportsAdapter          2026-02-16 14:05 ET
+H     Vincennes                 4    13     Yes    SkySportsAdapter          2026-02-16 14:40 ET
+H     Vincennes                 5    15     Yes    SkySportsAdapter          2026-02-16 15:15 ET
+H     Wagga                     1    0      No     SkyRacingWorldAdapter     2026-02-15 12:00 ET
+T     Aqueduct                  1    9      No     AtTheRacesAdapter         2026-02-15 21:46 ET
+T     Cagnes Sur Mer            1    10     No     AtTheRacesAdapter         2026-02-16 13:50 ET
+T     Cagnes Sur Mer Georges S  1    6      No     AtTheRacesAdapter         2026-02-16 12:05 ET
+T     Cagnes Sur Mer Jean Mass  1    9      No     AtTheRacesAdapter         2026-02-16 13:15 ET
+T     Cagnes Sur Mer Policeman  1    5      No     AtTheRacesAdapter         2026-02-16 12:40 ET
+T     Cagnes Sur Mer Saonois    1    10     No     AtTheRacesAdapter         2026-02-16 14:32 ET
+T     Cagnes Sur Mer St Raphae  1    12     No     AtTheRacesAdapter         2026-02-16 15:07 ET
+T     Carlisle Book Your        1    7      No     AtTheRacesAdapter         2026-02-16 14:35 ET
+T     Carlisle Come Racing At   1    11     No     AtTheRacesAdapter         2026-02-16 14:05 ET
+T     Carlisle Conference & Ev  1    10     No     AtTheRacesAdapter         2026-02-16 13:05 ET
+T     Carlisle Racing           1    9      No     AtTheRacesAdapter         2026-02-16 13:35 ET
+T     Carlisle Sandy Molloy     1    14     No     AtTheRacesAdapter         2026-02-16 15:35 ET
+T     Fairyhouse Bobbyjo        1    9      No     AtTheRacesAdapter         2026-02-16 15:20 ET
+T     Fairyhouse Buy The Real   1    10     No     AtTheRacesAdapter         2026-02-16 14:20 ET
+T     Fairyhouse Irish Stallio  1    7      No     AtTheRacesAdapter         2026-02-16 13:50 ET
+T     Gulfstream Park           1    14     No     AtTheRacesAdapter         2026-02-15 21:38 ET
+T     Jebel Ali                 1    14     No     AtTheRacesAdapter         2026-02-16 10:00 ET
+T     Maronas                   1    10     No     AtTheRacesAdapter         2026-02-15 21:40 ET
+T     Marseille Arganiers       1    5      No     AtTheRacesAdapter         2026-02-16 11:23 ET
+T     Marseille Castellane      1    12     No     AtTheRacesAdapter         2026-02-16 14:22 ET
+T     Marseille Lord Flasheart  1    8      No     AtTheRacesAdapter         2026-02-16 10:51 ET
+T     Marseille Maquis          1    9      No     AtTheRacesAdapter         2026-02-16 13:12 ET
+T     Marseille St Remy         1    9      No     AtTheRacesAdapter         2026-02-16 11:55 ET
+T     Musselburgh               1    11     No     SportingLifeAdapter       2026-02-15 13:50 ET
+T     Musselburgh               1    11     No     SportingLifeAdapter       2026-02-16 13:50 ET
+T     Newcastle                 1    12     No     AtTheRacesAdapter         2026-02-16 13:42 ET
+T     Oaklawn                   1    6      No     AtTheRacesAdapter         2026-02-15 21:35 ET
+T     Pontchateau               1    13     No     AtTheRacesAdapter         2026-02-16 09:30 ET
+T     Punchestown 1Xbet.Ie Beg  1    7      No     AtTheRacesAdapter         2026-02-16 14:00 ET
+T     Punchestown 1Xbet.Ie Gra  1    16     No     AtTheRacesAdapter         2026-02-16 14:30 ET
+T     Punchestown Concept Colo  1    5      No     AtTheRacesAdapter         2026-02-16 13:30 ET
+T     Punchestown Evad Technol  1    16     No     AtTheRacesAdapter         2026-02-16 15:32 ET
+T     Punchestown Irish Stalli  1    5      No     AtTheRacesAdapter         2026-02-16 15:00 ET
+T     Sam Houston               1    10     No     AtTheRacesAdapter         2026-02-15 21:42 ET
+T     Santa Anita               1    11     Yes    AtTheRacesAdapter         2026-02-15 23:30 ET
+T     Scottsville               1    13     No     AtTheRacesAdapter         2026-02-16 10:15 ET
+T     Scottsville Fever Tree    1    14     No     AtTheRacesAdapter         2026-02-16 13:45 ET
+T     Scottsville Gallop        1    13     No     AtTheRacesAdapter         2026-02-16 12:35 ET
+T     Scottsville Hollywoodbet  1    14     No     AtTheRacesAdapter         2026-02-16 14:55 ET
+T     Scottsville Join The Pas  1    9      No     AtTheRacesAdapter         2026-02-16 09:40 ET
+T     Scottsville Tote For The  1    10     No     AtTheRacesAdapter         2026-02-16 11:55 ET
+T     Sunland Park              1    9      No     AtTheRacesAdapter         2026-02-15 21:43 ET
+T     Tampa Bay Downs           1    13     No     AtTheRacesAdapter         2026-02-15 21:53 ET
+------------------------------------------------------------------------------------------------------------------------
+Total races: 143
+2026-02-15 21:45:11 [info     ] ============================================================================================================================================
+                                                🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES
+============================================================================================================================================
+Updated: 2026-02-15 16:45:11 ET
+Criteria: -10 < MTP <= 120 minutes AND 2nd Favorite Odds >= 4.0
+--------------------------------------------------------------------------------------------------------------------------------------------
+⏳ No races currently meet BET NOW criteria.
+2026-02-15 21:45:11 [warning  ] 🔭 Monitor found 0 BET NOW opportunities total_checked=13
+2026-02-15 21:45:11 [warning  ] empty_bet_now_list             golden_zone_count=13
+(B)0[?1049h[1;24r[m[4l[?1h=[?1h=[39;49m[39;49m[37m[40m[1;1H                                                                                [2;1H                                                                                [3;1H                                                                                [4;1H                                                                                [5;1H                                                                                [6;1H                                                                                [7;1H                                                                                [8;1H                                                                                [9;1H                                                                                [10;1H                                                                                [11;1H                                                                                [12;1H                                                                                [13;1H                                                                                [14;1H                                                                                [15;1H                                                                                [16;1H                                                                                [17;1H                                                                                [18;1H                                                                                [19;1H                                                                                [20;1H                                                                                [21;1H                                                                                [22;1H                                                                                [23;1H                                                                                [24;1H                                                                                [1@[37m[40m [H[m[39;49m[37m[40m[39;49m[37m[40m                                                                                [2;1H                                                                                [3;1H                                                                                [4;1H                                                                                [5;1H                                                                                [6;1H                                                                                [7;1H                                                                                [8;1H                                                                                [9;1H                                                                                [10;1H                                                                                [11;1H                                                                                [12;1H                                                                                [13;1H                                                                                [14;1H                                                                                [15;1H                                                                                [16;1H                                                                                [17;1H                                                                                [18;1H                                                                                [19;1H                                                                                [20;1H                                                                                [21;1H                                                                                [22;1H                                                                                [23;1H                                                                                [24;1H                                                                                [1@ [H[39;49m[m[22d[93m[44mGetting file://localhost/app/fortuna_report.html                                [22;49H[39;49m[m[24d[24;1H[?1049l[?1l>Opening fortuna_report.html in your browser...
