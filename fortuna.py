@@ -149,7 +149,7 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = {2.75}
+COMMON_PLACEHOLDERS: Final[set] = {2.75, 1.8}
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -1389,58 +1389,115 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     SOURCE_NAME: ClassVar[str] = "RacingAndSports"
     BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
 
-    async def fetch_races(self, date_str: str) -> List[Race]:
-        url = f"{self.BASE_URL}/racing-index?date={date_str}"
-        headers = self.get_browser_headers()
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
-        try:
-            resp = await self.client.get(url, headers=headers)
-            if resp.status_code != 200:
-                self.logger.warning(f"RAS blocked with status {resp.status_code}")
-                return []
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=60
+        )
 
-            tree = HTMLParser(resp.text)
-            races = []
-            # RAS uses tables for different regions (Australia, UK, etc.)
-            tables = tree.css("table.table-index")
-            for table in tables:
-                for row in table.css("tbody tr"):
-                    venue_cell = row.css_first("td.venue-name")
-                    if not venue_cell: continue
-                    venue_name = venue_cell.text(strip=True)
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.racingandsports.com.au")
 
-                    for link in row.css("td a.race-link"):
-                        race_url = self.BASE_URL + link.attributes.get("href", "")
-                        r_num_match = re.search(r"R(\d+)", link.text(strip=True))
-                        if not r_num_match: continue
-                        r_num = int(r_num_match.group(1))
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        url = f"/racing-index?date={date}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            return None
 
-                        # We'll queue these for detail fetching
-                        # (In a real implementation, we'd use a pool)
-                        detail = await self._fetch_race_detail(race_url, venue_name, r_num, date_str)
-                        if detail: races.append(detail)
-            return races
-        except Exception as e:
-            self.logger.error(f"RAS Fetch Error: {e}")
-            return []
+        self._save_debug_snapshot(resp.text, f"ras_index_{date}")
+        parser = HTMLParser(resp.text)
+        metadata = []
 
-    async def _fetch_race_detail(self, url: str, venue: str, num: int, date_str: str) -> Optional[Race]:
-        try:
-            resp = await self.client.get(url, headers=self.get_browser_headers())
-            if resp.status_code != 200: return None
-            tree = HTMLParser(resp.text)
+        # RAS uses tables for different regions (Australia, UK, etc.)
+        for table in parser.css("table.table-index"):
+            for row in table.css("tbody tr"):
+                venue_cell = row.css_first("td.venue-name")
+                if not venue_cell: continue
+                venue_name = venue_cell.text(strip=True)
 
-            runners = []
-            for row in tree.css("tr.runner-row"):
-                name = row.css_first(".runner-name").text(strip=True) if row.css_first(".runner-name") else "Unknown"
-                saddle = int(row.css_first(".runner-number").text(strip=True)) if row.css_first(".runner-number") else 0
-                odds_text = row.css_first(".odds-win").text(strip=True) if row.css_first(".odds-win") else "0"
-                odds = float(odds_text) if odds_text.replace(".","").isdigit() else 0.0
-                runners.append(Runner(name=name, selection_number=saddle, win_odds=odds))
+                for link in row.css("td a.race-link"):
+                    race_url = link.attributes.get("href", "")
+                    if not race_url: continue
+                    if not race_url.startswith("http"):
+                        race_url = self.BASE_URL + race_url
 
-            if not runners: return None
-            return Race(venue=venue, race_number=num, start_time=datetime.now(EASTERN), runners=runners, source=self.SOURCE_NAME, url=url)
-        except Exception: return None
+                    r_num_match = re.search(r"R(\d+)", link.text(strip=True))
+                    r_num = int(r_num_match.group(1)) if r_num_match else 0
+
+                    metadata.append({
+                        "url": race_url,
+                        "venue": venue_name,
+                        "race_number": r_num
+                    })
+
+        if not metadata:
+            return None
+
+        # Limit for sanity
+        pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers())
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        except Exception: return []
+
+        races: List[Race] = []
+        for item in raw_data["pages"]:
+            html_content = item.get("html")
+            if not html_content: continue
+            try:
+                race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("venue"), item.get("race_number"))
+                if race: races.append(race)
+            except Exception: pass
+        return races
+
+    def _parse_single_race(self, html_content: str, url: str, race_date: date, venue: str, race_num: int) -> Optional[Race]:
+        tree = HTMLParser(html_content)
+
+        runners = []
+        for row in tree.css("tr.runner-row"):
+            name_node = row.css_first(".runner-name")
+            if not name_node: continue
+            name = clean_text(name_node.text())
+
+            num_node = row.css_first(".runner-number")
+            number = int("".join(filter(str.isdigit, num_node.text()))) if num_node else 0
+
+            odds_node = row.css_first(".odds-win")
+            win_odds = parse_odds_to_decimal(clean_text(odds_node.text())) if odds_node else None
+
+            odds_data = {}
+            if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                odds_data[self.SOURCE_NAME] = ov
+
+            runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds))
+
+        if not runners: return None
+
+        # Start time from page if available, else guess
+        start_time = datetime.combine(race_date, datetime.min.time())
+        # Try to find time in text
+        time_match = re.search(r"(\d{1,2}:\d{2})", html_content)
+        if time_match:
+            try:
+                start_time = datetime.combine(race_date, datetime.strptime(time_match.group(1), "%H:%M").time())
+            except Exception: pass
+
+        return Race(
+            id=generate_race_id("ras", venue, start_time, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=ensure_eastern(start_time),
+            runners=runners,
+            source=self.SOURCE_NAME,
+            available_bets=scrape_available_bets(html_content)
+        )
 
 class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
@@ -3477,6 +3534,11 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
             # Sort odds ascending
             all_odds.sort()
+
+            # Uniform Odds Check: If all runners have identical odds, it's likely a placeholder card (Memory Directive Fix)
+            if len(all_odds) >= 3 and len(set(all_odds)) == 1:
+                self.logger.warning("Race contains uniform odds; likely placeholder data. Skipping.", venue=race.venue, race=race.race_number, odds=float(all_odds[0]))
+                continue
 
             # Stability Check: Ensure we have at least 2 active runners to compare
             if len(active_runners) < 2:
