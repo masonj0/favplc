@@ -4950,6 +4950,49 @@ class FortunaDB:
                 ))
         await self._run_in_executor(_update)
 
+    async def update_audit_results_batch(self, outcomes: List[Tuple[str, Dict[str, Any]]]):
+        """Updates multiple tips with their audit outcomes in a single transaction."""
+        if not outcomes: return
+        if not self._initialized: await self.initialize()
+
+        def _update():
+            conn = self._get_conn()
+            with conn:
+                for race_id, outcome in outcomes:
+                    conn.execute("""
+                        UPDATE tips SET
+                            audit_completed = 1,
+                            verdict = ?,
+                            net_profit = ?,
+                            selection_position = ?,
+                            actual_top_5 = ?,
+                            actual_2nd_fav_odds = ?,
+                            trifecta_payout = ?,
+                            trifecta_combination = ?,
+                            superfecta_payout = ?,
+                            superfecta_combination = ?,
+                            top1_place_payout = ?,
+                            top2_place_payout = ?,
+                            audit_timestamp = ?
+                        WHERE id = (
+                            SELECT id FROM tips
+                            WHERE race_id = ? AND audit_completed = 0
+                            LIMIT 1
+                        )
+                    """, (
+                        outcome.get("verdict"), outcome.get("net_profit"),
+                        outcome.get("selection_position"), outcome.get("actual_top_5"),
+                        outcome.get("actual_2nd_fav_odds"), outcome.get("trifecta_payout"),
+                        outcome.get("trifecta_combination"),
+                        outcome.get("superfecta_payout"),
+                        outcome.get("superfecta_combination"),
+                        outcome.get("top1_place_payout"),
+                        outcome.get("top2_place_payout"),
+                        outcome.get("audit_timestamp"),
+                        race_id
+                    ))
+        await self._run_in_executor(_update)
+
     async def get_all_audited_tips(self) -> List[Dict[str, Any]]:
         """Returns all audited tips for reporting."""
         if not self._initialized: await self.initialize()

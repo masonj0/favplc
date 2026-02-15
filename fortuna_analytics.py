@@ -34,6 +34,8 @@ import fortuna
 
 EASTERN = ZoneInfo("America/New_York")
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
+STANDARD_BET: Final[float] = 2.00
+
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
     4: 1,    # ≤4 runners: win only
     7: 2,    # 5-7 runners: top 2
@@ -97,8 +99,14 @@ def parse_currency_value(value_str: str) -> float:
             _currency_logger.debug("unexpected_currency_format", value=raw)
 
         if "," in raw and "." in raw:
-            cleaned = raw.replace(",", "")
-        elif "," in raw and re.search(r",\d{2}$", raw):
+            if raw.rfind(",") > raw.rfind("."):
+                # European style: 1.234,56
+                cleaned = raw.replace(".", "").replace(",", ".")
+            else:
+                # US style: 1,234.56
+                cleaned = raw.replace(",", "")
+        elif "," in raw and "." not in raw and re.search(r",\d{2}$", raw):
+            # European format: 12,34
             cleaned = raw.replace(",", ".")
         else:
             cleaned = raw.replace(",", "")
@@ -181,6 +189,12 @@ class AuditorEngine:
         self.db = fortuna.FortunaDB(db_path or DEFAULT_DB_PATH)
         self.logger = structlog.get_logger(self.__class__.__name__)
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.close()
+
     # -- data access -------------------------------------------------------
 
     async def get_unverified_tips(
@@ -211,11 +225,26 @@ class AuditorEngine:
             unverified = await self.get_unverified_tips()
 
         audited: List[Dict[str, Any]] = []
+        outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
+
         for tip in unverified:
             try:
-                audited_tip = await self._audit_single_tip(tip, results_map)
-                if audited_tip:
-                    audited.append(audited_tip)
+                race_id = tip.get("race_id")
+                if not race_id:
+                    continue
+
+                tip_key = self._tip_canonical_key(tip)
+                if not tip_key:
+                    continue
+
+                result = self._match_tip_to_result(tip_key, results_map, race_id)
+                if not result:
+                    continue
+
+                outcome = self._evaluate_tip(tip, result)
+                outcomes_to_batch.append((race_id, outcome))
+                audited.append({**tip, **outcome, "audit_completed": True})
+
             except Exception as exc:
                 self.logger.error(
                     "Error during audit",
@@ -223,6 +252,11 @@ class AuditorEngine:
                     error=str(exc),
                     exc_info=True,
                 )
+
+        if outcomes_to_batch:
+            self.logger.info("Batch updating audit results", count=len(outcomes_to_batch))
+            await self.db.update_audit_results_batch(outcomes_to_batch)
+
         return audited
 
     @staticmethod
@@ -230,38 +264,25 @@ class AuditorEngine:
         results: List[ResultRace],
     ) -> Dict[str, ResultRace]:
         mapping: Dict[str, ResultRace] = {}
+        log = structlog.get_logger("AuditorEngine")
         for r in results:
+            # Canonical key: full precision
             mapping[r.canonical_key] = r
+
             if r.relaxed_key != r.canonical_key:
+                # Relaxed key: Venue|Race|Date|Disc (no time)
+                if r.relaxed_key in mapping:
+                    existing = mapping[r.relaxed_key]
+                    if existing.canonical_key != r.canonical_key:
+                        log.debug(
+                            "Relaxed key collision",
+                            key=r.relaxed_key,
+                            existing=existing.canonical_key,
+                            new=r.canonical_key,
+                        )
                 mapping[r.relaxed_key] = r
         return mapping
 
-    async def _audit_single_tip(
-        self,
-        tip: Dict[str, Any],
-        results_map: Dict[str, ResultRace],
-    ) -> Optional[Dict[str, Any]]:
-        race_id = tip.get("race_id")
-        if not race_id:
-            self.logger.warning("Tip missing race_id", tip=tip)
-            return None
-
-        tip_key = self._tip_canonical_key(tip)
-        if not tip_key:
-            return None
-
-        result = self._match_tip_to_result(tip_key, results_map, race_id)
-        if not result:
-            return None
-
-        self.logger.info(
-            "Auditing tip",
-            venue=tip.get("venue"),
-            race=tip.get("race_number"),
-        )
-        outcome = self._evaluate_tip(tip, result)
-        await self.db.update_audit_result(race_id, outcome)
-        return {**tip, **outcome, "audit_completed": True}
 
     def _match_tip_to_result(
         self,
@@ -291,14 +312,16 @@ class AuditorEngine:
         # Fallback 2: drop discipline (keep time)
         if len(parts) >= 4:
             prefix = "|".join(parts[:4])
-            for key, obj in results_map.items():
-                if key.startswith(prefix):
-                    self.logger.info(
-                        "Discipline fallback match",
+            matches = [obj for key, obj in results_map.items() if key.startswith(prefix)]
+            if matches:
+                if len(matches) > 1:
+                    self.logger.warning(
+                        "Multiple discipline fallback matches",
                         race_id=race_id,
-                        match_key=key,
+                        count=len(matches),
                     )
-                    return obj
+                # Deterministic return: the one with exact time match if available
+                return matches[0]
 
         return None
 
@@ -373,18 +396,18 @@ class AuditorEngine:
 
     @staticmethod
     def _find_actual_2nd_fav_odds(result: ResultRace) -> Optional[float]:
-        runners = sorted(
+        runners_list = sorted(
             (
                 r for r in result.runners
                 if r.final_win_odds and r.final_win_odds > 0 and not r.scratched
             ),
             key=lambda r: r.final_win_odds,
         )
-        if len(runners) < 2:
+        if len(runners_list) < 2:
             return None
-        fav_odds = runners[0].final_win_odds
-        higher = [r for r in runners if r.final_win_odds > fav_odds]
-        return higher[0].final_win_odds if higher else fav_odds
+        fav_odds = runners_list[0].final_win_odds
+        higher = [r for r in runners_list if r.final_win_odds > fav_odds]
+        return higher[0].final_win_odds if higher else None
 
     @staticmethod
     def _find_selection_runner(
@@ -416,22 +439,23 @@ class AuditorEngine:
         if sel is None:
             return "VOID", 0.0
         if sel.position_numeric is None:
-            return "BURNED", -2.00
+            return "BURNED", -STANDARD_BET
 
         active = [r for r in result.runners if not r.scratched]
         places_paid = get_places_paid(len(active))
 
         if sel.position_numeric > places_paid:
-            return "BURNED", -2.00
+            return "BURNED", -STANDARD_BET
 
         # CASHED — calculate profit
         if sel.place_payout and sel.place_payout > 0:
-            return "CASHED", sel.place_payout - 2.00
+            return "CASHED", sel.place_payout - STANDARD_BET
 
         # Heuristic: ~1/5 of win odds for place
+        # Claude Fix: Mark as ESTIMATED to avoid corrupting real audit trail
         odds = sel.final_win_odds or 2.75
         place_roi = max(0.1, (odds - 1.0) / 5.0)
-        return "CASHED", place_roi * 2.0
+        return "CASHED_ESTIMATED", place_roi * STANDARD_BET
 
     @staticmethod
     def _extract_selection_number(tip: Dict[str, Any]) -> Optional[int]:
@@ -464,12 +488,12 @@ def build_start_time(
     time_str: Optional[str] = None,
     *,
     tz: ZoneInfo = EASTERN,
-) -> datetime:
+) -> Optional[datetime]:
     """Build a tz-aware datetime from ``YYYY-MM-DD`` + optional ``HH:MM``."""
     try:
         base = datetime.strptime(date_str, "%Y-%m-%d")
     except ValueError:
-        return datetime.now(tz)
+        return None
     hour, minute = 12, 0
     if time_str:
         try:
@@ -563,7 +587,7 @@ def extract_exotic_payouts(
 def _extract_race_number_from_text(
     parser: HTMLParser,
     url: str = "",
-) -> int:
+) -> Optional[int]:
     """Best-effort race-number from page text or URL."""
     m = re.search(r"Race\s+(\d+)", parser.text(), re.I)
     if m:
@@ -571,7 +595,7 @@ def _extract_race_number_from_text(
     m = re.search(r"/R(\d+)(?:[/?#]|$)", url)
     if m:
         return int(m.group(1))
-    return 1
+    return None
 
 
 # -- PageFetchingResultsAdapter BASE ------------------------------------------
@@ -812,8 +836,9 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
                     )
                     if (
                         resp and resp.text
-                        and len(resp.text) > 1000
+                        and len(resp.text) > 2000 # Increased threshold for real content
                         and "Pardon Our Interruption" not in resp.text
+                        and "<table" in resp.text.lower() # Verify presence of data tables
                     ):
                         break
                     else:
