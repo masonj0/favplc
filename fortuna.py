@@ -343,7 +343,7 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = {2.75}
+COMMON_PLACEHOLDERS: Final[set] = {2.75, 1.8}
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -7381,6 +7381,22 @@ async def main_all_in_one():
     parser.add_argument("--quick-help", action="store_true", help="Show friendly onboarding guide")
     parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
     args = parser.parse_args()
+
+    if args.quick_help:
+        print_quick_help()
+        return
+
+    if args.status:
+        print_status_card(config)
+        return
+
+    if args.show_log:
+        await print_recent_logs()
+        return
+
+    if args.open_dashboard:
+        open_report_in_browser()
+        return
 
     if args.db_path:
         os.environ["FORTUNA_DB_PATH"] = args.db_path

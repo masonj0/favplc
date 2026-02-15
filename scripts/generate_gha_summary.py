@@ -565,6 +565,10 @@ def _build_system(out: SummaryWriter) -> None:
     out.write("</details>")
     out.write()
 
+    # Collapsed detail
+    out.write("<details>")
+    out.write("<summary>📋 Adapter details</summary>")
+    out.write()
 
 def _adapter_table(adapters: dict[str, dict], label: str) -> list[str]:
     rows = [
