@@ -226,8 +226,5 @@ jobs:
             goldmine_report.txt
             analytics_report.txt
             race_data.json
-            raw_races.json
-            qualified_races.json
             fortuna.db
-            prediction_history.jsonl
-          retention-days: 30
+          retention-days: 1
