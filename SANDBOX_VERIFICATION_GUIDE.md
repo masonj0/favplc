@@ -43,7 +43,7 @@ python3 -c "
 import fortuna
 import fortuna_analytics
 print('IMPORTS: OK')
-print(f'Adapters: {len(fortuna.get_adapter_classes())} discovery')
+print(f'Adapters: {len(fortuna.get_discovery_adapter_classes())} discovery')
 print(f'Results:  {len(fortuna_analytics.get_results_adapter_classes())} results')
 "
 ```
@@ -58,11 +58,12 @@ print(f'Results:  {len(fortuna_analytics.get_results_adapter_classes())} results
 
 ## Phase 1: Discovery
 
-### 1a. Run discovery
+### 1a. Run discovery (Monitor Mode)
 
 ```bash
 export PYTHONPATH=.
-timeout 600 python3 fortuna.py 2>&1 | tee discovery_output.log | tail -20
+# Run in monitor mode to generate race_data.json and analysis reports
+timeout 600 python3 fortuna.py --monitor --once 2>&1 | tee discovery_output.log | tail -20
 EXIT_CODE=$?
 ```
 

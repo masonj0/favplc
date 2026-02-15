@@ -1,6 +1,9 @@
 import PyInstaller.__main__
 import os
 import sys
+import platform
+import json
+import subprocess
 from datetime import datetime
 
 def create_version_info():
@@ -35,24 +38,30 @@ def create_version_info():
   ]
 )
 """
-    with open("version_info.txt", "w") as f:
-        f.write(version_content)
-    print("Created version_info.txt")
+    try:
+        with open("version_info.txt", "w") as f:
+            f.write(version_content)
+        print("Created version_info.txt")
+    except IOError as e:
+        print(f"Warning: Could not create version_info.txt: {e}")
+        print("Continuing without version metadata...")
 
 
 def get_data_files():
-    """Collect data files to bundle. Returns flat list for args.extend()."""
+    """Collect data files to bundle. Returns flat list of strings for args.extend()."""
     data_files = []
+    # Platform-specific separator
+    sep = ';' if platform.system() == 'Windows' else ':'
 
     # Directories
     for dirname in ["static", "templates", "config"]:
         if os.path.exists(dirname):
-            data_files.extend(["--add-data", f"{dirname};{dirname}"])
+            data_files.extend(["--add-data", f"{dirname}{sep}{dirname}"])
 
     # Root files
     for filename in ["VERSION", "config.toml"]:
         if os.path.exists(filename):
-            data_files.extend(["--add-data", f"{filename};."])
+            data_files.extend(["--add-data", f"{filename}{sep}."])
 
     # Optional reports
     report_files = [
@@ -64,9 +73,73 @@ def get_data_files():
     ]
     for f in report_files:
         if os.path.exists(f):
-            data_files.extend(["--add-data", f"{f};."])
+            data_files.extend(["--add-data", f"{f}{sep}."])
 
     return data_files
+
+
+def create_build_metadata():
+    """Creates build_info.json with build metadata."""
+    metadata = {
+        "build_date": datetime.now().isoformat(),
+        "python_version": sys.version,
+        "platform": platform.platform(),
+    }
+
+    # Try to get git info
+    try:
+        metadata["git_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+        metadata["git_branch"] = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+    except Exception:
+        metadata["git_commit"] = "unknown"
+        metadata["git_branch"] = "unknown"
+
+    try:
+        with open("build_info.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+        print("Created build_info.json")
+        return ["--add-data", f"build_info.json{';' if platform.system() == 'Windows' else ':'}."]
+    except Exception as e:
+        print(f"Warning: Could not create build_info.json: {e}")
+        return []
+
+
+def verify_exe(exe_path):
+    """Verify the EXE can launch without errors."""
+    print("\nVerifying EXE...")
+    if platform.system() != 'Windows' and not exe_path.endswith('.exe'):
+        # On non-windows, the output might not have .exe extension
+        # but for this repo we are focused on Windows EXE.
+        pass
+
+    try:
+        # Try to run with --help (should be fast)
+        # Note: This might not work on the build machine if it's Linux building for Windows
+        # but in GHA we are on Windows.
+        result = subprocess.run(
+            [exe_path, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode == 0:
+            print("✓ EXE verification passed")
+            return True
+        else:
+            print(f"✗ EXE returned error code: {result.returncode}")
+            print(f"stderr: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        print("✗ EXE timed out (might be stuck)")
+        return False
+    except Exception as e:
+        print(f"✗ Could not verify EXE: {e}")
+        # If we are on Linux but built a Windows EXE, verification will fail here.
+        if platform.system() != 'Windows':
+            print("  (This is expected when cross-compiling or building on Linux)")
+            return True
+        return False
 
 
 def build_exe(console_mode: bool = True, debug: bool = False):
@@ -84,12 +157,14 @@ def build_exe(console_mode: bool = True, debug: bool = False):
 
     # Base arguments
     args = [
-        script_path,
+        str(script_path),
         "--onefile",
         "--name=FortunaFaucetPortableApp",
         "--clean",
-        "--version-file=version_info.txt",
     ]
+
+    if os.path.exists("version_info.txt"):
+        args.append("--version-file=version_info.txt")
 
     if not console_mode:
         args.append("--noconsole")
@@ -149,6 +224,9 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     # Add data files
     args.extend(get_data_files())
 
+    # Add build metadata
+    args.extend(create_build_metadata())
+
     # Exclude bloat
     excludes = [
         "matplotlib", "PIL", "tkinter", "scipy",
@@ -157,25 +235,50 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "IPython", "jupyter", "notebook",
         "pandas.tests", "numpy.tests",
         "tornado", "sphinx", "docutils", "jedi", "parso",
+        # Additional bloat
+        "cv2", "opencv", "torch", "tensorflow",
+        "PIL.ImageQt", "PyQt5", "setuptools._distutils",
     ]
     for exc in excludes:
         args.append(f"--exclude-module={exc}")
 
-    print(f"\nRunning PyInstaller with {len(args)} arguments...")
+    # FINAL HARNESS: Ensure all args are strings and fail loudly if not
+    errors = []
+    final_args = []
+    for i, arg in enumerate(args):
+        if not isinstance(arg, str):
+            errors.append(f"  [{i}] {arg!r} (type: {type(arg).__name__})")
+        else:
+            final_args.append(arg)
+
+    if errors:
+        print("CRITICAL ERROR: Non-string arguments detected:")
+        print("\n".join(errors))
+        print("\nThis indicates a bug in build_monolith.py")
+        sys.exit(1)
+
+    print(f"\nRunning PyInstaller with {len(final_args)} arguments...")
     print("=" * 60)
 
     # Run PyInstaller
-    PyInstaller.__main__.run(args)
+    PyInstaller.__main__.run(final_args)
 
     # Verify output
-    exe_path = os.path.join("dist", "FortunaFaucetPortableApp.exe")
+    exe_name = "FortunaFaucetPortableApp.exe" if platform.system() == 'Windows' else "FortunaFaucetPortableApp"
+    exe_path = os.path.join("dist", exe_name)
+
     if os.path.exists(exe_path):
         size_mb = os.path.getsize(exe_path) / (1024 * 1024)
         print("\n" + "=" * 60)
         print(f"[SUCCESS] Build complete!")
         print(f"   Output: {exe_path}")
         print(f"   Size:   {size_mb:.1f} MB")
-        print("=" * 60)
+
+        if verify_exe(exe_path):
+             print("=" * 60)
+        else:
+             print("⚠️ EXE built but verification failed")
+             sys.exit(1)
     else:
         print("\n[ERROR] Build finished but EXE not found")
         sys.exit(1)

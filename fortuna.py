@@ -12,6 +12,7 @@ from various racing websites. It serves as a high-reliability fallback system.
 import argparse
 import asyncio
 import functools
+from functools import lru_cache
 import html
 import json
 import logging

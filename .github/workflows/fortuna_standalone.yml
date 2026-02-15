@@ -23,12 +23,21 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
+  # PHASE 1: Parallel Discovery
+  # Fetches racing data from three distinct regional sets of adapters.
+  # GLOBAL region includes adapters that cover multiple continents (e.g. Oddschecker, RacingPost).
   fetch:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       matrix:
-        region: [USA, INT, GLOBAL]
+        include:
+          - region: USA
+            slug: usa
+          - region: INT
+            slug: int
+          - region: GLOBAL
+            slug: global
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -42,13 +51,15 @@ jobs:
             ~/.cache/ms-playwright
           key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
 
-      - name: Restore Database
+      - name: Restore Regional Database
         id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-${{ github.run_number }}
-          restore-keys: fortuna-db-
+          # Scenario A: Regions maintain separate history baseline to avoid race conditions.
+          # These are merged in the audit-results job later.
+          key: fortuna-db-${{ matrix.slug }}-${{ github.run_number }}
+          restore-keys: fortuna-db-${{ matrix.slug }}-
 
       - name: Install dependencies
         run: |
@@ -62,33 +73,41 @@ jobs:
         run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().close())"
 
       - name: Run Discovery
-        timeout-minutes: 20
+        timeout-minutes: 25
         env:
           PYTHONPATH: .
         run: |
-          timeout 1140 python3 fortuna.py \
+          START_TIME=$(date +%s)
+
+          python3 fortuna.py \
             --region ${{ matrix.region }} \
-            --save "races_${{ matrix.region | lower }}.json" \
+            --save "races_${{ matrix.slug }}.json" \
             --hours "${{ github.event.inputs.hours || '8' }}" \
-          || echo '[]' > "races_${{ matrix.region | lower }}.json"
+          || echo '[]' > "races_${{ matrix.slug }}.json"
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "::notice::${{ matrix.region }} discovery completed in ${DURATION}s"
 
       - name: Prepare Artifact
         if: always()
         run: |
-          cp fortuna.db "fortuna_${{ matrix.region | lower }}.db"
-          mv discovery_harvest.json "discovery_harvest_${{ matrix.region | lower }}.json" 2>/dev/null \
-            || echo '{}' > "discovery_harvest_${{ matrix.region | lower }}.json"
+          cp fortuna.db "fortuna_${{ matrix.slug }}.db"
+          mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
+            || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-${{ matrix.region | lower }}
+          name: results-${{ matrix.slug }}
           path: |
-            races_${{ matrix.region | lower }}.json
-            fortuna_${{ matrix.region | lower }}.db
-            discovery_harvest_${{ matrix.region | lower }}.json
+            races_${{ matrix.slug }}.json
+            fortuna_${{ matrix.slug }}.db
+            discovery_harvest_${{ matrix.slug }}.json
           retention-days: 1
 
+  # PHASE 2: Data Consolidation & Audit
+  # Merges regional data and verifies results against the historical database.
   audit-results:
     needs: [fetch]
     if: always()
@@ -106,12 +125,12 @@ jobs:
             ~/.cache/ms-playwright
           key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
 
-      - name: Restore Database
+      - name: Restore Master Database
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-${{ github.run_number }}
-          restore-keys: fortuna-db-
+          key: fortuna-db-master-${{ github.run_number }}
+          restore-keys: fortuna-db-master-
 
       - name: Download Discovery Artifacts
         uses: actions/download-artifact@v4
@@ -126,11 +145,13 @@ jobs:
       - name: Consolidate Discovery Data
         run: |
           set -eo pipefail
-          echo "Consolidating parallel discovery artifacts..."
+          echo "Validating discovery artifacts..."
 
+          ARTIFACT_COUNT=0
           for region in usa int global; do
             DIR="results-${region}"
             if [ -d "$DIR" ]; then
+              ((ARTIFACT_COUNT++))
               cp "$DIR/races_${region}.json" . 2>/dev/null || echo '[]' > "races_${region}.json"
               cp "$DIR/fortuna_${region}.db" . 2>/dev/null || cp fortuna.db "fortuna_${region}.db"
               cp "$DIR/discovery_harvest_${region}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${region}.json"
@@ -142,6 +163,12 @@ jobs:
             fi
           done
 
+          if [ $ARTIFACT_COUNT -eq 0 ]; then
+            echo "::error::No discovery artifacts found! All fetch jobs failed."
+            exit 1
+          fi
+
+          echo "Consolidating $ARTIFACT_COUNT regional artifacts..."
           python3 scripts/consolidate_parallel_runs.py \
             --json-pattern "races_*.json" \
             --db-pattern "fortuna_*.db" \
@@ -172,6 +199,8 @@ jobs:
             discovery_harvest_*.json
           retention-days: 1
 
+  # PHASE 3: Reporting & Summary
+  # Generates the dashboard and persists the updated master database.
   conclude:
     needs: [audit-results]
     if: always()
@@ -195,7 +224,22 @@ jobs:
       - name: Install summary dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
+          python3 -m pip install tomli rich structlog pydantic aiosqlite selectolax
+
+      - name: Generate Workflow Metadata
+        run: |
+          cat > workflow_metadata.json <<EOF
+          {
+            "run_number": ${{ github.run_number }},
+            "run_id": "${{ github.run_id }}",
+            "workflow": "${{ github.workflow }}",
+            "ref": "${{ github.ref }}",
+            "sha": "${{ github.sha }}",
+            "actor": "${{ github.actor }}",
+            "event": "${{ github.event_name }}",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
 
       - name: Run Monitor Report
         run: |
@@ -209,12 +253,12 @@ jobs:
         if: always()
         run: python3 scripts/generate_gha_summary.py
 
-      - name: Save Fortuna Database
+      - name: Save Master Database
         if: always()
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
-          key: fortuna-db-${{ github.run_number }}
+          key: fortuna-db-master-${{ github.run_number }}
 
       - name: Upload Final Reports
         if: always()
@@ -227,4 +271,5 @@ jobs:
             analytics_report.txt
             race_data.json
             fortuna.db
+            workflow_metadata.json
           retention-days: 1

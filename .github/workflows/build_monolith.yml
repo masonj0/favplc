@@ -46,13 +46,26 @@ jobs:
             exit 1
           }
 
-          # Report size
+          # Report size and SHA256
           $size = (Get-Item "dist/FortunaFaucetPortableApp.exe").Length / 1MB
-          Write-Host "✓ Build successful: $([math]::Round($size, 1)) MB"
+          $sha256 = (Get-FileHash "dist/FortunaFaucetPortableApp.exe" -Algorithm SHA256).Hash
+
+          Write-Host "$([char]0x2713) Build successful: $([math]::Round($size, 1)) MB" -ForegroundColor Green
+          Write-Host "SHA256: $sha256"
+
+          # Add to GITHUB_STEP_SUMMARY
+          @"
+          ## Build Results
+
+          - **Status:** Success
+          - **Size:** $([math]::Round($size, 2)) MB
+          - **SHA256:** \`$sha256\`
+          - **Built:** $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: FortunaMonolith-Windows
+          name: FortunaMonolith-Windows-${{ github.sha }}
           path: dist/FortunaFaucetPortableApp.exe
           retention-days: 7
