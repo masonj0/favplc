@@ -133,11 +133,12 @@ RaceT = TypeVar("RaceT", bound="Race")
 EASTERN = ZoneInfo("America/New_York")
 
 # Region-based adapter lists
-USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada"}
-INT_DISCOVERY_ADAPTERS: Final[set] = {
+USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces"}
+INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist", "AtTheRaces"}
+GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
-    "TAB", "BetfairDataScientist", "Oddschecker", "Timeform", "BoyleSports",
-    "SportingLife", "SkySports"
+    "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
+    "RacingAndSports"
 }
 
 USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults"}
@@ -4418,6 +4419,13 @@ def format_grid_code(race_info_list, wrap_width=4):
 def format_prediction_row(race: Race) -> str:
     """Formats a single race prediction for the GHA Job Summary table."""
     metadata = getattr(race, 'metadata', {})
+
+    st = race.start_time
+    if isinstance(st, str):
+        try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+        except Exception: st = None
+    date_str = st.strftime('%m/%d') if st else '??/??'
+
     gold = '✅' if metadata.get('is_goldmine') else '—'
     selection = metadata.get('selection_name') or f"#{metadata.get('selection_number', '?')}"
     odds = metadata.get('predicted_2nd_fav_odds')
@@ -4435,7 +4443,7 @@ def format_prediction_row(race: Race) -> str:
             payouts.append(f"{display_label}: ${float(val):.2f}")
 
     payout_text = ' | '.join(payouts) or 'Awaiting Results'
-    return f"| {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
+    return f"| {date_str} | {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
 
 
 def format_predictions_section(qualified_races: List[Race]) -> str:
@@ -4464,8 +4472,8 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
     top_10 = sorted_races[:10]
 
     lines.extend([
-        "| Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |"
+        "| Date | Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
     ])
     for r in top_10:
         lines.append(format_prediction_row(r))
@@ -7130,7 +7138,7 @@ async def main_all_in_one():
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
-    parser.add_argument("--region", type=str, choices=["USA", "INT"], help="Filter by region (USA or INT)")
+    parser.add_argument("--region", type=str, choices=["USA", "INT", "GLOBAL"], help="Filter by region (USA, INT or GLOBAL)")
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
@@ -7167,7 +7175,12 @@ async def main_all_in_one():
 
     # Region-based adapter filtering
     if args.region:
-        target_set = USA_DISCOVERY_ADAPTERS if args.region == "USA" else INT_DISCOVERY_ADAPTERS
+        if args.region == "USA":
+            target_set = USA_DISCOVERY_ADAPTERS
+        elif args.region == "INT":
+            target_set = INT_DISCOVERY_ADAPTERS
+        else:
+            target_set = GLOBAL_DISCOVERY_ADAPTERS
 
         if adapter_filter:
             adapter_filter = [n for n in adapter_filter if n in target_set]
