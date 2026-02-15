@@ -4,10 +4,6 @@ on:
   push:
     branches:
       - main
-      - jules208
-      - jules209
-      - jules210
-      - jules214
   workflow_dispatch:
 
 jobs:
