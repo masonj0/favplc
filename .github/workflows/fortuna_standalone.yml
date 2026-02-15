@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      - jules210
-      - jules214
   schedule:
     - cron: '0,30 * * * *' # Every 30 minutes (on the hour and half-hour)
   workflow_dispatch:
