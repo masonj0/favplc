@@ -3279,7 +3279,7 @@ class BaseAnalyzer(ABC):
     """The abstract interface for all future analyzer plugins."""
 
     def __init__(self, **kwargs):
-        pass
+        self.logger = structlog.get_logger(self.__class__.__name__)
 
     @abstractmethod
     def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
