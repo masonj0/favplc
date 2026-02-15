@@ -132,9 +132,12 @@ RaceT = TypeVar("RaceT", bound="Race")
 # --- CONSTANTS ---
 EASTERN = ZoneInfo("America/New_York")
 
-# Region-based adapter lists
+# Region-based adapter lists (Refined by Council of Superbrains Directive)
+# Single-continent adapters remain in USA/INT jobs.
+# Multi-continental adapters move to the GLOBAL parallel fetch job.
+# AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces"}
-INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist", "AtTheRaces"}
+INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
@@ -3386,9 +3389,32 @@ class TrifectaAnalyzer(BaseAnalyzer):
     def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
         """Scores all races and returns a dictionary with criteria and a sorted list."""
         qualified_races = []
+        TRUSTWORTHY_RATIO_MIN = 0.7
+
         for race in races:
             if not self.is_race_qualified(race):
                 continue
+
+            active_runners = [r for r in race.runners if not r.scratched]
+            total_active = len(active_runners)
+
+            # Trustworthiness Airlock (Success Playbook Item)
+            if total_active > 0:
+                trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
+                if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
+                    log.warning("Not enough trustworthy odds for Trifecta; skipping", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
+                    continue
+
+            # Uniform Odds Check
+            all_odds = []
+            for runner in active_runners:
+                odds = _get_best_win_odds(runner)
+                if odds: all_odds.append(odds)
+
+            if len(all_odds) >= 3 and len(set(all_odds)) == 1:
+                log.warning("Race contains uniform odds; likely placeholder. Skipping Trifecta.", venue=race.venue, race=race.race_number)
+                continue
+
             score = self._evaluate_race(race)
             if score > 0:
                 race.qualification_score = score
@@ -3495,7 +3521,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         qualified = []
         now = datetime.now(EASTERN)
 
-        PLACEHOLDER_THRESHOLD = 0.5 # Playbook Recommendation
+        # Success Playbook Hardening (Council of Superbrains)
+        TRUSTWORTHY_RATIO_MIN = 0.7
 
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
@@ -3503,13 +3530,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if st.tzinfo is None:
                 st = st.replace(tzinfo=EASTERN)
 
-            # 2. Chalk Filter: Exclude races with an odds-on favorite (< 2.0)
-            # if best_odds is not None and best_odds < 2.0:
-            #     log.debug("Excluding chalk race", venue=race.venue, favorite_odds=best_odds)
-            #     continue
-
             # Goldmine Detection: 2nd favorite >= 4.5 decimal
-            # A race cannot be a goldmine if field size is over 11
             is_goldmine = False
             is_best_bet = False
             active_runners = [r for r in race.runners if not r.scratched]
@@ -3518,8 +3539,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Trustworthiness Airlock (Success Playbook Item)
             if total_active > 0:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
-                if trustworthy_count / total_active < (1 - PLACEHOLDER_THRESHOLD):
-                    self.logger.warning("Race lacks trustworthy odds profile; skipping qualification", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
+                if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
+                    self.logger.warning("Not enough trustworthy odds; skipping race", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
                     continue
 
             gap12 = 0.0
@@ -4149,9 +4170,18 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         is_gold = getattr(r, 'metadata', {}).get('is_goldmine', False)
         gold_badge = '<span class="badge gold">GOLD</span>' if is_gold else ''
 
+        d_str = '??/??'
+        if isinstance(st, datetime):
+            d_str = st.strftime('%m/%d')
+        elif isinstance(st, str):
+            try:
+                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                d_str = dt.strftime('%m/%d')
+            except Exception: pass
+
         rows.append(f"""
             <tr>
-                <td>{st_str}</td>
+                <td>{st_str} ({d_str})</td>
                 <td>{getattr(r, 'venue', 'Unknown')}</td>
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
@@ -5179,18 +5209,20 @@ class HotTipsTracker:
             if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
                 continue
 
-            # Trustworthiness Airlock Safeguard (Success Playbook Item)
+            # Trustworthiness Airlock Safeguard (Council of Superbrains Directive)
             active_runners = [run for run in r.runners if not run.scratched]
             total_active = len(active_runners)
-            if total_active > 0:
-                trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
-                if trustworthy_count / total_active < 0.5:
-                    self.logger.warning("Rejecting race with poor odds profile for DB logging", venue=r.venue, race=r.race_number)
-                    continue
 
             # Ensure trustworthy odds exist before logging (Memory Directive Fix)
             if r.metadata.get('predicted_2nd_fav_odds') is None:
                 continue
+
+            if total_active > 0:
+                trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
+                trust_ratio = trustworthy_count / total_active
+                if trust_ratio < 0.5:
+                    self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2))
+                    continue
 
             st = r.start_time
             if isinstance(st, str):
