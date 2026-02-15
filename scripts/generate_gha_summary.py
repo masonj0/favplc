@@ -230,15 +230,6 @@ def _time_context() -> str:
     return "🌙 Night — International overnight racing"
 
 
-def _pad(text: Any, width: int, align: str = 'left') -> str:
-    s = str(text)
-    if align == 'right':
-        return s.rjust(width)
-    if align == 'center':
-        return s.center(width)
-    return s.ljust(width)
-
-
 # ── Database ───────────────────────────────────────────────────────────────────
 
 def _get_stats(db_path: str = "fortuna.db") -> TipStats:
@@ -574,6 +565,35 @@ def _build_system(out: SummaryWriter) -> None:
     out.write("</details>")
     out.write()
 
+    if not failed:
+        out.write(f"## 🔧 System: ✅ All Good")
+        out.write()
+        out.write(f"{active} adapters active • {races} races harvested")
+    else:
+        out.write(f"## 🔧 System: ⚠️ {len(failed)} Issue{'s' if len(failed) != 1 else ''}")
+        out.write()
+        out.write(
+            f"{active}/{total_adapters} adapters active • {races} races harvested"
+        )
+        out.write()
+        for name in failed[:5]:
+            out.write(f"- **{name}** — returned 0 races")
+    out.write()
+
+    # Collapsed detail
+    out.write("<details>")
+    out.write("<summary>📋 Adapter details</summary>")
+    out.write()
+
+    if discovery:
+        out.lines(_adapter_table(discovery, "Discovery"))
+        out.write()
+    if results:
+        out.lines(_adapter_table(results, "Results"))
+        out.write()
+
+    out.write("</details>")
+    out.write()
 
 def _adapter_table(adapters: dict[str, dict], label: str) -> list[str]:
     rows = [
