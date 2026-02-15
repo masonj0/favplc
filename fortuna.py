@@ -7399,6 +7399,22 @@ async def main_all_in_one():
     if args.db_path:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
 
+    if args.quick_help:
+        print_quick_help()
+        return
+
+    if args.status:
+        print_status_card(config)
+        return
+
+    if args.show_log:
+        await print_recent_logs()
+        return
+
+    if args.open_dashboard:
+        open_report_in_browser()
+        return
+
     # Print status card for all normal runs
     print_status_card(config)
 
