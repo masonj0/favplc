@@ -49,6 +49,7 @@ DISCOVERY_HARVEST_FILES = [
     'discovery_harvest.json',
     'discovery_harvest_usa.json',
     'discovery_harvest_int.json',
+    'discovery_harvest_global.json',
 ]
 
 RESULTS_HARVEST_FILES = [
@@ -181,6 +182,15 @@ def _truncate(text: str, limit: int, display_max: int) -> str:
     return text[:limit] + '...' if len(text) > display_max else text
 
 
+def _pad(text: Any, width: int, align: str = 'left') -> str:
+    s = str(text)
+    if align == 'right':
+        return s.rjust(width)
+    if align == 'center':
+        return s.center(width)
+    return s.ljust(width)
+
+
 # ── Database ───────────────────────────────────────────────────────────────────
 
 def get_db_stats(db_path: str = 'fortuna.db') -> TipStats:
@@ -257,12 +267,13 @@ def build_harvest_table(summary: dict[str, dict], title: str) -> list[str]:
         "<details>",
         f"<summary><b>View {title}</b> (click to expand)</summary>",
         "",
-        '| Adapter | 🏇 Races | 💰 Max Odds | 📊 Quality | ✅ Status |',
-        '| :--- | ---: | ---: | ---: | :---: |',
+        "```",
+        f"{_pad('Adapter', 25)} | {_pad('Races', 6, 'right')} | {_pad('MaxOdds', 8, 'right')} | {_pad('Quality', 15)} | {_pad('Status', 12)}",
+        "-" * 75,
     ]
 
     if not summary:
-        return header + ['| *No data* | 0 | 0.0 | — | ⚠️ |', '']
+        return header + [f"{_pad('*No data*', 25)} | {_pad(0, 6, 'right')} | {_pad('0.0', 8, 'right')} | {_pad('—', 15)} | {_pad('⚠️', 12)}", "```", ""]
 
     sorted_adapters = sorted(
         summary.items(),
@@ -283,24 +294,26 @@ def build_harvest_table(summary: dict[str, dict], title: str) -> list[str]:
         if count == 0:
             quality, status = '—', '⚠️ No Data'
         elif trust < 0.3:
-            quality, status = '❌ Poor', '🔴 Garbage'
+            quality, status = 'Poor', 'Garbage'
         elif trust < 0.7:
-            quality, status = '⚠️ Fair', '🟡 Mixed'
+            quality, status = 'Fair', 'Mixed'
         elif max_odds < 5 and trust > 0.9:
-             quality, status = '🟢 Clean', '✅ Active'
+             quality, status = 'Clean', 'Active'
         else:
-            quality, status = '🔥 High', '✅ Active'
+            quality, status = 'High', 'Active'
 
+        q_str = f"{quality} ({int(trust*100)}%)"
         rows.append(
-            f'| **{adapter}** | {count} | {max_odds:.1f} | {quality} ({int(trust*100)}%) | {status} |'
+            f"{_pad(adapter, 25)} | {_pad(count, 6, 'right')} | {_pad(f'{max_odds:.1f}', 8, 'right')} | {_pad(q_str, 15)} | {_pad(status, 12)}"
         )
 
     if total_races > 0:
-        rows.append('| | | | | |')
+        rows.append("-" * 75)
         rows.append(
-            f'| **TOTAL** | **{total_races}** | **{total_max_odds:.1f}** | — | — |'
+            f"{_pad('TOTAL', 25)} | {_pad(total_races, 6, 'right')} | {_pad(f'{total_max_odds:.1f}', 8, 'right')} | {_pad('—', 15)} | {_pad('—', 12)}"
         )
 
+    rows.append("```")
     rows.append("</details>")
     return header + rows + ['']
 
@@ -311,6 +324,8 @@ def build_predictions_section(region_filter: str | None = None) -> list[str]:
         title = "🇺🇸 USA Goldmine Predictions"
     elif region_filter == "INT":
         title = "🌐 International Goldmine Predictions"
+    elif region_filter == "GLOBAL":
+        title = "🌍 Global Goldmine Predictions"
 
     lines = [
         f"### {title}",
@@ -319,13 +334,15 @@ def build_predictions_section(region_filter: str | None = None) -> list[str]:
         "",
         "*Sorted by time to post — imminent races first!*",
         "",
-        "| ⏰ MTP | 🏇 Venue | R# | 🎯 Selection | 💰 Odds | 📊 Gap | ⭐ Type | 🔝 Top 5 |",
-        "| :---: | :--- | :---: | :--- | ---: | ---: | :---: | :--- |",
+        "```",
+        f"{_pad('MTP', 8)} | {_pad('Date', 5)} | {_pad('Venue', 20)} | {_pad('R#', 3, 'center')} | {_pad('Selection', 20)} | {_pad('Odds', 6, 'right')} | {_pad('Gap', 6, 'right')} | {_pad('Type', 4, 'center')} | {_pad('Top 5', 15)}",
+        "-" * 105,
     ]
 
     data = _read_json('race_data.json')
     if data is None:
-        lines.append('| | | | *Awaiting discovery predictions* | | | | |')
+        lines.append(f"{_pad('', 8)} | {_pad('', 5)} | {_pad('Awaiting discovery', 20)} | {_pad('', 3)} | {_pad('', 20)} | {_pad('', 6)} | {_pad('', 6)} | {_pad('', 4)} | {_pad('', 15)}")
+        lines.append("```")
         lines.append("</details>")
         return lines
 
@@ -342,7 +359,8 @@ def build_predictions_section(region_filter: str | None = None) -> list[str]:
         filtered_races.append(r)
 
     if not filtered_races:
-        lines.append('| | | | *No predictions available for this region* | | | | |')
+        lines.append(f"{_pad('', 8)} | {_pad('', 5)} | {_pad('No predictions', 20)} | {_pad('', 3)} | {_pad('', 20)} | {_pad('', 6)} | {_pad('', 6)} | {_pad('', 4)} | {_pad('', 15)}")
+        lines.append("```")
         lines.append("</details>")
         return lines
 
@@ -352,35 +370,50 @@ def build_predictions_section(region_filter: str | None = None) -> list[str]:
     )
 
     for race in races_sorted[:MAX_PREDICTIONS]:
-        mtp        = parse_time_to_minutes(race.get('start_time', ''))
+        start_time_str = race.get('start_time', '')
+        mtp        = parse_time_to_minutes(start_time_str)
+
+        # Extract date from start_time
+        try:
+            if 'T' in start_time_str:
+                dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+            else:
+                dt = datetime.strptime(start_time_str, '%Y-%m-%d %H:%M:%S')
+            date_str = dt.strftime('%m/%d')
+        except Exception:
+            date_str = '??/??'
+
         venue      = race.get('track', 'Unknown')
-        discipline = race.get('discipline', 'Thoroughbred')
-        emoji      = get_venue_emoji(venue, discipline)
+        # Remove emojis for code block alignment
+        # emoji      = get_venue_emoji(venue, discipline)
         race_num   = race.get('race_number', '?')
-        time_str   = format_time_remaining(mtp)
+        # Remove emojis from time_str
+        if mtp < 0: time_str = 'OFF'
+        elif mtp < 60: time_str = f'{int(mtp)}m'
+        else: time_str = f'{int(mtp//60)}h{int(mtp%60)}m'
 
         sel_name = race.get('second_fav_name', '')
         sel_num  = race.get('selection_number', '?')
         sel_name = _truncate(sel_name, NAME_TRUNCATE, NAME_MAX_DISPLAY)
-        selection = f'**#{sel_num}** {sel_name}'.strip()
+        selection = f'#{sel_num} {sel_name}'.strip()
 
         odds     = race.get('second_fav_odds', 0.0)
-        odds_str = f'**{odds:.2f}**' if odds else 'N/A'
+        odds_str = f'{odds:.2f}' if odds else 'N/A'
 
         gap      = race.get('gap12', 0.0)
         gap_str  = f'{gap:.2f}' if gap else '—'
 
-        type_str = '💎' if race.get('is_goldmine') else '🎯'
+        type_str = 'GOLD' if race.get('is_goldmine') else 'BET'
 
         top5 = race.get('top_five_numbers', 'TBD')
         if isinstance(top5, str):
             top5 = _truncate(top5, TOP5_TRUNCATE, TOP5_MAX_DISPLAY)
 
         lines.append(
-            f'| {time_str} | {emoji} {venue} | **{race_num}** '
-            f'| {selection} | {odds_str} | {gap_str} | {type_str} | `{top5}` |'
+            f"{_pad(time_str, 8)} | {_pad(date_str, 5)} | {_pad(venue, 20)} | {_pad(race_num, 3, 'center')} | {_pad(selection, 20)} | {_pad(odds_str, 6, 'right')} | {_pad(gap_str, 6, 'right')} | {_pad(type_str, 4, 'center')} | {_pad(top5, 15)}"
         )
 
+    lines.append("```")
     lines.append("</details>")
     return lines
 
@@ -397,10 +430,10 @@ def build_audit_section(stats: TipStats) -> list[str]:
         '#### 📊 Overall Statistics',
         '',
         f'- **Total Bets:** {stats.total_tips}',
-        f'- **Cashed:** ✅ {stats.cashed} ({stats.win_rate:.1f}%)',
-        f'- **Burned:** ❌ {stats.burned}',
-        f'- **Pending:** ⏳ {stats.pending}',
-        f'- **Net P/L:** {stats.profit_emoji} **${stats.total_profit:+.2f}**',
+        f'- **Cashed:** {stats.cashed} ({stats.win_rate:.1f}%)',
+        f'- **Burned:** {stats.burned}',
+        f'- **Pending:** {stats.pending}',
+        f'- **Net P/L:** **${stats.total_profit:+.2f}**',
         '',
     ])
 
@@ -410,8 +443,9 @@ def build_audit_section(stats: TipStats) -> list[str]:
     lines.extend([
         f'#### 🎯 Recent Results (Last {MAX_RECENT_TIPS} Audited)',
         '',
-        '| Verdict | 💵 P/L | 🏇 Venue | R# | 🎯 Pick | 🏁 Finish | 💰 Payouts |',
-        '| :---: | ---: | :--- | :---: | :---: | :--- | :--- |',
+        "```",
+        f"{_pad('Verdict', 8)} | {_pad('P/L', 8, 'right')} | {_pad('Venue', 20)} | {_pad('R#', 3, 'center')} | {_pad('Pick', 12)} | {_pad('Finish', 15)} | {_pad('Payouts', 20)}",
+        "-" * 95,
     ])
 
     for tip in stats.recent_tips:
@@ -419,43 +453,38 @@ def build_audit_section(stats: TipStats) -> list[str]:
          sel_pos, actual_top5, _actual_odds,
          sf_payout, tri_payout, pl_payout, discipline) = tip
 
-        v_emoji, v_text = {
-            'CASHED': ('✅', 'WIN'),
-            'BURNED': ('❌', 'LOSS'),
-        }.get(verdict, ('⏳', 'PEND'))
+        v_text = {
+            'CASHED': 'WIN',
+            'BURNED': 'LOSS',
+        }.get(verdict, 'PEND')
 
         profit = profit or 0.0
-        p_color = '🟢' if profit > 0 else ('🔴' if profit < 0 else '⚪')
 
-        emoji = get_venue_emoji(venue, discipline)
-
-        pick_str = f'**#{sel_num}**'
+        pick_str = f'#{sel_num}'
         if pred_odds:
-            pick_str += f' @ {pred_odds:.2f}'
+            pick_str += f' @{pred_odds:.1f}'
 
         if sel_pos:
-            pos_e = POSITION_EMOJIS.get(sel_pos, '❌')
-            finish_str = f'{pos_e} {sel_pos}'
+            finish_str = f'Pos {sel_pos}'
             if actual_top5:
-                finish_str += f' of `{actual_top5}`'
+                finish_str += f' [{actual_top5[:7]}]'
         else:
-            finish_str = f'`{actual_top5}`' if actual_top5 else '—'
+            finish_str = f'[{actual_top5[:10]}]' if actual_top5 else '—'
 
         payouts = []
         if sf_payout:
-            payouts.append(f'SF ${sf_payout:.2f}')
+            payouts.append(f'SF${sf_payout:.0f}')
         if tri_payout:
-            payouts.append(f'Tri ${tri_payout:.2f}')
+            payouts.append(f'T${tri_payout:.0f}')
         if pl_payout:
-            payouts.append(f'Pl ${pl_payout:.2f}')
+            payouts.append(f'P${pl_payout:.0f}')
         payout_str = ' • '.join(payouts) or '—'
 
         lines.append(
-            f'| {v_emoji} **{v_text}** | {p_color} ${profit:+.2f} '
-            f'| {emoji} {venue} | **{race_num}** | {pick_str} '
-            f'| {finish_str} | {payout_str} |'
+            f"{_pad(v_text, 8)} | {_pad(f'${profit:+.2f}', 8, 'right')} | {_pad(venue[:20], 20)} | {_pad(race_num, 3, 'center')} | {_pad(pick_str, 12)} | {_pad(finish_str, 15)} | {_pad(payout_str, 20)}"
         )
 
+    lines.append("```")
     lines.append('</details>')
     return lines
 
@@ -542,6 +571,16 @@ def generate_summary() -> None:
 
         discovery_int = _merge_harvest_files(['discovery_harvest_int.json'])
         out.write_lines(build_harvest_table(discovery_int, '🛰️ International Discovery Health'))
+        out.write()
+
+        # --- GLOBAL SECTION ---
+        out.write("## 🌍 Global Intelligence")
+        out.write()
+        out.write_lines(build_predictions_section(region_filter="GLOBAL"))
+        out.write()
+
+        discovery_global = _merge_harvest_files(['discovery_harvest_global.json'])
+        out.write_lines(build_harvest_table(discovery_global, '🛰️ Global Discovery Health'))
         out.write()
 
         # --- Common Sections ---

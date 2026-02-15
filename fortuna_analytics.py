@@ -652,6 +652,7 @@ class PageFetchingResultsAdapter(
     # -- framework hooks (identical across every legacy adapter) -----------
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # Use CURL_CFFI as primary (faster) but keep PLAYWRIGHT as fallback via SmartFetcher (Project Hardening)
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
@@ -758,17 +759,26 @@ class PageFetchingResultsAdapter(
         """Check whether a link matches target venue filters."""
         if not self.target_venues:
             return True
-        if fortuna.get_canonical_venue(text) in self.target_venues:
+
+        # Try exact canonical match on text (e.g. track name in link)
+        canon_text = fortuna.get_canonical_venue(text)
+        if canon_text != "unknown" and canon_text in self.target_venues:
             return True
 
-        # Check components of the href (e.g. short codes like 'GP')
-        # We look for alphanumeric chunks that might be track codes
-        for chunk in re.findall(r'[A-Za-z0-9]+', href):
-            if fortuna.get_canonical_venue(chunk) in self.target_venues:
+        # Check if any target venue slug is present in the href
+        # This handles links that are just times (e.g. /results/track-slug/date/time)
+        href_clean = href.lower().replace("-", "").replace("_", "")
+        for v in self.target_venues:
+            if v in href_clean:
                 return True
 
-        href_clean = href.lower().replace("-", "")
-        return any(v in href_clean for v in self.target_venues)
+        # Last resort: check alphanumeric chunks for track codes (e.g. 'GP')
+        for chunk in re.findall(r'[A-Za-z0-9]{2,}', href):
+            canon_chunk = fortuna.get_canonical_venue(chunk)
+            if canon_chunk in self.target_venues:
+                return True
+
+        return False
 
     def _make_race_id(
         self,
@@ -1096,9 +1106,14 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingPostResults"
     BASE_URL    = "https://www.racingpost.com"
     HOST        = "www.racingpost.com"
+    IMPERSONATE = "chrome120"
     TIMEOUT     = 60
 
-    # RP doesn't need IMPERSONATE (no make_request override in original)
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        strategy = super()._configure_fetch_strategy()
+        # RacingPost is JS-heavy and has strong bot detection; keep CURL_CFFI primary but ensure fallback (Project Hardening)
+        strategy.primary_engine = fortuna.BrowserEngine.CURL_CFFI
+        return strategy
 
     # -- link discovery ----------------------------------------------------
 
@@ -1316,6 +1331,12 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     HOST        = "www.attheraces.com"
     IMPERSONATE = "chrome120"
     TIMEOUT     = 60
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        strategy = super()._configure_fetch_strategy()
+        # ATR uses Cloudflare; keep CURL_CFFI primary but ensure fallback (Project Hardening)
+        strategy.primary_engine = fortuna.BrowserEngine.CURL_CFFI
+        return strategy
 
     # -- link discovery (multi-URL index) ----------------------------------
 
@@ -1542,7 +1563,14 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL    = "https://www.sportinglife.com"
     HOST        = "www.sportinglife.com"
+    IMPERSONATE = "chrome120"
     TIMEOUT     = 45
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        strategy = super()._configure_fetch_strategy()
+        # SportingLife is JS-heavy; keep CURL_CFFI primary but ensure fallback (Project Hardening)
+        strategy.primary_engine = fortuna.BrowserEngine.CURL_CFFI
+        return strategy
 
     # -- link discovery ----------------------------------------------------
 
@@ -1737,6 +1765,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SkySportsResults"
     BASE_URL    = "https://www.skysports.com"
     HOST        = "www.skysports.com"
+    IMPERSONATE = "chrome120"
     TIMEOUT     = 45
 
     # -- link discovery ----------------------------------------------------
@@ -2343,13 +2372,12 @@ async def run_analytics(
     auditor = AuditorEngine()
     try:
         unverified = await auditor.get_unverified_tips()
+        target_venues = None
 
         if not unverified:
             _analytics_logger.info(
-                "No unverified tips — skipping harvest, "
-                "showing lifetime report",
+                "No unverified tips found in database; fetching all results for visibility (Project Directive)",
             )
-            await _save_harvest_summary(harvest_summary, auditor, region)
         else:
             _analytics_logger.info("Tips to audit", count=len(unverified))
             target_venues = {
@@ -2360,27 +2388,27 @@ async def run_analytics(
                 "Targeting venues", venues=list(target_venues),
             )
 
-            async with managed_adapters(
-                region=region, target_venues=target_venues,
-            ) as adapters:
-                try:
-                    all_results = await _harvest_results(
-                        adapters, valid_dates, harvest_summary,
+        async with managed_adapters(
+            region=region, target_venues=target_venues,
+        ) as adapters:
+            try:
+                all_results = await _harvest_results(
+                    adapters, valid_dates, harvest_summary,
+                )
+                _analytics_logger.info(
+                    "Total results harvested",
+                    count=len(all_results),
+                )
+                if all_results and unverified:
+                    await auditor.audit_races(all_results, unverified=unverified)
+                elif not all_results:
+                    _analytics_logger.warning(
+                        "No results harvested from any source",
                     )
-                    _analytics_logger.info(
-                        "Total results harvested",
-                        count=len(all_results),
-                    )
-                    if all_results:
-                        await auditor.audit_races(all_results, unverified=unverified)
-                    else:
-                        _analytics_logger.warning(
-                            "No results harvested from any source",
-                        )
-                finally:
-                    await _save_harvest_summary(
-                        harvest_summary, auditor, region,
-                    )
+            finally:
+                await _save_harvest_summary(
+                    harvest_summary, auditor, region,
+                )
 
         await _generate_and_save_report(
             auditor,
