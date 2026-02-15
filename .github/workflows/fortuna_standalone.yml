@@ -2,12 +2,9 @@ name: List of Best Bets
 
 on:
   push:
-    branches:
-      - main
-      - jules210
-      - jules214
+    branches: [main]
   schedule:
-    - cron: '0,30 * * * *' # Every 30 minutes (on the hour and half-hour)
+    - cron: '0,30 * * * *'
   workflow_dispatch:
     inputs:
       hours:
@@ -26,9 +23,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
-  fetch-usa:
+  fetch:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        region: [USA, INT, GLOBAL]
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -39,81 +40,58 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.cache/ms-playwright
-          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      - name: Restore Fortuna Database
-        uses: actions/cache/restore@v4
-        with:
-          path: fortuna.db
-          key: fortuna-db-${{ github.run_number }}
-          restore-keys: |
-            fortuna-db-
-      - name: Install dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
-          python3 -m browserforge update
-          playwright install --with-deps chromium
-      - name: Run USA Discovery
-        env:
-          PYTHONPATH: .
-        run: python3 fortuna.py --region USA --save "races_usa.json" --hours ${{ github.event.inputs.hours || 8 }}
-      - name: Prepare Artifact
-        run: |
-          cp fortuna.db fortuna_usa.db
-          mv discovery_harvest.json discovery_harvest_usa.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: results-usa
-          path: |
-            races_usa.json
-            fortuna_usa.db
-            discovery_harvest_usa.json
+          key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
 
-  fetch-int:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/ms-playwright
-          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      - name: Restore Fortuna Database
+      - name: Restore Database
+        id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
-          restore-keys: |
-            fortuna-db-
+          restore-keys: fortuna-db-
+
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
           playwright install --with-deps chromium
-      - name: Run INT Discovery
+
+      - name: Initialize DB if needed
+        if: steps.cache-db.outputs.cache-hit != 'true'
+        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().close())"
+
+      - name: Run Discovery
+        timeout-minutes: 20
         env:
           PYTHONPATH: .
-        run: python3 fortuna.py --region INT --save "races_int.json" --hours ${{ github.event.inputs.hours || 8 }}
-      - name: Prepare Artifact
         run: |
-          cp fortuna.db fortuna_int.db
-          mv discovery_harvest.json discovery_harvest_int.json
+          timeout 1140 python3 fortuna.py \
+            --region ${{ matrix.region }} \
+            --save "races_${{ matrix.region | lower }}.json" \
+            --hours "${{ github.event.inputs.hours || '8' }}" \
+          || echo '[]' > "races_${{ matrix.region | lower }}.json"
+
+      - name: Prepare Artifact
+        if: always()
+        run: |
+          cp fortuna.db "fortuna_${{ matrix.region | lower }}.db"
+          mv discovery_harvest.json "discovery_harvest_${{ matrix.region | lower }}.json" 2>/dev/null \
+            || echo '{}' > "discovery_harvest_${{ matrix.region | lower }}.json"
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: results-int
+          name: results-${{ matrix.region | lower }}
           path: |
-            races_int.json
-            fortuna_int.db
-            discovery_harvest_int.json
+            races_${{ matrix.region | lower }}.json
+            fortuna_${{ matrix.region | lower }}.db
+            discovery_harvest_${{ matrix.region | lower }}.json
+          retention-days: 1
 
   audit-results:
-    needs: [fetch-usa, fetch-int]
+    needs: [fetch]
+    if: always()
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -126,58 +104,77 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.cache/ms-playwright
-          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      - name: Restore Fortuna Database
+          key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+
+      - name: Restore Database
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
-          restore-keys: |
-            fortuna-db-
+          restore-keys: fortuna-db-
+
       - name: Download Discovery Artifacts
         uses: actions/download-artifact@v4
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+          playwright install --with-deps chromium
+
       - name: Consolidate Discovery Data
         run: |
-          set -e
-          echo "Consolidating discovery artifacts into primary database..."
-          cp results-usa/races_usa.json .
-          cp results-usa/fortuna_usa.db .
-          cp results-usa/discovery_harvest_usa.json .
-          cp results-int/races_int.json .
-          cp results-int/fortuna_int.db .
-          cp results-int/discovery_harvest_int.json .
+          set -eo pipefail
+          echo "Consolidating parallel discovery artifacts..."
+
+          for region in usa int global; do
+            DIR="results-${region}"
+            if [ -d "$DIR" ]; then
+              cp "$DIR/races_${region}.json" . 2>/dev/null || echo '[]' > "races_${region}.json"
+              cp "$DIR/fortuna_${region}.db" . 2>/dev/null || cp fortuna.db "fortuna_${region}.db"
+              cp "$DIR/discovery_harvest_${region}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${region}.json"
+            else
+              echo "::warning::Artifact directory $DIR missing"
+              echo '[]' > "races_${region}.json"
+              cp fortuna.db "fortuna_${region}.db"
+              echo '{}' > "discovery_harvest_${region}.json"
+            fi
+          done
 
           python3 scripts/consolidate_parallel_runs.py \
             --json-pattern "races_*.json" \
             --db-pattern "fortuna_*.db" \
             --output-json "raw_races.json" \
             --output-db "fortuna.db"
-      - name: Install dependencies
-        run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install -r requirements.txt
-          python3 -m browserforge update
-          playwright install --with-deps chromium
+
       - name: Run Results Audit
+        timeout-minutes: 15
         env:
           PYTHONPATH: .
-        run: python3 fortuna_analytics.py --days ${{ github.event.inputs.days || 2 }}
-      - name: Prepare Final Audit Artifact
+        run: python3 fortuna_analytics.py --days "${{ github.event.inputs.days || '2' }}"
+
+      - name: Prepare Audit Artifact
+        if: always()
         run: |
-          mv results_harvest.json results_harvest_audit.json
+          mv results_harvest.json results_harvest_audit.json 2>/dev/null \
+            || echo '{}' > results_harvest_audit.json
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: results-audit
+          name: audit-results
           path: |
             analytics_report.txt
             fortuna.db
             raw_races.json
             results_harvest_audit.json
-            discovery_harvest_usa.json
-            discovery_harvest_int.json
+            discovery_harvest_*.json
+          retention-days: 1
 
   conclude:
     needs: [audit-results]
+    if: always()
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
@@ -187,29 +184,38 @@ jobs:
           python-version: '3.11'
       - uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/ms-playwright
-          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/pip
+          key: deps-conclude-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+
       - name: Download Audit Artifact
         uses: actions/download-artifact@v4
         with:
-          name: results-audit
+          name: audit-results
+
       - name: Install summary dependencies
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
+
       - name: Run Monitor Report
-        run: python3 fortuna.py --load "raw_races.json" --monitor --once
+        run: |
+          if [ -s raw_races.json ] && python3 -c "import json; d=json.load(open('raw_races.json')); assert len(d)>0" 2>/dev/null; then
+            python3 fortuna.py --load raw_races.json --monitor --once
+          else
+            echo "::warning::No valid race data to monitor"
+          fi
+
       - name: Generate Job Summary
         if: always()
         run: python3 scripts/generate_gha_summary.py
+
       - name: Save Fortuna Database
         if: always()
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
           key: fortuna-db-${{ github.run_number }}
+
       - name: Upload Final Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -220,8 +226,5 @@ jobs:
             goldmine_report.txt
             analytics_report.txt
             race_data.json
-            raw_races.json
-            qualified_races.json
             fortuna.db
-            prediction_history.jsonl
-          retention-days: 30
+          retention-days: 1

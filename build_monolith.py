@@ -4,8 +4,8 @@ import sys
 from datetime import datetime
 
 def create_version_info():
-    """Creates a basic version_info.txt for the Windows EXE."""
-    year = datetime.now().year  # Dynamically use current year (2026)
+    """Creates version_info.txt for the Windows EXE metadata."""
+    year = datetime.now().year
     version_content = f"""VSVersionInfo(
   ffi=FixedFileInfo(
     filevers=(1, 0, 0, 0),
@@ -41,57 +41,40 @@ def create_version_info():
 
 
 def get_data_files():
-    """Collect data files that need to be bundled."""
+    """Collect data files to bundle. Returns flat list for args.extend()."""
     data_files = []
 
-    # Add static assets if they exist
-    if os.path.exists("static"):
-        data_files.append(("--add-data", "static;static"))
-    if os.path.exists("templates"):
-        data_files.append(("--add-data", "templates;templates"))
-    if os.path.exists("config"):
-        data_files.append(("--add-data", "config;config"))
+    # Directories
+    for dirname in ["static", "templates", "config"]:
+        if os.path.exists(dirname):
+            data_files.extend(["--add-data", f"{dirname};{dirname}"])
+
+    # Root files
+    for filename in ["VERSION", "config.toml"]:
+        if os.path.exists(filename):
+            data_files.extend(["--add-data", f"{filename};."])
+
+    # Optional reports
+    report_files = [
+        "summary_grid.txt",
+        "goldmine_report.txt",
+        "analytics_report.txt",
+        "fortuna_report.html",
+        "race_data.json"
+    ]
+    for f in report_files:
+        if os.path.exists(f):
+            data_files.extend(["--add-data", f"{f};."])
 
     return data_files
 
 
 def build_exe(console_mode: bool = True, debug: bool = False):
-    """
-    Build the Fortuna Monolith executable.
-
-    Args:
-        console_mode: If True, show console window. False for GUI-only.
-        debug: If True, add debug flags for troubleshooting.
-    """
+    """Build the Fortuna Monolith executable."""
     print("Preparing to build Fortuna Intelligence Monolith EXE...")
     print("=" * 60)
 
-    # Pre-flight checks
-    required_packages = ["PyInstaller", "pydantic", "httpx", "structlog", "setuptools"]
-    missing = []
-
-    for pkg in required_packages:
-        try:
-            if pkg == "PyInstaller":
-                import PyInstaller
-            else:
-                __import__(pkg)
-            print(f"[OK] Found {pkg}")
-        except ImportError as e:
-            print(f"[MISSING] {pkg}: {e}")
-            missing.append(pkg)
-
-    if missing:
-        print(f"\nError: Missing required packages: {', '.join(missing)}")
-        print(f"Please install with: python -m pip install {' '.join(missing)}")
-        # Print current sys.path for debugging
-        print("\nCurrent Python Path:")
-        for p in sys.path:
-            print(f"  - {p}")
-        sys.exit(1)
-
     script_path = "fortuna.py"
-
     if not os.path.exists(script_path):
         print(f"Error: {script_path} not found.")
         sys.exit(1)
@@ -108,163 +91,93 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "--version-file=version_info.txt",
     ]
 
-    # Console or windowed mode
     if not console_mode:
         args.append("--noconsole")
 
-    # Debug mode
     if debug:
-        args.extend([
-            "--debug=all",
-            "--log-level=DEBUG",
-        ])
+        args.extend(["--debug=all", "--log-level=DEBUG"])
 
-    # Icon if available
     if os.path.exists("assets/icon.ico"):
         args.append("--icon=assets/icon.ico")
 
-    # Collect-all for complex packages
+    # Packages that NEED their data files (use --collect-all)
     collect_all_packages = [
-        "scrapling",
         "browserforge",
+        "scrapling",
         "curl_cffi",
-        "fastapi",
-        "uvicorn",
-        "webview",
-        "selectolax",
         "camoufox",
-        "msgspec",
-        "pydantic",
-        "starlette",
-        "rich",
-        "winotify",
-        "win10toast_py3",
+        "selectolax",
     ]
-
     for pkg in collect_all_packages:
         args.append(f"--collect-all={pkg}")
 
-    # Hidden imports for packages that need explicit inclusion
+    # Packages that need submodules but not data (use --collect-submodules)
+    collect_submodules = [
+        "uvicorn",
+        "fastapi",
+        "starlette",
+        "pydantic",
+        "rich",
+    ]
+    for pkg in collect_submodules:
+        args.append(f"--collect-submodules={pkg}")
+
+    # Individual hidden imports
     hidden_imports = [
         # Async & DB
-        "aiosqlite",
-        "sqlite3",
-        "asyncio",
-
-        # Pydantic ecosystem
-        "pydantic",
-        "pydantic_core",
-        "pydantic_settings",
-        "pydantic.deprecated.decorator",
-
+        "aiosqlite", "sqlite3", "asyncio",
         # Data processing
-        "pandas",
-        "numpy",
-
-        # Logging & resilience
-        "structlog",
-        "tenacity",
-
+        "pandas", "numpy", "structlog", "tenacity",
         # Notifications
-        "winotify",
-
-        # Build tools
-        "setuptools",
-        "pkg_resources",
-
-        # Uvicorn internals
-        "uvicorn.logging",
-        "uvicorn.protocols",
-        "uvicorn.protocols.http",
-        "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.http.h11_impl",
-        "uvicorn.protocols.http.httptools_impl",
-        "uvicorn.protocols.websockets",
-        "uvicorn.protocols.websockets.auto",
-        "uvicorn.protocols.websockets.wsproto_impl",
-        "uvicorn.protocols.websockets.websockets_impl",
-        "uvicorn.lifespan",
-        "uvicorn.lifespan.on",
-        "uvicorn.lifespan.off",
-
+        "winotify", "win10toast_py3",
+        # Build tools (needed by pkg_resources)
+        "setuptools", "pkg_resources",
         # HTTP clients
-        "httpx",
-        "httpx._transports",
-        "httpx._transports.default",
-        "h11",
-        "anyio",
-        "anyio._backends",
-        "anyio._backends._asyncio",
-        "sniffio",
-
-        # Encodings (critical for --onefile)
-        "encodings",
-        "encodings.utf_8",
-        "encodings.ascii",
-        "encodings.latin_1",
-        "encodings.idna",
-
-        # Multiprocessing
-        "multiprocessing",
-        "concurrent.futures",
-
-        # JSON
-        "json",
-        "orjson",
+        "httpx", "httpx._transports", "httpx._transports.default",
+        "h11", "anyio", "anyio._backends", "anyio._backends._asyncio", "sniffio",
+        # Encodings
+        "encodings", "encodings.utf_8", "encodings.ascii",
+        "encodings.latin_1", "encodings.idna",
+        # Misc
+        "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec", "tomli",
+        # Webview
+        "webview",
     ]
-
     for imp in hidden_imports:
         args.append(f"--hidden-import={imp}")
 
     # Add data files
-    for flag, value in get_data_files():
-        args.append(f"{flag}={value}")
+    args.extend(get_data_files())
 
-    # Exclude unnecessary packages to reduce size
+    # Exclude bloat
     excludes = [
-        "matplotlib",
-        "PIL",
-        "tkinter",
-        "scipy",
-        "pytest",
-        "hypothesis",
-        "setuptools",
-        "wheel",
-        "pip",
-        "IPython",
-        "jupyter",
-        "notebook",
-        "pandas.tests",
-        "numpy.tests",
-        "tornado",
-        "sphinx",
-        "docutils",
-        "jedi",
-        "parso",
+        "matplotlib", "PIL", "tkinter", "scipy",
+        "pytest", "hypothesis",
+        "wheel", "pip",
+        "IPython", "jupyter", "notebook",
+        "pandas.tests", "numpy.tests",
+        "tornado", "sphinx", "docutils", "jedi", "parso",
     ]
-
     for exc in excludes:
         args.append(f"--exclude-module={exc}")
 
     print(f"\nRunning PyInstaller with {len(args)} arguments...")
     print("=" * 60)
 
-    try:
-        PyInstaller.__main__.run(args)
+    # Run PyInstaller
+    PyInstaller.__main__.run(args)
 
-        exe_path = os.path.join("dist", "FortunaFaucetPortableApp.exe")
-        if os.path.exists(exe_path):
-            size_mb = os.path.getsize(exe_path) / (1024 * 1024)
-            print("\n" + "=" * 60)
-            print(f"[SUCCESS] Build complete!")
-            print(f"   Output: {exe_path}")
-            print(f"   Size: {size_mb:.1f} MB")
-            print("=" * 60)
-        else:
-            print("\n[WARNING] Build completed but EXE not found at expected path")
-
-    except Exception as e:
-        print(f"\n[ERROR] Build failed: {e}")
+    # Verify output
+    exe_path = os.path.join("dist", "FortunaFaucetPortableApp.exe")
+    if os.path.exists(exe_path):
+        size_mb = os.path.getsize(exe_path) / (1024 * 1024)
+        print("\n" + "=" * 60)
+        print(f"[SUCCESS] Build complete!")
+        print(f"   Output: {exe_path}")
+        print(f"   Size:   {size_mb:.1f} MB")
+        print("=" * 60)
+    else:
+        print("\n[ERROR] Build finished but EXE not found")
         sys.exit(1)
 
 
