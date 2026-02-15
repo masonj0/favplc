@@ -1795,17 +1795,9 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
-            url_date = dt.strftime("%d-%m-%Y")
+            url_dates = [dt.strftime("%d-%m-%Y"), (dt - timedelta(days=1)).strftime("%d-%m-%Y")]
         except ValueError:
-            url_date = date_str
-
-        resp = await self.make_request(
-            "GET",
-            f"/racing/results/{url_date}",
-            headers=self._get_headers(),
-        )
-        if not resp or not resp.text:
-            return set()
+            url_dates = [date_str]
 
         parser = HTMLParser(resp.text)
         self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")

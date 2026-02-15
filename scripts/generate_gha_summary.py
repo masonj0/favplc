@@ -230,6 +230,15 @@ def _time_context() -> str:
     return "🌙 Night — International overnight racing"
 
 
+def _pad(text: Any, width: int, align: str = 'left') -> str:
+    s = str(text)
+    if align == 'right':
+        return s.rjust(width)
+    if align == 'center':
+        return s.center(width)
+    return s.ljust(width)
+
+
 # ── Database ───────────────────────────────────────────────────────────────────
 
 def _get_stats(db_path: str = "fortuna.db") -> TipStats:
