@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-      - jules210
-      - jules214
   schedule:
     - cron: '0,30 * * * *' # Every 30 minutes (on the hour and half-hour)
   workflow_dispatch:
@@ -112,8 +110,51 @@ jobs:
             fortuna_int.db
             discovery_harvest_int.json
 
+  fetch-global:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: deps-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+      - name: Restore Fortuna Database
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-${{ github.run_number }}
+          restore-keys: |
+            fortuna-db-
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+          playwright install --with-deps chromium
+      - name: Run GLOBAL Discovery
+        env:
+          PYTHONPATH: .
+        run: python3 fortuna.py --region GLOBAL --save "races_global.json" --hours ${{ github.event.inputs.hours || 8 }}
+      - name: Prepare Artifact
+        run: |
+          cp fortuna.db fortuna_global.db
+          mv discovery_harvest.json discovery_harvest_global.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: results-global
+          path: |
+            races_global.json
+            fortuna_global.db
+            discovery_harvest_global.json
+
   audit-results:
-    needs: [fetch-usa, fetch-int]
+    needs: [fetch-usa, fetch-int, fetch-global]
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -146,6 +187,9 @@ jobs:
           cp results-int/races_int.json .
           cp results-int/fortuna_int.db .
           cp results-int/discovery_harvest_int.json .
+          cp results-global/races_global.json .
+          cp results-global/fortuna_global.db .
+          cp results-global/discovery_harvest_global.json .
 
           python3 scripts/consolidate_parallel_runs.py \
             --json-pattern "races_*.json" \
@@ -175,6 +219,7 @@ jobs:
             results_harvest_audit.json
             discovery_harvest_usa.json
             discovery_harvest_int.json
+            discovery_harvest_global.json
 
   conclude:
     needs: [audit-results]
