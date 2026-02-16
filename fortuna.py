@@ -335,10 +335,11 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "RacingAndSports"
 }
 
-USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults"}
+USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults", "StandardbredCanadaResults"}
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
-    "SportingLifeResults", "SkySportsResults"
+    "SportingLifeResults", "SkySportsResults", "RacingAndSportsResults",
+    "TimeformResults"
 }
 
 MAX_VALID_ODDS: Final[float] = 1000.0
@@ -1005,7 +1006,10 @@ class GlobalResourceManager:
     @classmethod
     async def cleanup(cls):
         if cls._httpx_client:
-            await cls._httpx_client.aclose()
+            try:
+                await cls._httpx_client.aclose()
+            except (AttributeError, RuntimeError):
+                pass
             cls._httpx_client = None
 
 
