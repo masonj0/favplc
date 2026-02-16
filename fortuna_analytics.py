@@ -1799,9 +1799,21 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
         except ValueError:
             url_dates = [date_str]
 
-        parser = HTMLParser(resp.text)
-        self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
-        return self._extract_sky_links(parser, date_str, url_date)
+        links: set = set()
+        for url_date in url_dates:
+            try:
+                resp = await self.make_request(
+                    "GET", f"/racing/results/{url_date}", headers=self._get_headers(),
+                )
+                if not resp or not resp.text:
+                    continue
+                self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
+                parser = HTMLParser(resp.text)
+                links.update(self._extract_sky_links(parser, date_str, url_date))
+            except Exception as exc:
+                self.logger.debug("Sky index fetch failed", url_date=url_date, error=str(exc))
+
+        return links
 
     def _extract_sky_links(self, parser: HTMLParser, date_str: str, url_date: str) -> set:
         links: set = set()
@@ -2474,7 +2486,7 @@ def main() -> None:
     parser.add_argument(
         "--region",
         type=str,
-        choices=["USA", "INT"],
+        choices=["USA", "INT", "GLOBAL"],
         help="Filter results by region",
     )
     parser.add_argument(
