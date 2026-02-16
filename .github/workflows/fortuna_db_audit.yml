@@ -1,0 +1,191 @@
+name: Fortuna DB Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'  # 6 AM UTC daily
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore Master Database
+        id: cache-db
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-master-
+          restore-keys: fortuna-db-master-
+
+      - name: Run inspector
+        id: inspect
+        run: |
+          # Use scripts/fortuna_db_inspector.py as that is where it was saved
+          python scripts/fortuna_db_inspector.py fortuna.db -o full_report.txt || echo "Database not found or inspector failed" > full_report.txt
+
+          # ── Build a compact markdown summary for the job ──
+          cat <<'PYEOF' > _summary.py
+          import sqlite3, sys, os
+          from datetime import datetime
+
+          db = sys.argv[1]
+          if not os.path.exists(db):
+              print(f"## ⚠️ Error: Database {db} not found")
+              sys.exit(0)
+
+          conn = sqlite3.connect(db)
+          conn.row_factory = sqlite3.Row
+          c = conn.cursor()
+
+          size_kb = os.path.getsize(db) / 1024
+
+          # Discover tables
+          tables = [r["name"] for r in c.execute(
+              "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+          ).fetchall()]
+
+          # Row counts
+          counts = {}
+          for t in tables:
+              counts[t] = c.execute(f"SELECT COUNT(*) as n FROM '{t}'").fetchone()["n"]
+
+          # Try to find tips/verdict/profit columns dynamically
+          def find_table(frag):
+              return next((t for t in tables if frag in t.lower()), None)
+
+          def find_col(tbl, *frags):
+              cols = [r["name"] for r in c.execute(f"PRAGMA table_info('{tbl}')").fetchall()]
+              for f in frags:
+                  for co in cols:
+                      if f in co.lower():
+                          return co
+              return None
+
+          tips_t = find_table("tip")
+          verdict_col = find_col(tips_t, "verdict") if tips_t else None
+          profit_col  = find_col(tips_t, "net_profit", "profit", "pnl") if tips_t else None
+          date_col    = find_col(tips_t, "start_time", "date", "created") if tips_t else None
+
+          md = []
+          md.append("## 🏇 Fortuna DB Snapshot")
+          md.append(f"**Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ")
+          md.append(f"**DB size:** {size_kb:.0f} KB\n")
+
+          # Table overview
+          md.append("### Tables\n")
+          md.append("| Table | Rows |")
+          md.append("|-------|-----:|")
+          for t in tables:
+              md.append(f"| `{t}` | {counts[t]:,} |")
+
+          # Verdict + P&L block
+          if tips_t and verdict_col:
+              md.append("\n### Audit Summary\n")
+              rows = c.execute(f"""
+                  SELECT {verdict_col} as v, COUNT(*) as n
+                  FROM '{tips_t}'
+                  WHERE {verdict_col} IS NOT NULL AND {verdict_col} != ''
+                  GROUP BY v ORDER BY n DESC
+              """).fetchall()
+
+              total_audited = sum(r["n"] for r in rows)
+              cashed = sum(r["n"] for r in rows if "CASH" in (r["v"] or "").upper())
+              burned = sum(r["n"] for r in rows if "BURN" in (r["v"] or "").upper())
+              decided = cashed + burned
+              strike = f"{cashed/decided*100:.1f}%" if decided else "N/A"
+
+              md.append("| Verdict | Count | % |")
+              md.append("|---------|------:|--:|")
+              for r in rows:
+                  pct = f"{r['n']/total_audited*100:.1f}%" if total_audited else ""
+                  md.append(f"| {r['v']} | {r['n']:,} | {pct} |")
+
+              md.append(f"\n**Strike rate:** {strike} ({cashed}W / {burned}L of {decided} decided)")
+
+              if profit_col:
+                  r = c.execute(f"""
+                      SELECT SUM({profit_col}) as pnl,
+                             AVG({profit_col}) as avg,
+                             MAX({profit_col}) as best,
+                             MIN({profit_col}) as worst,
+                             COUNT(*) as n
+                      FROM '{tips_t}'
+                      WHERE {profit_col} IS NOT NULL
+                  """).fetchone()
+                  if r and r["n"] > 0:
+                      pnl = r['pnl'] or 0
+                      emoji = "📈" if pnl >= 0 else "📉"
+                      md.append(f"\n### {emoji} P&L\n")
+                      md.append(f"| Metric | Value |")
+                      md.append(f"|--------|------:|")
+                      md.append(f"| Total P&L | **{pnl:+,.2f}** |")
+                      md.append(f"| Avg per tip | {(r['avg'] or 0):+,.2f} |")
+                      md.append(f"| Best | {(r['best'] or 0):+,.2f} |")
+                      md.append(f"| Worst | {(r['worst'] or 0):+,.2f} |")
+                      md.append(f"| Tips w/ P&L | {r['n']:,} |")
+
+              # Last 7 days mini-trend
+              if date_col and profit_col:
+                  week = c.execute(f"""
+                      SELECT DATE({date_col}) as d,
+                             COUNT(*) as n,
+                             SUM(CASE WHEN {verdict_col} LIKE '%CASH%' THEN 1 ELSE 0 END) as w,
+                             SUM({profit_col}) as pnl
+                      FROM '{tips_t}'
+                      WHERE {date_col} IS NOT NULL AND {verdict_col} IS NOT NULL
+                            AND {verdict_col} != ''
+                      GROUP BY d ORDER BY d DESC LIMIT 7
+                  """).fetchall()
+                  if week:
+                      md.append("\n### Last 7 Active Days\n")
+                      md.append("| Date | Tips | Wins | P&L |")
+                      md.append("|------|-----:|-----:|----:|")
+                      for wr in reversed(week):
+                          md.append(f"| {wr['d']} | {wr['n']} | {wr['w']} | {(wr['pnl'] or 0):+.2f} |")
+
+          # Data quality flags
+          warnings = []
+          for t in tables:
+              if counts[t] == 0:
+                  warnings.append(f"⚠️ `{t}` is empty")
+          if tips_t:
+              cols = [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]
+              for col in cols:
+                  nn = c.execute(f"SELECT COUNT(*) as n FROM '{tips_t}' WHERE {col} IS NOT NULL").fetchone()["n"]
+                  if nn == 0 and counts[tips_t] > 0:
+                      warnings.append(f"⚠️ `{tips_t}.{col}` is entirely NULL")
+
+          if warnings:
+              md.append("\n### ⚠️ Data Quality Flags\n")
+              for w in warnings:
+                  md.append(f"- {w}")
+
+          md.append(f"\n---\n*Full report attached as artifact.*")
+
+          conn.close()
+
+          # Write to GHA step summary
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "_summary.md")
+          with open(summary_path, "a") as f:
+              f.write("\n".join(md) + "\n")
+          PYEOF
+
+          python3 _summary.py fortuna.db
+
+      - name: Upload detailed report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fortuna-db-report
+          path: full_report.txt
+          retention-days: 1
