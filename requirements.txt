@@ -69,7 +69,7 @@ requests==2.31.0
 scrapling==0.3.14
 playwright==1.49.1
 pyee==12.0.0
-setuptools==69.5.1
+setuptools==82.0.0
 secretstorage==3.3.3
 selectolax==0.3.20
 six==1.16.0
