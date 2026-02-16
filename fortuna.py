@@ -343,7 +343,7 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = {2.75, 1.8}
+COMMON_PLACEHOLDERS: Final[set] = {2.75}
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -579,13 +579,8 @@ def now_eastern() -> datetime:
 
 def get_optimal_region_at_time(dt: datetime) -> str:
     """Determine which region has the most active racing at given time."""
-    et_hour = dt.astimezone(EASTERN).hour
-    # US Racing Window: 9am - 11pm ET
-    if 9 <= et_hour < 23:
-        return "USA"
-    # International Window: 11pm - 9am ET (covers AUS/UK morning)
-    else:
-        return "INT"
+    # Always return GLOBAL to ensure 24/7 coverage across all continents (Bug #1 Fix)
+    return "GLOBAL"
 
 
 def to_eastern(dt: datetime) -> datetime:

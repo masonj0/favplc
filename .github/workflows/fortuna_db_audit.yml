@@ -2,8 +2,13 @@ name: Fortuna DB Audit
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["List of Best Bets"]
+    types: [completed]
   schedule:
-    - cron: '0 6 * * *'  # 6 AM UTC daily
+    - cron: '0 18 * * *'  # After UK/IRE afternoon cards finish
+    - cron: '0 4 * * *'   # After US evening cards finish
+    - cron: '0 10 * * *'  # After ZA/AUS morning cards
 
 jobs:
   inspect:
@@ -27,11 +32,20 @@ jobs:
           key: fortuna-db-master-
           restore-keys: fortuna-db-master-
 
+      - name: Verify database exists
+        run: |
+          if [ ! -f fortuna.db ]; then
+            echo "::error::Database not found after cache restore. Check that the analytics workflow saves with key 'fortuna-db-master-*'"
+            echo "## ❌ Database Not Found" >> "$GITHUB_STEP_SUMMARY"
+            echo "Cache restore failed. The analytics workflow must save the DB with a key matching \`fortuna-db-master-*\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "DB size: $(stat -f%z fortuna.db 2>/dev/null || stat -c%s fortuna.db) bytes"
+
       - name: Run inspector
         id: inspect
         run: |
-          # Use scripts/fortuna_db_inspector.py as that is where it was saved
-          python scripts/fortuna_db_inspector.py fortuna.db -o full_report.txt || echo "Database not found or inspector failed" > full_report.txt
+          python scripts/fortuna_db_inspector.py fortuna.db -o full_report.txt
 
           # ── Build a compact markdown summary for the job ──
           cat <<'PYEOF' > _summary.py
@@ -57,11 +71,18 @@ jobs:
           # Row counts
           counts = {}
           for t in tables:
-              counts[t] = c.execute(f"SELECT COUNT(*) as n FROM '{t}'").fetchone()["n"]
+              c.execute(f"SELECT COUNT(*) as n FROM '{t}'")
+              counts[t] = c.fetchone()["n"]
 
           # Try to find tips/verdict/profit columns dynamically
           def find_table(frag):
-              return next((t for t in tables if frag in t.lower()), None)
+              fl = frag.lower()
+              # Exact or plural match first
+              for t in tables:
+                  if t.lower() in (fl, fl + "s"):
+                      return t
+              # Then substring
+              return next((t for t in tables if fl in t.lower()), None)
 
           def find_col(tbl, *frags):
               cols = [r["name"] for r in c.execute(f"PRAGMA table_info('{tbl}')").fetchall()]
@@ -153,6 +174,51 @@ jobs:
                       for wr in reversed(week):
                           md.append(f"| {wr['d']} | {wr['n']} | {wr['w']} | {(wr['pnl'] or 0):+.2f} |")
 
+          # ── Matching gap analysis ──
+          if tips_t and verdict_col:
+              total_tips = counts[tips_t]
+              unverified = c.execute(f"""
+                  SELECT COUNT(*) as n FROM '{tips_t}'
+                  WHERE {verdict_col} IS NULL OR {verdict_col} = ''
+              """).fetchone()["n"]
+
+              if unverified > 0:
+                  md.append(f"\n### 🔍 Matching Gap\n")
+                  md.append(f"**{unverified:,} / {total_tips:,} tips ({unverified/total_tips*100:.0f}%) have NO verdict.**\n")
+
+                  # Which venues are stuck?
+                  if "venue" in [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]:
+                      stuck = c.execute(f"""
+                          SELECT venue, COUNT(*) as n
+                          FROM '{tips_t}'
+                          WHERE {verdict_col} IS NULL OR {verdict_col} = ''
+                          GROUP BY venue ORDER BY n DESC LIMIT 10
+                      """).fetchall()
+
+                      results_t = find_table("result")
+                      result_venues = set()
+                      if results_t and "venue" in [r["name"] for r in c.execute(f"PRAGMA table_info('{results_t}')").fetchall()]:
+                          result_venues = {r["venue"].lower().strip() for r in c.execute(
+                              f"SELECT DISTINCT venue FROM '{results_t}'"
+                          ).fetchall() if r["venue"]}
+
+                      md.append("| Venue | Stuck Tips | Results Exist? |")
+                      md.append("|-------|----------:|:--------------:|")
+                      for s in stuck:
+                          has_results = "✅" if s["venue"] and s["venue"].lower().strip() in result_venues else "❌"
+                          md.append(f"| {s['venue']} | {s['n']} | {has_results} |")
+
+                  # Age of oldest unverified tip
+                  if date_col:
+                      oldest = c.execute(f"""
+                          SELECT MIN({date_col}) as oldest
+                          FROM '{tips_t}'
+                          WHERE {verdict_col} IS NULL OR {verdict_col} = ''
+                      """).fetchone()
+                      if oldest["oldest"]:
+                          md.append(f"\n**Oldest unverified tip:** {oldest['oldest']}")
+                          md.append(f"_(Tips older than 48h will likely never be matched — results adapters only look back 2 days)_")
+
           # Data quality flags
           warnings = []
           for t in tables:
@@ -161,7 +227,8 @@ jobs:
           if tips_t:
               cols = [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]
               for col in cols:
-                  nn = c.execute(f"SELECT COUNT(*) as n FROM '{tips_t}' WHERE {col} IS NOT NULL").fetchone()["n"]
+                  c.execute(f"SELECT COUNT(*) as n FROM '{tips_t}' WHERE {col} IS NOT NULL")
+                  nn = c.fetchone()["n"]
                   if nn == 0 and counts[tips_t] > 0:
                       warnings.append(f"⚠️ `{tips_t}.{col}` is entirely NULL")
 
@@ -186,6 +253,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fortuna-db-report
+          name: fortuna-db-report-${{ github.run_number }}
           path: full_report.txt
-          retention-days: 1
+          retention-days: 7

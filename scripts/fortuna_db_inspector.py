@@ -128,6 +128,7 @@ class FortunaDBInspector:
         self._data_quality_checks()
         self._temporal_analysis()
         self._pnl_summary()
+        self._matching_diagnostic()
 
         self.log(section("END OF REPORT"))
 
@@ -186,9 +187,9 @@ class FortunaDBInspector:
 
         for tbl in tables:
             name = tbl["name"]
-            self.cur.execute(f"PRAGMA table_info('{name}');")
+            self.cur.execute(f"PRAGMA table_info({self._safe_name(name)});")
             columns = self.cur.fetchall()
-            self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{name}';")
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(name)};")
             row_count = self.cur.fetchone()["cnt"]
 
             self.log(f"\n{INDENT}╔══ {name}  ({fmt_number(row_count)} rows)")
@@ -215,7 +216,7 @@ class FortunaDBInspector:
 
         summary_rows = []
         for name in tables:
-            self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{name}';")
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(name)};")
             count = self.cur.fetchone()["cnt"]
             summary_rows.append([name, fmt_number(count)])
 
@@ -223,13 +224,13 @@ class FortunaDBInspector:
 
         # Show 3 sample rows from each table
         for name in tables:
-            self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{name}';")
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(name)};")
             count = self.cur.fetchone()["cnt"]
             if count == 0:
                 continue
 
             self.log(subsection(f"Sample rows from '{name}' (up to 3)"))
-            self.cur.execute(f"SELECT * FROM '{name}' LIMIT 3;")
+            self.cur.execute(f"SELECT * FROM {self._safe_name(name)} LIMIT 3;")
             rows = self.cur.fetchall()
             if rows:
                 headers = rows[0].keys()
@@ -248,7 +249,7 @@ class FortunaDBInspector:
             self.log(f"{INDENT}No tips table found.")
             return
 
-        self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{tips_table}';")
+        self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(tips_table)};")
         total = self.cur.fetchone()["cnt"]
         self.log(f"{INDENT}Total tips: {fmt_number(total)}")
 
@@ -260,21 +261,21 @@ class FortunaDBInspector:
         # Venue breakdown
         if "venue" in columns:
             self.log(subsection("Tips by Venue (top 20)"))
-            self.cur.execute(f"SELECT venue, COUNT(*) as cnt FROM '{tips_table}' GROUP BY venue ORDER BY cnt DESC LIMIT 20;")
+            self.cur.execute(f"SELECT venue, COUNT(*) as cnt FROM {self._safe_name(tips_table)} GROUP BY venue ORDER BY cnt DESC LIMIT 20;")
             rows = [[r["venue"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Venue", "Count"], rows))
 
         # Source breakdown
         if "source" in columns:
             self.log(subsection("Tips by Source"))
-            self.cur.execute(f"SELECT source, COUNT(*) as cnt FROM '{tips_table}' GROUP BY source ORDER BY cnt DESC;")
+            self.cur.execute(f"SELECT source, COUNT(*) as cnt FROM {self._safe_name(tips_table)} GROUP BY source ORDER BY cnt DESC;")
             rows = [[r["source"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Source", "Count"], rows))
 
         # Discipline breakdown
         if "discipline" in columns:
             self.log(subsection("Tips by Discipline"))
-            self.cur.execute(f"SELECT discipline, COUNT(*) as cnt FROM '{tips_table}' GROUP BY discipline ORDER BY cnt DESC;")
+            self.cur.execute(f"SELECT discipline, COUNT(*) as cnt FROM {self._safe_name(tips_table)} GROUP BY discipline ORDER BY cnt DESC;")
             rows = [[r["discipline"] or "(null)", fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Discipline", "Count"], rows))
 
@@ -282,7 +283,7 @@ class FortunaDBInspector:
         verified_col = self._find_column_like(tips_table, "verified", "audited", "audit")
         if verified_col:
             self.log(subsection("Verification Status"))
-            self.cur.execute(f"SELECT {verified_col}, COUNT(*) as cnt FROM '{tips_table}' GROUP BY {verified_col};")
+            self.cur.execute(f"SELECT {self._safe_name(verified_col)}, COUNT(*) as cnt FROM {self._safe_name(tips_table)} GROUP BY {self._safe_name(verified_col)};")
             rows = [[str(r[verified_col]), fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Status", "Count"], rows))
 
@@ -290,7 +291,7 @@ class FortunaDBInspector:
         date_col = self._find_column_like(tips_table, "start_time", "date", "created", "timestamp")
         if date_col:
             self.log(subsection("Date Range"))
-            self.cur.execute(f"SELECT MIN({date_col}) as earliest, MAX({date_col}) as latest FROM '{tips_table}';")
+            self.cur.execute(f"SELECT MIN({self._safe_name(date_col)}) as earliest, MAX({self._safe_name(date_col)}) as latest FROM {self._safe_name(tips_table)};")
             r = self.cur.fetchone()
             self.log(f"{INDENT}Earliest: {r['earliest']}")
             self.log(f"{INDENT}Latest:   {r['latest']}")
@@ -299,7 +300,7 @@ class FortunaDBInspector:
         self.log(subsection("Null / Empty Value Analysis"))
         null_rows = []
         for col in columns:
-            self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{tips_table}' WHERE {col} IS NULL OR CAST({col} AS TEXT) = '';")
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(tips_table)} WHERE {self._safe_name(col)} IS NULL OR CAST({self._safe_name(col)} AS TEXT) = '';")
             null_count = self.cur.fetchone()["cnt"]
             if null_count > 0:
                 null_rows.append([col, fmt_number(null_count), fmt_pct(null_count, total)])
@@ -334,7 +335,7 @@ class FortunaDBInspector:
 
         columns = self._get_columns(target_table)
 
-        self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{target_table}' WHERE {verdict_col} IS NOT NULL AND {verdict_col} != '';")
+        self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(target_table)} WHERE {self._safe_name(verdict_col)} IS NOT NULL AND {self._safe_name(verdict_col)} != '';")
         audited_total = self.cur.fetchone()["cnt"]
         self.log(f"{INDENT}Audited tips: {fmt_number(audited_total)}")
 
@@ -344,10 +345,10 @@ class FortunaDBInspector:
         # Verdict distribution
         self.log(subsection("Verdict Distribution"))
         self.cur.execute(f"""
-            SELECT {verdict_col}, COUNT(*) as cnt
-            FROM '{target_table}'
-            WHERE {verdict_col} IS NOT NULL AND {verdict_col} != ''
-            GROUP BY {verdict_col}
+            SELECT {self._safe_name(verdict_col)}, COUNT(*) as cnt
+            FROM {self._safe_name(target_table)}
+            WHERE {self._safe_name(verdict_col)} IS NOT NULL AND {self._safe_name(verdict_col)} != ''
+            GROUP BY {self._safe_name(verdict_col)}
             ORDER BY cnt DESC;
         """)
         verdict_rows = self.cur.fetchall()
@@ -368,13 +369,13 @@ class FortunaDBInspector:
             self.log(subsection("Profit / Loss Summary"))
             self.cur.execute(f"""
                 SELECT
-                    SUM({profit_col}) as total_pnl,
-                    AVG({profit_col}) as avg_pnl,
-                    MIN({profit_col}) as worst,
-                    MAX({profit_col}) as best,
+                    SUM({self._safe_name(profit_col)}) as total_pnl,
+                    AVG({self._safe_name(profit_col)}) as avg_pnl,
+                    MIN({self._safe_name(profit_col)}) as worst,
+                    MAX({self._safe_name(profit_col)}) as best,
                     COUNT(*) as cnt
-                FROM '{target_table}'
-                WHERE {profit_col} IS NOT NULL;
+                FROM {self._safe_name(target_table)}
+                WHERE {self._safe_name(profit_col)} IS NOT NULL;
             """)
             r = self.cur.fetchone()
             self.log(f"{INDENT}Total P&L:   {fmt_number(r['total_pnl'])}")
@@ -386,13 +387,13 @@ class FortunaDBInspector:
             # P&L by verdict
             self.log(subsection("P&L by Verdict"))
             self.cur.execute(f"""
-                SELECT {verdict_col},
+                SELECT {self._safe_name(verdict_col)},
                     COUNT(*) as cnt,
-                    SUM({profit_col}) as total,
-                    AVG({profit_col}) as avg
-                FROM '{target_table}'
-                WHERE {profit_col} IS NOT NULL AND {verdict_col} IS NOT NULL
-                GROUP BY {verdict_col}
+                    SUM({self._safe_name(profit_col)}) as total,
+                    AVG({self._safe_name(profit_col)}) as avg
+                FROM {self._safe_name(target_table)}
+                WHERE {self._safe_name(profit_col)} IS NOT NULL AND {self._safe_name(verdict_col)} IS NOT NULL
+                GROUP BY {self._safe_name(verdict_col)}
                 ORDER BY total DESC;
             """)
             rows = [
@@ -407,11 +408,11 @@ class FortunaDBInspector:
                 self.cur.execute(f"""
                     SELECT venue,
                         COUNT(*) as cnt,
-                        SUM({profit_col}) as total,
-                        AVG({profit_col}) as avg,
-                        SUM(CASE WHEN {verdict_col} LIKE '%CASH%' THEN 1 ELSE 0 END) as wins
-                    FROM '{target_table}'
-                    WHERE {profit_col} IS NOT NULL
+                        SUM({self._safe_name(profit_col)}) as total,
+                        AVG({self._safe_name(profit_col)}) as avg,
+                        SUM(CASE WHEN {self._safe_name(verdict_col)} LIKE '%CASH%' THEN 1 ELSE 0 END) as wins
+                    FROM {self._safe_name(target_table)}
+                    WHERE {self._safe_name(profit_col)} IS NOT NULL
                     GROUP BY venue
                     ORDER BY cnt DESC
                     LIMIT 15;
@@ -429,11 +430,11 @@ class FortunaDBInspector:
                 self.cur.execute(f"""
                     SELECT source,
                         COUNT(*) as cnt,
-                        SUM({profit_col}) as total,
-                        AVG({profit_col}) as avg,
-                        SUM(CASE WHEN {verdict_col} LIKE '%CASH%' THEN 1 ELSE 0 END) as wins
-                    FROM '{target_table}'
-                    WHERE {profit_col} IS NOT NULL
+                        SUM({self._safe_name(profit_col)}) as total,
+                        AVG({self._safe_name(profit_col)}) as avg,
+                        SUM(CASE WHEN {self._safe_name(verdict_col)} LIKE '%CASH%' THEN 1 ELSE 0 END) as wins
+                    FROM {self._safe_name(target_table)}
+                    WHERE {self._safe_name(profit_col)} IS NOT NULL
                     GROUP BY source
                     ORDER BY cnt DESC;
                 """)
@@ -454,7 +455,7 @@ class FortunaDBInspector:
             self.log(f"{INDENT}No results table found.")
             return
 
-        self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{results_table}';")
+        self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(results_table)};")
         total = self.cur.fetchone()["cnt"]
         self.log(f"{INDENT}Total result records: {fmt_number(total)}")
 
@@ -466,7 +467,7 @@ class FortunaDBInspector:
         # Venue breakdown
         if "venue" in columns:
             self.log(subsection("Results by Venue (top 15)"))
-            self.cur.execute(f"SELECT venue, COUNT(*) as cnt FROM '{results_table}' GROUP BY venue ORDER BY cnt DESC LIMIT 15;")
+            self.cur.execute(f"SELECT venue, COUNT(*) as cnt FROM {self._safe_name(results_table)} GROUP BY venue ORDER BY cnt DESC LIMIT 15;")
             rows = [[r["venue"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Venue", "Count"], rows))
 
@@ -474,9 +475,9 @@ class FortunaDBInspector:
         for exotic in ["trifecta_payout", "exacta_payout", "superfecta_payout"]:
             if exotic in columns:
                 self.cur.execute(f"""
-                    SELECT COUNT(*) as cnt, AVG({exotic}) as avg, MAX({exotic}) as mx
-                    FROM '{results_table}'
-                    WHERE {exotic} IS NOT NULL AND {exotic} > 0;
+                    SELECT COUNT(*) as cnt, AVG({self._safe_name(exotic)}) as avg, MAX({self._safe_name(exotic)}) as mx
+                    FROM {self._safe_name(results_table)}
+                    WHERE {self._safe_name(exotic)} IS NOT NULL AND {self._safe_name(exotic)} > 0;
                 """)
                 r = self.cur.fetchone()
                 if r["cnt"] > 0:
@@ -492,7 +493,7 @@ class FortunaDBInspector:
             self.log(f"{INDENT}No races table found.")
             return
 
-        self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{races_table}';")
+        self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(races_table)};")
         total = self.cur.fetchone()["cnt"]
         self.log(f"{INDENT}Total race records: {fmt_number(total)}")
 
@@ -503,19 +504,19 @@ class FortunaDBInspector:
 
         if "venue" in columns:
             self.log(subsection("Races by Venue (top 15)"))
-            self.cur.execute(f"SELECT venue, COUNT(*) as cnt FROM '{races_table}' GROUP BY venue ORDER BY cnt DESC LIMIT 15;")
+            self.cur.execute(f"SELECT venue, COUNT(*) as cnt FROM {self._safe_name(races_table)} GROUP BY venue ORDER BY cnt DESC LIMIT 15;")
             rows = [[r["venue"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Venue", "Count"], rows))
 
         if "discipline" in columns:
             self.log(subsection("Races by Discipline"))
-            self.cur.execute(f"SELECT discipline, COUNT(*) as cnt FROM '{races_table}' GROUP BY discipline ORDER BY cnt DESC;")
+            self.cur.execute(f"SELECT discipline, COUNT(*) as cnt FROM {self._safe_name(races_table)} GROUP BY discipline ORDER BY cnt DESC;")
             rows = [[r["discipline"] or "(null)", fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Discipline", "Count"], rows))
 
         if "source" in columns:
             self.log(subsection("Races by Source"))
-            self.cur.execute(f"SELECT source, COUNT(*) as cnt FROM '{races_table}' GROUP BY source ORDER BY cnt DESC;")
+            self.cur.execute(f"SELECT source, COUNT(*) as cnt FROM {self._safe_name(races_table)} GROUP BY source ORDER BY cnt DESC;")
             rows = [[r["source"] or "(null)", fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Source", "Count"], rows))
 
@@ -529,7 +530,7 @@ class FortunaDBInspector:
             self.log(f"{INDENT}No runners table found.")
             return
 
-        self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{runners_table}';")
+        self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(runners_table)};")
         total = self.cur.fetchone()["cnt"]
         self.log(f"{INDENT}Total runner records: {fmt_number(total)}")
 
@@ -539,7 +540,7 @@ class FortunaDBInspector:
         columns = self._get_columns(runners_table)
 
         if "scratched" in columns:
-            self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{runners_table}' WHERE scratched = 1;")
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(runners_table)} WHERE scratched = 1;")
             scratched = self.cur.fetchone()["cnt"]
             self.log(f"{INDENT}Scratched: {fmt_number(scratched)} ({fmt_pct(scratched, total)})")
 
@@ -550,11 +551,11 @@ class FortunaDBInspector:
             self.cur.execute(f"""
                 SELECT
                     COUNT(*) as total,
-                    SUM(CASE WHEN {odds_col} IS NULL THEN 1 ELSE 0 END) as null_odds,
-                    AVG({odds_col}) as avg_odds,
-                    MIN({odds_col}) as min_odds,
-                    MAX({odds_col}) as max_odds
-                FROM '{runners_table}';
+                    SUM(CASE WHEN {self._safe_name(odds_col)} IS NULL THEN 1 ELSE 0 END) as null_odds,
+                    AVG({self._safe_name(odds_col)}) as avg_odds,
+                    MIN({self._safe_name(odds_col)}) as min_odds,
+                    MAX({self._safe_name(odds_col)}) as max_odds
+                FROM {self._safe_name(runners_table)};
             """)
             r = self.cur.fetchone()
             self.log(f"{INDENT}With odds: {fmt_number(r['total'] - r['null_odds'])}  |  Missing odds: {fmt_number(r['null_odds'])}")
@@ -565,18 +566,18 @@ class FortunaDBInspector:
             self.cur.execute(f"""
                 SELECT
                     CASE
-                        WHEN {odds_col} < 2 THEN 'Heavy fav (<2.0)'
-                        WHEN {odds_col} < 4 THEN 'Short (2.0-3.9)'
-                        WHEN {odds_col} < 8 THEN 'Mid (4.0-7.9)'
-                        WHEN {odds_col} < 15 THEN 'Long (8.0-14.9)'
-                        WHEN {odds_col} < 30 THEN 'Very long (15-29.9)'
+                        WHEN {self._safe_name(odds_col)} < 2 THEN 'Heavy fav (<2.0)'
+                        WHEN {self._safe_name(odds_col)} < 4 THEN 'Short (2.0-3.9)'
+                        WHEN {self._safe_name(odds_col)} < 8 THEN 'Mid (4.0-7.9)'
+                        WHEN {self._safe_name(odds_col)} < 15 THEN 'Long (8.0-14.9)'
+                        WHEN {self._safe_name(odds_col)} < 30 THEN 'Very long (15-29.9)'
                         ELSE 'Outsider (30+)'
                     END as bracket,
                     COUNT(*) as cnt
-                FROM '{runners_table}'
-                WHERE {odds_col} IS NOT NULL AND {odds_col} > 0
+                FROM {self._safe_name(runners_table)}
+                WHERE {self._safe_name(odds_col)} IS NOT NULL AND {self._safe_name(odds_col)} > 0
                 GROUP BY bracket
-                ORDER BY MIN({odds_col});
+                ORDER BY MIN({self._safe_name(odds_col)});
             """)
             rows = [[r["bracket"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
             self.log(table_rows(["Bracket", "Count"], rows))
@@ -591,7 +592,7 @@ class FortunaDBInspector:
 
         for tbl in tables:
             columns = self._get_columns(tbl)
-            self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{tbl}';")
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(tbl)};")
             total = self.cur.fetchone()["cnt"]
 
             if total == 0:
@@ -601,7 +602,7 @@ class FortunaDBInspector:
 
             # Check for completely null columns
             for col in columns:
-                self.cur.execute(f"SELECT COUNT(*) as cnt FROM '{tbl}' WHERE {col} IS NOT NULL;")
+                self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(tbl)} WHERE {self._safe_name(col)} IS NOT NULL;")
                 non_null = self.cur.fetchone()["cnt"]
                 if non_null == 0:
                     self.log(f"{INDENT}⚠  '{tbl}.{col}' is entirely NULL ({fmt_number(total)} rows)")
@@ -611,7 +612,7 @@ class FortunaDBInspector:
             if "race_id" in columns:
                 self.cur.execute(f"""
                     SELECT race_id, COUNT(*) as cnt
-                    FROM '{tbl}'
+                    FROM {self._safe_name(tbl)}
                     GROUP BY race_id
                     HAVING cnt > 1
                     ORDER BY cnt DESC
@@ -634,8 +635,8 @@ class FortunaDBInspector:
             if "race_id" in tips_cols and "race_id" in results_cols:
                 self.cur.execute(f"""
                     SELECT COUNT(*) as cnt
-                    FROM '{tips_table}' t
-                    LEFT JOIN '{results_table}' r ON t.race_id = r.race_id
+                    FROM {self._safe_name(tips_table)} t
+                    LEFT JOIN {self._safe_name(results_table)} r ON t.race_id = r.race_id
                     WHERE r.race_id IS NULL;
                 """)
                 orphaned = self.cur.fetchone()["cnt"]
@@ -666,9 +667,9 @@ class FortunaDBInspector:
         # Tips per day (last 14 days)
         self.log(subsection("Tips per Day (last 14 days with data)"))
         self.cur.execute(f"""
-            SELECT DATE({date_col}) as day, COUNT(*) as cnt
-            FROM '{tips_table}'
-            WHERE {date_col} IS NOT NULL
+            SELECT DATE({self._safe_name(date_col)}) as day, COUNT(*) as cnt
+            FROM {self._safe_name(tips_table)}
+            WHERE {self._safe_name(date_col)} IS NOT NULL
             GROUP BY day
             ORDER BY day DESC
             LIMIT 14;
@@ -683,7 +684,7 @@ class FortunaDBInspector:
         self.log(subsection("Tips by Day of Week"))
         self.cur.execute(f"""
             SELECT
-                CASE CAST(strftime('%w', {date_col}) AS INTEGER)
+                CASE CAST(strftime('%w', {self._safe_name(date_col)}) AS INTEGER)
                     WHEN 0 THEN 'Sunday'
                     WHEN 1 THEN 'Monday'
                     WHEN 2 THEN 'Tuesday'
@@ -693,10 +694,10 @@ class FortunaDBInspector:
                     WHEN 6 THEN 'Saturday'
                 END as dow,
                 COUNT(*) as cnt
-            FROM '{tips_table}'
-            WHERE {date_col} IS NOT NULL
-            GROUP BY strftime('%w', {date_col})
-            ORDER BY strftime('%w', {date_col});
+            FROM {self._safe_name(tips_table)}
+            WHERE {self._safe_name(date_col)} IS NOT NULL
+            GROUP BY strftime('%w', {self._safe_name(date_col)})
+            ORDER BY strftime('%w', {self._safe_name(date_col)});
         """)
         rows = [[r["dow"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
         if rows:
@@ -706,10 +707,10 @@ class FortunaDBInspector:
         self.log(subsection("Tips by Hour (ET / local)"))
         self.cur.execute(f"""
             SELECT
-                CAST(strftime('%H', {date_col}) AS INTEGER) as hour,
+                CAST(strftime('%H', {self._safe_name(date_col)}) AS INTEGER) as hour,
                 COUNT(*) as cnt
-            FROM '{tips_table}'
-            WHERE {date_col} IS NOT NULL
+            FROM {self._safe_name(tips_table)}
+            WHERE {self._safe_name(date_col)} IS NOT NULL
             GROUP BY hour
             ORDER BY hour;
         """)
@@ -723,13 +724,13 @@ class FortunaDBInspector:
             self.log(subsection("Weekly Strike Rate (recent 8 weeks with data)"))
             self.cur.execute(f"""
                 SELECT
-                    strftime('%Y-W%W', {date_col}) as week,
+                    strftime('%Y-W%W', {self._safe_name(date_col)}) as week,
                     COUNT(*) as total,
-                    SUM(CASE WHEN {verdict_col} LIKE '%CASH%' THEN 1 ELSE 0 END) as wins,
-                    SUM(CASE WHEN {verdict_col} LIKE '%BURN%' THEN 1 ELSE 0 END) as losses
-                FROM '{tips_table}'
-                WHERE {verdict_col} IS NOT NULL AND {verdict_col} != ''
-                    AND {date_col} IS NOT NULL
+                    SUM(CASE WHEN {self._safe_name(verdict_col)} LIKE '%CASH%' THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN {self._safe_name(verdict_col)} LIKE '%BURN%' THEN 1 ELSE 0 END) as losses
+                FROM {self._safe_name(tips_table)}
+                WHERE {self._safe_name(verdict_col)} IS NOT NULL AND {self._safe_name(verdict_col)} != ''
+                    AND {self._safe_name(date_col)} IS NOT NULL
                 GROUP BY week
                 ORDER BY week DESC
                 LIMIT 8;
@@ -765,18 +766,18 @@ class FortunaDBInspector:
         self.cur.execute(f"""
             SELECT
                 COUNT(*) as total_tips,
-                SUM(CASE WHEN {profit_col} IS NOT NULL THEN 1 ELSE 0 END) as with_pnl,
-                SUM({profit_col}) as total_pnl,
-                AVG({profit_col}) as avg_pnl,
-                SUM(CASE WHEN {profit_col} > 0 THEN {profit_col} ELSE 0 END) as total_winnings,
-                SUM(CASE WHEN {profit_col} < 0 THEN ABS({profit_col}) ELSE 0 END) as total_losses,
-                SUM(CASE WHEN {profit_col} > 0 THEN 1 ELSE 0 END) as winning_bets,
-                SUM(CASE WHEN {profit_col} < 0 THEN 1 ELSE 0 END) as losing_bets,
-                SUM(CASE WHEN {profit_col} = 0 THEN 1 ELSE 0 END) as breakeven_bets,
-                MAX({profit_col}) as best_bet,
-                MIN({profit_col}) as worst_bet
-            FROM '{tips_table}'
-            WHERE {profit_col} IS NOT NULL;
+                SUM(CASE WHEN {self._safe_name(profit_col)} IS NOT NULL THEN 1 ELSE 0 END) as with_pnl,
+                SUM({self._safe_name(profit_col)}) as total_pnl,
+                AVG({self._safe_name(profit_col)}) as avg_pnl,
+                SUM(CASE WHEN {self._safe_name(profit_col)} > 0 THEN {self._safe_name(profit_col)} ELSE 0 END) as total_winnings,
+                SUM(CASE WHEN {self._safe_name(profit_col)} < 0 THEN ABS({self._safe_name(profit_col)}) ELSE 0 END) as total_losses,
+                SUM(CASE WHEN {self._safe_name(profit_col)} > 0 THEN 1 ELSE 0 END) as winning_bets,
+                SUM(CASE WHEN {self._safe_name(profit_col)} < 0 THEN 1 ELSE 0 END) as losing_bets,
+                SUM(CASE WHEN {self._safe_name(profit_col)} = 0 THEN 1 ELSE 0 END) as breakeven_bets,
+                MAX({self._safe_name(profit_col)}) as best_bet,
+                MIN({self._safe_name(profit_col)}) as worst_bet
+            FROM {self._safe_name(tips_table)}
+            WHERE {self._safe_name(profit_col)} IS NOT NULL;
         """)
         r = self.cur.fetchone()
 
@@ -807,11 +808,11 @@ class FortunaDBInspector:
             self.log(subsection("Cumulative P&L Over Time (by date)"))
             self.cur.execute(f"""
                 SELECT
-                    DATE({date_col}) as day,
-                    SUM({profit_col}) as daily_pnl,
+                    DATE({self._safe_name(date_col)}) as day,
+                    SUM({self._safe_name(profit_col)}) as daily_pnl,
                     COUNT(*) as tips
-                FROM '{tips_table}'
-                WHERE {profit_col} IS NOT NULL AND {date_col} IS NOT NULL
+                FROM {self._safe_name(tips_table)}
+                WHERE {self._safe_name(profit_col)} IS NOT NULL AND {self._safe_name(date_col)} IS NOT NULL
                 GROUP BY day
                 ORDER BY day;
             """)
@@ -858,6 +859,202 @@ class FortunaDBInspector:
                         prefix = "+" if val >= 0 else ""
                         self.log(f"{INDENT}{day_row['day']}  {bar.ljust(bar_width)}  {prefix}{val:.2f}")
 
+    def _matching_diagnostic(self) -> None:
+        """WHY are tips unverified? Diagnose the prediction→result gap."""
+        self.log(section("12. MATCHING DIAGNOSTIC — WHY TIPS ARE UNVERIFIED"))
+
+        tips_table = self._find_table_like("tip")
+        if not tips_table:
+            self.log(f"{INDENT}No tips table found.")
+            return
+
+        columns = self._get_columns(tips_table)
+        verdict_col = self._find_column_like(tips_table, "verdict")
+
+        # ── Stage 1: How many tips have never been audited? ──
+
+        if verdict_col:
+            self.cur.execute(f"""
+                SELECT COUNT(*) as cnt FROM {self._safe_name(tips_table)}
+                WHERE {self._safe_name(verdict_col)} IS NULL OR {self._safe_name(verdict_col)} = '';
+            """)
+            unverified_count = self.cur.fetchone()["cnt"]
+            self.cur.execute(f"SELECT COUNT(*) as cnt FROM {self._safe_name(tips_table)};")
+            total = self.cur.fetchone()["cnt"]
+
+            self.log(f"{INDENT}Unverified tips: {fmt_number(unverified_count)} / {fmt_number(total)} "
+                     f"({fmt_pct(unverified_count, total)})")
+
+            if unverified_count == 0:
+                self.log(f"{INDENT}✓ All tips have been audited.")
+                return
+        else:
+            self.log(f"{INDENT}⚠  No verdict column found — cannot determine verification status.")
+            return
+
+        # ── Stage 2: Do unverified tips have the fields needed for matching? ──
+
+        self.log(subsection("Required Fields for Key Matching"))
+
+        key_fields = ["venue", "race_number", "start_time", "discipline"]
+        for field in key_fields:
+            if field not in columns:
+                self.log(f"{INDENT}❌ Column '{field}' MISSING from tips table — matching impossible")
+                continue
+
+            self.cur.execute(f"""
+                SELECT COUNT(*) as cnt FROM {self._safe_name(tips_table)}
+                WHERE ({self._safe_name(verdict_col)} IS NULL OR {self._safe_name(verdict_col)} = '')
+                  AND ({self._safe_name(field)} IS NULL OR CAST({self._safe_name(field)} AS TEXT) = '');
+            """)
+            missing = self.cur.fetchone()["cnt"]
+            status = "✓" if missing == 0 else "⚠"
+            self.log(f"{INDENT}{status} '{field}': {fmt_number(missing)} unverified tips missing this value")
+
+        # ── Stage 3: What venues are unverified tips waiting on? ──
+
+        if "venue" in columns:
+            self.log(subsection("Unverified Tips by Venue"))
+            self.cur.execute(f"""
+                SELECT venue, COUNT(*) as cnt
+                FROM {self._safe_name(tips_table)}
+                WHERE {self._safe_name(verdict_col)} IS NULL OR {self._safe_name(verdict_col)} = ''
+                GROUP BY venue
+                ORDER BY cnt DESC
+                LIMIT 20;
+            """)
+            rows = [[r["venue"], fmt_number(r["cnt"])] for r in self.cur.fetchall()]
+            self.log(table_rows(["Venue (awaiting results)", "Count"], rows))
+
+        # ── Stage 4: Do we have ANY results for those venues? ──
+
+        results_table = self._find_table_like("result")
+        if results_table and "venue" in columns:
+            results_cols = self._get_columns(results_table)
+            if "venue" in results_cols:
+                self.log(subsection("Venue Coverage: Tips vs Results"))
+                self.cur.execute(f"""
+                    SELECT
+                        t.venue,
+                        COUNT(DISTINCT t.rowid) as tip_count,
+                        COUNT(DISTINCT r.rowid) as result_count
+                    FROM {self._safe_name(tips_table)} t
+                    LEFT JOIN {self._safe_name(results_table)} r ON LOWER(t.venue) = LOWER(r.venue)
+                    WHERE t.{self._safe_name(verdict_col)} IS NULL OR t.{self._safe_name(verdict_col)} = ''
+                    GROUP BY t.venue
+                    ORDER BY tip_count DESC
+                    LIMIT 20;
+                """)
+                rows = [
+                    [r["venue"], fmt_number(r["tip_count"]),
+                     fmt_number(r["result_count"]),
+                     "❌ NO RESULTS" if r["result_count"] == 0 else "✓"]
+                    for r in self.cur.fetchall()
+                ]
+                self.log(table_rows(["Venue", "Unverified Tips", "Result Records", "Status"], rows))
+
+        # ── Stage 5: Time zone / key alignment check ──
+
+        if "start_time" in columns:
+            self.log(subsection("Start Time Format Samples (unverified tips)"))
+            self.cur.execute(f"""
+                SELECT start_time, venue, race_number
+                FROM {self._safe_name(tips_table)}
+                WHERE ({self._safe_name(verdict_col)} IS NULL OR {self._safe_name(verdict_col)} = '')
+                  AND start_time IS NOT NULL
+                LIMIT 10;
+            """)
+            rows = [[r["start_time"], r["venue"], r["race_number"]]
+                    for r in self.cur.fetchall()]
+            self.log(table_rows(["start_time (raw)", "venue", "race#"], rows))
+
+            # Check if results table has comparable times
+            if results_table:
+                date_col_r = self._find_column_like(results_table, "start_time", "date", "timestamp")
+                if date_col_r:
+                    self.log(subsection("Start Time Format Samples (results)"))
+                    self.cur.execute(f"""
+                        SELECT {self._safe_name(date_col_r)}, venue, race_number
+                        FROM {self._safe_name(results_table)}
+                        WHERE {self._safe_name(date_col_r)} IS NOT NULL
+                        LIMIT 10;
+                    """)
+                    rows = [[r[date_col_r], r["venue"], r["race_number"]]
+                            for r in self.cur.fetchall()]
+                    self.log(table_rows([f"{date_col_r} (raw)", "venue", "race#"], rows))
+
+        # ── Stage 6: Simulated key matching ──
+
+        if results_table and all(f in columns for f in ["venue", "race_number", "start_time"]):
+            results_cols = self._get_columns(results_table)
+            if all(f in results_cols for f in ["venue", "race_number"]):
+                self.log(subsection("Simulated Key Match Attempts"))
+
+                date_col_r = self._find_column_like(
+                    results_table, "start_time", "date", "timestamp"
+                )
+                if date_col_r:
+                    # Try exact date+venue+race_number match
+                    self.cur.execute(f"""
+                        SELECT
+                            COUNT(*) as total_unverified,
+                            SUM(CASE WHEN r.rowid IS NOT NULL THEN 1 ELSE 0 END) as matched
+                        FROM {self._safe_name(tips_table)} t
+                        LEFT JOIN {self._safe_name(results_table)} r
+                            ON LOWER(TRIM(t.venue)) = LOWER(TRIM(r.venue))
+                            AND t.race_number = r.race_number
+                            AND DATE(t.start_time) = DATE(r.{self._safe_name(date_col_r)})
+                        WHERE t.{self._safe_name(verdict_col)} IS NULL OR t.{self._safe_name(verdict_col)} = '';
+                    """)
+                    r = self.cur.fetchone()
+                    self.log(f"{INDENT}Exact match (venue+race#+date): "
+                             f"{fmt_number(r['matched'])} / {fmt_number(r['total_unverified'])}")
+
+                    # Try relaxed match: just venue + date
+                    self.cur.execute(f"""
+                        SELECT
+                            COUNT(*) as total_unverified,
+                            SUM(CASE WHEN r.rowid IS NOT NULL THEN 1 ELSE 0 END) as matched
+                        FROM {self._safe_name(tips_table)} t
+                        LEFT JOIN {self._safe_name(results_table)} r
+                            ON LOWER(TRIM(t.venue)) = LOWER(TRIM(r.venue))
+                            AND DATE(t.start_time) = DATE(r.{self._safe_name(date_col_r)})
+                        WHERE t.{self._safe_name(verdict_col)} IS NULL OR t.{self._safe_name(verdict_col)} = '';
+                    """)
+                    r = self.cur.fetchone()
+                    self.log(f"{INDENT}Relaxed match (venue+date only): "
+                             f"{fmt_number(r['matched'])} / {fmt_number(r['total_unverified'])}")
+
+                    # Try very relaxed: just venue
+                    self.cur.execute(f"""
+                        SELECT
+                            COUNT(*) as total_unverified,
+                            SUM(CASE WHEN r.rowid IS NOT NULL THEN 1 ELSE 0 END) as matched
+                        FROM {self._safe_name(tips_table)} t
+                        LEFT JOIN {self._safe_name(results_table)} r
+                            ON LOWER(TRIM(t.venue)) = LOWER(TRIM(r.venue))
+                        WHERE t.{self._safe_name(verdict_col)} IS NULL OR t.{self._safe_name(verdict_col)} = '';
+                    """)
+                    r = self.cur.fetchone()
+                    self.log(f"{INDENT}Venue-only match (any date):     "
+                             f"{fmt_number(r['matched'])} / {fmt_number(r['total_unverified'])}")
+
+                    # Show the unmatched venues
+                    self.cur.execute(f"""
+                        SELECT DISTINCT t.venue
+                        FROM {self._safe_name(tips_table)} t
+                        LEFT JOIN {self._safe_name(results_table)} r
+                            ON LOWER(TRIM(t.venue)) = LOWER(TRIM(r.venue))
+                        WHERE (t.{self._safe_name(verdict_col)} IS NULL OR t.{self._safe_name(verdict_col)} = '')
+                          AND r.rowid IS NULL
+                        LIMIT 20;
+                    """)
+                    orphan_venues = [r["venue"] for r in self.cur.fetchall()]
+                    if orphan_venues:
+                        self.log(f"\n{INDENT}Venues with tips but ZERO results ever fetched:")
+                        for v in orphan_venues:
+                            self.log(f"{INDENT}  ❌ {v}")
+
     # ── Utility methods ──────────────────────────────────────────────────────
 
     def _get_table_names(self) -> List[str]:
@@ -865,12 +1062,20 @@ class FortunaDBInspector:
         return [r["name"] for r in self.cur.fetchall()]
 
     def _get_columns(self, table_name: str) -> List[str]:
-        self.cur.execute(f"PRAGMA table_info('{table_name}');")
+        self.cur.execute(f"PRAGMA table_info({self._safe_name(table_name)});")
         return [r["name"] for r in self.cur.fetchall()]
 
     def _find_table_like(self, *fragments: str) -> Optional[str]:
         """Find a table whose name contains any of the given fragments (case-insensitive)."""
         tables = self._get_table_names()
+        # Prefer exact or plural match first (Bug #4 Fix)
+        for frag in fragments:
+            fl = frag.lower()
+            for t in tables:
+                if t.lower() in (fl, fl + "s"):
+                    return t
+
+        # Substring match fallback
         for frag in fragments:
             fl = frag.lower()
             for t in tables:
@@ -887,6 +1092,10 @@ class FortunaDBInspector:
                 if fl in c.lower():
                     return c
         return None
+
+    def _safe_name(self, name: str) -> str:
+        """Double-quote an identifier, escaping any embedded quotes (Bug #4 Fix)."""
+        return '"' + name.replace('"', '""') + '"'
 
     @staticmethod
     def _truncate(s: str, max_len: int = 40) -> str:
