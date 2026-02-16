@@ -76,3 +76,4 @@ prediction_history.jsonl
 .pytest_cache/
 .coverage
 htmlcov/
+*.pdf
