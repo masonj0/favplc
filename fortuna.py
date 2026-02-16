@@ -1025,6 +1025,19 @@ class BrowserEngine(Enum):
     HTTPX = "httpx"
 
 
+@dataclass
+class UnifiedResponse:
+    """Unified response object to normalize data across different fetch engines."""
+    text: str
+    status: int
+    status_code: int
+    url: str
+    headers: Dict[str, str] = field(default_factory=dict)
+
+    def json(self) -> Any:
+        return json.loads(self.text)
+
+
 class FetchStrategy(FortunaBaseModel):
     primary_engine: BrowserEngine = BrowserEngine.PLAYWRIGHT
     enable_js: bool = True
@@ -1137,8 +1150,7 @@ class SmartFetcher:
                 if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
             }
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
-            resp.status = resp.status_code
-            return resp
+            return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
         
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
@@ -1167,8 +1179,7 @@ class SmartFetcher:
                     impersonate=impersonate,
                     **clean_kwargs
                 )
-                resp.status = resp.status_code
-                return resp
+                return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
 
         if not ASYNC_SESSIONS_AVAILABLE:
             raise ImportError("scrapling not available")
@@ -1195,7 +1206,8 @@ class SmartFetcher:
         if engine == BrowserEngine.CAMOUFOX:
             async with AsyncStealthySession(headless=True) as s:
                 resp = await s.fetch(url, method=method, **scrapling_kwargs)
-            return resp
+                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             # Direct Playwright usage for cases where scrapling/camoufox fail
@@ -1217,21 +1229,18 @@ class SmartFetcher:
                 resp_obj = await page.goto(url, wait_until=wait_until, timeout=timeout)
                 content = await page.content()
                 status = resp_obj.status if resp_obj else 0
+                headers = resp_obj.headers if resp_obj else {}
 
                 await browser.close()
+                return UnifiedResponse(content, status, status, url, headers)
 
-                class LegacyResponse:
-                    def __init__(self, text, status_code, url):
-                        self.text = text
-                        self.status = status_code
-                        self.status_code = status_code
-                        self.url = url
-
-                return LegacyResponse(content, status, url)
         elif engine == BrowserEngine.PLAYWRIGHT:
             async with AsyncDynamicSession(headless=True) as s:
                 resp = await s.fetch(url, method=method, **scrapling_kwargs)
-            return resp
+                # Scrapling responses have a .text object that sometimes returns length 0
+                # We ensure it's a string from .body or .html_content
+                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
         else:
             # Fallback to simple fetcher
             async with AsyncFetcher() as fetcher:
@@ -1239,7 +1248,9 @@ class SmartFetcher:
                     resp = await fetcher.get(url, **kwargs)
                 else:
                     resp = await fetcher.post(url, **kwargs)
-            return resp
+
+                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
 
 
     async def close(self) -> None:
@@ -1830,6 +1841,9 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                 if odds_node:
                     win_odds = parse_odds_to_decimal(clean_text(odds_node.text()))
 
+                if win_odds is None:
+                    win_odds = SmartOddsExtractor.extract_from_node(row)
+
                 od = {}
                 if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                     od[self.SOURCE_NAME] = ov
@@ -2189,7 +2203,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                 race_time_str = m_data.get("time", "")
                 distance = m_data.get("distance", "")
                 if not race_number: race_number = m_data.get("raceNumber") or m_data.get("number")
-            if m_type == "OddsGrid":
+            elif m_type == "OddsGrid":
                 odds_grid = m_data.get("oddsGrid", {})
 
                 # If venue still empty, try to get it from OddsGrid data
@@ -2222,6 +2236,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                     # Advanced heuristic fallback
                     if win_odds is None:
                         win_odds = SmartOddsExtractor.extract_from_text(str(t))
+
 
                     odds_data = {}
                     if ov := create_odds_data(self.source_name, win_odds): odds_data[self.source_name] = ov
@@ -3041,7 +3056,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         for url in script_json_matches:
             # Normalizing backslashes and escaped slashes in found URLs
             url_norm = url.replace("\\/", "/").replace("\\", "/")
-            if "/static/entry/" in url_norm:
+            # Restrict lookahead: ensure link is for the targeted date_str
+            if "/static/entry/" in url_norm and (date_str in url_norm or "RaceCardIndex" in url_norm):
                 links.append(url_norm)
 
         for a in parser.css("a"):
@@ -3050,14 +3066,16 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             txt = node_text(a).lower()
             # Normalize backslashes (Project fix for Equibase path separators)
             h_norm = h.replace("\\", "/")
+
+            # Restrict lookahead: ensure link strictly belongs to targeted date_str (Project Hardening)
             if "/static/entry/" in h_norm and (date_str in h_norm or "RaceCardIndex" in h_norm):
                 self.logger.debug("Equibase link matched", href=h_norm)
                 links.append(h_norm)
-            elif "entry-race-level" in c:
+            elif "entry-race-level" in c and date_str in h_norm:
                 links.append(h_norm)
-            elif "race-link" in c or "track-link" in c:
+            elif ("race-link" in c or "track-link" in c) and date_str in h_norm:
                 links.append(h_norm)
-            elif "entries" in txt and "/static/entry/" in h_norm:
+            elif "entries" in txt and "/static/entry/" in h_norm and date_str in h_norm:
                 links.append(h_norm)
 
         if not links:

@@ -70,10 +70,10 @@ jobs:
 
       - name: Initialize DB if needed
         if: steps.cache-db.outputs.cache-hit != 'true'
-        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().close())"
+        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
 
       - name: Run Discovery
-        timeout-minutes: 25
+        timeout-minutes: 20
         env:
           PYTHONPATH: .
         run: |
@@ -89,12 +89,24 @@ jobs:
           DURATION=$((END_TIME - START_TIME))
           echo "::notice::${{ matrix.region }} discovery completed in ${DURATION}s"
 
+      - name: Run Results Audit (Parallel Matrix)
+        timeout-minutes: 15
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 fortuna_analytics.py \
+            --region ${{ matrix.region }} \
+            --days "${{ github.event.inputs.days || '2' }}" \
+          || echo "::warning::Parallel audit failed"
+
       - name: Prepare Artifact
         if: always()
         run: |
           cp fortuna.db "fortuna_${{ matrix.slug }}.db"
           mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
             || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
+          mv results_harvest.json "results_harvest_${{ matrix.slug }}.json" 2>/dev/null \
+            || echo '{}' > "results_harvest_${{ matrix.slug }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -104,6 +116,7 @@ jobs:
             races_${{ matrix.slug }}.json
             fortuna_${{ matrix.slug }}.db
             discovery_harvest_${{ matrix.slug }}.json
+            results_harvest_${{ matrix.slug }}.json
           retention-days: 1
 
   # PHASE 2: Data Consolidation & Audit
@@ -126,14 +139,12 @@ jobs:
           key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
+        id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-master-${{ github.run_number }}
           restore-keys: fortuna-db-master-
-
-      - name: Download Discovery Artifacts
-        uses: actions/download-artifact@v4
 
       - name: Install dependencies
         run: |
@@ -141,6 +152,13 @@ jobs:
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
           playwright install --with-deps chromium
+
+      - name: Initialize DB if needed
+        if: steps.cache-db.outputs.cache-hit != 'true'
+        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
+
+      - name: Download Discovery Artifacts
+        uses: actions/download-artifact@v4
 
       - name: Consolidate Discovery Data
         run: |
@@ -151,15 +169,18 @@ jobs:
           for region in usa int global; do
             DIR="results-${region}"
             if [ -d "$DIR" ]; then
-              ((ARTIFACT_COUNT++))
+              ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
               cp "$DIR/races_${region}.json" . 2>/dev/null || echo '[]' > "races_${region}.json"
-              cp "$DIR/fortuna_${region}.db" . 2>/dev/null || cp fortuna.db "fortuna_${region}.db"
+              # Try to get the regional DB, fallback to master ONLY if it exists
+              cp "$DIR/fortuna_${region}.db" . 2>/dev/null || { [ -f fortuna.db ] && cp fortuna.db "fortuna_${region}.db" || true; }
               cp "$DIR/discovery_harvest_${region}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${region}.json"
+              cp "$DIR/results_harvest_${region}.json" . 2>/dev/null || echo '{}' > "results_harvest_${region}.json"
             else
               echo "::warning::Artifact directory $DIR missing"
               echo '[]' > "races_${region}.json"
-              cp fortuna.db "fortuna_${region}.db"
+              [ -f fortuna.db ] && cp fortuna.db "fortuna_${region}.db" || true
               echo '{}' > "discovery_harvest_${region}.json"
+              echo '{}' > "results_harvest_${region}.json"
             fi
           done
 
@@ -224,7 +245,7 @@ jobs:
       - name: Install summary dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install tomli rich structlog pydantic aiosqlite selectolax
+          python3 -m pip install -r requirements.txt
 
       - name: Generate Workflow Metadata
         run: |
