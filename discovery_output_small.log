@@ -1,0 +1,81 @@
+
+════════════════════════════════════════════════════════════
+══════════ 🐎 FORTUNA FAUCET INTELLIGENCE - v3.0.0 ══════════
+════════════════════════════════════════════════════════════
+ 📍 Region: GLOBAL | 🔍 Status: READY
+ 📊 Database: 0 tips | ✅ 0 audited | 💎 0 goldmines
+ 🛡️  Odds Hygiene: >70% trust ratio required
+════════════════════════════════════════════════════════════
+
+2026-02-16 10:03:37 [info     ] Auto-selected region           region=GLOBAL
+2026-02-16 10:03:38 [info     ] Initializing adapters          count=3
+2026-02-16 10:03:38 [info     ] Adapters initialization complete initialized=3
+2026-02-16 10:03:38 [info     ] Fetching races                 dates=['2026-02-16']
+2026-02-16 10:03:40 [info     ] adapter_odds_quality           adapter_name=SportingLife ratio=1.0 source=SportingLife
+2026-02-16 10:03:40 [info     ] Fetch complete                 adapter=SportingLifeAdapter count=1 date=2026-02-16
+2026-02-16 10:03:48 [info     ] Fetch complete                 adapter=SkyRacingWorldAdapter count=5 date=2026-02-16
+2026-02-16 10:03:52 [warning  ] placeholder_odds_detected      odds=1.8 source=SkySports
+2026-02-16 10:03:54 [info     ] adapter_odds_quality           adapter_name=SkySports ratio=0.57 source=SkySports
+2026-02-16 10:03:54 [info     ] Fetch complete                 adapter=SkySportsAdapter count=39 date=2026-02-16
+2026-02-16 10:03:54 [info     ] Total races fetched            total=45
+2026-02-16 10:03:54 [info     ] ========================================================================================================================
+                                                     FULL RACE LIST
+========================================================================================================================
+DISC  TRACK                     R#   FIELD  SUPER  ADAPTER                   START TIME
+------------------------------------------------------------------------------------------------------------------------
+H     Carlisle                  1    11     Yes    SkySportsAdapter          2026-02-16 13:05 ET
+H     Carlisle                  2    7      Yes    SkySportsAdapter          2026-02-16 13:35 ET
+H     Carlisle                  3    11     Yes    SkySportsAdapter          2026-02-16 14:05 ET
+H     Carlisle                  4    10     Yes    SkySportsAdapter          2026-02-16 14:35 ET
+H     Carlisle                  5    10     Yes    SkySportsAdapter          2026-02-16 15:05 ET
+H     Carlisle                  6    14     Yes    SkySportsAdapter          2026-02-16 15:35 ET
+H     Carlisle                  7    11     Yes    SkySportsAdapter          2026-02-16 16:05 ET
+H     Carlisle                  8    9      Yes    SkySportsAdapter          2026-02-16 16:35 ET
+H     Kembla Grange             1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Marseille                 1    8      Yes    SkySportsAdapter          2026-02-16 10:51 ET
+H     Marseille                 2    5      No     SkySportsAdapter          2026-02-16 11:23 ET
+H     Marseille                 3    9      Yes    SkySportsAdapter          2026-02-16 11:55 ET
+H     Marseille                 4    7      Yes    SkySportsAdapter          2026-02-16 12:27 ET
+H     Marseille                 5    8      Yes    SkySportsAdapter          2026-02-16 13:12 ET
+H     Marseille                 6    10     Yes    SkySportsAdapter          2026-02-16 13:47 ET
+H     Marseille                 7    12     Yes    SkySportsAdapter          2026-02-16 14:22 ET
+H     Marseille                 8    14     Yes    SkySportsAdapter          2026-02-16 14:57 ET
+H     Palermo                   1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Queanbeyan                1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Rockhampton               1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Santa Anita               1    9      Yes    SkySportsAdapter          2026-02-16 15:32 ET
+H     Santa Anita               2    12     Yes    SkySportsAdapter          2026-02-16 16:07 ET
+H     Santa Anita               3    9      Yes    SkySportsAdapter          2026-02-16 16:42 ET
+H     Santa Anita               4    16     Yes    SkySportsAdapter          2026-02-16 17:15 ET
+H     Santa Anita               5    10     Yes    SkySportsAdapter          2026-02-16 17:45 ET
+H     Santa Anita               6    16     Yes    SkySportsAdapter          2026-02-16 18:15 ET
+H     Santa Anita               7    10     Yes    SkySportsAdapter          2026-02-16 18:45 ET
+H     Santa Anita               8    14     Yes    SkySportsAdapter          2026-02-16 19:15 ET
+H     Tokyo City Keiba          1    0      No     SkyRacingWorldAdapter     2026-02-16 12:00 ET
+H     Vincennes                 1    16     Yes    SkySportsAdapter          2026-02-16 12:55 ET
+H     Vincennes                 2    8      Yes    SkySportsAdapter          2026-02-16 13:30 ET
+H     Vincennes                 3    14     Yes    SkySportsAdapter          2026-02-16 14:05 ET
+H     Vincennes                 4    13     Yes    SkySportsAdapter          2026-02-16 14:40 ET
+H     Vincennes                 5    14     Yes    SkySportsAdapter          2026-02-16 15:15 ET
+H     Vincennes                 6    10     Yes    SkySportsAdapter          2026-02-16 15:50 ET
+H     Vincennes                 7    11     Yes    SkySportsAdapter          2026-02-16 16:25 ET
+H     Vincennes                 8    11     Yes    SkySportsAdapter          2026-02-16 17:00 ET
+H     Wolverhampton             1    6      Yes    SkySportsAdapter          2026-02-16 17:00 ET
+H     Wolverhampton             2    10     Yes    SkySportsAdapter          2026-02-16 17:30 ET
+H     Wolverhampton             3    5      No     SkySportsAdapter          2026-02-16 18:00 ET
+H     Wolverhampton             4    8      Yes    SkySportsAdapter          2026-02-16 18:30 ET
+H     Wolverhampton             5    9      Yes    SkySportsAdapter          2026-02-16 19:00 ET
+H     Wolverhampton             6    7      Yes    SkySportsAdapter          2026-02-16 19:30 ET
+H     Wolverhampton             7    9      Yes    SkySportsAdapter          2026-02-16 20:00 ET
+------------------------------------------------------------------------------------------------------------------------
+Total races: 44
+2026-02-16 10:03:54 [info     ] ============================================================================================================================================
+                                                🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES
+============================================================================================================================================
+Updated: 2026-02-16 05:03:54 ET
+Criteria: -10 < MTP <= 120 minutes AND 2nd Favorite Odds >= 4.0
+--------------------------------------------------------------------------------------------------------------------------------------------
+⏳ No races currently meet BET NOW criteria.
+2026-02-16 10:03:54 [warning  ] 🔭 Monitor found 0 BET NOW opportunities total_checked=44
+2026-02-16 10:03:54 [warning  ] empty_bet_now_list             golden_zone_count=44
+No report found. Run discovery first!

@@ -61,9 +61,8 @@ def to_eastern(dt: datetime) -> datetime:
 
 
 def get_optimal_region_at_time(dt: datetime) -> str:
-    """US 9am–11pm ET, otherwise international."""
-    et_hour = dt.astimezone(EASTERN).hour
-    return "USA" if 9 <= et_hour < 23 else "INT"
+    """Racing runs globally around the clock. Always fetch everything (Bug #1 Fix)."""
+    return "GLOBAL"
 
 
 def parse_position(pos_str: Optional[str]) -> Optional[int]:
@@ -225,10 +224,20 @@ class AuditorEngine:
         unverified: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         results_map = self._build_results_map(results)
-        self.logger.debug("Built results map", count=len(results_map))
+        self.logger.info("=== MATCHING DIAGNOSTIC ===")
+        self.logger.info("Result keys available:", keys=list(results_map.keys())[:20])
 
         if unverified is None:
             unverified = await self.get_unverified_tips()
+
+        for tip in unverified[:10]:
+            tip_key = self._tip_canonical_key(tip)
+            self.logger.info(
+                "Tip key vs results",
+                tip_venue=tip.get("venue"),
+                tip_key=tip_key,
+                matched=tip_key in results_map if tip_key else False,
+            )
 
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
@@ -632,6 +641,29 @@ class PageFetchingResultsAdapter(
 
     ADAPTER_TYPE: Final[str] = "results"
 
+    _BLOCK_SIGNATURES = [
+        "pardon our interruption",
+        "checking your browser",
+        "cloudflare",
+        "access denied",
+        "captcha",
+        "please verify",
+    ]
+
+    def _check_for_block(self, html: str, url: str) -> bool:
+        lower = html.lower()
+        for sig in self._BLOCK_SIGNATURES:
+            if sig in lower and len(html) < 10000:
+                self.logger.error(
+                    "BOT BLOCKED",
+                    source=self.SOURCE_NAME,
+                    url=url,
+                    signature=sig,
+                    html_length=len(html),
+                )
+                return True
+        return False
+
     # -- subclass must set -------------------------------------------------
     SOURCE_NAME: str
     BASE_URL: str
@@ -735,6 +767,10 @@ class PageFetchingResultsAdapter(
             url  = item.get("url", "") if isinstance(item, dict) else ""
             if not html:
                 continue
+
+            if self._check_for_block(html, url):
+                continue
+
             try:
                 races.extend(self._parse_page(html, date_str, url))
             except Exception as exc:
@@ -1136,6 +1172,10 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         )
         if not resp or not resp.text:
             return set()
+
+        if self._check_for_block(resp.text, f"/results/{date_str}"):
+            return set()
+
         self._save_debug_snapshot(resp.text, f"rp_results_index_{date_str}")
         parser = HTMLParser(resp.text)
         return self._extract_rp_links(parser)
@@ -1799,9 +1839,21 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
         except ValueError:
             url_dates = [date_str]
 
-        parser = HTMLParser(resp.text)
-        self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
-        return self._extract_sky_links(parser, date_str, url_date)
+        links: set = set()
+        for url_date in url_dates:
+            try:
+                resp = await self.make_request(
+                    "GET", f"/racing/results/{url_date}", headers=self._get_headers(),
+                )
+                if not resp or not resp.text:
+                    continue
+                self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
+                parser = HTMLParser(resp.text)
+                links.update(self._extract_sky_links(parser, date_str, url_date))
+            except Exception as exc:
+                self.logger.debug("Sky index fetch failed", url_date=url_date, error=str(exc))
+
+        return links
 
     def _extract_sky_links(self, parser: HTMLParser, date_str: str, url_date: str) -> set:
         links: set = set()
@@ -2404,10 +2456,18 @@ async def run_analytics(
             target_venues = {
                 fortuna.get_canonical_venue(t.get("venue"))
                 for t in unverified
-            }
-            _analytics_logger.info(
-                "Targeting venues", venues=list(target_venues),
-            )
+            } - {"unknown"}
+
+            if len(target_venues) < len(set(t.get("venue") for t in unverified)):
+                 _analytics_logger.warning(
+                     "Some tips have unrecognized venues — fetching all results",
+                     unknown_count=len(unverified) - len(target_venues),
+                 )
+                 target_venues = None # Accept everything
+            else:
+                _analytics_logger.info(
+                    "Targeting venues", venues=list(target_venues),
+                )
 
         async with managed_adapters(
             region=region, target_venues=target_venues,
@@ -2420,11 +2480,23 @@ async def run_analytics(
                     "Total results harvested",
                     count=len(all_results),
                 )
-                if all_results and unverified:
-                    await auditor.audit_races(all_results, unverified=unverified)
-                elif not all_results:
-                    _analytics_logger.warning(
-                        "No results harvested from any source",
+                if not all_results:
+                    _analytics_logger.error(
+                        "ZERO results harvested — audit impossible",
+                        adapters_tried=[a.source_name for a in adapters],
+                        dates=valid_dates,
+                        region=target_region,
+                    )
+                elif not unverified:
+                    _analytics_logger.warning("No unverified tips to audit against results")
+                else:
+                    matched = await auditor.audit_races(all_results, unverified=unverified)
+                    _analytics_logger.info(
+                        "Audit complete",
+                        results_available=len(all_results),
+                        tips_checked=len(unverified),
+                        tips_matched=len(matched),
+                        tips_still_unmatched=len(unverified) - len(matched),
                     )
             finally:
                 await _save_harvest_summary(
@@ -2474,7 +2546,7 @@ def main() -> None:
     parser.add_argument(
         "--region",
         type=str,
-        choices=["USA", "INT"],
+        choices=["USA", "INT", "GLOBAL"],
         help="Filter results by region",
     )
     parser.add_argument(

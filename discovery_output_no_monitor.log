@@ -1,0 +1,103 @@
+
+════════════════════════════════════════════════════════════
+══════════ 🐎 FORTUNA FAUCET INTELLIGENCE - v3.0.0 ══════════
+════════════════════════════════════════════════════════════
+ 📍 Region: GLOBAL | 🔍 Status: READY
+ 📊 Database: 0 tips | ✅ 0 audited | 💎 0 goldmines
+ 🛡️  Odds Hygiene: >70% trust ratio required
+════════════════════════════════════════════════════════════
+
+2026-02-16 10:05:21 [info     ] Auto-selected region           region=GLOBAL
+2026-02-16 10:05:22 [info     ] Running Discovery              dates=['2026-02-16'] window_hours=8
+2026-02-16 10:05:22 [info     ] Cleaning up duplicate race_ids before indexing
+2026-02-16 10:05:22 [info     ] Duplicates removed, creating unique index
+2026-02-16 10:05:22 [info     ] Database initialized           path=fortuna.db schema_version=4
+2026-02-16 10:05:25 [info     ] adapter_odds_quality           adapter_name=SportingLife ratio=1.0 source=SportingLife
+2026-02-16 10:05:30 [warning  ] placeholder_odds_detected      odds=1.8 source=SkySports
+2026-02-16 10:05:32 [info     ] adapter_odds_quality           adapter_name=SkySports ratio=0.57 source=SkySports
+2026-02-16 10:05:36 [info     ] Fetched total races            count=45
+2026-02-16 10:05:36 [info     ] Unique races identified        count=44
+2026-02-16 10:05:36 [info     ] Total unique races available for analysis count=44
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=1 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=2 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=3 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=4 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=5 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=6 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=8 ratio=0.0 venue=Santa Anita
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=1 ratio=0.0 venue=Vincennes
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=3 ratio=0.0 venue=Vincennes
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=5 ratio=0.0 venue=Vincennes
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=6 ratio=0.0 venue=Vincennes
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=7 ratio=0.0 venue=Vincennes
+2026-02-16 10:05:36 [warning  ] Not enough trustworthy odds; skipping race race=8 ratio=0.0 venue=Vincennes
+2026-02-16 10:05:36 [info     ] Summary Grid Generated
+2026-02-16 10:05:36 [info     ] Field Matrix Generated
+2026-02-16 10:05:36 [info     ] Cleaning up duplicate race_ids before indexing
+2026-02-16 10:05:36 [info     ] Duplicates removed, creating unique index
+2026-02-16 10:05:36 [info     ] Database initialized           path=fortuna.db schema_version=4
+2026-02-16 10:05:36 [info     ] Hot tips processed             count=0
+2026-02-16 10:05:36 [info     ] Cleaning up duplicate race_ids before indexing
+2026-02-16 10:05:36 [info     ] Duplicates removed, creating unique index
+2026-02-16 10:05:36 [info     ] Database initialized           path=fortuna.db schema_version=4
+2026-02-16 10:05:36 [info     ] Friendly HTML report generated path=fortuna_report.html
+(B)0[?1049h[1;24r[m[4l[?1h=[?1h=[39;49m[39;49m[37m[40m[1;1H                                                                                [2;1H                                                                                [3;1H                                                                                [4;1H                                                                                [5;1H                                                                                [6;1H                                                                                [7;1H                                                                                [8;1H                                                                                [9;1H                                                                                [10;1H                                                                                [11;1H                                                                                [12;1H                                                                                [13;1H                                                                                [14;1H                                                                                [15;1H                                                                                [16;1H                                                                                [17;1H                                                                                [18;1H                                                                                [19;1H                                                                                [20;1H                                                                                [21;1H                                                                                [22;1H                                                                                [23;1H                                                                                [24;1H                                                                                [1@[37m[40m [H[m[39;49m[37m[40m[39;49m[37m[40m                                                                                [2;1H                                                                                [3;1H                                                                                [4;1H                                                                                [5;1H                                                                                [6;1H                                                                                [7;1H                                                                                [8;1H                                                                                [9;1H                                                                                [10;1H                                                                                [11;1H                                                                                [12;1H                                                                                [13;1H                                                                                [14;1H                                                                                [15;1H                                                                                [16;1H                                                                                [17;1H                                                                                [18;1H                                                                                [19;1H                                                                                [20;1H                                                                                [21;1H                                                                                [22;1H                                                                                [23;1H                                                                                [24;1H                                                                                [1@ [H[39;49m[m[22d[93m[44mGetting file://localhost/app/fortuna_report.html                                [22;49H[39;49m[m[24d[24;1H[?1049l[?1l>╭──────────────────────────────────────────────────────────────────────────────╮
+│                        🏇 FORTUNA DISCOVERY COMPLETE                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+                           🔥 GOLDMINE OPPORTUNITIES
+┏━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┓
+┃ Track      ┃   Race    ┃ Time     ┃ Selection         ┃     Odds ┃     Gap12 ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━┩
+└────────────┴───────────┴──────────┴───────────────────┴──────────┴───────────┘
+╭──────────────────────────── Today's Performance ─────────────────────────────╮
+│ 📊 Tips: 0  │  Cashed: 0  │  Strike Rate: 0.0%  │  Profit: $0.00             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+(B)0[?1049h[1;24r[m[4l[?1h=[?1h=[39;49m[39;49m[37m[40m[1;1H                                                                                [2;1H                                                                                [3;1H                                                                                [4;1H                                                                                [5;1H                                                                                [6;1H                                                                                [7;1H                                                                                [8;1H                                                                                [9;1H                                                                                [10;1H                                                                                [11;1H                                                                                [12;1H                                                                                [13;1H                                                                                [14;1H                                                                                [15;1H                                                                                [16;1H                                                                                [17;1H                                                                                [18;1H                                                                                [19;1H                                                                                [20;1H                                                                                [21;1H                                                                                [22;1H                                                                                [23;1H                                                                                [24;1H                                                                                [1@[37m[40m [H[m[39;49m[37m[40m[39;49m[37m[40m                                                                                [2;1H                                                                                [3;1H                                                                                [4;1H                                                                                [5;1H                                                                                [6;1H                                                                                [7;1H                                                                                [8;1H                                                                                [9;1H                                                                                [10;1H                                                                                [11;1H                                                                                [12;1H                                                                                [13;1H                                                                                [14;1H                                                                                [15;1H                                                                                [16;1H                                                                                [17;1H                                                                                [18;1H                                                                                [19;1H                                                                                [20;1H                                                                                [21;1H                                                                                [22;1H                                                                                [23;1H                                                                                [24;1H                                                                                [1@ [H[39;49m[m[22d[93m[44mGetting file://localhost/app/fortuna_report.html                                [22;49H[39;49m[m[24d[24;1H[?1049l[?1l>
+| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | |
+|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|
+| 345m | H | Marseille | 1 | 8 | `2, 5, 7, 8, 6` | 0.00 |  |
+| 377m | H | Marseille | 2 | 5 | `1, 2, 3, 5, 4` | 0.13 |  |
+| 409m | H | Marseille | 3 | 9 | `5, 8, 9, 1, 2` | 0.62 |  |
+| 414m | H | Palermo | 1 | 0 | `None` | 0.00 |  |
+| 414m | H | Tokyo City Keiba | 1 | 0 | `None` | 0.00 |  |
+| 414m | H | Queanbeyan | 1 | 0 | `None` | 0.00 |  |
+| 414m | H | Kembla Grange | 1 | 0 | `None` | 0.00 |  |
+| 414m | H | Rockhampton | 1 | 0 | `None` | 0.00 |  |
+| 441m | H | Marseille | 4 | 7 | `1, 2, 5, 7, 3` | 0.29 |  |
+| 469m | H | Vincennes | 1 | 16 | `None` | 0.00 |  |
+| 479m | H | Carlisle | 1 | 11 | `8, 11, 1, 9, 3` | 0.50 |  |
+| 486m | H | Marseille | 5 | 8 | `9, 8, 5, 1, 7` | 2.64 |  |
+| 504m | H | Vincennes | 2 | 8 | `3, 4, 5, 6, 7` | 0.00 |  |
+| 509m | H | Carlisle | 2 | 7 | `5, 2, 6, 9, 4` | 0.50 |  |
+| 521m | H | Marseille | 6 | 10 | `5, 4, 6, 7, 8` | 0.51 |  |
+| 539m | H | Carlisle | 3 | 11 | `2, 6, 10, 1, 9` | 0.50 |  |
+| 539m | H | Vincennes | 3 | 14 | `None` | 0.00 |  |
+| 556m | H | Marseille | 7 | 12 | `1, 3, 8, 6, 10` | 0.19 |  |
+| 569m | H | Carlisle | 4 | 10 | `1, 6, 3, 7, 5` | 0.33 |  |
+| 574m | H | Vincennes | 4 | 13 | `1, 2, 3, 4, 6` | 0.00 |  |
+| 591m | H | Marseille | 8 | 14 | `3, 11, 5, 9, 1` | 0.00 |  |
+| 599m | H | Carlisle | 5 | 10 | `6, 10, 1, 2, 9` | 0.33 |  |
+| 609m | H | Vincennes | 5 | 14 | `None` | 0.00 |  |
+| 626m | H | Santa Anita | 1 | 9 | `None` | 0.00 |  |
+| 629m | H | Carlisle | 6 | 14 | `7, 4, 5, 9, 8` | 0.36 |  |
+| 644m | H | Vincennes | 6 | 10 | `None` | 0.00 |  |
+| 659m | H | Carlisle | 7 | 11 | `2, 5, 3, 4, 9` | 0.60 |  |
+| 661m | H | Santa Anita | 2 | 12 | `None` | 0.00 |  |
+| 679m | H | Vincennes | 7 | 11 | `None` | 0.00 |  |
+| 689m | H | Carlisle | 8 | 9 | `5, 6, 4, 2, 1` | 0.00 |  |
+| 696m | H | Santa Anita | 3 | 9 | `None` | 0.00 |  |
+| 714m | H | Wolverhampton | 1 | 6 | `4, 5, 1, 2, 6` | 0.00 |  |
+| 714m | H | Vincennes | 8 | 11 | `None` | 0.00 |  |
+| 729m | H | Santa Anita | 4 | 16 | `None` | 0.00 |  |
+| 744m | H | Wolverhampton | 2 | 10 | `4, 10, 5, 2, 6` | 0.00 |  |
+| 759m | H | Santa Anita | 5 | 10 | `None` | 0.00 |  |
+| 774m | H | Wolverhampton | 3 | 5 | `4, 3, 2, 5, 1` | 1.50 |  |
+| 789m | H | Santa Anita | 6 | 16 | `None` | 0.00 |  |
+| 804m | H | Wolverhampton | 4 | 8 | `4, 7, 8, 5, 6` | 0.00 |  |
+| 819m | H | Santa Anita | 7 | 10 | `4, 1, 2, 5, 7` | 1.56 |  |
+| 834m | H | Wolverhampton | 5 | 9 | `4, 1, 2, 7, 5` | 0.25 |  |
+| 849m | H | Santa Anita | 8 | 14 | `None` | 0.00 |  |
+| 864m | H | Wolverhampton | 6 | 7 | `1, 6, 7, 3, 5` | 0.50 |  |
+| 894m | H | Wolverhampton | 7 | 9 | `4, 5, 8, 6, 7` | 0.20 |  |
+
+Opening fortuna_report.html in your browser...
