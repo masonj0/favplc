@@ -15,11 +15,7 @@ def translate_to_memo(filepath):
     except SyntaxError as e:
         return {"error": f"Syntax error in {filepath}: {e}"}
 
-    memo = {
-        "memo_type": "monolith_structure",
-        "source_file": filepath,
-        "blocks": []
-    }
+    blocks = []
 
     # Sort nodes by line number
     nodes = sorted(tree.body, key=lambda n: n.lineno)
@@ -31,7 +27,7 @@ def translate_to_memo(filepath):
         start_idx = node.lineno - 1
         if start_idx > last_line:
             gap_content = "".join(lines[last_line:start_idx])
-            memo["blocks"].append({
+            blocks.append({
                 "type": "miscellaneous",
                 "content": gap_content
             })
@@ -65,20 +61,45 @@ def translate_to_memo(filepath):
         if block_name:
             block["name"] = block_name
 
-        memo["blocks"].append(block)
+        blocks.append(block)
         last_line = end_idx
 
     # Final gap
     if last_line < len(lines):
-        memo["blocks"].append({
+        blocks.append({
             "type": "miscellaneous",
             "content": "".join(lines[last_line:])
         })
 
-    return memo
+    return blocks
 
 if __name__ == "__main__":
-    memo_data = translate_to_memo("fortuna.py")
-    with open("fortuna_memo.json", "w", encoding="utf-8") as f:
-        json.dump(memo_data, f, indent=2)
-    print(f"Successfully generated fortuna_memo.json from fortuna.py")
+    filepath = "fortuna.py"
+    blocks = translate_to_memo(filepath)
+
+    total_chars = sum(len(b['content']) for b in blocks)
+    target_chars_per_part = total_chars / 2
+
+    parts = [[], []]
+    current_chars = 0
+    current_part = 0
+
+    for b in blocks:
+        parts[current_part].append(b)
+        current_chars += len(b['content'])
+        if current_part == 0 and current_chars >= target_chars_per_part:
+            current_part = 1
+
+    for i, part_blocks in enumerate(parts):
+        memo_data = {
+            "memo_type": "monolith_structure",
+            "source_file": filepath,
+            "part": i + 1,
+            "total_parts": 2,
+            "blocks": part_blocks
+        }
+
+        output_file = f"fortuna_memo_part{i+1}.json"
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(memo_data, f, indent=2)
+        print(f"Successfully generated {output_file} ({sum(len(b['content']) for b in part_blocks)} chars)")
