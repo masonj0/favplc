@@ -2143,11 +2143,14 @@ async def managed_adapters(
     logger = structlog.get_logger("managed_adapters")
 
     if region:
-        allowed = (
-            fortuna.USA_RESULTS_ADAPTERS
-            if region == "USA"
-            else fortuna.INT_RESULTS_ADAPTERS
-        )
+        if region == "GLOBAL":
+            allowed = fortuna.USA_RESULTS_ADAPTERS | fortuna.INT_RESULTS_ADAPTERS
+        else:
+            allowed = (
+                fortuna.USA_RESULTS_ADAPTERS
+                if region == "USA"
+                else fortuna.INT_RESULTS_ADAPTERS
+            )
         classes = [
             c for c in classes
             if getattr(c, "SOURCE_NAME", "") in allowed
@@ -2376,11 +2379,14 @@ async def run_analytics(
     )
 
     # Pre-populate harvest summary for regional visibility
-    expected = (
-        fortuna.USA_RESULTS_ADAPTERS
-        if target_region == "USA"
-        else fortuna.INT_RESULTS_ADAPTERS
-    )
+    if target_region == "GLOBAL":
+        expected = fortuna.USA_RESULTS_ADAPTERS | fortuna.INT_RESULTS_ADAPTERS
+    else:
+        expected = (
+            fortuna.USA_RESULTS_ADAPTERS
+            if target_region == "USA"
+            else fortuna.INT_RESULTS_ADAPTERS
+        )
     harvest_summary: Dict[str, Dict[str, Any]] = {
         name: {"count": 0, "max_odds": 0.0} for name in expected
     }

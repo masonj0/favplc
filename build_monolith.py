@@ -182,6 +182,8 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "curl_cffi",
         "camoufox",
         "selectolax",
+        "rich",
+        "tomli",
     ]
     for pkg in collect_all_packages:
         args.append(f"--collect-all={pkg}")
@@ -192,7 +194,6 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "fastapi",
         "starlette",
         "pydantic",
-        "rich",
     ]
     for pkg in collect_submodules:
         args.append(f"--collect-submodules={pkg}")
@@ -214,7 +215,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "encodings", "encodings.utf_8", "encodings.ascii",
         "encodings.latin_1", "encodings.idna",
         # Misc
-        "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec", "tomli",
+        "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec",
         # Webview
         "webview",
     ]

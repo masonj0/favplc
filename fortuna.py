@@ -3056,7 +3056,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         for url in script_json_matches:
             # Normalizing backslashes and escaped slashes in found URLs
             url_norm = url.replace("\\/", "/").replace("\\", "/")
-            if "/static/entry/" in url_norm:
+            # Restrict lookahead: ensure link is for the targeted date_str
+            if "/static/entry/" in url_norm and (date_str in url_norm or "RaceCardIndex" in url_norm):
                 links.append(url_norm)
 
         for a in parser.css("a"):
@@ -3065,14 +3066,16 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             txt = node_text(a).lower()
             # Normalize backslashes (Project fix for Equibase path separators)
             h_norm = h.replace("\\", "/")
+
+            # Restrict lookahead: ensure link strictly belongs to targeted date_str (Project Hardening)
             if "/static/entry/" in h_norm and (date_str in h_norm or "RaceCardIndex" in h_norm):
                 self.logger.debug("Equibase link matched", href=h_norm)
                 links.append(h_norm)
-            elif "entry-race-level" in c:
+            elif "entry-race-level" in c and date_str in h_norm:
                 links.append(h_norm)
-            elif "race-link" in c or "track-link" in c:
+            elif ("race-link" in c or "track-link" in c) and date_str in h_norm:
                 links.append(h_norm)
-            elif "entries" in txt and "/static/entry/" in h_norm:
+            elif "entries" in txt and "/static/entry/" in h_norm and date_str in h_norm:
                 links.append(h_norm)
 
         if not links:
