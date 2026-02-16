@@ -1,4 +1,20 @@
 from __future__ import annotations
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CRITICAL: Fix for Playwright + PyInstaller + Windows
+# Must be at the very top, before any other imports
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+import sys
+import platform
+
+if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
+    # Running as frozen EXE on Windows - force ProactorEventLoop
+    import asyncio
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except AttributeError:
+        # Fallback for older Python versions if needed, though 3.8+ is standard now
+        pass
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # fortuna_discovery_engine.py
 # Aggregated monolithic discovery adapters for Fortuna
 # This engine serves as a high-reliability fallback for the Fortuna discovery system.
@@ -321,6 +337,7 @@ RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
 EASTERN = ZoneInfo("America/New_York")
+DEFAULT_REGION: Final[str] = "GLOBAL"
 
 # Region-based adapter lists (Refined by Council of Superbrains Directive)
 # Single-continent adapters remain in USA/INT jobs.
@@ -334,16 +351,17 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "RacingAndSports"
 }
 
-USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults"}
+USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults", "StandardbredCanadaResults"}
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
-    "SportingLifeResults", "SkySportsResults"
+    "SportingLifeResults", "SkySportsResults", "RacingAndSportsResults",
+    "TimeformResults"
 }
 
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = {2.75, 1.8}
+COMMON_PLACEHOLDERS: Final[set] = {2.75}
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -577,15 +595,6 @@ def now_eastern() -> datetime:
     return datetime.now(EASTERN)
 
 
-def get_optimal_region_at_time(dt: datetime) -> str:
-    """Determine which region has the most active racing at given time."""
-    et_hour = dt.astimezone(EASTERN).hour
-    # US Racing Window: 9am - 11pm ET
-    if 9 <= et_hour < 23:
-        return "USA"
-    # International Window: 11pm - 9am ET (covers AUS/UK morning)
-    else:
-        return "INT"
 
 
 def to_eastern(dt: datetime) -> datetime:
@@ -1013,7 +1022,10 @@ class GlobalResourceManager:
     @classmethod
     async def cleanup(cls):
         if cls._httpx_client:
-            await cls._httpx_client.aclose()
+            try:
+                await cls._httpx_client.aclose()
+            except (AttributeError, RuntimeError):
+                pass
             cls._httpx_client = None
 
 
@@ -4817,29 +4829,36 @@ def format_artifact_links() -> str:
     ])
 
 
-def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artifacts_md: str) -> None:
-    """Writes the consolidated sections to $GITHUB_STEP_SUMMARY."""
+from contextlib import contextmanager
+
+@contextmanager
+def open_summary():
+    """Context manager for writing to GHA Job Summary with fallback to stdout."""
     path = os.environ.get('GITHUB_STEP_SUMMARY')
-    if not path:
-        return
+    if path:
+        with open(path, 'a', encoding='utf-8') as f:
+            yield f
+    else:
+        # Fallback to a dummy file or stdout if not in GHA
+        yield StringIO()
 
-    # Narrate the entire workflow
-    summary = '\n'.join([
-        predictions_md,
-        '',
-        harvest_md,
-        '',
-        proof_md,
-        '',
-        artifacts_md,
-    ])
-
-    try:
-        with open(path, "a", encoding="utf-8") as f:
+def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artifacts_md: str) -> None:
+    """Writes the consolidated sections to $GITHUB_STEP_SUMMARY using an efficient context manager."""
+    with open_summary() as f:
+        # Narrate the entire workflow
+        summary = '\n'.join([
+            predictions_md,
+            '',
+            harvest_md,
+            '',
+            proof_md,
+            '',
+            artifacts_md,
+        ])
+        try:
             f.write(summary + '\n')
-    except Exception:
-        # Silently fail if writing summary fails
-        pass
+        except Exception:
+            pass
 
 
 def get_db_path() -> str:
@@ -6883,7 +6902,7 @@ async def run_discovery(
         harvest_summary = {}
 
         # Pre-populate harvest_summary based on region/filter for visibility
-        target_region = region or get_optimal_region_at_time(now_eastern())
+        target_region = region or DEFAULT_REGION
         target_set = USA_DISCOVERY_ADAPTERS if target_region == "USA" else INT_DISCOVERY_ADAPTERS
 
         # Determine which adapters should be visible in the harvest summary
@@ -7325,6 +7344,14 @@ async def start_desktop_app():
 
 async def ensure_browsers():
     """Ensure browser dependencies are available for scraping."""
+
+    # Skip Playwright in frozen apps if binary doesn't exist - use HTTP-only adapters
+    if is_frozen():
+        playwright_path = os.path.expanduser("~\\AppData\\Local\\ms-playwright")
+        if not os.path.exists(playwright_path) and platform.system() == 'Windows':
+            structlog.get_logger().info("Running as frozen app - Playwright disabled (binary not found)")
+            return True
+
     try:
         # Check if playwright is installed and has a chromium binary
         from playwright.async_api import async_playwright
@@ -7336,23 +7363,19 @@ async def ensure_browsers():
                 return True
             except Exception as e:
                 structlog.get_logger().debug("Playwright launch failed during verification", error=str(e))
+                if is_frozen():
+                    structlog.get_logger().info("Frozen app: Playwright launch failed, using HTTP-only fallbacks")
+                    return True
     except ImportError:
         structlog.get_logger().debug("Playwright not imported")
+        if is_frozen(): return True
 
     if is_frozen():
-        print("━" * 60)
-        print("⚠️  PLAYWRIGHT NOT DETECTED IN MONOLITH")
-        print("━" * 60)
-        print("Playwright is required for some adapters but cannot be auto-installed in EXE mode.")
-        print("\nStandard HTTP-based adapters will still function.")
-        print("━" * 60)
-        return False
+        return True
 
     structlog.get_logger().info("Installing browser dependencies (Playwright Chromium)...")
     try:
         # Run installation in a separate process to avoid blocking the loop too much
-        # We explicitly don't use 'pip install playwright' here if possible because it might conflict
-        # but for local non-frozen runs it's a helpful fallback.
         subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True, capture_output=True, text=True)
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
         structlog.get_logger().info("Browser dependencies installed successfully.")
@@ -7453,10 +7476,10 @@ async def main_all_in_one():
 
     adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
 
-    # Auto-select region if not specified
+    # Use default region if not specified
     if not args.region:
-        args.region = config.get("region", {}).get("default", get_optimal_region_at_time(datetime.now(EASTERN)))
-        structlog.get_logger().info("Auto-selected region", region=args.region)
+        args.region = config.get("region", {}).get("default", DEFAULT_REGION)
+        structlog.get_logger().info("Using default region", region=args.region)
 
     # Region-based adapter filtering
     if args.region:
@@ -7538,12 +7561,18 @@ if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
         os.makedirs("debug_snapshots", exist_ok=True)
     
-    # Windows Selector Event Loop Policy Fix (Project Hardening)
+    # Windows Event Loop Policy Fix (Project Hardening)
     if sys.platform == 'win32':
         try:
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            # We prefer ProactorEventLoopPolicy for subprocess support (Playwright requirement)
+            # This is also set at the top of the file for frozen EXEs.
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         except AttributeError:
-            pass # Policy not available on this version
+            # Fallback if Proactor is not available (should be rare on modern Windows)
+            try:
+                asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            except AttributeError:
+                pass
 
     try:
         asyncio.run(main_all_in_one())
