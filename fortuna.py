@@ -4839,8 +4839,8 @@ def open_summary():
         with open(path, 'a', encoding='utf-8') as f:
             yield f
     else:
-        # Fallback to a dummy file or stdout if not in GHA
-        yield StringIO()
+        # Fallback to stdout if not in GHA
+        yield sys.stdout
 
 def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artifacts_md: str) -> None:
     """Writes the consolidated sections to $GITHUB_STEP_SUMMARY using an efficient context manager."""
