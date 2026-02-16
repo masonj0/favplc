@@ -1,6 +1,9 @@
 import ast
 import json
 import os
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import simpleSplit
 
 def translate_to_memo(filepath):
     if not os.path.exists(filepath):
@@ -73,6 +76,28 @@ def translate_to_memo(filepath):
 
     return blocks
 
+def create_pdf(data, filename):
+    c = canvas.Canvas(filename, pagesize=letter)
+    width, height = letter
+    json_str = json.dumps(data, indent=2)
+
+    text_object = c.beginText(40, height - 40)
+    text_object.setFont("Courier", 7)
+
+    lines = json_str.splitlines()
+    for line in lines:
+        wrapped_lines = simpleSplit(line, "Courier", 7, width - 80)
+        for wl in wrapped_lines:
+            if text_object.getY() < 40:
+                c.drawText(text_object)
+                c.showPage()
+                text_object = c.beginText(40, height - 40)
+                text_object.setFont("Courier", 7)
+            text_object.textLine(wl)
+
+    c.drawText(text_object)
+    c.save()
+
 if __name__ == "__main__":
     filepath = "fortuna.py"
     blocks = translate_to_memo(filepath)
@@ -88,7 +113,6 @@ if __name__ == "__main__":
     for b in blocks:
         parts[current_part].append(b)
         current_chars += len(b['content'])
-        # Move to next part if we've reached the target and aren't on the last part
         if current_part < total_parts - 1 and current_chars >= target_chars_per_part:
             current_part += 1
             current_chars = 0
@@ -102,7 +126,10 @@ if __name__ == "__main__":
             "blocks": part_blocks
         }
 
-        output_file = f"fortuna_memo_part{i+1}.json"
-        with open(output_file, "w", encoding="utf-8") as f:
+        json_file = f"fortuna_memo_part{i+1}.json"
+        with open(json_file, "w", encoding="utf-8") as f:
             json.dump(memo_data, f, indent=2)
-        print(f"Successfully generated {output_file} ({sum(len(b['content']) for b in part_blocks)} chars)")
+
+        pdf_file = f"fortuna_memo_part{i+1}.pdf"
+        create_pdf(memo_data, pdf_file)
+        print(f"Successfully generated {json_file} and {pdf_file}")
