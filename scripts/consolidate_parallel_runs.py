@@ -37,19 +37,69 @@ def merge_json_races(input_files, output_file):
         json.dump(all_races, f, indent=2)
     print(f"Merged {len(all_races)} unique races into {output_file}")
 
+def ensure_schema(conn):
+    """Ensure the target database has the required tables and indexes."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS harvest_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            region TEXT,
+            adapter_name TEXT NOT NULL,
+            race_count INTEGER NOT NULL,
+            max_odds REAL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            race_id TEXT NOT NULL,
+            venue TEXT NOT NULL,
+            race_number INTEGER NOT NULL,
+            discipline TEXT,
+            start_time TEXT NOT NULL,
+            report_date TEXT NOT NULL,
+            is_goldmine INTEGER NOT NULL,
+            gap12 TEXT,
+            top_five TEXT,
+            selection_number INTEGER,
+            selection_name TEXT,
+            audit_completed INTEGER DEFAULT 0,
+            verdict TEXT,
+            net_profit REAL,
+            selection_position INTEGER,
+            actual_top_5 TEXT,
+            actual_2nd_fav_odds REAL,
+            trifecta_payout REAL,
+            trifecta_combination TEXT,
+            superfecta_payout REAL,
+            superfecta_combination TEXT,
+            top1_place_payout REAL,
+            top2_place_payout REAL,
+            predicted_2nd_fav_odds REAL,
+            audit_timestamp TEXT
+        )
+    """)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+
 def merge_databases(primary_db, secondary_dbs):
     print(f"Merging {len(secondary_dbs)} databases into {primary_db}...")
+
+    # Ensure primary DB exists or use a secondary as base
     if not os.path.exists(primary_db):
-        print(f"Primary DB {primary_db} does not exist. Using first secondary as primary.")
         if secondary_dbs:
+            print(f"Primary DB {primary_db} does not exist. Using {secondary_dbs[0]} as base.")
             import shutil
             shutil.copy2(secondary_dbs[0], primary_db)
             secondary_dbs = secondary_dbs[1:]
         else:
+            print("No databases to merge.")
             return
 
     conn = sqlite3.connect(primary_db)
     cursor = conn.cursor()
+
+    # Ensure schema in primary
+    ensure_schema(conn)
 
     # Ensure WAL mode
     conn.execute("PRAGMA journal_mode=WAL")
@@ -59,10 +109,21 @@ def merge_databases(primary_db, secondary_dbs):
             print(f"Secondary DB {sec_db} not found, skipping.")
             continue
 
+        if not os.path.getsize(sec_db) > 0:
+            print(f"Secondary DB {sec_db} is empty, skipping.")
+            continue
+
         print(f"Merging {sec_db}...")
         try:
             # Attach secondary DB
             cursor.execute(f"ATTACH DATABASE '{sec_db}' AS sec")
+
+            # Check if 'tips' table exists in secondary
+            cursor.execute("SELECT name FROM sec.sqlite_master WHERE type='table' AND name='tips'")
+            if not cursor.fetchone():
+                print(f"Secondary DB {sec_db} is missing 'tips' table, skipping.")
+                cursor.execute("DETACH DATABASE sec")
+                continue
 
             # Merge tips table
             # We want to keep the one that is audited if there is a conflict
