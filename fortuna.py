@@ -169,7 +169,13 @@ def load_config() -> Dict[str, Any]:
                     else:
                         config[section] = values
         except Exception as e:
-            print(f"Warning: Failed to load config.toml: {e}")
+            print(f"Warning: Failed to load config.toml: {e} - using default configuration")
+    else:
+        # Explicitly log if we are falling back to defaults due to missing config or parser
+        if not selected_config:
+            structlog.get_logger().debug("No config.toml found, using default configuration")
+        elif not HAS_TOML:
+            structlog.get_logger().warning("tomli not installed, using default configuration")
 
     return config
 
@@ -188,7 +194,9 @@ def print_status_card(config: Dict[str, Any]):
         console = Console()
         print_func = console.print
     except ImportError:
-        print_func = print
+        # Fallback to structlog for telemetry (GPT5 Improvement)
+        sl = structlog.get_logger()
+        print_func = lambda msg: sl.info(msg)
 
     print_func("\n" + "═" * 60)
     print_func(f" 🐎 FORTUNA FAUCET INTELLIGENCE - v{version} ".center(60, "═"))
@@ -238,7 +246,9 @@ def print_quick_help():
         console = Console()
         print_func = console.print
     except ImportError:
-        print_func = print
+        # Fallback to structlog for telemetry (GPT5 Improvement)
+        sl = structlog.get_logger()
+        print_func = lambda msg: sl.info(msg)
 
     help_text = """
     [bold yellow]Welcome to Fortuna Faucet Intelligence![/]
@@ -989,7 +999,9 @@ class GlobalResourceManager:
         lock = await cls._get_lock()
         async with lock:
             if cls._httpx_client is not None:
-                if timeout is not None and abs(cls._httpx_client.timeout.read - timeout) > 0.001:
+                # Guard against None in timeout comparison (GPT5 Fix)
+                current_timeout = getattr(cls._httpx_client.timeout, "read", None)
+                if timeout is not None and current_timeout is not None and abs(current_timeout - timeout) > 0.001:
                     try:
                         await cls._httpx_client.aclose()
                     except Exception:
@@ -3791,9 +3803,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 continue
 
             # 2. Derive Selection (2nd favorite) and Top 5
-            # Collect valid runners with their enriched odds
+            # Collect valid runners with their enriched odds (Using Decimal for consistency - GPT5 Improvement)
             valid_r_with_odds = sorted(
-                [(r, Decimal(str(r.win_odds))) for r in active_runners if r.win_odds is not None],
+                [(r, odds) for r in active_runners if (odds := _get_best_win_odds(r)) is not None],
                 key=lambda x: x[1]
             )
             race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in valid_r_with_odds[:5]])
@@ -3923,7 +3935,9 @@ class RaceNotifier:
             return
 
         title = "🐎 High-Value Opportunity!"
-        message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {race.start_time.strftime('%I:%M %p')}"
+        # Guard against None start_time (GPT5 Fix)
+        time_str = race.start_time.strftime('%I:%M %p') if race.start_time else "TBD"
+        message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {time_str}"
 
         try:
             # Use keyword arguments for better compatibility (AI Review Fix)
@@ -4888,8 +4902,11 @@ class FortunaDB:
         self.logger = structlog.get_logger(self.__class__.__name__)
 
     def _get_conn(self):
+        """Returns a thread-safe connection using WAL and a thread lock (GPT5 Requirement)."""
         with self._conn_lock:
             if not self._conn:
+                # check_same_thread=False is safe because we use a ThreadPoolExecutor(max_workers=1)
+                # and a connection lock for all direct cursor operations.
                 self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             # Enable WAL mode for better concurrency
@@ -5324,12 +5341,13 @@ class FortunaDB:
                     ))
         await self._run_in_executor(_update)
 
-    async def get_all_audited_tips(self) -> List[Dict[str, Any]]:
-        """Returns all audited tips for reporting."""
+    async def get_all_audited_tips(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Returns recent audited tips for reporting (capped for performance - GPT5 Improvement)."""
         if not self._initialized: await self.initialize()
         def _get():
             cursor = self._get_conn().execute(
-                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC LIMIT ?",
+                (limit,)
             )
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
@@ -5486,6 +5504,11 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
+            # Cap the batch size to avoid performance degradation (GPT5 Improvement)
+            if len(new_tips) > 100:
+                self.logger.info("Capping large tips batch", original_count=len(new_tips), capped_at=100)
+                new_tips = new_tips[:100]
+
             await self.db.log_tips(new_tips)
             self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
@@ -5554,8 +5577,9 @@ class RaceSummary:
         }
 
 
+@lru_cache(maxsize=1)
 def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
-    """Returns all non-abstract discovery adapter classes."""
+    """Recursively discovers all discovery adapter classes (cached for performance - GPT5 Improvement)."""
     def get_all_subclasses(cls):
         return set(cls.__subclasses__()).union(
             [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
@@ -5603,9 +5627,16 @@ class FavoriteToPlaceMonitor:
 
         self.logger.info("Initializing adapters", count=len(classes_to_init))
 
+        # Get adapter-specific configs from global config (GPT5 Improvement)
+        adapter_configs = self.config.get("adapters", {})
+
         for adapter_class in classes_to_init:
             try:
-                adapter = adapter_class(config={"region": self.config.get("region")})
+                name = adapter_class.SOURCE_NAME if hasattr(adapter_class, "SOURCE_NAME") else adapter_class.__name__
+                specific_config = adapter_configs.get(name, {}).copy() # Use copy to avoid shared mutation
+                # Merge with basic region config
+                specific_config.update({"region": self.config.get("region")})
+                adapter = adapter_class(config=specific_config)
                 self.adapters.append(adapter)
                 self.logger.debug("Adapter initialized", adapter=adapter_class.__name__)
             except Exception as e:
@@ -5740,15 +5771,16 @@ class FavoriteToPlaceMonitor:
             try:
                 # Time window filtering
                 st = race.start_time
+                if not st: continue # Guard against None start_time (GPT5 Fix)
                 if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
                 # Time window filtering removed to ensure all unique races are counted
 
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number + Date
+                # Stable key: Canonical Venue + Race Number + Date + Discipline (GPT5 Fix)
                 canonical_venue = get_canonical_venue(summary.track)
                 date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
-                key = f"{canonical_venue}|{summary.race_number}|{date_str}"
+                key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -5977,6 +6009,8 @@ class FavoriteToPlaceMonitor:
                 await asyncio.sleep(self.refresh_interval)
         except KeyboardInterrupt:
             self.logger.info("Stopped by user")
+        except asyncio.CancelledError:
+            self.logger.info("Monitor task cancelled")
         finally:
             for a in self.adapters: await a.shutdown()
             await GlobalResourceManager.cleanup()
@@ -6942,10 +6976,17 @@ async def run_discovery(
                 reverse=True
             )
 
+            # Get adapter-specific configs from global config (GPT5 Improvement)
+            adapter_configs = config.get("adapters", {}) if config else {}
+
             adapters = []
             for cls in adapter_classes:
                 try:
-                    adapters.append(cls(config={"region": region}))
+                    name = cls.SOURCE_NAME if hasattr(cls, "SOURCE_NAME") else cls.__name__
+                    specific_config = adapter_configs.get(name, {}).copy() # Use copy to avoid shared mutation
+                    # Merge with basic region config
+                    specific_config.update({"region": region})
+                    adapters.append(cls(config=specific_config))
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
@@ -7034,8 +7075,8 @@ async def run_discovery(
                     pass
 
             date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            # Removing discipline from key to allow better merging across adapters
-            key = f"{canonical_venue}|{race.race_number}|{date_str}"
+            # Include discipline in key to avoid misclassification (GPT5 Fix)
+            key = f"{canonical_venue}|{race.race_number}|{date_str}|{race.discipline}"
             
             if key not in race_map:
                 race_map[key] = race
@@ -7373,25 +7414,44 @@ async def ensure_browsers():
     if is_frozen():
         return True
 
-    structlog.get_logger().info("Installing browser dependencies (Playwright Chromium)...")
-    try:
-        # Run installation in a separate process to avoid blocking the loop too much
-        subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True, capture_output=True, text=True)
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
-        structlog.get_logger().info("Browser dependencies installed successfully.")
+    # GPT5 Improvement: Instead of auto-installing, warn the user unless opt-in
+    # For now, we will assume it's NOT opt-in and ask for manual installation
+    # because auto-pip-installing can be surprising.
+    structlog.get_logger().warning("Browser dependencies (Playwright Chromium) missing.")
+    print("\n[bold red]Browser dependencies missing![/]")
+    print("To use browser-based adapters, please run:")
+    print(f"  {sys.executable} -m pip install playwright==1.49.1")
+    print(f"  {sys.executable} -m playwright install chromium\n")
+
+    # Check if we should auto-install via a hidden flag or environment variable
+    if os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
+        structlog.get_logger().info("Auto-installing browser dependencies as requested...")
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True, capture_output=True, text=True)
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
+            structlog.get_logger().info("Browser dependencies installed successfully.")
+            return True
+        except subprocess.CalledProcessError as e:
+            structlog.get_logger().error("Failed to auto-install browsers", error=str(e))
+            return False
+
+    return True # Continue with HTTP-only adapters
+
+async def handle_early_exit_args(args: argparse.Namespace, config: Dict[str, Any]) -> bool:
+    """Handles CLI arguments that should trigger an immediate exit (GPT5 Improvement)."""
+    if args.quick_help:
+        print_quick_help()
         return True
-    except subprocess.CalledProcessError as e:
-        structlog.get_logger().error(
-            "Failed to install browsers",
-            error=str(e),
-            returncode=e.returncode,
-            stdout=e.stdout,
-            stderr=e.stderr
-        )
-        return False
-    except Exception as e:
-        structlog.get_logger().error("Unexpected error installing browsers", error=str(e))
-        return False
+    if args.status:
+        print_status_card(config)
+        return True
+    if args.show_log:
+        await print_recent_logs()
+        return True
+    if args.open_dashboard:
+        open_report_in_browser()
+        return True
+    return False
 
 async def main_all_in_one():
     # Configure logging at the start of main
@@ -7423,40 +7483,12 @@ async def main_all_in_one():
     parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
     args = parser.parse_args()
 
-    if args.quick_help:
-        print_quick_help()
-        return
-
-    if args.status:
-        print_status_card(config)
-        return
-
-    if args.show_log:
-        await print_recent_logs()
-        return
-
-    if args.open_dashboard:
-        open_report_in_browser()
+    # Handle early-exit arguments via helper (GPT5 Fix/Improvement)
+    if await handle_early_exit_args(args, config):
         return
 
     if args.db_path:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
-
-    if args.quick_help:
-        print_quick_help()
-        return
-
-    if args.status:
-        print_status_card(config)
-        return
-
-    if args.show_log:
-        await print_recent_logs()
-        return
-
-    if args.open_dashboard:
-        open_report_in_browser()
-        return
 
     # Print status card for all normal runs
     print_status_card(config)
@@ -7530,7 +7562,7 @@ async def main_all_in_one():
 
     if args.monitor:
         await ensure_browsers()
-        monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
+        monitor = FavoriteToPlaceMonitor(target_dates=target_dates, config=config)
         # Pass region config to monitor
         monitor.config["region"] = args.region
         if args.once:
