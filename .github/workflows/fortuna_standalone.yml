@@ -70,7 +70,7 @@ jobs:
 
       - name: Initialize DB if needed
         if: steps.cache-db.outputs.cache-hit != 'true'
-        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().close())"
+        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
 
       - name: Run Discovery
         timeout-minutes: 25
@@ -126,14 +126,12 @@ jobs:
           key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
+        id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
           key: fortuna-db-master-${{ github.run_number }}
           restore-keys: fortuna-db-master-
-
-      - name: Download Discovery Artifacts
-        uses: actions/download-artifact@v4
 
       - name: Install dependencies
         run: |
@@ -141,6 +139,13 @@ jobs:
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
           playwright install --with-deps chromium
+
+      - name: Initialize DB if needed
+        if: steps.cache-db.outputs.cache-hit != 'true'
+        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
+
+      - name: Download Discovery Artifacts
+        uses: actions/download-artifact@v4
 
       - name: Consolidate Discovery Data
         run: |
@@ -153,12 +158,13 @@ jobs:
             if [ -d "$DIR" ]; then
               ((ARTIFACT_COUNT++))
               cp "$DIR/races_${region}.json" . 2>/dev/null || echo '[]' > "races_${region}.json"
-              cp "$DIR/fortuna_${region}.db" . 2>/dev/null || cp fortuna.db "fortuna_${region}.db"
+              # Try to get the regional DB, fallback to master ONLY if it exists
+              cp "$DIR/fortuna_${region}.db" . 2>/dev/null || { [ -f fortuna.db ] && cp fortuna.db "fortuna_${region}.db" || true; }
               cp "$DIR/discovery_harvest_${region}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${region}.json"
             else
               echo "::warning::Artifact directory $DIR missing"
               echo '[]' > "races_${region}.json"
-              cp fortuna.db "fortuna_${region}.db"
+              [ -f fortuna.db ] && cp fortuna.db "fortuna_${region}.db" || true
               echo '{}' > "discovery_harvest_${region}.json"
             fi
           done
@@ -224,7 +230,7 @@ jobs:
       - name: Install summary dependencies
         run: |
           python3 -m pip install --upgrade pip
-          python3 -m pip install tomli rich structlog pydantic aiosqlite selectolax
+          python3 -m pip install -r requirements.txt
 
       - name: Generate Workflow Metadata
         run: |

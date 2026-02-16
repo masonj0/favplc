@@ -124,17 +124,17 @@ def verify_exe(exe_path):
         )
 
         if result.returncode == 0:
-            print("✓ EXE verification passed")
+            print("[PASS] EXE verification passed")
             return True
         else:
-            print(f"✗ EXE returned error code: {result.returncode}")
+            print(f"[FAIL] EXE returned error code: {result.returncode}")
             print(f"stderr: {result.stderr}")
             return False
     except subprocess.TimeoutExpired:
-        print("✗ EXE timed out (might be stuck)")
+        print("[FAIL] EXE timed out (might be stuck)")
         return False
     except Exception as e:
-        print(f"✗ Could not verify EXE: {e}")
+        print(f"[FAIL] Could not verify EXE: {e}")
         # If we are on Linux but built a Windows EXE, verification will fail here.
         if platform.system() != 'Windows':
             print("  (This is expected when cross-compiling or building on Linux)")
@@ -182,6 +182,8 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "curl_cffi",
         "camoufox",
         "selectolax",
+        "rich",
+        "tomli",
     ]
     for pkg in collect_all_packages:
         args.append(f"--collect-all={pkg}")
@@ -192,7 +194,6 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "fastapi",
         "starlette",
         "pydantic",
-        "rich",
     ]
     for pkg in collect_submodules:
         args.append(f"--collect-submodules={pkg}")
@@ -214,7 +215,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "encodings", "encodings.utf_8", "encodings.ascii",
         "encodings.latin_1", "encodings.idna",
         # Misc
-        "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec", "tomli",
+        "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec",
         # Webview
         "webview",
     ]
@@ -277,7 +278,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         if verify_exe(exe_path):
              print("=" * 60)
         else:
-             print("⚠️ EXE built but verification failed")
+             print("[WARN] EXE built but verification failed")
              sys.exit(1)
     else:
         print("\n[ERROR] Build finished but EXE not found")
