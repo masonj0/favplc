@@ -218,6 +218,12 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec",
         # Webview
         "webview",
+        # Playwright support
+        "playwright",
+        "playwright.async_api",
+        "playwright._impl._api_types",
+        "playwright._impl._connection",
+        "playwright._impl._transport",
     ]
     for imp in hidden_imports:
         args.append(f"--hidden-import={imp}")
