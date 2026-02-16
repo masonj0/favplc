@@ -77,25 +77,28 @@ if __name__ == "__main__":
     filepath = "fortuna.py"
     blocks = translate_to_memo(filepath)
 
+    total_parts = 3
     total_chars = sum(len(b['content']) for b in blocks)
-    target_chars_per_part = total_chars / 2
+    target_chars_per_part = total_chars / total_parts
 
-    parts = [[], []]
+    parts = [[] for _ in range(total_parts)]
     current_chars = 0
     current_part = 0
 
     for b in blocks:
         parts[current_part].append(b)
         current_chars += len(b['content'])
-        if current_part == 0 and current_chars >= target_chars_per_part:
-            current_part = 1
+        # Move to next part if we've reached the target and aren't on the last part
+        if current_part < total_parts - 1 and current_chars >= target_chars_per_part:
+            current_part += 1
+            current_chars = 0
 
     for i, part_blocks in enumerate(parts):
         memo_data = {
             "memo_type": "monolith_structure",
             "source_file": filepath,
             "part": i + 1,
-            "total_parts": 2,
+            "total_parts": total_parts,
             "blocks": part_blocks
         }
 
