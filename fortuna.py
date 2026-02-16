@@ -1483,6 +1483,7 @@ class RacePageFetcherMixin:
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
     ADAPTER_TYPE: ClassVar[str] = "discovery"
+    PROVIDES_ODDS: ClassVar[bool] = True  # GPT5 Fix: discovery-only adapters set this to False
 
     def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
         self.source_name = source_name
@@ -1544,6 +1545,10 @@ class BaseAdapterV3(ABC):
         races = self._parse_races(raw_data)
         total_runners = 0
         trustworthy_runners = 0
+
+        # Propagate adapter capability flag to race metadata (GPT5 Fix)
+        for r in races:
+            r.metadata["provides_odds"] = self.PROVIDES_ODDS
 
         for r in races:
             # Global heuristic for runner numbers (addressing "impossible" high numbers)
@@ -2346,7 +2351,8 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 elif r_harness or ' (us)' in trw.lower():
                     if fs >= 6: ab.append('Superfecta')
                 races.append(Race(id=f"boyle_{track_name.lower().replace(' ', '')}_{st:%Y%m%d_%H%M}", venue=track_name, race_number=i + 1, start_time=st, runners=runners, distance=dist, source=self.source_name, discipline=disc, available_bets=ab))
-        return races
+        # Filter out races with only placeholder/generic runners (no real names or odds) (GPT5 Fix)
+        return [r for r in races if not all(re.match(r'^Runner \d+$', run.name) for run in r.runners)]
 
 
 # ----------------------------------------
@@ -2661,6 +2667,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
 class RacingPostB2BAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "RacingPostB2B"
     BASE_URL: ClassVar[str] = "https://backend-us-racecards.widget.rpb2b.com"
+    PROVIDES_ODDS: ClassVar[bool] = False  # GPT5 Fix: RPB2B is racecard-only
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=300.0, rate_limit=5.0)
@@ -3634,7 +3641,9 @@ class TrifectaAnalyzer(BaseAnalyzer):
             total_active = len(active_runners)
 
             # Trustworthiness Airlock (Success Playbook Item)
-            if total_active > 0:
+            # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
+            skip_trust_check = race.metadata.get("provides_odds") is False
+            if total_active > 0 and not skip_trust_check:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
                     log.warning("Not enough trustworthy odds for Trifecta; skipping", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
@@ -3772,7 +3781,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             total_active = len(active_runners)
 
             # Trustworthiness Airlock (Success Playbook Item)
-            if total_active > 0:
+            # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
+            skip_trust_check = race.metadata.get("provides_odds") is False
+            if total_active > 0 and not skip_trust_check:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
                     self.logger.warning("Not enough trustworthy odds; skipping race", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
@@ -4563,7 +4574,7 @@ async def _generate_audit_history_html() -> str:
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """
     Generates a Markdown table summary of upcoming races.
-    Sorted by MTP, ceiling of 4 hours from now.
+    Sorted by MTP, ceiling of 18 hours from now (GPT5 Fix).
     """
     now = datetime.now(EASTERN)
     cutoff = now + timedelta(hours=18)
@@ -5449,8 +5460,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Strict future cutoff to prevent leakage (Never log more than 20 mins ahead)
-        future_limit = now + timedelta(minutes=45)
+        # Future cutoff aligned with BET NOW window (MTP <= 120) (GPT5 Fix)
+        future_limit = now + timedelta(minutes=120)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -5850,7 +5861,7 @@ class FavoriteToPlaceMonitor:
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
-        return bet_now
+        return bet_now[:15]  # Cap to prevent overwhelming output (GPT5 Fix)
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
@@ -6036,6 +6047,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+        self._semaphore = asyncio.Semaphore(3) # GPT5 Fix
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Oddschecker is heavily protected by Cloudflare; Playwright with high timeout and network idle
@@ -6117,8 +6129,11 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             return None
 
         async def fetch_single_html(url_path: str):
-            response = await self.make_request("GET", url_path, headers=self._get_headers())
-            return response.text if response else ""
+            async with self._semaphore:
+                # Small delay to avoid ban (GPT5 Fix)
+                await asyncio.sleep(0.5 + random.random() * 0.5)
+                response = await self.make_request("GET", url_path, headers=self._get_headers())
+                return response.text if response else ""
 
         tasks = [fetch_single_html(link) for link in metadata]
         html_pages = await asyncio.gather(*tasks)
@@ -6874,9 +6889,21 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 try: number = int(clean_text(num_node.text()))
                 except Exception: pass
 
+            # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
+            win_odds = None
+            sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
+            if sp_node:
+                win_odds = parse_odds_to_decimal(clean_text(sp_node.text()))
+
+            odds_data = {}
+            if ov := create_odds_data(self.source_name, win_odds):
+                odds_data[self.source_name] = ov
+
             runners.append(Runner(
                 name=name,
                 number=number,
+                win_odds=win_odds,
+                odds=odds_data,
                 metadata={"position": pos}
             ))
 
@@ -6928,6 +6955,9 @@ async def run_discovery(
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
 
+    db = FortunaDB()
+    await db.initialize()
+
     try:
         now = datetime.now(EASTERN)
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
@@ -6966,7 +6996,6 @@ async def run_discovery(
                 adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
 
             # Load historical performance scores to prioritize adapters
-            db = FortunaDB()
             adapter_scores = await db.get_adapter_scores(days=30)
 
             # Prioritize adapters by score (descending)
@@ -7427,7 +7456,8 @@ async def ensure_browsers():
     if os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
         structlog.get_logger().info("Auto-installing browser dependencies as requested...")
         try:
-            subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True, capture_output=True, text=True)
+            # Remove version pin to avoid conflicts (GPT5 Fix)
+            subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True, capture_output=True, text=True)
             subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
             structlog.get_logger().info("Browser dependencies installed successfully.")
             return True
