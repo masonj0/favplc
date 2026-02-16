@@ -321,6 +321,7 @@ RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
 EASTERN = ZoneInfo("America/New_York")
+DEFAULT_REGION: Final[str] = "GLOBAL"
 
 # Region-based adapter lists (Refined by Council of Superbrains Directive)
 # Single-continent adapters remain in USA/INT jobs.
@@ -577,10 +578,6 @@ def now_eastern() -> datetime:
     return datetime.now(EASTERN)
 
 
-def get_optimal_region_at_time(dt: datetime) -> str:
-    """Determine which region has the most active racing at given time."""
-    # Always return GLOBAL to ensure 24/7 coverage across all continents (Bug #1 Fix)
-    return "GLOBAL"
 
 
 def to_eastern(dt: datetime) -> datetime:
@@ -6878,7 +6875,7 @@ async def run_discovery(
         harvest_summary = {}
 
         # Pre-populate harvest_summary based on region/filter for visibility
-        target_region = region or get_optimal_region_at_time(now_eastern())
+        target_region = region or DEFAULT_REGION
         target_set = USA_DISCOVERY_ADAPTERS if target_region == "USA" else INT_DISCOVERY_ADAPTERS
 
         # Determine which adapters should be visible in the harvest summary
@@ -7448,10 +7445,10 @@ async def main_all_in_one():
 
     adapter_filter = [n.strip() for n in args.include.split(",")] if args.include else None
 
-    # Auto-select region if not specified
+    # Use default region if not specified
     if not args.region:
-        args.region = config.get("region", {}).get("default", get_optimal_region_at_time(datetime.now(EASTERN)))
-        structlog.get_logger().info("Auto-selected region", region=args.region)
+        args.region = config.get("region", {}).get("default", DEFAULT_REGION)
+        structlog.get_logger().info("Using default region", region=args.region)
 
     # Region-based adapter filtering
     if args.region:
