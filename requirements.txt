@@ -66,7 +66,7 @@ pyyaml==6.0.1
 rich==13.7.0
 redis==5.0.1
 requests==2.31.0
-scrapling==0.3.14
+scrapling==0.4
 playwright==1.49.1
 pyee==12.0.0
 setuptools==69.5.1
