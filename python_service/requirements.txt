@@ -83,7 +83,7 @@ uvicorn[standard]==0.24.0
 watchfiles==0.20.0
 websockets==12.0
 playwright==1.49.1
-pyee==12.0.0
+pyee==13.0.1
 setuptools==69.5.1
 wheel==0.45.1
 wrapt==1.16.0

@@ -68,7 +68,7 @@ redis==5.0.1
 requests==2.31.0
 scrapling==0.3.14
 playwright==1.49.1
-pyee==12.0.0
+pyee==13.0.1
 setuptools==69.5.1
 secretstorage==3.3.3
 selectolax==0.3.20
