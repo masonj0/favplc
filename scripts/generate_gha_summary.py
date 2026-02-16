@@ -59,6 +59,31 @@ DISCIPLINE_EMOJI = {"greyhound": "🐕", "harness": "🏇"}
 
 POSITION_EMOJI = {1: "🥇", 2: "🥈", 3: "🥉", 4: "4️⃣", 5: "5️⃣"}
 
+# Region mapping for sorting (Global > Intl > USA)
+GLOBAL_ADAPTERS = {
+    "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
+    "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
+    "RacingAndSports"
+}
+INT_ADAPTERS = {
+    "TAB", "BetfairDataScientist", "RacingPostResults", "RacingPostTote",
+    "AtTheRacesResults", "SkySportsResults", "RacingAndSportsResults",
+    "TimeformResults"
+}
+USA_ADAPTERS = {
+    "Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada",
+    "EquibaseResults", "StandardbredCanadaResults", "SportingLifeResults"
+}
+
+def _get_region_rank(adapter_name: str) -> int:
+    """Returns 0 for Global, 1 for Intl, 2 for USA, 3 for Other."""
+    # Strip 'Adapter' suffix if present for matching
+    name = adapter_name.replace("Adapter", "")
+    if name in GLOBAL_ADAPTERS: return 0
+    if name in INT_ADAPTERS: return 1
+    if name in USA_ADAPTERS: return 2
+    return 3
+
 DISCOVERY_HARVEST_FILES = [
     "discovery_harvest.json",
     "discovery_harvest_usa.json",
@@ -360,48 +385,57 @@ def _build_plays(out: SummaryWriter) -> None:
         out.write()
         return
 
+    # Sort upcoming by Region Rank then MTP (GPT5 Requirement)
+    upcoming.sort(key=lambda r: (_get_region_rank(r.get("adapter", "")), r["_mtp"]))
+
     visible = upcoming[:HERO_VISIBLE]
     overflow = upcoming[HERO_VISIBLE:]
 
+    out.write("```text")
     out.lines(_plays_table(visible))
+    out.write("```")
     out.write()
 
     if overflow:
         out.write("<details>")
         out.write(f"<summary>📋 See all {len(upcoming)} plays</summary>")
         out.write()
+        out.write("```text")
         out.lines(_plays_table(overflow, continued=True))
+        out.write("```")
         out.write()
         out.write("</details>")
         out.write()
 
 
 def _plays_table(races: list[dict], *, continued: bool = False) -> list[str]:
+    """Generates a text-based monospace table for plays."""
     rows: list[str] = []
+    # Fixed-width columns for monospace alignment
+    # MTP (5) | Race (25) | Pick (20) | Odds (6) | Gap (5)
+    header = f"{'MTP':<5} | {'Race':<25} | {'Pick':<20} | {'Odds':<6} | {'Gap':<5}"
+    sep    = "-" * len(header)
+
     if not continued:
-        rows.extend([
-            "| ⏰ | Race | Pick | Odds | Gap |",
-            "|:---|:---|:---|---:|---:|",
-        ])
+        rows.extend([header, sep])
+
     for r in races:
-        flag  = _venue_flag(r.get("track"), r.get("discipline"))
-        venue = _trunc(r.get("track", "?"), 14)
+        venue = _trunc(r.get("track", "?"), 18)
         rnum  = r.get("race_number", "?")
+        race_str = f"{venue} R{rnum}"
         mtp_s = _mtp_str(r["_mtp"])
 
         sel_num  = r.get("selection_number", "?")
-        sel_name = _trunc(r.get("second_fav_name", ""), 12)
-        pick     = f"**#{sel_num}** {sel_name}".strip()
+        sel_name = _trunc(r.get("second_fav_name", ""), 15)
+        pick     = f"#{sel_num} {sel_name}".strip()
 
         odds = r.get("second_fav_odds", 0)
         gap  = r.get("gap12", 0)
 
-        gold = " 💎" if r.get("is_goldmine") else ""
-        time_icon = "⚡" if r["_mtp"] < 15 else ""
+        gold = "*" if r.get("is_goldmine") else " "
 
         rows.append(
-            f"| {time_icon}{mtp_s} | {flag} {venue} R{rnum}{gold} "
-            f"| {pick} | {odds:.2f} | {gap:.2f} |"
+            f"{mtp_s:<5} | {race_str:<25}{gold} | {pick:<20} | {odds:>6.2f} | {gap:>5.2f}"
         )
     return rows
 
@@ -462,17 +496,21 @@ def _build_scoreboard(out: SummaryWriter, stats: TipStats) -> None:
             f"<summary>📋 Recent results ({len(stats.recent_tips)} bets)</summary>"
         )
         out.write()
+        out.write("```text")
         out.lines(_results_table(stats.recent_tips))
+        out.write("```")
         out.write()
         out.write("</details>")
         out.write()
 
 
 def _results_table(tips: list[tuple]) -> list[str]:
-    rows = [
-        "| Result | P/L | Race | Pick | Finish |",
-        "|:---:|---:|:---|:---|:---|",
-    ]
+    """Generates a text-based monospace table for results."""
+    # Result | P/L | Race | Pick | Finish
+    header = f"{'Res':<4} | {'P/L':<7} | {'Race':<20} | {'Pick':<12} | {'Finish':<15}"
+    sep    = "-" * len(header)
+    rows = [header, sep]
+
     for tip in tips:
         # (venue, race_num, sel_num, pred_odds, verdict, profit,
         #  sel_pos, actual_top5, actual_2nd_odds,
@@ -487,30 +525,28 @@ def _results_table(tips: list[tuple]) -> list[str]:
         actual_t5  = tip[7] or ""
         sf_pay     = tip[9]
         tri_pay    = tip[10]
-        discipline = tip[12]
 
-        icon = VERDICT_ICON.get(verdict, "⚪")
-        flag = _venue_flag(venue, discipline)
+        res_map = {"CASHED": "WIN", "CASHED_ESTIMATED": "WIN", "BURNED": "LOSS", "VOID": "VOID"}
+        res_text = res_map.get(verdict, "???")
 
+        race_str = f"{venue} R{race_num}"
         pick = f"#{sel_num}"
         if pred_odds:
             pick += f" @{pred_odds:.1f}"
 
         finish_parts = []
         if sel_pos:
-            pos_e = POSITION_EMOJI.get(sel_pos, f"#{sel_pos}")
-            finish_parts.append(str(pos_e))
+            finish_parts.append(f"P{sel_pos}")
         if sf_pay:
             finish_parts.append(f"SF${sf_pay:.0f}")
         elif tri_pay:
-            finish_parts.append(f"Tri${tri_pay:.0f}")
+            finish_parts.append(f"T${tri_pay:.0f}")
         elif actual_t5:
-            finish_parts.append(f"[{_trunc(actual_t5, 10)}]")
-        finish = " ".join(finish_parts) or "—"
+            finish_parts.append(f"[{_trunc(actual_t5, 8)}]")
+        finish = " ".join(finish_parts) or "-"
 
         rows.append(
-            f"| {icon} | ${profit:+.2f} | {flag} {venue} R{race_num} "
-            f"| {pick} | {finish} |"
+            f"{res_text:<4} | ${profit:>6.2f} | {race_str:<20} | {pick:<12} | {finish:<15}"
         )
     return rows
 
@@ -571,24 +607,29 @@ def _build_system(out: SummaryWriter) -> None:
     out.write()
 
 def _adapter_table(adapters: dict[str, dict], label: str) -> list[str]:
-    rows = [
-        f"**{label} Adapters**",
-        "",
-        "| Adapter | Races | Max Odds | Status |",
-        "|:---|---:|---:|:---|",
-    ]
+    """Generates a text-based monospace table for adapters, sorted by region rank (GPT5)."""
+    header = f"{'Adapter':<20} | {'Races':>5} | {'MaxOdds':>8} | {'Status'}"
+    sep    = "-" * len(header)
+    rows = [f"**{label} Adapters**", "", "```text", header, sep]
+
     total = 0
-    for name, data in sorted(
-        adapters.items(), key=lambda x: -x[1].get("count", 0),
-    ):
+    # Sort by Region Rank (Global > Intl > USA) then count
+    sorted_adapters = sorted(
+        adapters.items(),
+        key=lambda x: (_get_region_rank(x[0]), -x[1].get("count", 0))
+    )
+
+    for name, data in sorted_adapters:
         count = data.get("count", 0)
         odds  = data.get("max_odds", 0.0)
         total += count
-        status = "✅ Active" if count > 0 else "⚠️ No data"
-        rows.append(f"| {name} | {count} | {odds:.1f} | {status} |")
+        status = "Active" if count > 0 else "No data"
+        rows.append(f"{name[:20]:<20} | {count:>5} | {odds:>8.1f} | {status}")
 
     if len(adapters) > 1:
-        rows.append(f"| **Total** | **{total}** | | |")
+        rows.append(f"{'Total':<20} | {total:>5} | {'':>8} |")
+
+    rows.append("```")
     return rows
 
 

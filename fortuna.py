@@ -169,7 +169,13 @@ def load_config() -> Dict[str, Any]:
                     else:
                         config[section] = values
         except Exception as e:
-            print(f"Warning: Failed to load config.toml: {e}")
+            print(f"Warning: Failed to load config.toml: {e} - using default configuration")
+    else:
+        # Explicitly log if we are falling back to defaults due to missing config or parser
+        if not selected_config:
+            structlog.get_logger().debug("No config.toml found, using default configuration")
+        elif not HAS_TOML:
+            structlog.get_logger().warning("tomli not installed, using default configuration")
 
     return config
 
@@ -188,7 +194,9 @@ def print_status_card(config: Dict[str, Any]):
         console = Console()
         print_func = console.print
     except ImportError:
-        print_func = print
+        # Fallback to structlog for telemetry (GPT5 Improvement)
+        sl = structlog.get_logger()
+        print_func = lambda msg: sl.info(msg)
 
     print_func("\n" + "═" * 60)
     print_func(f" 🐎 FORTUNA FAUCET INTELLIGENCE - v{version} ".center(60, "═"))
@@ -238,7 +246,9 @@ def print_quick_help():
         console = Console()
         print_func = console.print
     except ImportError:
-        print_func = print
+        # Fallback to structlog for telemetry (GPT5 Improvement)
+        sl = structlog.get_logger()
+        print_func = lambda msg: sl.info(msg)
 
     help_text = """
     [bold yellow]Welcome to Fortuna Faucet Intelligence![/]
@@ -989,7 +999,9 @@ class GlobalResourceManager:
         lock = await cls._get_lock()
         async with lock:
             if cls._httpx_client is not None:
-                if timeout is not None and abs(cls._httpx_client.timeout.read - timeout) > 0.001:
+                # Guard against None in timeout comparison (GPT5 Fix)
+                current_timeout = getattr(cls._httpx_client.timeout, "read", None)
+                if timeout is not None and current_timeout is not None and abs(current_timeout - timeout) > 0.001:
                     try:
                         await cls._httpx_client.aclose()
                     except Exception:
@@ -1471,6 +1483,7 @@ class RacePageFetcherMixin:
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
     ADAPTER_TYPE: ClassVar[str] = "discovery"
+    PROVIDES_ODDS: ClassVar[bool] = True  # GPT5 Fix: discovery-only adapters set this to False
 
     def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
         self.source_name = source_name
@@ -1532,6 +1545,10 @@ class BaseAdapterV3(ABC):
         races = self._parse_races(raw_data)
         total_runners = 0
         trustworthy_runners = 0
+
+        # Propagate adapter capability flag to race metadata (GPT5 Fix)
+        for r in races:
+            r.metadata["provides_odds"] = self.PROVIDES_ODDS
 
         for r in races:
             # Global heuristic for runner numbers (addressing "impossible" high numbers)
@@ -1636,7 +1653,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
             for row in table.css("tbody tr"):
                 venue_cell = row.css_first("td.venue-name")
                 if not venue_cell: continue
-                venue_name = venue_cell.text(strip=True)
+                venue_name = node_text(venue_cell)
 
                 for link in row.css("td a.race-link"):
                     race_url = link.attributes.get("href", "")
@@ -1644,7 +1661,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                     if not race_url.startswith("http"):
                         race_url = self.BASE_URL + race_url
 
-                    r_num_match = re.search(r"R(\d+)", link.text(strip=True))
+                    r_num_match = re.search(r"R(\d+)", node_text(link))
                     r_num = int(r_num_match.group(1)) if r_num_match else 0
 
                     metadata.append({
@@ -2334,7 +2351,8 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 elif r_harness or ' (us)' in trw.lower():
                     if fs >= 6: ab.append('Superfecta')
                 races.append(Race(id=f"boyle_{track_name.lower().replace(' ', '')}_{st:%Y%m%d_%H%M}", venue=track_name, race_number=i + 1, start_time=st, runners=runners, distance=dist, source=self.source_name, discipline=disc, available_bets=ab))
-        return races
+        # Filter out races with only placeholder/generic runners (no real names or odds) (GPT5 Fix)
+        return [r for r in races if not all(re.match(r'^Runner \d+$', run.name) for run in r.runners)]
 
 
 # ----------------------------------------
@@ -2649,6 +2667,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
 class RacingPostB2BAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "RacingPostB2B"
     BASE_URL: ClassVar[str] = "https://backend-us-racecards.widget.rpb2b.com"
+    PROVIDES_ODDS: ClassVar[bool] = False  # GPT5 Fix: RPB2B is racecard-only
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=300.0, rate_limit=5.0)
@@ -3622,7 +3641,9 @@ class TrifectaAnalyzer(BaseAnalyzer):
             total_active = len(active_runners)
 
             # Trustworthiness Airlock (Success Playbook Item)
-            if total_active > 0:
+            # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
+            skip_trust_check = race.metadata.get("provides_odds") is False
+            if total_active > 0 and not skip_trust_check:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
                     log.warning("Not enough trustworthy odds for Trifecta; skipping", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
@@ -3760,7 +3781,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             total_active = len(active_runners)
 
             # Trustworthiness Airlock (Success Playbook Item)
-            if total_active > 0:
+            # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
+            skip_trust_check = race.metadata.get("provides_odds") is False
+            if total_active > 0 and not skip_trust_check:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
                     self.logger.warning("Not enough trustworthy odds; skipping race", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
@@ -3791,9 +3814,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 continue
 
             # 2. Derive Selection (2nd favorite) and Top 5
-            # Collect valid runners with their enriched odds
+            # Collect valid runners with their enriched odds (Using Decimal for consistency - GPT5 Improvement)
             valid_r_with_odds = sorted(
-                [(r, Decimal(str(r.win_odds))) for r in active_runners if r.win_odds is not None],
+                [(r, odds) for r in active_runners if (odds := _get_best_win_odds(r)) is not None],
                 key=lambda x: x[1]
             )
             race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in valid_r_with_odds[:5]])
@@ -3923,7 +3946,9 @@ class RaceNotifier:
             return
 
         title = "🐎 High-Value Opportunity!"
-        message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {race.start_time.strftime('%I:%M %p')}"
+        # Guard against None start_time (GPT5 Fix)
+        time_str = race.start_time.strftime('%I:%M %p') if race.start_time else "TBD"
+        message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {time_str}"
 
         try:
             # Use keyword arguments for better compatibility (AI Review Fix)
@@ -4549,7 +4574,7 @@ async def _generate_audit_history_html() -> str:
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """
     Generates a Markdown table summary of upcoming races.
-    Sorted by MTP, ceiling of 4 hours from now.
+    Sorted by MTP, ceiling of 18 hours from now (GPT5 Fix).
     """
     now = datetime.now(EASTERN)
     cutoff = now + timedelta(hours=18)
@@ -4888,8 +4913,11 @@ class FortunaDB:
         self.logger = structlog.get_logger(self.__class__.__name__)
 
     def _get_conn(self):
+        """Returns a thread-safe connection using WAL and a thread lock (GPT5 Requirement)."""
         with self._conn_lock:
             if not self._conn:
+                # check_same_thread=False is safe because we use a ThreadPoolExecutor(max_workers=1)
+                # and a connection lock for all direct cursor operations.
                 self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             # Enable WAL mode for better concurrency
@@ -5324,12 +5352,13 @@ class FortunaDB:
                     ))
         await self._run_in_executor(_update)
 
-    async def get_all_audited_tips(self) -> List[Dict[str, Any]]:
-        """Returns all audited tips for reporting."""
+    async def get_all_audited_tips(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Returns recent audited tips for reporting (capped for performance - GPT5 Improvement)."""
         if not self._initialized: await self.initialize()
         def _get():
             cursor = self._get_conn().execute(
-                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC LIMIT ?",
+                (limit,)
             )
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
@@ -5431,8 +5460,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Strict future cutoff to prevent leakage (Never log more than 20 mins ahead)
-        future_limit = now + timedelta(minutes=45)
+        # Future cutoff aligned with BET NOW window (MTP <= 120) (GPT5 Fix)
+        future_limit = now + timedelta(minutes=120)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -5486,6 +5515,11 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
+            # Cap the batch size to avoid performance degradation (GPT5 Improvement)
+            if len(new_tips) > 100:
+                self.logger.info("Capping large tips batch", original_count=len(new_tips), capped_at=100)
+                new_tips = new_tips[:100]
+
             await self.db.log_tips(new_tips)
             self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
@@ -5554,8 +5588,9 @@ class RaceSummary:
         }
 
 
+@lru_cache(maxsize=1)
 def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
-    """Returns all non-abstract discovery adapter classes."""
+    """Recursively discovers all discovery adapter classes (cached for performance - GPT5 Improvement)."""
     def get_all_subclasses(cls):
         return set(cls.__subclasses__()).union(
             [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
@@ -5603,9 +5638,16 @@ class FavoriteToPlaceMonitor:
 
         self.logger.info("Initializing adapters", count=len(classes_to_init))
 
+        # Get adapter-specific configs from global config (GPT5 Improvement)
+        adapter_configs = self.config.get("adapters", {})
+
         for adapter_class in classes_to_init:
             try:
-                adapter = adapter_class(config={"region": self.config.get("region")})
+                name = adapter_class.SOURCE_NAME if hasattr(adapter_class, "SOURCE_NAME") else adapter_class.__name__
+                specific_config = adapter_configs.get(name, {}).copy() # Use copy to avoid shared mutation
+                # Merge with basic region config
+                specific_config.update({"region": self.config.get("region")})
+                adapter = adapter_class(config=specific_config)
                 self.adapters.append(adapter)
                 self.logger.debug("Adapter initialized", adapter=adapter_class.__name__)
             except Exception as e:
@@ -5740,15 +5782,16 @@ class FavoriteToPlaceMonitor:
             try:
                 # Time window filtering
                 st = race.start_time
+                if not st: continue # Guard against None start_time (GPT5 Fix)
                 if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
                 # Time window filtering removed to ensure all unique races are counted
 
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number + Date
+                # Stable key: Canonical Venue + Race Number + Date + Discipline (GPT5 Fix)
                 canonical_venue = get_canonical_venue(summary.track)
                 date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
-                key = f"{canonical_venue}|{summary.race_number}|{date_str}"
+                key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
 
                 if key not in race_map:
                     race_map[key] = summary
@@ -5818,7 +5861,7 @@ class FavoriteToPlaceMonitor:
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
-        return bet_now
+        return bet_now[:15]  # Cap to prevent overwhelming output (GPT5 Fix)
 
     def get_you_might_like_races(self) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria."""
@@ -5977,6 +6020,8 @@ class FavoriteToPlaceMonitor:
                 await asyncio.sleep(self.refresh_interval)
         except KeyboardInterrupt:
             self.logger.info("Stopped by user")
+        except asyncio.CancelledError:
+            self.logger.info("Monitor task cancelled")
         finally:
             for a in self.adapters: await a.shutdown()
             await GlobalResourceManager.cleanup()
@@ -6002,6 +6047,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+        self._semaphore = asyncio.Semaphore(3) # GPT5 Fix
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Oddschecker is heavily protected by Cloudflare; Playwright with high timeout and network idle
@@ -6083,8 +6129,11 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             return None
 
         async def fetch_single_html(url_path: str):
-            response = await self.make_request("GET", url_path, headers=self._get_headers())
-            return response.text if response else ""
+            async with self._semaphore:
+                # Small delay to avoid ban (GPT5 Fix)
+                await asyncio.sleep(0.5 + random.random() * 0.5)
+                response = await self.make_request("GET", url_path, headers=self._get_headers())
+                return response.text if response else ""
 
         tasks = [fetch_single_html(link) for link in metadata]
         html_pages = await asyncio.gather(*tasks)
@@ -6125,12 +6174,12 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         track_name_node = parser.css_first("h1.meeting-name")
         if not track_name_node:
             return None
-        track_name = track_name_node.text(strip=True)
+        track_name = node_text(track_name_node)
 
         race_time_node = parser.css_first("span.race-time")
         if not race_time_node:
             return None
-        race_time_str = race_time_node.text(strip=True)
+        race_time_str = node_text(race_time_node)
 
         # Heuristic to find race number from navigation
         active_link = parser.css_first("a.race-time-link.active")
@@ -6165,17 +6214,17 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             name_node = row.css_first("span.selection-name")
             if not name_node:
                 return None
-            name = name_node.text(strip=True)
+            name = node_text(name_node)
 
             odds_node = row.css_first("span.bet-button-odds-desktop, span.best-price")
             if not odds_node:
                 return None
-            odds_str = odds_node.text(strip=True)
+            odds_str = node_text(odds_node)
 
             number_node = row.css_first("td.runner-number")
             number = 0
             if number_node:
-                num_txt = "".join(filter(str.isdigit, number_node.text(strip=True)))
+                num_txt = "".join(filter(str.isdigit, node_text(number_node)))
                 if num_txt:
                     number = int(num_txt)
 
@@ -6616,13 +6665,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 venue_node = parser.css_first('a[data-test-selector="RC-course__name"]')
                 if not venue_node:
                     continue
-                venue_raw = venue_node.text(strip=True)
+                venue_raw = node_text(venue_node)
                 venue = normalize_venue_name(venue_raw)
 
                 race_time_node = parser.css_first('span[data-test-selector="RC-course__time"]')
                 if not race_time_node:
                     continue
-                race_time_str = race_time_node.text(strip=True)
+                race_time_str = node_text(race_time_node)
 
                 race_datetime_str = f"{date} {race_time_str}"
                 start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
@@ -6650,7 +6699,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         time_str_to_find = start_time.strftime("%H:%M")
         time_links = parser.css('a[data-test-selector="RC-raceTime"]')
         for i, link in enumerate(time_links):
-            if link.text(strip=True) == time_str_to_find:
+            if node_text(link) == time_str_to_find:
                 return i + 1
         return 1
 
@@ -6791,11 +6840,11 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _parse_result_page(self, parser: HTMLParser, date_str: str, url: str) -> Optional[Race]:
         venue_node = parser.css_first('a[data-test-selector="RC-course__name"]')
         if not venue_node: return None
-        venue = normalize_venue_name(venue_node.text(strip=True))
+        venue = normalize_venue_name(node_text(venue_node))
 
         time_node = parser.css_first('span[data-test-selector="RC-course__time"]')
         if not time_node: return None
-        time_str = time_node.text(strip=True)
+        time_str = node_text(time_node)
 
         try:
             start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
@@ -6840,9 +6889,21 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 try: number = int(clean_text(num_node.text()))
                 except Exception: pass
 
+            # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
+            win_odds = None
+            sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
+            if sp_node:
+                win_odds = parse_odds_to_decimal(clean_text(sp_node.text()))
+
+            odds_data = {}
+            if ov := create_odds_data(self.source_name, win_odds):
+                odds_data[self.source_name] = ov
+
             runners.append(Runner(
                 name=name,
                 number=number,
+                win_odds=win_odds,
+                odds=odds_data,
                 metadata={"position": pos}
             ))
 
@@ -6894,6 +6955,9 @@ async def run_discovery(
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
 
+    db = FortunaDB()
+    await db.initialize()
+
     try:
         now = datetime.now(EASTERN)
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
@@ -6932,7 +6996,6 @@ async def run_discovery(
                 adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
 
             # Load historical performance scores to prioritize adapters
-            db = FortunaDB()
             adapter_scores = await db.get_adapter_scores(days=30)
 
             # Prioritize adapters by score (descending)
@@ -6942,10 +7005,17 @@ async def run_discovery(
                 reverse=True
             )
 
+            # Get adapter-specific configs from global config (GPT5 Improvement)
+            adapter_configs = config.get("adapters", {}) if config else {}
+
             adapters = []
             for cls in adapter_classes:
                 try:
-                    adapters.append(cls(config={"region": region}))
+                    name = cls.SOURCE_NAME if hasattr(cls, "SOURCE_NAME") else cls.__name__
+                    specific_config = adapter_configs.get(name, {}).copy() # Use copy to avoid shared mutation
+                    # Merge with basic region config
+                    specific_config.update({"region": region})
+                    adapters.append(cls(config=specific_config))
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
@@ -7034,8 +7104,8 @@ async def run_discovery(
                     pass
 
             date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            # Removing discipline from key to allow better merging across adapters
-            key = f"{canonical_venue}|{race.race_number}|{date_str}"
+            # Include discipline in key to avoid misclassification (GPT5 Fix)
+            key = f"{canonical_venue}|{race.race_number}|{date_str}|{race.discipline}"
             
             if key not in race_map:
                 race_map[key] = race
@@ -7373,25 +7443,45 @@ async def ensure_browsers():
     if is_frozen():
         return True
 
-    structlog.get_logger().info("Installing browser dependencies (Playwright Chromium)...")
-    try:
-        # Run installation in a separate process to avoid blocking the loop too much
-        subprocess.run([sys.executable, "-m", "pip", "install", "playwright==1.49.1"], check=True, capture_output=True, text=True)
-        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
-        structlog.get_logger().info("Browser dependencies installed successfully.")
+    # GPT5 Improvement: Instead of auto-installing, warn the user unless opt-in
+    # For now, we will assume it's NOT opt-in and ask for manual installation
+    # because auto-pip-installing can be surprising.
+    structlog.get_logger().warning("Browser dependencies (Playwright Chromium) missing.")
+    print("\n[bold red]Browser dependencies missing![/]")
+    print("To use browser-based adapters, please run:")
+    print(f"  {sys.executable} -m pip install playwright==1.49.1")
+    print(f"  {sys.executable} -m playwright install chromium\n")
+
+    # Check if we should auto-install via a hidden flag or environment variable
+    if os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
+        structlog.get_logger().info("Auto-installing browser dependencies as requested...")
+        try:
+            # Remove version pin to avoid conflicts (GPT5 Fix)
+            subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True, capture_output=True, text=True)
+            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
+            structlog.get_logger().info("Browser dependencies installed successfully.")
+            return True
+        except subprocess.CalledProcessError as e:
+            structlog.get_logger().error("Failed to auto-install browsers", error=str(e))
+            return False
+
+    return True # Continue with HTTP-only adapters
+
+async def handle_early_exit_args(args: argparse.Namespace, config: Dict[str, Any]) -> bool:
+    """Handles CLI arguments that should trigger an immediate exit (GPT5 Improvement)."""
+    if args.quick_help:
+        print_quick_help()
         return True
-    except subprocess.CalledProcessError as e:
-        structlog.get_logger().error(
-            "Failed to install browsers",
-            error=str(e),
-            returncode=e.returncode,
-            stdout=e.stdout,
-            stderr=e.stderr
-        )
-        return False
-    except Exception as e:
-        structlog.get_logger().error("Unexpected error installing browsers", error=str(e))
-        return False
+    if args.status:
+        print_status_card(config)
+        return True
+    if args.show_log:
+        await print_recent_logs()
+        return True
+    if args.open_dashboard:
+        open_report_in_browser()
+        return True
+    return False
 
 async def main_all_in_one():
     # Configure logging at the start of main
@@ -7423,40 +7513,12 @@ async def main_all_in_one():
     parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
     args = parser.parse_args()
 
-    if args.quick_help:
-        print_quick_help()
-        return
-
-    if args.status:
-        print_status_card(config)
-        return
-
-    if args.show_log:
-        await print_recent_logs()
-        return
-
-    if args.open_dashboard:
-        open_report_in_browser()
+    # Handle early-exit arguments via helper (GPT5 Fix/Improvement)
+    if await handle_early_exit_args(args, config):
         return
 
     if args.db_path:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
-
-    if args.quick_help:
-        print_quick_help()
-        return
-
-    if args.status:
-        print_status_card(config)
-        return
-
-    if args.show_log:
-        await print_recent_logs()
-        return
-
-    if args.open_dashboard:
-        open_report_in_browser()
-        return
 
     # Print status card for all normal runs
     print_status_card(config)
@@ -7530,7 +7592,7 @@ async def main_all_in_one():
 
     if args.monitor:
         await ensure_browsers()
-        monitor = FavoriteToPlaceMonitor(target_dates=target_dates)
+        monitor = FavoriteToPlaceMonitor(target_dates=target_dates, config=config)
         # Pass region config to monitor
         monitor.config["region"] = args.region
         if args.once:

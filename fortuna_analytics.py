@@ -495,19 +495,44 @@ class AuditorEngine:
 
     @staticmethod
     def _find_actual_2nd_fav_odds(result: ResultRace) -> Optional[float]:
-        runners_by_odds = sorted(
-            (
-                r for r in result.runners
-                if r.final_win_odds and r.final_win_odds > 0 and not r.scratched
-            ),
-            key=lambda r: r.final_win_odds,  # type: ignore[arg-type]
-        )
-        if len(runners_by_odds) < 2:
+        """
+        Derives the actual second-favorite's odds from the result data.
+        Handles cases where odds are identical (co-favorites) and fallbacks to payouts.
+        """
+        runners_list = []
+        for r in result.runners:
+            if r.scratched:
+                continue
+
+            odds = r.final_win_odds
+            # Fallback to win_payout if odds are missing (common for Harness - GPT5 Fix)
+            if (not odds or odds <= 0) and r.win_payout and r.win_payout > 0:
+                odds = round(r.win_payout / 2.0, 2)
+
+            if odds and odds > 0:
+                runners_list.append((r, odds))
+
+        if not runners_list:
             return None
-        fav_odds = runners_by_odds[0].final_win_odds
-        for r in runners_by_odds[1:]:
-            if r.final_win_odds > fav_odds:  # type: ignore[operator]
-                return r.final_win_odds
+
+        # Sort by odds ascending
+        runners_list.sort(key=lambda x: x[1])
+
+        if len(runners_list) < 2:
+            # If we only have odds for one runner (e.g. the winner), we can't find 2nd fav
+            return None
+
+        fav_odds = runners_list[0][1]
+
+        # Find the first runner with odds GREATER than the favorite (GPT5 Fix)
+        # If multiple runners share the same lowest odds, they are co-favorites.
+        for _, odds in runners_list[1:]:
+            if odds > fav_odds:
+                return float(odds)
+
+        # If all runners have same odds (e.g. co-favorites), standard Goldmine logic
+        # treats the "next" runner as having no gap. We return None to signify
+        # that a distinct 2nd favorite couldn't be determined from final prices.
         return None
 
     @staticmethod
@@ -643,14 +668,14 @@ def extract_exotic_payouts(
     """
     results: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
     for table in tables:
-        text = table.text().lower()
+        text = fortuna.node_text(table).lower()
         for bet_type, aliases in _BET_ALIASES.items():
             if bet_type in results:
                 continue
             if not any(a in text for a in aliases):
                 continue
             for row in table.css("tr"):
-                row_text = row.text().lower()
+                row_text = fortuna.node_text(row).lower()
                 if not any(a in row_text for a in aliases):
                     continue
                 cols = row.css("td")
@@ -748,7 +773,7 @@ class PageFetchingResultsAdapter(
         title_node = parser.css_first("title") or parser.css_first("h1")
         if not title_node:
             return False
-        title_text = title_node.text().lower()
+        title_text = fortuna.node_text(title_node).lower()
         for sig in self._BLOCK_SIGNATURES:
             if sig in title_text:
                 self.logger.error(
@@ -1084,7 +1109,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         if not track_node:
             self.logger.debug("No track header found", url=url)
             return []
-        venue = fortuna.normalize_venue_name(track_node.text(strip=True))
+        venue = fortuna.normalize_venue_name(fortuna.node_text(track_node))
         if not venue:
             return []
 
@@ -1092,7 +1117,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         indexed_race_tables: list[tuple[int, Node]] = []
         for i, table in enumerate(all_tables):
             header = table.css_first("thead tr th")
-            if header and "Race" in header.text():
+            if header and "Race" in fortuna.node_text(header):
                 indexed_race_tables.append((i, table))
 
         races: List[ResultRace] = []
@@ -1123,7 +1148,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         header = table.css_first("thead tr th")
         if not header:
             return None
-        header_text = header.text()
+        header_text = fortuna.node_text(header)
 
         race_match = re.search(r"Race\s+(\d+)", header_text)
         if not race_match:
@@ -1798,7 +1823,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     )
 
     _RUNNER_RE = re.compile(
-        r"(\d+)-([A-Za-z\s']{3,}?)\s+([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?",
+        r"(\d+)-([A-Za-z\s']{3,}?)\s+([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?",
     )
 
     _BET_NAME_MAP: Final[Dict[str, str]] = {
@@ -1831,7 +1856,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         if not venue_node:
             return []
 
-        venue_text = venue_node.text(strip=True).split("-")[0].strip()
+        venue_text = fortuna.node_text(venue_node).split("-")[0].strip()
         venue = fortuna.normalize_venue_name(venue_text)
 
         blocks = re.split(r"<a name='N(\d+)'></a>", html)
@@ -1880,6 +1905,12 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                 win_pay = parse_currency_value(m.group(3)) if m.group(3) else 0.0
                 place_pay = parse_currency_value(m.group(4)) if m.group(4) else 0.0
                 show_pay = parse_currency_value(m.group(5)) if m.group(5) else 0.0
+                odds_val = parse_currency_value(m.group(6)) if m.group(6) else 0.0
+
+                # Populating final_win_odds from win_payout or explicit odds (GPT5 Fix)
+                final_odds = odds_val
+                if final_odds <= 0 and win_pay > 0:
+                    final_odds = round(win_pay / 2.0, 2)
 
                 runners.append(ResultRunner(
                     name=name,
@@ -1888,6 +1919,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                     win_payout=win_pay,
                     place_payout=place_pay,
                     show_payout=show_pay,
+                    final_win_odds=final_odds if final_odds > 0 else None,
                 ))
                 position_counter += 1
 
@@ -2433,6 +2465,7 @@ def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
         for c in _all_subclasses(fortuna.BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
         and getattr(c, "ADAPTER_TYPE", "discovery") == "results"
+        and hasattr(c, "SOURCE_NAME") # Filter out base classes without SOURCE_NAME (GPT5 Fix)
     ]
 
 
