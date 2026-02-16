@@ -301,6 +301,15 @@ class AuditorEngine:
         if unverified is None:
             unverified = await self.get_unverified_tips()
 
+        for tip in unverified[:10]:
+            tip_key = self._tip_canonical_key(tip)
+            self.logger.debug(
+                "Tip key vs results",
+                tip_venue=tip.get("venue"),
+                tip_key=tip_key,
+                matched=tip_key in results_map if tip_key else False,
+            )
+
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
 
