@@ -28,6 +28,7 @@ import fortuna
 EASTERN = ZoneInfo("America/New_York")
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 STANDARD_BET: Final[float] = 2.00
+DEFAULT_REGION: Final[str] = "GLOBAL"
 
 PLACE_POSITIONS_BY_FIELD_SIZE: Final[Dict[int, int]] = {
     4: 1,           # ≤4 runners: win only
@@ -60,10 +61,6 @@ def to_eastern(dt: datetime) -> datetime:
     return dt.astimezone(EASTERN)
 
 
-def get_optimal_region_at_time(dt: datetime) -> str:
-    """US 9am–11pm ET, otherwise international."""
-    et_hour = dt.astimezone(EASTERN).hour
-    return "USA" if 9 <= et_hour < 23 else "INT"
 
 
 def parse_position(pos_str: Optional[str]) -> Optional[int]:
@@ -215,7 +212,9 @@ class AuditorEngine:
         return await self.db.get_recent_tips(limit)
 
     async def close(self) -> None:
-        await self.db.close()
+        """Close database connection."""
+        if hasattr(self, "db"):
+            await self.db.close()
 
     # -- audit pipeline ----------------------------------------------------
 
@@ -225,10 +224,20 @@ class AuditorEngine:
         unverified: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         results_map = self._build_results_map(results)
-        self.logger.debug("Built results map", count=len(results_map))
+        self.logger.debug("=== MATCHING DIAGNOSTIC ===")
+        self.logger.debug("Result keys available:", keys=list(results_map.keys())[:20])
 
         if unverified is None:
             unverified = await self.get_unverified_tips()
+
+        for tip in unverified[:10]:
+            tip_key = self._tip_canonical_key(tip)
+            self.logger.debug(
+                "Tip key vs results",
+                tip_venue=tip.get("venue"),
+                tip_key=tip_key,
+                matched=tip_key in results_map if tip_key else False,
+            )
 
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
@@ -260,8 +269,12 @@ class AuditorEngine:
                 )
 
         if outcomes_to_batch:
-            self.logger.info("Batch updating audit results", count=len(outcomes_to_batch))
-            await self.db.update_audit_results_batch(outcomes_to_batch)
+            self.logger.info("Updating audit results", count=len(outcomes_to_batch))
+            if hasattr(self.db, "update_audit_results_batch"):
+                await self.db.update_audit_results_batch(outcomes_to_batch)
+            else:
+                for race_id, outcome in outcomes_to_batch:
+                    await self.db.update_audit_result(race_id, outcome)
 
         return audited
 
@@ -632,6 +645,33 @@ class PageFetchingResultsAdapter(
 
     ADAPTER_TYPE: Final[str] = "results"
 
+    _BLOCK_SIGNATURES = [
+        "pardon our interruption",
+        "checking your browser",
+        "cloudflare",
+        "access denied",
+        "captcha",
+        "please verify",
+    ]
+
+    def _check_for_block(self, html: str, url: str) -> bool:
+        """Detect anti-bot block pages. Only flags short pages with block-like titles (Bug #9 Fix)."""
+        if len(html) > 15000:
+            return False  # Real content pages are longer
+        parser = HTMLParser(html)
+        title = (parser.css_first("title") or parser.css_first("h1"))
+        if not title:
+            return False
+        title_text = title.text().lower()
+        for sig in self._BLOCK_SIGNATURES:
+            if sig in title_text:
+                self.logger.error(
+                    "BOT BLOCKED", source=self.SOURCE_NAME,
+                    url=url, signature=sig,
+                )
+                return True
+        return False
+
     # -- subclass must set -------------------------------------------------
     SOURCE_NAME: str
     BASE_URL: str
@@ -735,6 +775,10 @@ class PageFetchingResultsAdapter(
             url  = item.get("url", "") if isinstance(item, dict) else ""
             if not html:
                 continue
+
+            if self._check_for_block(html, url):
+                continue
+
             try:
                 races.extend(self._parse_page(html, date_str, url))
             except Exception as exc:
@@ -782,14 +826,6 @@ class PageFetchingResultsAdapter(
         for v in self.target_venues:
             if v and v in href_clean:
                 return True
-
-        # Last resort: check alphanumeric chunks for track codes (e.g. 'GP')
-        # We also check the text for short codes
-        for source in [href, text]:
-            for chunk in re.findall(r'[A-Za-z0-9]{2,}', source):
-                canon_chunk = fortuna.get_canonical_venue(chunk)
-                if canon_chunk != "unknown" and canon_chunk in self.target_venues:
-                    return True
 
         return False
 
@@ -1136,6 +1172,10 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         )
         if not resp or not resp.text:
             return set()
+
+        if self._check_for_block(resp.text, f"/results/{date_str}"):
+            return set()
+
         self._save_debug_snapshot(resp.text, f"rp_results_index_{date_str}")
         parser = HTMLParser(resp.text)
         return self._extract_rp_links(parser)
@@ -1361,8 +1401,6 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             f"/results/{dt.strftime('%d-%B-%Y')}",
             f"/results/international/{date_str}",
             f"/results/international/{dt.strftime('%d-%B-%Y')}",
-            f"/results/yesterday",
-            f"/results/international/yesterday",
         ]
 
         links: set = set()
@@ -1781,6 +1819,391 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         )
 
 
+class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
+    """Standardbred Canada harness results."""
+
+    SOURCE_NAME = "StandardbredCanadaResults"
+    BASE_URL    = "https://standardbredcanada.ca"
+    HOST        = "standardbredcanada.ca"
+    IMPERSONATE = "chrome120"
+    TIMEOUT     = 45
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=False,
+            stealth_mode="fast",
+            timeout=self.TIMEOUT,
+        )
+
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        date_short = dt.strftime("%m%d") # e.g. 0209
+
+        # We'll try to guess common track codes since the index is harder to parse
+        # and doesn't always contain the .dat links directly.
+        # This mirrors the logic in StandardbredCanadaAdapter (discovery).
+        tracks = ["lonn", "wbsbsn", "flmn", "ridcn", "trrn", "kdun", "geodn", "clntn", "hanon", "Dresn", "grvr", "leam", "kaww", "wood"]
+        links = set()
+        for track in tracks:
+            links.add(f"/racing/results/data/r{date_short}{track}.dat")
+
+        return links
+
+    def _parse_page(
+        self, html: str, date_str: str, url: str,
+    ) -> List[ResultRace]:
+        parser = HTMLParser(html)
+        venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1")
+        if not venue_node:
+            return []
+
+        venue_text = venue_node.text(strip=True).split("-")[0].strip()
+        venue = fortuna.normalize_venue_name(venue_text)
+
+        pre = parser.css_first("pre")
+        if not pre:
+            return []
+
+        content = pre.text()
+        # Split by race markers <a name='N1'></a>
+        # In text it might look like just the race number if HTML tags are stripped by .text()
+        # but selectolax .text() preserves some structure.
+        # Actually, let's use regex on the raw HTML for splitting if needed,
+        # or find all <a> tags with name starting with 'N'.
+
+        races: List[ResultRace] = []
+
+        # Use regex to find race blocks in raw HTML
+        blocks = re.split(r"<a name='N(\d+)'></a>", html)
+        # blocks[0] is preamble
+        # blocks[1] is race_num, blocks[2] is content
+
+        for i in range(1, len(blocks), 2):
+            try:
+                race_num = int(blocks[i])
+                race_html = blocks[i+1]
+                # End of race is often <hr/> or next <a name>
+                race_html = race_html.split("<hr/>")[0]
+
+                race = self._parse_race_block(race_html, venue, date_str, race_num)
+                if race:
+                    races.append(race)
+            except Exception as e:
+                self.logger.debug("Failed to parse SC race block", error=str(e))
+
+        return races
+
+    def _parse_race_block(self, html: str, venue: str, date_str: str, race_num: int) -> Optional[ResultRace]:
+        parser = HTMLParser(html)
+
+        # Extract payouts
+        exotics = {}
+        # Example: <strong>$2 EXACTOR (5-4) paid   7.60, pool 5885</strong>
+        # Example: <strong>$2 TRIACTOR (5-4-2) paid  30.70, pool 5639</strong>
+        # Example: <strong>$1 SUPERFECTA (5-4-2-1) paid 119.40, pool 4951</strong>
+
+        strong_tags = parser.css("strong")
+        for s in strong_tags:
+            txt = s.text().strip()
+            if "paid" in txt:
+                p_match = re.search(r"\$?\d+\s+([A-Z0-9\s-]+)\(([^)]+)\)\s+paid\s+([\d,.]+)", txt, re.I)
+                if p_match:
+                    bet_name = p_match.group(1).strip().upper()
+                    combo = p_match.group(2).strip()
+                    payout = parse_currency_value(p_match.group(3))
+
+                    if "EXACTOR" in bet_name:
+                        exotics["exacta"] = (payout, combo)
+                    elif "TRIACTOR" in bet_name:
+                        exotics["trifecta"] = (payout, combo)
+                    elif "SUPERFECTA" in bet_name:
+                        exotics["superfecta"] = (payout, combo)
+
+        # Extract runners and their positions/payouts
+        # <strong>5-Annabella Bianco          4.00  2.20  2.30      3987</strong>
+        runners = []
+        for s in strong_tags:
+            txt = s.text().strip()
+            # Look for "Number-Name  WinPay PlacePay ShowPay"
+            m = re.match(r"(\d+)-([A-Za-z\s']{3,})\s+([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?", txt)
+            if m:
+                num = int(m.group(1))
+                name = m.group(2).strip()
+                win_pay = parse_currency_value(m.group(3)) if m.group(3) else 0.0
+                place_pay = parse_currency_value(m.group(4)) if m.group(4) else 0.0
+                show_pay = parse_currency_value(m.group(5)) if m.group(5) else 0.0
+
+                # Assign position based on which payout is present
+                pos = None
+                if win_pay > 0: pos = "1"
+                elif place_pay > 0: pos = "2"
+                elif show_pay > 0: pos = "3"
+
+                if pos:
+                    runners.append(ResultRunner(
+                        name=name,
+                        number=num,
+                        position=pos,
+                        win_payout=win_pay,
+                        place_payout=place_pay,
+                        show_payout=show_pay
+                    ))
+
+        if not runners:
+            return None
+
+        tri = exotics.get("trifecta", (None, None))
+        exa = exotics.get("exacta", (None, None))
+        sup = exotics.get("superfecta", (None, None))
+
+        return ResultRace(
+            id=self._make_race_id("sc_res", venue, date_str, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=build_start_time(date_str),
+            runners=runners,
+            discipline="Harness",
+            source=self.SOURCE_NAME,
+            trifecta_payout=tri[0],
+            trifecta_combination=tri[1],
+            exacta_payout=exa[0],
+            exacta_combination=exa[1],
+            superfecta_payout=sup[0],
+            superfecta_combination=sup[1]
+        )
+
+
+class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
+    """Racing & Sports results."""
+
+    SOURCE_NAME = "RacingAndSportsResults"
+    BASE_URL    = "https://www.racingandsports.com.au"
+    HOST        = "www.racingandsports.com.au"
+    IMPERSONATE = "chrome120"
+    TIMEOUT     = 60
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+        )
+
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        # Index: /racing-results/YYYY-MM-DD
+        url = f"/racing-results/{date_str}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            return set()
+
+        self._save_debug_snapshot(resp.text, f"ras_results_index_{date_str}")
+        parser = HTMLParser(resp.text)
+        links = set()
+
+        # RAS uses tables for different regions
+        for table in parser.css("table.table-index"):
+            for row in table.css("tbody tr"):
+                venue_cell = row.css_first("td.venue-name")
+                if not venue_cell: continue
+                venue_name = venue_cell.text(strip=True)
+
+                if not self._venue_matches(venue_name):
+                    continue
+
+                for link in row.css("td a.race-link"):
+                    race_url = link.attributes.get("href", "")
+                    if not race_url: continue
+                    links.add(race_url)
+
+        return links
+
+    def _parse_race_page(
+        self, html: str, date_str: str, url: str,
+    ) -> Optional[ResultRace]:
+        parser = HTMLParser(html)
+
+        # Extract venue and race number
+        header = parser.css_first("h1") or parser.css_first(".race-title")
+        if not header: return None
+
+        header_text = header.text(strip=True)
+        # Usually: "RANDWICK - Race 1 - Results"
+        parts = header_text.split("-")
+        venue = fortuna.normalize_venue_name(parts[0].strip())
+
+        race_num = 1
+        if len(parts) > 1:
+            num_match = re.search(r"Race\s+(\d+)", parts[1])
+            if num_match:
+                race_num = int(num_match.group(1))
+
+        # Extract runners
+        runners = []
+        for row in parser.css("tr.runner-row"):
+            name_node = row.css_first(".runner-name")
+            if not name_node: continue
+            name = fortuna.clean_text(name_node.text())
+
+            num_node = row.css_first(".runner-number")
+            number = int("".join(filter(str.isdigit, num_node.text()))) if num_node else 0
+
+            pos_node = row.css_first(".position")
+            pos = fortuna.clean_text(pos_node.text()) if pos_node else None
+
+            odds_node = row.css_first(".odds-win")
+            final_odds = parse_fractional_odds(odds_node.text()) if odds_node else 0.0
+
+            win_pay = parse_currency_value(row.css_first(".payout-win").text()) if row.css_first(".payout-win") else 0.0
+            place_pay = parse_currency_value(row.css_first(".payout-place").text()) if row.css_first(".payout-place") else 0.0
+
+            runners.append(ResultRunner(
+                name=name,
+                number=number,
+                position=pos,
+                final_win_odds=final_odds,
+                win_payout=win_pay,
+                place_payout=place_pay
+            ))
+
+        if not runners:
+            # Try alternate table structure
+            for row in parser.css("table.results-table tbody tr"):
+                cols = row.css("td")
+                if len(cols) < 5: continue
+
+                pos = fortuna.clean_text(cols[0].text())
+                name = fortuna.clean_text(cols[2].text())
+                num_text = "".join(filter(str.isdigit, cols[1].text()))
+                number = int(num_text) if num_text else 0
+
+                win_pay = parse_currency_value(cols[-2].text())
+                place_pay = parse_currency_value(cols[-1].text())
+
+                runners.append(ResultRunner(
+                    name=name,
+                    number=number,
+                    position=pos,
+                    win_payout=win_pay,
+                    place_payout=place_pay
+                ))
+
+        if not runners: return None
+
+        # Exotics
+        exotics = extract_exotic_payouts(parser.css("table"))
+        tri = exotics.get("trifecta", (None, None))
+        exa = exotics.get("exacta", (None, None))
+        sup = exotics.get("superfecta", (None, None))
+
+        return ResultRace(
+            id=self._make_race_id("ras_res", venue, date_str, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=build_start_time(date_str),
+            runners=runners,
+            source=self.SOURCE_NAME,
+            trifecta_payout=tri[0],
+            trifecta_combination=tri[1],
+            exacta_payout=exa[0],
+            exacta_combination=exa[1],
+            superfecta_payout=sup[0],
+            superfecta_combination=sup[1]
+        )
+
+
+class TimeformResultsAdapter(PageFetchingResultsAdapter):
+    """Timeform results (UK / IRE / International)."""
+
+    SOURCE_NAME = "TimeformResults"
+    BASE_URL    = "https://www.timeform.com"
+    HOST        = "www.timeform.com"
+    IMPERSONATE = "chrome120"
+    TIMEOUT     = 60
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+            network_idle=True
+        )
+
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        # Index: /horse-racing/results/YYYY-MM-DD
+        url = f"/horse-racing/results/{date_str}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            return set()
+
+        self._save_debug_snapshot(resp.text, f"timeform_results_index_{date_str}")
+        parser = HTMLParser(resp.text)
+        links = set()
+
+        for a in parser.css("a[href*='/horse-racing/results/']"):
+            href = a.attributes.get("href", "")
+            if not href: continue
+            if "/horse-racing/results/" in href and len(href.split("/")) >= 6:
+                if not self._venue_matches(a.text(), href):
+                    continue
+                links.add(href)
+
+        return links
+
+    def _parse_race_page(
+        self, html: str, date_str: str, url: str,
+    ) -> Optional[ResultRace]:
+        parser = HTMLParser(html)
+
+        # Extract venue from title or breadcrumbs
+        venue = ""
+        title = parser.css_first("title")
+        if title:
+            # "14:32 DUNDALK | Results 28 January 2026..."
+            match = re.search(r'\d{1,2}:\d{2}\s+([^|]+)', title.text())
+            if match:
+                venue = fortuna.normalize_venue_name(match.group(1).strip())
+
+        if not venue: return None
+
+        # Race number
+        race_num = 1
+        # Try to find race number in URL or page
+        num_match = re.search(r'/(\d+)/([^/]+)$', url)
+        if num_match:
+            try: race_num = int(num_match.group(1))
+            except: pass
+
+        runners = []
+        for row in parser.css("tbody.rp-horse-row"):
+            name_node = row.css_first("a.rp-horse")
+            if not name_node: continue
+            name = fortuna.clean_text(name_node.text())
+
+            pos_node = row.css_first(".rp-entry-number") # This is often position in results
+            pos = fortuna.clean_text(pos_node.text()) if pos_node else None
+
+            # Payouts and Odds are often in specific columns
+            # This is complex on Timeform as it's very JS-heavy
+            runners.append(ResultRunner(
+                name=name,
+                position=pos
+            ))
+
+        if not runners: return None
+
+        return ResultRace(
+            id=self._make_race_id("tf_res", venue, date_str, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=build_start_time(date_str),
+            runners=runners,
+            source=self.SOURCE_NAME
+        )
+
+
 class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     """Sky Sports Racing results (UK / IRE)."""
 
@@ -1795,13 +2218,25 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
-            url_dates = [dt.strftime("%d-%m-%Y"), (dt - timedelta(days=1)).strftime("%d-%m-%Y")]
+            url_dates = [dt.strftime("%d-%m-%Y")]
         except ValueError:
             url_dates = [date_str]
 
-        parser = HTMLParser(resp.text)
-        self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
-        return self._extract_sky_links(parser, date_str, url_date)
+        links: set = set()
+        for url_date in url_dates:
+            try:
+                resp = await self.make_request(
+                    "GET", f"/racing/results/{url_date}", headers=self._get_headers(),
+                )
+                if not resp or not resp.text:
+                    continue
+                self._save_debug_snapshot(resp.text, f"sky_results_index_{url_date}")
+                parser = HTMLParser(resp.text)
+                links.update(self._extract_sky_links(parser, date_str, url_date))
+            except Exception as exc:
+                self.logger.debug("Sky index fetch failed", url_date=url_date, error=str(exc))
+
+        return links
 
     def _extract_sky_links(self, parser: HTMLParser, date_str: str, url_date: str) -> set:
         links: set = set()
@@ -2144,12 +2579,12 @@ async def managed_adapters(
 
     if region:
         if region == "GLOBAL":
-            allowed = fortuna.USA_RESULTS_ADAPTERS | fortuna.INT_RESULTS_ADAPTERS
+            allowed = set(fortuna.USA_RESULTS_ADAPTERS) | set(fortuna.INT_RESULTS_ADAPTERS)
         else:
             allowed = (
-                fortuna.USA_RESULTS_ADAPTERS
+                set(fortuna.USA_RESULTS_ADAPTERS)
                 if region == "USA"
-                else fortuna.INT_RESULTS_ADAPTERS
+                else set(fortuna.INT_RESULTS_ADAPTERS)
             )
         classes = [
             c for c in classes
@@ -2371,7 +2806,7 @@ async def run_analytics(
         _analytics_logger.error("No valid dates", input_dates=target_dates)
         return
 
-    target_region = region or get_optimal_region_at_time(now_eastern())
+    target_region = region or DEFAULT_REGION
     _analytics_logger.info(
         "Starting analytics audit",
         dates=valid_dates,
@@ -2380,12 +2815,12 @@ async def run_analytics(
 
     # Pre-populate harvest summary for regional visibility
     if target_region == "GLOBAL":
-        expected = fortuna.USA_RESULTS_ADAPTERS | fortuna.INT_RESULTS_ADAPTERS
+            expected = set(fortuna.USA_RESULTS_ADAPTERS) | set(fortuna.INT_RESULTS_ADAPTERS) | {"StandardbredCanadaResults", "RacingAndSportsResults", "TimeformResults"}
     else:
         expected = (
-            fortuna.USA_RESULTS_ADAPTERS
+            set(fortuna.USA_RESULTS_ADAPTERS)
             if target_region == "USA"
-            else fortuna.INT_RESULTS_ADAPTERS
+            else set(fortuna.INT_RESULTS_ADAPTERS)
         )
     harvest_summary: Dict[str, Dict[str, Any]] = {
         name: {"count": 0, "max_odds": 0.0} for name in expected
@@ -2405,9 +2840,16 @@ async def run_analytics(
                 fortuna.get_canonical_venue(t.get("venue"))
                 for t in unverified
             }
-            _analytics_logger.info(
-                "Targeting venues", venues=list(target_venues),
-            )
+            # Remove only the sentinel value, not a real problem (Bug #6 Fix)
+            target_venues.discard("unknown")
+
+            if not target_venues:
+                _analytics_logger.warning(
+                    "All tip venues resolved to 'unknown' — fetching everything",
+                )
+                target_venues = None
+            else:
+                _analytics_logger.info("Targeting venues", venues=sorted(target_venues))
 
         async with managed_adapters(
             region=region, target_venues=target_venues,
@@ -2420,11 +2862,23 @@ async def run_analytics(
                     "Total results harvested",
                     count=len(all_results),
                 )
-                if all_results and unverified:
-                    await auditor.audit_races(all_results, unverified=unverified)
-                elif not all_results:
-                    _analytics_logger.warning(
-                        "No results harvested from any source",
+                if not all_results:
+                    _analytics_logger.error(
+                        "ZERO results harvested — audit impossible",
+                        adapters_tried=[a.source_name for a in adapters],
+                        dates=valid_dates,
+                        region=target_region,
+                    )
+                elif not unverified:
+                    _analytics_logger.warning("No unverified tips to audit against results")
+                else:
+                    matched = await auditor.audit_races(all_results, unverified=unverified)
+                    _analytics_logger.info(
+                        "Audit complete",
+                        results_available=len(all_results),
+                        tips_checked=len(unverified),
+                        tips_matched=len(matched),
+                        tips_still_unmatched=len(unverified) - len(matched),
                     )
             finally:
                 await _save_harvest_summary(
@@ -2474,7 +2928,7 @@ def main() -> None:
     parser.add_argument(
         "--region",
         type=str,
-        choices=["USA", "INT"],
+        choices=["USA", "INT", "GLOBAL"],
         help="Filter results by region",
     )
     parser.add_argument(
@@ -2537,11 +2991,11 @@ def main() -> None:
         print(f"Error: {exc}")
         return
 
-    # Auto-select region if not specified
+    # Use default region if not specified
     if not args.region:
-        args.region = get_optimal_region_at_time(datetime.now(EASTERN))
+        args.region = DEFAULT_REGION
         structlog.get_logger().info(
-            "Auto-selected region", region=args.region,
+            "Using default region", region=args.region,
         )
 
     asyncio.run(
