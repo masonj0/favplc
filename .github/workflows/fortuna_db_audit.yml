@@ -8,7 +8,6 @@ on:
   schedule:
     - cron: '0 18 * * *'  # After UK/IRE afternoon cards finish
     - cron: '0 4 * * *'   # After US evening cards finish
-    - cron: '0 10 * * *'  # After ZA/AUS morning cards
 
 jobs:
   inspect:
@@ -103,57 +102,89 @@ jobs:
           md.append(f"**DB size:** {size_kb:.0f} KB\n")
 
           # Table overview
+          def format_monospace_table(header, rows):
+              if not rows: return "No data"
+              col_widths = [len(h) for h in header]
+              for row in rows:
+                  for i, val in enumerate(row):
+                      col_widths[i] = max(col_widths[i], len(str(val)))
+              fmt = " | ".join([f"{{:<{w}}}" for w in col_widths])
+              lines = ["```text", fmt.format(*header), "-+-".join(["-" * w for w in col_widths])]
+              for row in rows:
+                  lines.append(fmt.format(*row))
+              lines.append("```")
+              return "\n".join(lines)
+
+          # Table overview
           md.append("### Tables\n")
-          md.append("| Table | Rows |")
-          md.append("|-------|-----:|")
-          for t in tables:
-              md.append(f"| `{t}` | {counts[t]:,} |")
+          table_rows = [(t, f"{counts[t]:,}") for t in tables]
+          md.append(format_monospace_table(["Table", "Rows"], table_rows))
 
           # Verdict + P&L block
           if tips_t and verdict_col:
               md.append("\n### Audit Summary\n")
-              rows = c.execute(f"""
+              v_rows = c.execute(f"""
                   SELECT {verdict_col} as v, COUNT(*) as n
                   FROM '{tips_t}'
                   WHERE {verdict_col} IS NOT NULL AND {verdict_col} != ''
                   GROUP BY v ORDER BY n DESC
               """).fetchall()
 
-              total_audited = sum(r["n"] for r in rows)
-              cashed = sum(r["n"] for r in rows if "CASH" in (r["v"] or "").upper())
-              burned = sum(r["n"] for r in rows if "BURN" in (r["v"] or "").upper())
+              total_audited = sum(r["n"] for r in v_rows)
+              cashed = sum(r["n"] for r in v_rows if "CASH" in (r["v"] or "").upper())
+              burned = sum(r["n"] for r in v_rows if "BURN" in (r["v"] or "").upper())
               decided = cashed + burned
               strike = f"{cashed/decided*100:.1f}%" if decided else "N/A"
 
-              md.append("| Verdict | Count | % |")
-              md.append("|---------|------:|--:|")
-              for r in rows:
+              verdict_data = []
+              for r in v_rows:
                   pct = f"{r['n']/total_audited*100:.1f}%" if total_audited else ""
-                  md.append(f"| {r['v']} | {r['n']:,} | {pct} |")
+                  verdict_data.append((r['v'], f"{r['n']:,}", pct))
 
+              md.append(format_monospace_table(["Verdict", "Count", "%"], verdict_data))
               md.append(f"\n**Strike rate:** {strike} ({cashed}W / {burned}L of {decided} decided)")
 
               if profit_col:
-                  r = c.execute(f"""
-                      SELECT SUM({profit_col}) as pnl,
-                             AVG({profit_col}) as avg,
-                             MAX({profit_col}) as best,
-                             MIN({profit_col}) as worst,
-                             COUNT(*) as n
-                      FROM '{tips_t}'
-                      WHERE {profit_col} IS NOT NULL
-                  """).fetchone()
-                  if r and r["n"] > 0:
-                      pnl = r['pnl'] or 0
-                      emoji = "📈" if pnl >= 0 else "📉"
-                      md.append(f"\n### {emoji} P&L\n")
-                      md.append(f"| Metric | Value |")
-                      md.append(f"|--------|------:|")
-                      md.append(f"| Total P&L | **{pnl:+,.2f}** |")
-                      md.append(f"| Avg per tip | {(r['avg'] or 0):+,.2f} |")
-                      md.append(f"| Best | {(r['best'] or 0):+,.2f} |")
-                      md.append(f"| Worst | {(r['worst'] or 0):+,.2f} |")
-                      md.append(f"| Tips w/ P&L | {r['n']:,} |")
+                  md.append("\n### 📉 P&L Matrix\n")
+                  # Bucket by field size if column exists
+                  has_field_size = "field_size" in [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]
+
+                  if has_field_size:
+                      buckets = [
+                          ("Overall", "1=1"),
+                          ("Small (<=7)", "field_size <= 7"),
+                          ("Med (8-10)", "field_size BETWEEN 8 AND 10"),
+                          ("Large (11+)", "field_size >= 11")
+                      ]
+                  else:
+                      buckets = [("Overall", "1=1")]
+
+                  pnl_metrics = [
+                      ("Total P&L", "SUM({pc})"),
+                      ("Avg per tip", "AVG({pc})"),
+                      ("Best", "MAX({pc})"),
+                      ("Worst", "MIN({pc})"),
+                      ("Wins", "SUM(CASE WHEN {vc} LIKE 'CASH%' THEN 1 ELSE 0 END)"),
+                      ("Tips", "COUNT(*)")
+                  ]
+
+                  pnl_grid = []
+                  header = ["Metric"] + [b[0] for b in buckets]
+
+                  for label, agg in pnl_metrics:
+                      row = [label]
+                      for _, cond in buckets:
+                          sql = f"SELECT {agg.format(pc=profit_col, vc=verdict_col)} FROM '{tips_t}' WHERE {profit_col} IS NOT NULL AND {cond}"
+                          val = c.execute(sql).fetchone()[0]
+                          if val is None:
+                              row.append("-")
+                          elif label in ["Total P&L", "Avg per tip", "Best", "Worst"]:
+                              row.append(f"{val:+.2f}")
+                          else:
+                              row.append(f"{int(val):,}")
+                      pnl_grid.append(row)
+
+                  md.append(format_monospace_table(header, pnl_grid))
 
               # Last 7 days mini-trend
               if date_col and profit_col:
@@ -169,10 +200,8 @@ jobs:
                   """).fetchall()
                   if week:
                       md.append("\n### Last 7 Active Days\n")
-                      md.append("| Date | Tips | Wins | P&L |")
-                      md.append("|------|-----:|-----:|----:|")
-                      for wr in reversed(week):
-                          md.append(f"| {wr['d']} | {wr['n']} | {wr['w']} | {(wr['pnl'] or 0):+.2f} |")
+                      week_data = [(wr['d'], f"{wr['n']}", f"{wr['w']}", f"{(wr['pnl'] or 0):+.2f}") for wr in reversed(week)]
+                      md.append(format_monospace_table(["Date", "Tips", "Wins", "P&L"], week_data))
 
           # ── Matching gap analysis ──
           if tips_t and verdict_col:
@@ -202,11 +231,12 @@ jobs:
                               f"SELECT DISTINCT venue FROM '{results_t}'"
                           ).fetchall() if r["venue"]}
 
-                      md.append("| Venue | Stuck Tips | Results Exist? |")
-                      md.append("|-------|----------:|:--------------:|")
+                      stuck_data = []
                       for s in stuck:
-                          has_results = "✅" if s["venue"] and s["venue"].lower().strip() in result_venues else "❌"
-                          md.append(f"| {s['venue']} | {s['n']} | {has_results} |")
+                          has_results = "YES" if s["venue"] and s["venue"].lower().strip() in result_venues else "NO"
+                          stuck_data.append((s['venue'], f"{s['n']}", has_results))
+
+                      md.append(format_monospace_table(["Venue", "Stuck Tips", "Results?"], stuck_data))
 
                   # Age of oldest unverified tip
                   if date_col:
