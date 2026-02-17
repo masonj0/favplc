@@ -915,7 +915,7 @@ class SmartOddsExtractor:
         """Scans a selectolax node for odds using multiple strategies."""
         # Strategy 1: Look at text content of the entire node
         if hasattr(node, 'text'):
-            if val := SmartOddsExtractor.extract_from_text(node.text()):
+            if val := SmartOddsExtractor.extract_from_text(node_text(node)):
                 return val
 
         # Strategy 2: Look at attributes
@@ -1388,7 +1388,7 @@ class JSONParsingMixin:
         if not script:
             return None
         try:
-            return json.loads(script.text())
+            return json.loads(node_text(script))
         except json.JSONDecodeError as e:
             if hasattr(self, 'logger'):
                 self.logger.error("failed_parsing_json", context=context, selector=selector, error=str(e))
@@ -1412,7 +1412,7 @@ class JSONParsingMixin:
         results = []
         for script in parser.css(selector):
             try:
-                results.append(json.loads(script.text()))
+                results.append(json.loads(node_text(script)))
             except json.JSONDecodeError as e:
                 if hasattr(self, 'logger'):
                     self.logger.error("failed_parsing_json_in_list", context=context, selector=selector, error=str(e))
@@ -1699,13 +1699,13 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         for row in tree.css("tr.runner-row"):
             name_node = row.css_first(".runner-name")
             if not name_node: continue
-            name = clean_text(name_node.text())
+            name = clean_text(node_text(name_node))
 
             num_node = row.css_first(".runner-number")
-            number = int("".join(filter(str.isdigit, num_node.text()))) if num_node else 0
+            number = int("".join(filter(str.isdigit, node_text(num_node)))) if num_node else 0
 
             odds_node = row.css_first(".odds-win")
-            win_odds = parse_odds_to_decimal(clean_text(odds_node.text())) if odds_node else None
+            win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
 
             odds_data = {}
             if ov := create_odds_data(self.SOURCE_NAME, win_odds):
@@ -1826,7 +1826,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         header = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
         if not header: return None
 
-        header_text = clean_text(header.text())
+        header_text = clean_text(node_text(header))
         match = re.search(r"(\d{1,2}:\d{2})\s+(.+)", header_text)
         if match:
             time_str = match.group(1)
@@ -1852,7 +1852,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             try:
                 name_node = row.css_first(".horseName") or row.css_first("a[href*='/horse/']")
                 if not name_node: continue
-                name = clean_text(name_node.text())
+                name = clean_text(node_text(name_node))
 
                 num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]")
                 number = 0
@@ -1860,7 +1860,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                     if num_node.attributes.get("data-tab-no"):
                         number = int(num_node.attributes.get("data-tab-no"))
                     else:
-                        digits = "".join(filter(str.isdigit, num_node.text()))
+                        digits = "".join(filter(str.isdigit, node_text(num_node)))
                         if digits: number = int(digits)
 
                 scratched = "strikeout" in (row.attributes.get("class") or "").lower() or row.attributes.get("data-scratched") == "True"
@@ -1868,7 +1868,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                 win_odds = None
                 odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
                 if odds_node:
-                    win_odds = parse_odds_to_decimal(clean_text(odds_node.text()))
+                    win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node)))
 
                 if win_odds is None:
                     win_odds = SmartOddsExtractor.extract_from_node(row)
@@ -2020,7 +2020,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         track_name, time_str, header_text = None, None, ""
         header = parser.css_first(".race-header__details") or parser.css_first(".racecard-header")
         if header:
-            header_text = clean_text(header.text()) or ""
+            header_text = clean_text(node_text(header)) or ""
             time_match = re.search(r"(\d{1,2}:\d{2})", header_text)
             if time_match:
                 time_str = time_match.group(1)
@@ -2032,10 +2032,10 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             details = parser.css_first(".race-header__details--primary")
             if details:
                 track_node = details.css_first("h2") or details.css_first("h1 a") or details.css_first("h1")
-                if track_node: track_name = normalize_venue_name(clean_text(track_node.text()))
+                if track_node: track_name = normalize_venue_name(clean_text(node_text(track_node)))
                 if not time_str:
                     time_node = details.css_first("h2 b") or details.css_first(".race-time")
-                    if time_node: time_str = clean_text(time_node.text()).replace(" ATR", "")
+                    if time_node: time_str = clean_text(node_text(time_node)).replace(" ATR", "")
         if not track_name:
             parts = url_path.split("/")
             if len(parts) >= 3: track_name = normalize_venue_name(parts[2])
@@ -2078,12 +2078,12 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         try:
             name_node = row.css_first("h3") or row.css_first("a.horse__link") or row.css_first('a[href*="/form/horse/"]')
             if not name_node: return None
-            name = clean_text(name_node.text())
+            name = clean_text(node_text(name_node))
             if not name: return None
             num_node = row.css_first(".horse-in-racecard__saddle-cloth-number") or row.css_first(".odds-grid-horse__no")
             number = 0
             if num_node:
-                ns = clean_text(num_node.text())
+                ns = clean_text(node_text(num_node))
                 if ns:
                     digits = "".join(filter(str.isdigit, ns))
                     if digits: number = int(digits)
@@ -2096,7 +2096,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                     win_odds = odds_map.get(m.group(1))
             if win_odds is None:
                 if odds_node := row.css_first(".horse-in-racecard__odds"):
-                    win_odds = parse_odds_to_decimal(clean_text(odds_node.text()))
+                    win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node)))
 
             # Advanced heuristic fallback
             if win_odds is None:
@@ -2220,7 +2220,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         # Try to extract venue from title as high-priority fallback
         title_node = parser.css_first("title")
         if title_node:
-            title_text = title_node.text().strip()
+            title_text = title_node_text(node).strip()
             # Title: "14:26 Oxford Greyhound Racecard..."
             tm = re.search(r'\d{1,2}:\d{2}\s+(.+?)\s+Greyhound', title_text)
             if tm:
@@ -2327,14 +2327,14 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         for meeting in meeting_groups:
             tnn = meeting.css_first('.meeting-name') or meeting.css_first('h2') or meeting.css_first('.title')
             if not tnn: continue
-            trw = clean_text(tnn.text())
+            trw = clean_text(tnode_text(nn))
             track_name = normalize_venue_name(trw)
             if not track_name: continue
             m_harness = any(kw in trw.lower() for kw in ['harness', 'trot', 'pace', 'standardbred'])
             is_grey = any(kw in trw.lower() for kw in ['greyhound', 'dog'])
             race_nodes = meeting.css('.race-time-row') or meeting.css('.race-details') or meeting.css('a[href*="/race/"]')
             for i, rn in enumerate(race_nodes):
-                txt = clean_text(rn.text())
+                txt = clean_text(node_text(rn))
                 r_harness = m_harness or any(kw in txt.lower() for kw in ['trot', 'pace', 'attele', 'mounted'])
                 tm = re.search(r'(\d{1,2}:\d{2})', txt)
                 if not tm: continue
@@ -2491,7 +2491,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
         if not h1: return None
-        ht = clean_text(h1.text())
+        ht = clean_text(node_text(h1))
         if not ht: return None
         parts = ht.split()
         if not parts: return None
@@ -2503,11 +2503,11 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             try:
                 nn = row.css_first('a[href*="/racing/profiles/horse/"]')
                 if not nn: continue
-                name = clean_text(nn.text()).splitlines()[0].strip()
+                name = clean_text(node_text(nn)).splitlines()[0].strip()
                 num_node = row.css_first('span[class*="SaddleCloth__Number"]')
-                number = int("".join(filter(str.isdigit, clean_text(num_node.text())))) if num_node else 0
+                number = int("".join(filter(str.isdigit, clean_text(node_text(num_node))))) if num_node else 0
                 on = row.css_first('span[class*="Odds__Price"]')
-                wo = parse_odds_to_decimal(clean_text(on.text()) if on else "")
+                wo = parse_odds_to_decimal(clean_text(node_text(on)) if on else "")
 
                 # Advanced heuristic fallback
                 if wo is None:
@@ -2519,7 +2519,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             except Exception: continue
         if not runners: return None
         dn = parser.css_first('span[class*="RacecardHeader__Distance"]') or parser.css_first(".race-distance")
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(dn.text()) if dn else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(node_text(dn)) if dn else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
 # ----------------------------------------
 # SkySportsAdapter
@@ -2560,7 +2560,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         for meeting in meetings:
             hn = meeting.css_first(".sdc-site-concertina-block__title") or meeting.css_first(".racing-meetings__meeting-title")
             if not hn: continue
-            vr = clean_text(hn.text()) or ""
+            vr = clean_text(node_text(hn)) or ""
             if "ABD:" in vr: continue
 
             # Updated Sky Sports event discovery logic
@@ -2570,7 +2570,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                     tn = event.css_first(".sdc-site-racing-meetings__event-time") or event.css_first(".racing-meetings__event-time")
                     ln = event.css_first(".sdc-site-racing-meetings__event-link") or event.css_first(".racing-meetings__event-link")
                     if tn and ln:
-                        txt, h = clean_text(tn.text()), ln.attributes.get("href")
+                        txt, h = clean_text(node_text(tn)), ln.attributes.get("href")
                         if h and re.match(r"\d{1,2}:\d{2}", txt):
                             try:
                                 rt = datetime.strptime(txt, "%H:%M").replace(
@@ -2614,11 +2614,11 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             parser = HTMLParser(html_content)
             h = parser.css_first(".sdc-site-racing-header__name")
             if not h: continue
-            ht = clean_text(h.text()) or ""
+            ht = clean_text(node_text(h)) or ""
             m = re.match(r"(\d{1,2}:\d{2})\s+(.+)", ht)
             if not m:
                 tn, cn = parser.css_first(".sdc-site-racing-header__time"), parser.css_first(".sdc-site-racing-header__course")
-                if tn and cn: rts, tnr = clean_text(tn.text()) or "", clean_text(cn.text()) or ""
+                if tn and cn: rts, tnr = clean_text(node_text(tn)) or "", clean_text(node_text(cn)) or ""
                 else: continue
             else: rts, tnr = m.group(1), m.group(2)
             track_name = normalize_venue_name(tnr)
@@ -2627,29 +2627,29 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             except Exception: continue
             dist = None
             for d in parser.css(".sdc-site-racing-header__detail-item"):
-                dt = clean_text(d.text()) or ""
+                dt = clean_text(node_text(d)) or ""
                 if "Distance:" in dt: dist = dt.replace("Distance:", "").strip(); break
             runners = []
             for i, node in enumerate(parser.css(".sdc-site-racing-card__item")):
                 nn = node.css_first(".sdc-site-racing-card__name a")
                 if not nn: continue
-                name = clean_text(nn.text())
+                name = clean_text(node_text(nn))
                 if not name: continue
                 nnode = node.css_first(".sdc-site-racing-card__number strong")
                 number = i + 1
                 if nnode:
-                    nt = clean_text(nnode.text())
+                    nt = clean_text(nnode_text(node))
                     if nt:
                         try: number = int(nt)
                         except Exception: pass
                 onode = node.css_first(".sdc-site-racing-card__betting-odds")
-                wo = parse_odds_to_decimal(clean_text(onode.text()) if onode else "")
+                wo = parse_odds_to_decimal(clean_text(onode_text(node)) if onode else "")
 
                 # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(node)
 
-                ntxt = clean_text(node.text()) or ""
+                ntxt = clean_text(node_text(node)) or ""
                 scratched = "NR" in ntxt or "Non-runner" in ntxt
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
@@ -2790,8 +2790,8 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         for container in parser.css("#entries-results-container .racing-results-ex-wrap > div"):
             tnn = container.css_first("h4.track-name")
             if not tnn: continue
-            tn = clean_text(tnn.text()) or ""
-            isf = "*" in tn or "*" in (clean_text(container.text()) or "")
+            tn = clean_text(tnode_text(nn)) or ""
+            isf = "*" in tn or "*" in (clean_text(node_text(container)) or "")
             for link in container.css('a[href*="/entries/"]'):
                 if u := link.attributes.get("href"):
                     metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
@@ -2811,7 +2811,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
             if not html_content or ("Final Changes Made" not in html_content and not item.get("finalized")): continue
             track_name = normalize_venue_name(item["venue"])
             for pre in HTMLParser(html_content).css("pre"):
-                text = pre.text()
+                text = prnode_text(e)
                 race_chunks = re.split(r"(\d+)\s+--\s+", text)
                 for i in range(1, len(race_chunks), 2):
                     try:
@@ -3182,10 +3182,10 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 rn = p.css_first("div.race-information strong")
                 pt = p.css_first("p.post-time span")
                 if not vn or not rn or not pt: continue
-                venue = clean_text(vn.text())
-                rnum_txt = rn.text().replace("Race", "").strip()
+                venue = clean_text(node_text(vn))
+                rnum_txt = node_text(rn).replace("Race", "").strip()
                 if not venue or not rnum_txt.isdigit(): continue
-                st = self._parse_post_time(ds, pt.text().strip())
+                st = self._parse_post_time(ds, node_text(pt).strip())
                 ab = scrape_available_bets(html_content)
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
                 if not runners: continue
@@ -3200,7 +3200,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
             # P1: Try to find number in first col
             number = 0
-            num_text = clean_text(cols[0].text())
+            num_text = clean_text(node_text(cols[0]))
             if num_text.isdigit():
                 number = int(num_text)
 
@@ -3208,21 +3208,21 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             name = None
             for idx in [2, 1, 3]:
                 if len(cols) > idx:
-                    n_text = clean_text(cols[idx].text())
+                    n_text = clean_text(node_text(cols[idx]))
                     if n_text and not n_text.isdigit() and len(n_text) > 2:
                         name = n_text
                         break
 
             if not name: return None
 
-            sc = "scratched" in node.attributes.get("class", "").lower() or "SCR" in (clean_text(node.text()) or "")
+            sc = "scratched" in node.attributes.get("class", "").lower() or "SCR" in (clean_text(node_text(node)) or "")
 
             odds, wo = {}, None
             if not sc:
                 # Odds column can be 9 or 10 (blind indexing fallback)
                 for idx in [9, 8, 10]:
                     if len(cols) > idx:
-                        o_text = clean_text(cols[idx].text())
+                        o_text = clean_text(node_text(cols[idx]))
                         if o_text:
                             wo = parse_odds_to_decimal(o_text)
                             if wo: break
@@ -6387,7 +6387,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                     title = parser.css_first("title")
                     if title:
                         # 14:32 DUNDALK | Races 28 January 2026 ...
-                        match = re.search(r'(\d{1,2}:\d{2})\s+([^|]+)', title.text())
+                        match = re.search(r'(\d{1,2}:\d{2})\s+([^|]+)', node_text(title))
                         if match:
                             time_str = match.group(1)
                             venue = normalize_venue_name(match.group(2).strip())
@@ -6400,7 +6400,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 forecast_map = {}
                 verdict_section = parser.css_first("section.rp-verdict")
                 if verdict_section:
-                    forecast_text = clean_text(verdict_section.text())
+                    forecast_text = clean_text(node_text(verdict_section))
                     if "Betting Forecast :" in forecast_text:
                         # "Betting Forecast : 15/8 2.87 Spring Is Here, 3/1 4 This Guy, ..."
                         after_forecast = forecast_text.split("Betting Forecast :")[1]
@@ -6454,7 +6454,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             name_node = row.css_first("a.rp-horse") or row.css_first("a.rp-horseTable_horse-name")
             if not name_node:
                 return None
-            name = clean_text(name_node.text())
+            name = clean_text(node_text(name_node))
 
             number = 0
             num_attr = row.attributes.get("data-entrynumber")
@@ -6468,7 +6468,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             if not number:
                 num_node = row.css_first(".rp-entry-number") or row.css_first("span.rp-horseTable_horse-number")
                 if num_node:
-                    num_text = clean_text(num_node.text()).strip("()")
+                    num_text = clean_text(node_text(num_node)).strip("()")
                     num_match = re.search(r"\d+", num_text)
                     if num_match:
                         val = int(num_match.group())
@@ -6482,7 +6482,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             if not win_odds:
                 odds_tag = row.css_first("button.rp-bet-placer-btn__odds")
                 if odds_tag:
-                    win_odds = parse_odds_to_decimal(clean_text(odds_tag.text()))
+                    win_odds = parse_odds_to_decimal(clean_text(node_text(odds_tag)))
 
             odds_data = {}
             if odds_val := create_odds_data(self.source_name, win_odds):
@@ -6721,15 +6721,15 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             if not all([number_node, name_node, odds_node]):
                 return None
 
-            number_str = clean_text(number_node.text())
+            number_str = clean_text(number_node_text(node))
             number = 0
             if number_str:
                 num_txt = "".join(filter(str.isdigit, number_str))
                 if num_txt:
                     val = int(num_txt)
                     if val <= 40: number = val
-            name = clean_text(name_node.text())
-            odds_str = clean_text(odds_node.text())
+            name = clean_text(node_text(name_node))
+            odds_str = clean_text(node_text(odds_node))
             scratched = "NR" in odds_str.upper() or not odds_str
 
             odds = {}
@@ -6864,8 +6864,8 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     label_node = row.css_first('div.rp-toteReturns__label') or row.css_first('.rp-toteReturns__label')
                     val_node = row.css_first('div.rp-toteReturns__value') or row.css_first('.rp-toteReturns__value')
                     if label_node and val_node:
-                        label = clean_text(label_node.text())
-                        value = clean_text(val_node.text())
+                        label = clean_text(node_text(label_node))
+                        value = clean_text(node_text(val_node))
                         if label and value:
                             dividends[label] = value
                 except Exception as e:
@@ -6878,22 +6878,22 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         for row in parser.css('div[data-test-selector="RC-resultRunner"]'):
             name_node = row.css_first('a[data-test-selector="RC-resultRunnerName"]')
             if not name_node: continue
-            name = clean_text(name_node.text())
+            name = clean_text(node_text(name_node))
             pos_node = row.css_first('span.rp-resultRunner__position')
-            pos = clean_text(pos_node.text()) if pos_node else "?"
+            pos = clean_text(pos_node_text(node)) if pos_node else "?"
 
             # Try to find saddle number
             number = 0
             num_node = row.css_first(".rp-resultRunner__saddleClothNo")
             if num_node:
-                try: number = int(clean_text(num_node.text()))
+                try: number = int(clean_text(node_text(num_node)))
                 except Exception: pass
 
             # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
             win_odds = None
             sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
             if sp_node:
-                win_odds = parse_odds_to_decimal(clean_text(sp_node.text()))
+                win_odds = parse_odds_to_decimal(clean_text(node_text(sp_node)))
 
             odds_data = {}
             if ov := create_odds_data(self.source_name, win_odds):
@@ -6921,7 +6921,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if not found_in_nav:
             # Priority 2: Text search for "Race X"
-            race_num_match = re.search(r'Race\s+(\d+)', parser.text())
+            race_num_match = re.search(r'Race\s+(\d+)', node_text(parser))
             if race_num_match:
                 race_num = int(race_num_match.group(1))
 

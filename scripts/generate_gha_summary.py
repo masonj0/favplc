@@ -43,7 +43,11 @@ VENUE_FLAGS: list[tuple[list[str], str]] = [
       "santa", "golden", "belmont", "aqueduct", "parx", "turfway",
       "delta", "fair grounds", "laurel", "sam houston", "penn",
       "charles town", "sunland", "mahoning", "turf paradise",
-      "saratoga", "monmouth", "woodbine"], "🇺🇸"),
+      "saratoga", "monmouth", "woodbine",
+      "meadowlands", "yonkers", "mohawk", "flamboro", "northfield",
+      "scioto", "hoosier", "pocono", "dover", "miami valley"], "🇺🇸"),
+    (["turffontein", "kenilworth", "greyville", "vaal",
+      "hollywoodbet"], "🇿🇦"),
     (["ascot", "cheltenham", "newmarket", "york", "aintree",
       "doncaster", "lingfield", "kempton", "sandown", "haydock",
       "curragh", "leopardstown", "fairyhouse", "galway",
@@ -420,9 +424,10 @@ def _plays_table(races: list[dict], *, continued: bool = False) -> list[str]:
         rows.extend([header, sep])
 
     for r in races:
-        venue = _trunc(r.get("track", "?"), 18)
+        venue = _trunc(r.get("track", "?"), 17)
         rnum  = r.get("race_number", "?")
-        race_str = f"{venue} R{rnum}"
+        gold  = "*" if r.get("is_goldmine") else ""
+        race_str = f"{gold}{venue} R{rnum}"
         mtp_s = _mtp_str(r["_mtp"])
 
         sel_num  = r.get("selection_number", "?")
@@ -432,10 +437,8 @@ def _plays_table(races: list[dict], *, continued: bool = False) -> list[str]:
         odds = r.get("second_fav_odds", 0)
         gap  = r.get("gap12", 0)
 
-        gold = "*" if r.get("is_goldmine") else " "
-
         rows.append(
-            f"{mtp_s:<5} | {race_str:<25}{gold} | {pick:<20} | {odds:>6.2f} | {gap:>5.2f}"
+            f"{mtp_s:<5} | {race_str:<25} | {pick:<20} | {odds:>6.2f} | {gap:>5.2f}"
         )
     return rows
 
@@ -507,7 +510,7 @@ def _build_scoreboard(out: SummaryWriter, stats: TipStats) -> None:
 def _results_table(tips: list[tuple]) -> list[str]:
     """Generates a text-based monospace table for results."""
     # Result | P/L | Race | Pick | Finish
-    header = f"{'Res':<4} | {'P/L':<7} | {'Race':<20} | {'Pick':<12} | {'Finish':<15}"
+    header = f"{'Res':<4} | {'P/L':<8} | {'Race':<20} | {'Pick':<12} | {'Finish':<15}"
     sep    = "-" * len(header)
     rows = [header, sep]
 
@@ -536,7 +539,8 @@ def _results_table(tips: list[tuple]) -> list[str]:
 
         finish_parts = []
         if sel_pos:
-            finish_parts.append(f"P{sel_pos}")
+            pos_icon = POSITION_EMOJI.get(sel_pos, "")
+            finish_parts.append(f"{pos_icon}P{sel_pos}" if pos_icon else f"P{sel_pos}")
         if sf_pay:
             finish_parts.append(f"SF${sf_pay:.0f}")
         elif tri_pay:
@@ -546,7 +550,7 @@ def _results_table(tips: list[tuple]) -> list[str]:
         finish = " ".join(finish_parts) or "-"
 
         rows.append(
-            f"{res_text:<4} | ${profit:>6.2f} | {race_str:<20} | {pick:<12} | {finish:<15}"
+            f"{res_text:<4} | ${profit:>7.2f} | {race_str:<20} | {pick:<12} | {finish:<15}"
         )
     return rows
 
@@ -599,11 +603,6 @@ def _build_system(out: SummaryWriter) -> None:
         out.write()
 
     out.write("</details>")
-    out.write()
-
-    # Collapsed detail
-    out.write("<details>")
-    out.write("<summary>📋 Adapter details</summary>")
     out.write()
 
 def _adapter_table(adapters: dict[str, dict], label: str) -> list[str]:
