@@ -126,6 +126,6 @@ if __name__ == "__main__":
             "blocks": part_blocks
         }
 
-        pdf_file = f"fortuna_memo_part{i+1}.pdf"
+        pdf_file = f"fortuna_for_ai__pt{i+1}.pdf"
         create_pdf(memo_data, pdf_file)
         print(f"Successfully generated {pdf_file}")
