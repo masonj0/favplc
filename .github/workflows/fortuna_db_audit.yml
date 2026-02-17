@@ -33,8 +33,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-master-READ-ONLY
-          restore-keys: fortuna-db-master-
+          key: fortuna-db-v3-master-READ-ONLY
+          restore-keys: fortuna-db-v3-master-
 
       - name: Verify database exists
         run: |

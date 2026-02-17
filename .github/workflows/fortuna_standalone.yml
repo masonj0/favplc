@@ -59,8 +59,8 @@ jobs:
           path: fortuna.db
           # Scenario A: Regions maintain separate history baseline to avoid race conditions.
           # These are merged in the audit-results job later.
-          key: fortuna-db-${{ matrix.slug }}-${{ github.run_number }}
-          restore-keys: fortuna-db-${{ matrix.slug }}-
+          key: fortuna-db-v3-${{ matrix.slug }}-${{ github.run_number }}
+          restore-keys: fortuna-db-v3-${{ matrix.slug }}-
 
       - name: Install dependencies
         run: |
@@ -129,8 +129,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-master-${{ github.run_number }}
-          restore-keys: fortuna-db-master-
+          key: fortuna-db-v3-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v3-master-
 
       - name: Install dependencies
         run: |
@@ -264,7 +264,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
-          key: fortuna-db-master-${{ github.run_number }}
+          key: fortuna-db-v3-master-${{ github.run_number }}
 
       - name: Upload Final Reports
         if: always()
