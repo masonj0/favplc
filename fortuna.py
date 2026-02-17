@@ -5,12 +5,17 @@ from __future__ import annotations
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 import sys
 import platform
+import os
 
 if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
-    # Running as frozen EXE on Windows - force ProactorEventLoop
+    # Running as frozen EXE on Windows - force ProactorEventLoop by default
     import asyncio
     try:
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        # GPT5 Fix: Allow override for curl_cffi compatibility if Playwright isn't needed
+        if os.getenv("FORTUNA_USE_SELECTOR_EVENT_LOOP") == "1":
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        else:
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except AttributeError:
         # Fallback for older Python versions if needed, though 3.8+ is standard now
         pass
@@ -288,7 +293,7 @@ async def print_recent_logs():
 
         # Recent Harvests
         cursor = conn.execute("SELECT timestamp, adapter_name, race_count, region FROM harvest_logs ORDER BY id DESC LIMIT 5")
-        print("\n [bold]Latest Fetches:[/]")
+        print("\n Latest Fetches:")
         for row in cursor.fetchall():
             ts = row['timestamp'][:16].replace('T', ' ')
             print(f"  • {ts} | {row['adapter_name']:<20} | {row['race_count']} races ({row['region']})")
@@ -297,7 +302,7 @@ async def print_recent_logs():
         cursor = conn.execute("SELECT audit_timestamp, venue, race_number, verdict, net_profit FROM tips WHERE audit_completed = 1 ORDER BY audit_timestamp DESC LIMIT 5")
         rows = cursor.fetchall()
         if rows:
-            print("\n [bold]Latest Audits:[/]")
+            print("\n Latest Audits:")
             for row in rows:
                 ts = row['audit_timestamp'][:16].replace('T', ' ')
                 emoji = "✅" if row['verdict'] == "CASHED" else "❌"
@@ -1330,11 +1335,17 @@ class RateLimiter:
                         loop = asyncio.get_running_loop()
                         self._lock = asyncio.Lock()
                     except RuntimeError:
+                        # Will be handled in acquire()
                         pass
         return self._lock
 
     async def acquire(self) -> None:
         lock = self._get_lock()
+        if lock is None:
+            # Fallback if loop wasn't running during _get_lock (Claude Fix)
+            self._lock = asyncio.Lock()
+            lock = self._lock
+
         for _ in range(1000): # Iteration limit to prevent potential hangs
             wait_time = 0
             async with lock:
@@ -1366,16 +1377,17 @@ class AdapterMetrics:
     async def record_success(self, latency_ms: float) -> None:
         with self._lock:
             self.total_requests += 1
-        self.successful_requests += 1
-        self.total_latency_ms += latency_ms
-        self.consecutive_failures = 0
-        self.last_failure_reason: Optional[str] = None
+            self.successful_requests += 1
+            self.total_latency_ms += latency_ms
+            self.consecutive_failures = 0
+            self.last_failure_reason = None
+
     async def record_failure(self, error: str) -> None:
         with self._lock:
             self.total_requests += 1
-        self.failed_requests += 1
-        self.consecutive_failures += 1
-        self.last_failure_reason = error
+            self.failed_requests += 1
+            self.consecutive_failures += 1
+            self.last_failure_reason = error
     def snapshot(self) -> Dict[str, Any]:
         return {
             "total_requests": self.total_requests,
@@ -2648,12 +2660,12 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                 nnode = node.css_first(".sdc-site-racing-card__number strong")
                 number = i + 1
                 if nnode:
-                    nt = clean_text(nnode_text(node))
+                    nt = clean_text(node_text(nnode))
                     if nt:
                         try: number = int(nt)
                         except Exception: pass
                 onode = node.css_first(".sdc-site-racing-card__betting-odds")
-                wo = parse_odds_to_decimal(clean_text(onode_text(node)) if onode else "")
+                wo = parse_odds_to_decimal(clean_text(node_text(onode)) if onode else "")
 
                 # Advanced heuristic fallback
                 if wo is None:
@@ -4875,16 +4887,24 @@ def format_artifact_links() -> str:
 
 from contextlib import contextmanager
 
+class SimpleSummaryWriter:
+    """A simple wrapper for GHA Step Summary writes with auto-flush."""
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, text):
+        self.stream.write(text)
+        self.stream.flush()
+
 @contextmanager
 def open_summary():
-    """Context manager for writing to GHA Job Summary with fallback to stdout."""
+    """Context manager for writing to GHA Job Summary with fallback to stdout (GPT5 Optimized)."""
     path = os.environ.get('GITHUB_STEP_SUMMARY')
     if path:
         with open(path, 'a', encoding='utf-8') as f:
-            yield f
+            yield SimpleSummaryWriter(f)
     else:
         # Fallback to stdout if not in GHA
-        yield sys.stdout
+        yield SimpleSummaryWriter(sys.stdout)
 
 def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artifacts_md: str) -> None:
     """Writes the consolidated sections to $GITHUB_STEP_SUMMARY using an efficient context manager."""
@@ -4901,8 +4921,8 @@ def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artif
         ])
         try:
             f.write(summary + '\n')
-        except Exception:
-            pass
+        except Exception as e:
+            structlog.get_logger().error("job_summary_write_failed", error=str(e))
 
 
 def get_db_path() -> str:
@@ -5892,33 +5912,43 @@ class FavoriteToPlaceMonitor:
         self.logger.info("\n".join(lines))
 
     def get_bet_now_races(self) -> List[RaceSummary]:
-        """Get races meeting BET NOW criteria."""
-        # 1. MTP <= 120 (Broadened for yield)
-        # 2. 2nd Fav Odds >= 4.0
-        # 3. Field size <= 11 (User Directive)
-        # 4. Gap > 0.25 (User Directive)
+        """Get races meeting BET NOW criteria (GPT5 Alignment)."""
+        # Configurable thresholds
+        ana_config = self.config.get("analysis", {})
+        min_odds = ana_config.get("bet_now_min_odds", 4.0)
+        max_field = ana_config.get("max_field_size", 11)
+        min_gap = ana_config.get("min_gap", 0.25)
+        mtp_limit = ana_config.get("bet_now_mtp_limit", 120)
+
         bet_now = [
             r for r in self.golden_zone_races
-            if r.mtp is not None and -10 < r.mtp <= 120
-            and r.second_fav_odds is not None and r.second_fav_odds >= 4.0
-            and r.field_size <= 11
-            and r.gap12 > 0.25
+            if r.mtp is not None and -10 < r.mtp <= mtp_limit
+            and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
+            and r.field_size <= max_field
+            and r.gap12 > min_gap
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
         return bet_now[:15]  # Cap to prevent overwhelming output (GPT5 Fix)
 
-    def get_you_might_like_races(self) -> List[RaceSummary]:
-        """Get 'You Might Like' races with relaxed criteria."""
-        # Criteria: Not in BET NOW, but -10 < MTP <= 240 (4h) and 2nd Fav Odds >= 3.0
-        # and field size <= 11 and Gap > 0.25
-        bet_now_keys = {(r.track, r.race_number) for r in self.get_bet_now_races()}
+    def get_you_might_like_races(self, bet_now_races: Optional[List[RaceSummary]] = None) -> List[RaceSummary]:
+        """Get 'You Might Like' races with relaxed criteria (GPT5 Optimized)."""
+        # Configurable thresholds
+        ana_config = self.config.get("analysis", {})
+        min_odds = ana_config.get("yml_min_odds", 3.0)
+        max_field = ana_config.get("max_field_size", 11)
+        min_gap = ana_config.get("min_gap", 0.25)
+        mtp_limit = ana_config.get("yml_mtp_limit", 240)
+
+        if bet_now_races is None:
+            bet_now_races = self.get_bet_now_races()
+        bet_now_keys = {(r.track, r.race_number) for r in bet_now_races}
         yml = [
             r for r in self.golden_zone_races
-            if r.mtp is not None and -10 < r.mtp <= 240
-            and r.second_fav_odds is not None and r.second_fav_odds >= 3.0
-            and r.field_size <= 11
-            and r.gap12 > 0.25
+            if r.mtp is not None and -10 < r.mtp <= mtp_limit
+            and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
+            and r.field_size <= max_field
+            and r.gap12 > min_gap
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
@@ -5938,7 +5968,7 @@ class FavoriteToPlaceMonitor:
         ]
         if not bet_now:
             lines.append("⏳ No races currently meet BET NOW criteria.")
-            yml = self.get_you_might_like_races()
+            yml = self.get_you_might_like_races(bet_now_races=bet_now)
             if yml:
                 lines.extend([
                     "=" * 160,
@@ -5982,7 +6012,7 @@ class FavoriteToPlaceMonitor:
     def save_to_json(self, filename: str = "race_data.json"):
         """Export to JSON."""
         bn = self.get_bet_now_races()
-        yml = self.get_you_might_like_races()
+        yml = self.get_you_might_like_races(bet_now_races=bn)
 
         if not bn:
             self.logger.warning("🔭 Monitor found 0 BET NOW opportunities", total_checked=len(self.golden_zone_races))

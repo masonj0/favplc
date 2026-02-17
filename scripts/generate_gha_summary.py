@@ -162,6 +162,7 @@ class TipStats:
 # ── Writer ─────────────────────────────────────────────────────────────────────
 
 class SummaryWriter:
+    """A simple wrapper for GHA Step Summary writes with auto-flush."""
     def __init__(self, stream: TextIO) -> None:
         self._s = stream
 
@@ -176,6 +177,7 @@ class SummaryWriter:
 
 @contextmanager
 def open_summary():
+    """Context manager for writing to GHA Job Summary with fallback to stdout."""
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if path:
         with open(path, "a", encoding="utf-8") as fh:
@@ -276,16 +278,18 @@ def _get_stats(db_path: str = "fortuna.db") -> TipStats:
     if not Path(db_path).exists():
         return stats
     try:
+        now_et = _now_et().isoformat()
         with sqlite3.connect(db_path) as conn:
             cur = conn.cursor()
+            # GPT5 Improvement: Only count 'Pending' if the race has actually run
             cur.execute("""
                 SELECT COUNT(*),
                        SUM(CASE WHEN verdict LIKE 'CASHED%' THEN 1 ELSE 0 END),
                        SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
-                       SUM(CASE WHEN audit_completed = 0 THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN audit_completed = 0 AND start_time < ? THEN 1 ELSE 0 END),
                        SUM(COALESCE(net_profit, 0.0))
                 FROM tips
-            """)
+            """, (now_et,))
             row = cur.fetchone()
             if row:
                 stats.total_tips   = row[0] or 0

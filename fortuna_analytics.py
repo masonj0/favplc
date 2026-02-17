@@ -523,14 +523,8 @@ class AuditorEngine:
             # If we only have odds for one runner (e.g. the winner), we can't find 2nd fav
             return None
 
-        fav_odds = runners_list[0][1]
-
-        # Return the odds of the actual second favorite (Jules Fix)
-        # Even if they are co-favorites with the first, this accurately reflects the market state.
-        if len(runners_list) >= 2:
-            return float(runners_list[1][1])
-
-        return None
+        # Return the odds of the actual second favorite (Claude Fix)
+        return float(runners_list[1][1])
 
     @staticmethod
     def _find_selection_runner(
@@ -560,7 +554,8 @@ class AuditorEngine:
         if sel is None:
             return Verdict.VOID, 0.0
         if sel.position_numeric is None:
-            return Verdict.BURNED, -STANDARD_BET
+            # Missing position often means parsing gap, not a loss (Claude Fix)
+            return Verdict.VOID, 0.0
 
         places_paid = get_places_paid(len(result.active_runners))
 
