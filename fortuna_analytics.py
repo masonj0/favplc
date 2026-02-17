@@ -524,15 +524,11 @@ class AuditorEngine:
 
         fav_odds = runners_list[0][1]
 
-        # Find the first runner with odds GREATER than the favorite (GPT5 Fix)
-        # If multiple runners share the same lowest odds, they are co-favorites.
-        for _, odds in runners_list[1:]:
-            if odds > fav_odds:
-                return float(odds)
+        # Return the odds of the actual second favorite (Jules Fix)
+        # Even if they are co-favorites with the first, this accurately reflects the market state.
+        if len(runners_list) >= 2:
+            return float(runners_list[1][1])
 
-        # If all runners have same odds (e.g. co-favorites), standard Goldmine logic
-        # treats the "next" runner as having no gap. We return None to signify
-        # that a distinct 2nd favorite couldn't be determined from final prices.
         return None
 
     @staticmethod
@@ -1947,23 +1943,30 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                         continue
 
                 # Table line: 2   Forefather(L)               2    9/14T ... 8.60   T Schlatman
-                rm = re.match(r"^(\d+)\s+(.+?)\s{2,}", clean_line)
+                # Relaxed regex to handle tight spacing in harness result tables (Jules Fix)
+                rm = re.match(r"^(\d+)\s+(.+?)(?:\s{2,}|$)", clean_line)
                 if rm:
                     num = int(rm.group(1))
                     name = rm.group(2).split("(")[0].strip()
 
-                    # Extract odds (numeric value near the end, possibly with *)
+                    # Extract odds (numeric value or fraction, possibly with *)
                     parts = clean_line.split()
                     final_odds = None
                     for p in reversed(parts[1:-1]): # Skip trainer at end
-                        os = p.replace("*", "")
+                        os = p.replace("*", "").strip()
+                        if not os:
+                            continue
                         try:
                             val = float(os)
                             if 0.0 <= val < 1000.0:
                                 final_odds = val
                                 break
                         except ValueError:
-                            continue
+                            # Try parsing as fractional odds
+                            f_val = fortuna.parse_odds_to_decimal(os)
+                            if f_val is not None:
+                                final_odds = float(f_val)
+                                break
 
                     # Extract position from "Finish" column (usually 7th or 8th part)
                     # We pick the LAST one matching the pattern to avoid 1/4, 1/2, 3/4, Stretch calls
