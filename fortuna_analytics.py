@@ -183,11 +183,11 @@ def _apply_exotics_to_race(
     exa = exotics.get("exacta", (None, None))
     sup = exotics.get("superfecta", (None, None))
     return {
-        "trifecta_payout": tri[0],
+        "trifecta_payout": tri[0] if (tri[0] and tri[0] > 0) else None,
         "trifecta_combination": tri[1],
-        "exacta_payout": exa[0],
+        "exacta_payout": exa[0] if (exa[0] and exa[0] > 0) else None,
         "exacta_combination": exa[1],
-        "superfecta_payout": sup[0],
+        "superfecta_payout": sup[0] if (sup[0] and sup[0] > 0) else None,
         "superfecta_combination": sup[1],
     }
 
@@ -477,6 +477,7 @@ class AuditorEngine:
         verdict, profit = self._compute_verdict(sel_result, result)
 
         return {
+            "field_size": len([r for r in result.runners if not r.scratched]),
             "actual_top_5": ", ".join(actual_top_5),
             "actual_2nd_fav_odds": actual_2nd_fav_odds,
             "verdict": verdict.value,
@@ -566,8 +567,8 @@ class AuditorEngine:
         if sel.position_numeric > places_paid:
             return Verdict.BURNED, -STANDARD_BET
 
-        # Actual place payout available
-        if sel.place_payout and sel.place_payout > 0:
+        # Actual place payout available (GPT5 Fix: Handle zero payouts)
+        if sel.place_payout and sel.place_payout > 0.01:
             return Verdict.CASHED, sel.place_payout - STANDARD_BET
 
         # Heuristic estimate: ~1/5 of (win odds - 1) for place return

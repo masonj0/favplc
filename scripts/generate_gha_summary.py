@@ -167,9 +167,11 @@ class SummaryWriter:
 
     def write(self, text: str = "") -> None:
         self._s.write(text + "\n")
+        self._s.flush()
 
     def lines(self, rows: list[str]) -> None:
         self._s.write("\n".join(rows) + "\n")
+        self._s.flush()
 
 
 @contextmanager
@@ -185,16 +187,24 @@ def open_summary():
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+_JSON_CACHE: dict[str, Any] = {}
+
 def _now_et() -> datetime:
     return datetime.now(EASTERN)
 
 
 def _read_json(path: str | Path) -> dict | list | None:
+    path_str = str(path)
+    if path_str in _JSON_CACHE:
+        return _JSON_CACHE[path_str]
+
     p = Path(path)
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        _JSON_CACHE[path_str] = data
+        return data
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read %s: %s", path, exc)
         return None
