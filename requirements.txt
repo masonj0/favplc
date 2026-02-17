@@ -67,7 +67,7 @@ rich==13.7.0
 redis==5.0.1
 requests==2.31.0
 scrapling==0.3.14
-playwright==1.49.1
+playwright==1.58.0
 pyee==12.0.0
 setuptools==69.5.1
 secretstorage==3.3.3
