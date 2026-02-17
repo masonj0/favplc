@@ -1612,6 +1612,115 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
 # -- SPORTING LIFE RESULTS ADAPTER -------------------------------------------
 
+class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
+    """At The Races Greyhound results."""
+
+    SOURCE_NAME = "AtTheRacesGreyhoundResults"
+    BASE_URL = "https://greyhounds.attheraces.com"
+    HOST = "greyhounds.attheraces.com"
+    IMPERSONATE = "chrome120"
+    TIMEOUT = 45
+
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            url_date = dt.strftime("%d-%B-%Y")
+        except ValueError:
+            url_date = date_str
+
+        index_url = f"/results/{url_date}"
+        try:
+            resp = await self.make_request(
+                "GET", index_url, headers=self._get_headers(),
+            )
+            if not resp or not resp.text:
+                return set()
+            self._save_debug_snapshot(resp.text, f"atr_grey_results_index_{url_date}")
+            parser = HTMLParser(resp.text)
+            return self._extract_grey_links(parser, date_str)
+        except Exception:
+            self.logger.debug("ATR Greyhound index fetch failed", exc_info=True)
+            return set()
+
+    def _extract_grey_links(self, parser: HTMLParser, date_str: str) -> Set[str]:
+        links: Set[str] = set()
+        for a in parser.css("a[href*='/results/']"):
+            href = a.attributes.get("href", "")
+            if not href:
+                continue
+            if re.search(r"/results/.*?/.*?/\d+", href):
+                full = (
+                    href if href.startswith("http") else f"{self.BASE_URL}{href}"
+                )
+                links.add(full)
+        return links
+
+    def _parse_page(
+        self, html: str, date_str: str, url: str,
+    ) -> List[ResultRace]:
+        parser = HTMLParser(html)
+        pc = parser.css_first("page-content")
+        if pc:
+            items_raw = pc.attributes.get(":items") or pc.attributes.get(
+                ":modules",
+            )
+            if items_raw:
+                try:
+                    modules = json.loads(
+                        re.sub(r"&quot;", '"', items_raw),
+                    )
+                    return self._parse_from_modules(modules, date_str, url)
+                except Exception:
+                    self.logger.debug(
+                        "Failed to parse ATR Grey JSON", exc_info=True,
+                    )
+        return []
+
+    def _parse_from_modules(
+        self, modules: List[Any], date_str: str, url: str,
+    ) -> List[ResultRace]:
+        races: List[ResultRace] = []
+        venue, race_time_str, race_num = "", "", 1
+
+        url_match = re.search(r"/(\d+)$", url)
+        if url_match:
+            race_num = int(url_match.group(1))
+
+        for module in modules:
+            m_type, m_data = module.get("type"), module.get("data", {})
+            if m_type == "RacecardHero":
+                venue = fortuna.normalize_venue_name(m_data.get("track", ""))
+                race_time_str = m_data.get("time", "")
+            elif m_type == "RaceResult":
+                runners: List[ResultRunner] = []
+                for item in m_data.get("items", []):
+                    name = item.get("name", "")
+                    num = item.get("trap") or item.get("number") or 0
+                    pos = item.get("position")
+                    win_p = parse_currency_value(str(item.get("sp", "0")))
+
+                    runners.append(ResultRunner(
+                        name=name,
+                        number=num,
+                        position=str(pos) if pos else None,
+                        win_payout=win_p,
+                    ))
+
+                if runners and venue:
+                    races.append(ResultRace(
+                        id=self._make_race_id(
+                            "atr_grey_res", venue, date_str, race_num,
+                        ),
+                        venue=venue,
+                        race_number=race_num,
+                        start_time=build_start_time(date_str, race_time_str),
+                        runners=runners,
+                        discipline="Greyhound",
+                        source=self.SOURCE_NAME,
+                    ))
+        return races
+
+
 class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     """Sporting Life results (UK / IRE / International)."""
 

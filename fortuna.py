@@ -369,8 +369,8 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
 USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults", "StandardbredCanadaResults"}
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
-    "SportingLifeResults", "SkySportsResults", "RacingAndSportsResults",
-    "TimeformResults"
+    "AtTheRacesGreyhoundResults", "SportingLifeResults", "SkySportsResults",
+    "RacingAndSportsResults", "TimeformResults"
 }
 
 MAX_VALID_ODDS: Final[float] = 1000.0
@@ -4887,13 +4887,16 @@ def format_artifact_links() -> str:
 
 from contextlib import contextmanager
 
-class SimpleSummaryWriter:
-    """A simple wrapper for GHA Step Summary writes with auto-flush."""
-    def __init__(self, stream):
-        self.stream = stream
-    def write(self, text):
-        self.stream.write(text)
-        self.stream.flush()
+class SummaryWriter:
+    """A simple wrapper for GHA Step Summary writes with auto-flush (Consolidated)."""
+    def __init__(self, stream: TextIO) -> None:
+        self._s = stream
+    def write(self, text: str = "") -> None:
+        self._s.write(text + "\n")
+        self._s.flush()
+    def lines(self, rows: list[str]) -> None:
+        self._s.write("\n".join(rows) + "\n")
+        self._s.flush()
 
 @contextmanager
 def open_summary():
@@ -4901,10 +4904,10 @@ def open_summary():
     path = os.environ.get('GITHUB_STEP_SUMMARY')
     if path:
         with open(path, 'a', encoding='utf-8') as f:
-            yield SimpleSummaryWriter(f)
+            yield SummaryWriter(f)
     else:
         # Fallback to stdout if not in GHA
-        yield SimpleSummaryWriter(sys.stdout)
+        yield SummaryWriter(sys.stdout)
 
 def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artifacts_md: str) -> None:
     """Writes the consolidated sections to $GITHUB_STEP_SUMMARY using an efficient context manager."""
@@ -4920,7 +4923,7 @@ def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artif
             artifacts_md,
         ])
         try:
-            f.write(summary + '\n')
+            f.write(summary)
         except Exception as e:
             structlog.get_logger().error("job_summary_write_failed", error=str(e))
 
