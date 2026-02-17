@@ -495,19 +495,44 @@ class AuditorEngine:
 
     @staticmethod
     def _find_actual_2nd_fav_odds(result: ResultRace) -> Optional[float]:
-        runners_by_odds = sorted(
-            (
-                r for r in result.runners
-                if r.final_win_odds and r.final_win_odds > 0 and not r.scratched
-            ),
-            key=lambda r: r.final_win_odds,  # type: ignore[arg-type]
-        )
-        if len(runners_by_odds) < 2:
+        """
+        Derives the actual second-favorite's odds from the result data.
+        Handles cases where odds are identical (co-favorites) and fallbacks to payouts.
+        """
+        runners_list = []
+        for r in result.runners:
+            if r.scratched:
+                continue
+
+            odds = r.final_win_odds
+            # Fallback to win_payout if odds are missing (common for Harness - GPT5 Fix)
+            if (not odds or odds <= 0) and r.win_payout and r.win_payout > 0:
+                odds = round(r.win_payout / 2.0, 2)
+
+            if odds and odds > 0:
+                runners_list.append((r, odds))
+
+        if not runners_list:
             return None
-        fav_odds = runners_by_odds[0].final_win_odds
-        for r in runners_by_odds[1:]:
-            if r.final_win_odds > fav_odds:  # type: ignore[operator]
-                return r.final_win_odds
+
+        # Sort by odds ascending
+        runners_list.sort(key=lambda x: x[1])
+
+        if len(runners_list) < 2:
+            # If we only have odds for one runner (e.g. the winner), we can't find 2nd fav
+            return None
+
+        fav_odds = runners_list[0][1]
+
+        # Find the first runner with odds GREATER than the favorite (GPT5 Fix)
+        # If multiple runners share the same lowest odds, they are co-favorites.
+        for _, odds in runners_list[1:]:
+            if odds > fav_odds:
+                return float(odds)
+
+        # If all runners have same odds (e.g. co-favorites), standard Goldmine logic
+        # treats the "next" runner as having no gap. We return None to signify
+        # that a distinct 2nd favorite couldn't be determined from final prices.
         return None
 
     @staticmethod
@@ -643,25 +668,25 @@ def extract_exotic_payouts(
     """
     results: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
     for table in tables:
-        text = table.text().lower()
+        text = fortuna.node_text(table).lower()
         for bet_type, aliases in _BET_ALIASES.items():
             if bet_type in results:
                 continue
             if not any(a in text for a in aliases):
                 continue
             for row in table.css("tr"):
-                row_text = row.text().lower()
+                row_text = fortuna.node_text(row).lower()
                 if not any(a in row_text for a in aliases):
                     continue
                 cols = row.css("td")
                 combo: Optional[str] = None
                 payout = 0.0
                 if len(cols) >= 3:
-                    combo = fortuna.clean_text(cols[1].text())
-                    payout = parse_currency_value(cols[2].text())
+                    combo = fortuna.clean_text(fortuna.node_text(cols[1]))
+                    payout = parse_currency_value(fortuna.node_text(cols[2]))
                 elif len(cols) >= 2:
-                    combo = fortuna.clean_text(cols[0].text())
-                    payout = parse_currency_value(cols[1].text())
+                    combo = fortuna.clean_text(fortuna.node_text(cols[0]))
+                    payout = parse_currency_value(fortuna.node_text(cols[1]))
                 if payout > 0:
                     results[bet_type] = (payout, combo)
                     break
@@ -673,7 +698,7 @@ def _extract_race_number_from_text(
     url: str = "",
 ) -> Optional[int]:
     """Best-effort race-number from page text or URL."""
-    m = re.search(r"Race\s+(\d+)", parser.text(), re.I)
+    m = re.search(r"Race\s+(\d+)", fortuna.node_text(parser), re.I)
     if m:
         return int(m.group(1))
     m = re.search(r"/R(\d+)(?:[/?#]|$)", url)
@@ -748,7 +773,7 @@ class PageFetchingResultsAdapter(
         title_node = parser.css_first("title") or parser.css_first("h1")
         if not title_node:
             return False
-        title_text = title_node.text().lower()
+        title_text = fortuna.node_text(title_node).lower()
         for sig in self._BLOCK_SIGNATURES:
             if sig in title_text:
                 self.logger.error(
@@ -778,6 +803,7 @@ class PageFetchingResultsAdapter(
 
         compact_formats = (
             dt.strftime("%Y%m%d"),       # 20260209
+            dt.strftime("%m%d"),         # 0209
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1050,7 +1076,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
                     continue
                 if extra_filter and not extra_filter(href):
                     continue
-                if not self._venue_matches(a.text(), href):
+                if not self._venue_matches(fortuna.node_text(a), href):
                     continue
                 raw_links.add(href)
 
@@ -1084,7 +1110,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         if not track_node:
             self.logger.debug("No track header found", url=url)
             return []
-        venue = fortuna.normalize_venue_name(track_node.text(strip=True))
+        venue = fortuna.normalize_venue_name(fortuna.node_text(track_node))
         if not venue:
             return []
 
@@ -1092,7 +1118,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         indexed_race_tables: list[tuple[int, Node]] = []
         for i, table in enumerate(all_tables):
             header = table.css_first("thead tr th")
-            if header and "Race" in header.text():
+            if header and "Race" in fortuna.node_text(header):
                 indexed_race_tables.append((i, table))
 
         races: List[ResultRace] = []
@@ -1123,7 +1149,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         header = table.css_first("thead tr th")
         if not header:
             return None
-        header_text = header.text()
+        header_text = fortuna.node_text(header)
 
         race_match = re.search(r"Race\s+(\d+)", header_text)
         if not race_match:
@@ -1169,21 +1195,21 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         if len(cols) < 3:
             return None
 
-        name = fortuna.clean_text(cols[2].text())
+        name = fortuna.clean_text(fortuna.node_text(cols[2]))
         if not name or name.upper() in ("HORSE", "NAME", "RUNNER"):
             return None
 
-        pos_text = fortuna.clean_text(cols[0].text())
-        num_text = fortuna.clean_text(cols[1].text())
+        pos_text = fortuna.clean_text(fortuna.node_text(cols[0]))
+        num_text = fortuna.clean_text(fortuna.node_text(cols[1]))
 
-        odds_text = fortuna.clean_text(cols[3].text()) if len(cols) > 3 else ""
+        odds_text = fortuna.clean_text(fortuna.node_text(cols[3])) if len(cols) > 3 else ""
         final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
         win_pay = place_pay = show_pay = 0.0
         if len(cols) >= 7:
-            win_pay = parse_currency_value(cols[4].text())
-            place_pay = parse_currency_value(cols[5].text())
-            show_pay = parse_currency_value(cols[6].text())
+            win_pay = parse_currency_value(fortuna.node_text(cols[4]))
+            place_pay = parse_currency_value(fortuna.node_text(cols[5]))
+            show_pay = parse_currency_value(fortuna.node_text(cols[6]))
 
         return ResultRunner(
             name=name,
@@ -1236,7 +1262,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 href = a.attributes.get("href", "")
                 if not href:
                     continue
-                if not self._venue_matches(a.text(), href):
+                if not self._venue_matches(fortuna.node_text(a), href):
                     continue
                 if not self._link_matches_date(href, date_str):
                     continue
@@ -1323,8 +1349,8 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 or row.css_first(".rp-toteReturns__value")
             )
             if label_node and val_node:
-                label = fortuna.clean_text(label_node.text())
-                value = fortuna.clean_text(val_node.text())
+                label = fortuna.clean_text(fortuna.node_text(label_node))
+                value = fortuna.clean_text(fortuna.node_text(val_node))
                 if label and value:
                     dividends[label] = value
         return dividends
@@ -1362,19 +1388,19 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             name_node = row.css_first(".rp-horseTable__horse__name")
             if not name_node:
                 continue
-            name = fortuna.clean_text(name_node.text())
+            name = fortuna.clean_text(fortuna.node_text(name_node))
 
             pos_node = row.css_first(".rp-horseTable__pos__number")
-            pos = fortuna.clean_text(pos_node.text()) if pos_node else None
+            pos = fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None
 
             num_node = row.css_first(".rp-horseTable__saddleClothNo")
-            number = _safe_int(num_node.text()) if num_node else 0
+            number = _safe_int(fortuna.node_text(num_node)) if num_node else 0
 
             place_payout = self._find_place_payout(name, dividends)
 
             sp_node = row.css_first(".rp-horseTable__horse__sp")
             final_odds = (
-                parse_fractional_odds(fortuna.clean_text(sp_node.text()))
+                parse_fractional_odds(fortuna.clean_text(fortuna.node_text(sp_node)))
                 if sp_node else 0.0
             )
 
@@ -1462,7 +1488,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
                 href = a.attributes.get("href", "")
                 if not href:
                     continue
-                if not self._venue_matches(a.text(), href):
+                if not self._venue_matches(fortuna.node_text(a), href):
                     continue
                 if not self._link_matches_date(href, date_str):
                     continue
@@ -1562,11 +1588,11 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             odds_node = row.css_first(".result-racecard__odds")
 
             runners.append(ResultRunner(
-                name=fortuna.clean_text(name_node.text()),
-                number=_safe_int(num_node.text()) if num_node else 0,
-                position=fortuna.clean_text(pos_node.text()) if pos_node else None,
+                name=fortuna.clean_text(fortuna.node_text(name_node)),
+                number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
+                position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=(
-                    parse_fractional_odds(fortuna.clean_text(odds_node.text()))
+                    parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
                     if odds_node else 0.0
                 ),
             ))
@@ -1575,14 +1601,14 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     @staticmethod
     def _map_place_payouts(div_table: Node, runners: List[ResultRunner]) -> None:
         for row in div_table.css("tr"):
-            row_text = row.text().lower()
+            row_text = fortuna.node_text(row).lower()
             if "place" not in row_text:
                 continue
             cols = row.css("td")
             if len(cols) < 2:
                 continue
-            p_name = fortuna.clean_text(cols[0].text().replace("Place", "").strip())
-            p_val = parse_currency_value(cols[1].text())
+            p_name = fortuna.clean_text(fortuna.node_text(cols[0]).replace("Place", "").strip())
+            p_val = parse_currency_value(fortuna.node_text(cols[1]))
             p_name_lower = p_name.lower()
             for runner in runners:
                 if (
@@ -1622,7 +1648,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             href = a.attributes.get("href", "")
             if not href:
                 continue
-            if not self._venue_matches(a.text(), href):
+            if not self._venue_matches(fortuna.node_text(a), href):
                 continue
             if not self._link_matches_date(href, date_str):
                 continue
@@ -1640,7 +1666,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         # Strategy 1: Next.js JSON payload (most reliable)
         script = parser.css_first("script#__NEXT_DATA__")
         if script:
-            race = self._parse_from_next_data(script.text(), date_str)
+            race = self._parse_from_next_data(fortuna.node_text(script), date_str)
             if race:
                 return race
 
@@ -1738,7 +1764,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
 
         match = re.match(
             r"(\d{1,2}:\d{2})\s+(.+)\s+Result",
-            fortuna.clean_text(header.text()),
+            fortuna.clean_text(fortuna.node_text(header)),
         )
         if not match:
             return None
@@ -1758,9 +1784,9 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
                 'div[class*="ResultRunner__StyledRunnerPositionContainer"]',
             )
             runners.append(ResultRunner(
-                name=fortuna.clean_text(name_node.text()),
+                name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=0,
-                position=fortuna.clean_text(pos_node.text()) if pos_node else None,
+                position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
             ))
 
         if not runners:
@@ -1798,7 +1824,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     )
 
     _RUNNER_RE = re.compile(
-        r"(\d+)-([A-Za-z\s']{3,}?)\s+([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?",
+        r"(\d+)-(.+?)\s{2,}([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?",
     )
 
     _BET_NAME_MAP: Final[Dict[str, str]] = {
@@ -1831,7 +1857,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         if not venue_node:
             return []
 
-        venue_text = venue_node.text(strip=True).split("-")[0].strip()
+        venue_text = fortuna.node_text(venue_node).split("-")[0].strip()
         venue = fortuna.normalize_venue_name(venue_text)
 
         blocks = re.split(r"<a name='N(\d+)'></a>", html)
@@ -1854,11 +1880,11 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         parser = HTMLParser(html)
 
         exotics: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
-        runners: List[ResultRunner] = []
-        position_counter = 1
+        runners_map: Dict[int, ResultRunner] = {}
 
+        # 1. Parse payouts and finishers from <strong> tags
         for s in parser.css("strong"):
-            txt = s.text().strip()
+            txt = fortuna.node_text(s).strip()
 
             # Check for payout line
             p_match = self._PAYOUT_RE.search(txt)
@@ -1872,25 +1898,92 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                         break
                 continue
 
-            # Check for runner line
+            # Check for finisher line (Top 3)
+            # Format: NUM-NAME   WIN_PAY  PLACE_PAY  SHOW_PAY  POOL
             m = self._RUNNER_RE.match(txt)
             if m:
                 num = int(m.group(1))
                 name = m.group(2).strip()
-                win_pay = parse_currency_value(m.group(3)) if m.group(3) else 0.0
-                place_pay = parse_currency_value(m.group(4)) if m.group(4) else 0.0
-                show_pay = parse_currency_value(m.group(5)) if m.group(5) else 0.0
 
-                runners.append(ResultRunner(
+                # Handling column-aware payouts based on available numbers
+                nums = [p for p in m.groups()[2:] if p is not None]
+                win_pay = place_pay = show_pay = 0.0
+
+                # Standardbred Canada format:
+                # Winner: NUM-NAME WIN PLACE SHOW POOL
+                # 2nd:    NUM-NAME PLACE SHOW POOL
+                # 3rd:    NUM-NAME SHOW POOL
+                if len(nums) == 4: # Winner
+                    win_pay = parse_currency_value(nums[0])
+                    place_pay = parse_currency_value(nums[1])
+                    show_pay = parse_currency_value(nums[2])
+                elif len(nums) == 3: # 2nd place
+                    place_pay = parse_currency_value(nums[0])
+                    show_pay = parse_currency_value(nums[1])
+                elif len(nums) == 2: # 3rd place
+                    show_pay = parse_currency_value(nums[0])
+
+                runners_map[num] = ResultRunner(
                     name=name,
                     number=num,
-                    position=str(position_counter),
                     win_payout=win_pay,
                     place_payout=place_pay,
                     show_payout=show_pay,
-                ))
-                position_counter += 1
+                )
 
+        # 2. Parse Horse table for odds and positions (Source of Truth for ALL runners)
+        in_horse_table = False
+        for line in html.splitlines():
+            clean_line = line.strip()
+            if clean_line.startswith("Horse ") and "Odds" in clean_line:
+                in_horse_table = True
+                continue
+            if in_horse_table:
+                if not clean_line or "Time:" in clean_line or "Temp:" in clean_line or "---" in clean_line:
+                    if clean_line and re.match(r"^\d+", clean_line):
+                        pass # Continue if it looks like a runner
+                    else:
+                        in_horse_table = False
+                        continue
+
+                # Table line: 2   Forefather(L)               2    9/14T ... 8.60   T Schlatman
+                rm = re.match(r"^(\d+)\s+(.+?)\s{2,}", clean_line)
+                if rm:
+                    num = int(rm.group(1))
+                    name = rm.group(2).split("(")[0].strip()
+
+                    # Extract odds (numeric value near the end, possibly with *)
+                    parts = clean_line.split()
+                    final_odds = None
+                    for p in reversed(parts[1:-1]): # Skip trainer at end
+                        os = p.replace("*", "")
+                        try:
+                            val = float(os)
+                            if 0.0 <= val < 1000.0:
+                                final_odds = val
+                                break
+                        except ValueError:
+                            continue
+
+                    # Extract position from "Finish" column (usually 7th or 8th part)
+                    # We pick the LAST one matching the pattern to avoid 1/4, 1/2, 3/4, Stretch calls
+                    pos = None
+                    for p in parts[3:]:
+                        if "/" in p and re.match(r"^\d+[A-Z]*/", p):
+                            pos = p.split("/")[0]
+
+                    if num in runners_map:
+                        runners_map[num].final_win_odds = final_odds
+                        if pos: runners_map[num].position = pos
+                    else:
+                        runners_map[num] = ResultRunner(
+                            name=name,
+                            number=num,
+                            position=pos,
+                            final_win_odds=final_odds
+                        )
+
+        runners = list(runners_map.values())
         if not runners:
             return None
 
@@ -1991,12 +2084,12 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             place_node = row.css_first(".payout-place")
 
             runners.append(ResultRunner(
-                name=fortuna.clean_text(name_node.text()),
-                number=_safe_int(num_node.text()) if num_node else 0,
-                position=fortuna.clean_text(pos_node.text()) if pos_node else None,
-                final_win_odds=parse_fractional_odds(odds_node.text()) if odds_node else 0.0,
-                win_payout=parse_currency_value(win_node.text()) if win_node else 0.0,
-                place_payout=parse_currency_value(place_node.text()) if place_node else 0.0,
+                name=fortuna.clean_text(fortuna.node_text(name_node)),
+                number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
+                position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
+                final_win_odds=parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0,
+                win_payout=parse_currency_value(fortuna.node_text(win_node)) if win_node else 0.0,
+                place_payout=parse_currency_value(fortuna.node_text(place_node)) if place_node else 0.0,
             ))
         return runners
 
@@ -2008,11 +2101,11 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             if len(cols) < 5:
                 continue
             runners.append(ResultRunner(
-                name=fortuna.clean_text(cols[2].text()),
-                number=_safe_int(cols[1].text()),
-                position=fortuna.clean_text(cols[0].text()),
-                win_payout=parse_currency_value(cols[-2].text()),
-                place_payout=parse_currency_value(cols[-1].text()),
+                name=fortuna.clean_text(fortuna.node_text(cols[2])),
+                number=_safe_int(fortuna.node_text(cols[1])),
+                position=fortuna.clean_text(fortuna.node_text(cols[0])),
+                win_payout=parse_currency_value(fortuna.node_text(cols[-2])),
+                place_payout=parse_currency_value(fortuna.node_text(cols[-1])),
             ))
         return runners
 
@@ -2054,7 +2147,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             if "/horse-racing/results/" in href and len(href.split("/")) >= 6:
                 if not self._link_matches_date(href, date_str):
                     continue
-                if self._venue_matches(a.text(), href):
+                if self._venue_matches(fortuna.node_text(a), href):
                     links.add(href)
         return links
 
@@ -2066,7 +2159,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
         venue = ""
         title = parser.css_first("title")
         if title:
-            match = re.search(r"\d{1,2}:\d{2}\s+([^|]+)", title.text())
+            match = re.search(r"\d{1,2}:\d{2}\s+([^|]+)", fortuna.node_text(title))
             if match:
                 venue = fortuna.normalize_venue_name(match.group(1).strip())
         if not venue:
@@ -2084,8 +2177,8 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
                 continue
             pos_node = row.css_first(".rp-entry-number")
             runners.append(ResultRunner(
-                name=fortuna.clean_text(name_node.text()),
-                position=fortuna.clean_text(pos_node.text()) if pos_node else None,
+                name=fortuna.clean_text(fortuna.node_text(name_node)),
+                position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
             ))
 
         if not runners:
@@ -2144,7 +2237,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             href = a.attributes.get("href", "")
             if not href:
                 continue
-            if not self._venue_matches(a.text(), href):
+            if not self._venue_matches(fortuna.node_text(a), href):
                 continue
 
             has_race_path = any(
@@ -2167,7 +2260,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
 
         match = re.match(
             r"(\d{1,2}:\d{2})\s+(.+)",
-            fortuna.clean_text(header.text()),
+            fortuna.clean_text(fortuna.node_text(header)),
         )
         if not match:
             return None
@@ -2206,11 +2299,11 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             odds_node = row.css_first(".sdc-site-racing-card__odds")
 
             runners.append(ResultRunner(
-                name=fortuna.clean_text(name_node.text()),
-                number=_safe_int(number_node.text()) if number_node else 0,
-                position=fortuna.clean_text(pos_node.text()) if pos_node else None,
+                name=fortuna.clean_text(fortuna.node_text(name_node)),
+                number=_safe_int(fortuna.node_text(number_node)) if number_node else 0,
+                position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=parse_fractional_odds(
-                    fortuna.clean_text(odds_node.text()) if odds_node else "",
+                    fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
                 ),
             ))
         return runners
@@ -2433,6 +2526,7 @@ def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
         for c in _all_subclasses(fortuna.BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
         and getattr(c, "ADAPTER_TYPE", "discovery") == "results"
+        and hasattr(c, "SOURCE_NAME") # Filter out base classes without SOURCE_NAME (GPT5 Fix)
     ]
 
 
