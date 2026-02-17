@@ -425,6 +425,37 @@ class AuditorEngine:
                 candidate_count=len(matches),
             )
 
+        # Fallback 3: ±1 race number, same venue/date/discipline
+        try:
+            venue_part, race_str, date_str, _, disc = parts
+            for delta in (-1, +1):
+                shifted_num = int(race_str) + delta
+                if shifted_num < 1:
+                    continue
+                shifted_key = f"{venue_part}|{shifted_num}|{date_str}|{disc}"
+                result = results_map.get(shifted_key)
+                if result:
+                    self.logger.warning(
+                        "Race-number-shifted fallback match",
+                        race_id=race_id,
+                        original_race_num=race_str,
+                        matched_race_num=shifted_num,
+                        match_key=result.canonical_key,
+                    )
+                    return result
+        except (ValueError, IndexError):
+            pass
+
+        if results_map:
+            tip_venue = parts[0] if parts else ""
+            venue_candidates = [k for k in results_map if k.startswith(tip_venue)][:5]
+            self.logger.warning(
+                "No result match found",
+                race_id=race_id,
+                tip_key=tip_key,
+                venue_candidates_in_results=venue_candidates,
+            )
+
         return None
 
     # -- key generation ----------------------------------------------------
@@ -2882,6 +2913,7 @@ async def run_analytics(
     region: Optional[str] = None,
     *,
     include_lifetime_stats: bool = False,
+    lookback_hours: Optional[int] = None,
 ) -> None:
     """Main analytics entry: harvest → audit → report → GHA summary."""
     valid_dates = [d for d in target_dates if validate_date_format(d)]
@@ -2913,7 +2945,9 @@ async def run_analytics(
     }
 
     async with AuditorEngine() as auditor:
-        unverified = await auditor.get_unverified_tips()
+        if lookback_hours is None:
+            lookback_hours = 72 if target_region == "GLOBAL" else 48
+        unverified = await auditor.get_unverified_tips(lookback_hours=lookback_hours)
         target_venues: Optional[Set[str]] = None
 
         if not unverified:
@@ -3004,6 +3038,10 @@ def main() -> None:
         "--db-path", type=str, default=DEFAULT_DB_PATH,
         help=f"Path to tip database (default: {DEFAULT_DB_PATH})",
     )
+    parser.add_argument(
+        "--lookback-hours", type=int,
+        help="Custom hours to look back for unverified tips",
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
     parser.add_argument("--migrate", action="store_true", help="Migrate data from legacy JSON to SQLite")
     parser.add_argument(
@@ -3049,6 +3087,7 @@ def main() -> None:
             target_dates,
             region=args.region,
             include_lifetime_stats=args.include_lifetime_stats,
+            lookback_hours=args.lookback_hours,
         ),
     )
 
