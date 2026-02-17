@@ -183,11 +183,11 @@ def _apply_exotics_to_race(
     exa = exotics.get("exacta", (None, None))
     sup = exotics.get("superfecta", (None, None))
     return {
-        "trifecta_payout": tri[0],
+        "trifecta_payout": tri[0] if (tri[0] and tri[0] > 0) else None,
         "trifecta_combination": tri[1],
-        "exacta_payout": exa[0],
+        "exacta_payout": exa[0] if (exa[0] and exa[0] > 0) else None,
         "exacta_combination": exa[1],
-        "superfecta_payout": sup[0],
+        "superfecta_payout": sup[0] if (sup[0] and sup[0] > 0) else None,
         "superfecta_combination": sup[1],
     }
 
@@ -477,6 +477,7 @@ class AuditorEngine:
         verdict, profit = self._compute_verdict(sel_result, result)
 
         return {
+            "field_size": len([r for r in result.runners if not r.scratched]),
             "actual_top_5": ", ".join(actual_top_5),
             "actual_2nd_fav_odds": actual_2nd_fav_odds,
             "verdict": verdict.value,
@@ -522,18 +523,8 @@ class AuditorEngine:
             # If we only have odds for one runner (e.g. the winner), we can't find 2nd fav
             return None
 
-        fav_odds = runners_list[0][1]
-
-        # Find the first runner with odds GREATER than the favorite (GPT5 Fix)
-        # If multiple runners share the same lowest odds, they are co-favorites.
-        for _, odds in runners_list[1:]:
-            if odds > fav_odds:
-                return float(odds)
-
-        # If all runners have same odds (e.g. co-favorites), standard Goldmine logic
-        # treats the "next" runner as having no gap. We return None to signify
-        # that a distinct 2nd favorite couldn't be determined from final prices.
-        return None
+        # Return the odds of the actual second favorite (Claude Fix)
+        return float(runners_list[1][1])
 
     @staticmethod
     def _find_selection_runner(
@@ -563,15 +554,16 @@ class AuditorEngine:
         if sel is None:
             return Verdict.VOID, 0.0
         if sel.position_numeric is None:
-            return Verdict.BURNED, -STANDARD_BET
+            # Missing position often means parsing gap, not a loss (Claude Fix)
+            return Verdict.VOID, 0.0
 
         places_paid = get_places_paid(len(result.active_runners))
 
         if sel.position_numeric > places_paid:
             return Verdict.BURNED, -STANDARD_BET
 
-        # Actual place payout available
-        if sel.place_payout and sel.place_payout > 0:
+        # Actual place payout available (GPT5 Fix: Handle zero payouts)
+        if sel.place_payout and sel.place_payout > 0.01:
             return Verdict.CASHED, sel.place_payout - STANDARD_BET
 
         # Heuristic estimate: ~1/5 of (win odds - 1) for place return
@@ -1814,8 +1806,9 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
-        "lonn", "wbsbsn", "flmn", "ridcn", "trrn", "kdun", "geodn",
-        "clntn", "hanon", "Dresn", "grvr", "leam", "kaww", "wood",
+        "lonn", "lon", "wbsbsn", "wbsb", "flmn", "flm", "ridcn", "rid",
+        "trrn", "kdun", "geodn", "clntn", "hanon", "Dresn", "grvr",
+        "leam", "kaww", "wood",
     )
 
     _PAYOUT_RE = re.compile(
@@ -1853,11 +1846,30 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         self, html: str, date_str: str, url: str,
     ) -> List[ResultRace]:
         parser = HTMLParser(html)
-        venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1")
-        if not venue_node:
+        # Relaxed venue detection: try headers first, then scan text if needed (Jules Fix)
+        venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1") or parser.css_first("h2") or parser.css_first("strong")
+
+        venue_text = ""
+        if venue_node:
+            venue_text = fortuna.node_text(venue_node).split("-")[0].strip()
+
+        if not venue_text:
+            # Fallback: search for track name in first 1000 chars
+            for track_match in ["Western Fair", "Mohawk", "Flamboro", "Rideau", "Woodbine"]:
+                if track_match.lower() in html[:1000].lower():
+                    venue_text = track_match
+                    break
+
+        if not venue_text:
+            # Last fallback: extract from URL if possible
+            for track_code, track_name in [("lonn", "Western Fair"), ("wbsbsn", "Mohawk"), ("flmn", "Flamboro")]:
+                if track_code in url.lower():
+                    venue_text = track_name
+                    break
+
+        if not venue_text:
             return []
 
-        venue_text = fortuna.node_text(venue_node).split("-")[0].strip()
         venue = fortuna.normalize_venue_name(venue_text)
 
         blocks = re.split(r"<a name='N(\d+)'></a>", html)
@@ -1947,23 +1959,30 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                         continue
 
                 # Table line: 2   Forefather(L)               2    9/14T ... 8.60   T Schlatman
-                rm = re.match(r"^(\d+)\s+(.+?)\s{2,}", clean_line)
+                # Relaxed regex to handle tight spacing in harness result tables (Jules Fix)
+                rm = re.match(r"^(\d+)\s+(.+?)(?:\s{2,}|$)", clean_line)
                 if rm:
                     num = int(rm.group(1))
                     name = rm.group(2).split("(")[0].strip()
 
-                    # Extract odds (numeric value near the end, possibly with *)
+                    # Extract odds (numeric value or fraction, possibly with *)
                     parts = clean_line.split()
                     final_odds = None
                     for p in reversed(parts[1:-1]): # Skip trainer at end
-                        os = p.replace("*", "")
+                        os = p.replace("*", "").strip()
+                        if not os:
+                            continue
                         try:
                             val = float(os)
                             if 0.0 <= val < 1000.0:
                                 final_odds = val
                                 break
                         except ValueError:
-                            continue
+                            # Try parsing as fractional odds
+                            f_val = fortuna.parse_odds_to_decimal(os)
+                            if f_val is not None:
+                                final_odds = float(f_val)
+                                break
 
                     # Extract position from "Finish" column (usually 7th or 8th part)
                     # We pick the LAST one matching the pattern to avoid 1/4, 1/2, 3/4, Stretch calls

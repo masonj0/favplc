@@ -203,7 +203,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         # Async & DB
         "aiosqlite", "sqlite3", "asyncio",
         # Data processing
-        "pandas", "numpy", "structlog", "tenacity",
+        "pandas", "numpy", "structlog", "tenacity", "tomli",
         # Notifications
         "winotify", "win10toast_py3",
         # Build tools (needed by pkg_resources)

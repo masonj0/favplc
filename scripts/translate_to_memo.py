@@ -126,10 +126,6 @@ if __name__ == "__main__":
             "blocks": part_blocks
         }
 
-        json_file = f"fortuna_memo_part{i+1}.json"
-        with open(json_file, "w", encoding="utf-8") as f:
-            json.dump(memo_data, f, indent=2)
-
         pdf_file = f"fortuna_memo_part{i+1}.pdf"
         create_pdf(memo_data, pdf_file)
-        print(f"Successfully generated {json_file} and {pdf_file}")
+        print(f"Successfully generated {pdf_file}")

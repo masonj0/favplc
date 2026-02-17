@@ -30,3 +30,10 @@ The app requires Playwright for some discovery adapters. On first run, you may n
 ```bash
 python -m playwright install chromium
 ```
+
+Alternatively, run Fortuna with the `--install-browsers` flag:
+```bash
+python fortuna.py --install-browsers
+```
+
+You can also set the environment variable `FORTUNA_AUTO_INSTALL_BROWSERS=1` to enable automatic installation when dependencies are missing.

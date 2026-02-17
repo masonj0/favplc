@@ -162,18 +162,22 @@ class TipStats:
 # ── Writer ─────────────────────────────────────────────────────────────────────
 
 class SummaryWriter:
+    """A simple wrapper for GHA Step Summary writes with auto-flush."""
     def __init__(self, stream: TextIO) -> None:
         self._s = stream
 
     def write(self, text: str = "") -> None:
         self._s.write(text + "\n")
+        self._s.flush()
 
     def lines(self, rows: list[str]) -> None:
         self._s.write("\n".join(rows) + "\n")
+        self._s.flush()
 
 
 @contextmanager
 def open_summary():
+    """Context manager for writing to GHA Job Summary with fallback to stdout."""
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if path:
         with open(path, "a", encoding="utf-8") as fh:
@@ -185,16 +189,24 @@ def open_summary():
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+_JSON_CACHE: dict[str, Any] = {}
+
 def _now_et() -> datetime:
     return datetime.now(EASTERN)
 
 
 def _read_json(path: str | Path) -> dict | list | None:
+    path_str = str(path)
+    if path_str in _JSON_CACHE:
+        return _JSON_CACHE[path_str]
+
     p = Path(path)
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        _JSON_CACHE[path_str] = data
+        return data
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read %s: %s", path, exc)
         return None
@@ -266,16 +278,18 @@ def _get_stats(db_path: str = "fortuna.db") -> TipStats:
     if not Path(db_path).exists():
         return stats
     try:
+        now_et = _now_et().isoformat()
         with sqlite3.connect(db_path) as conn:
             cur = conn.cursor()
+            # GPT5 Improvement: Only count 'Pending' if the race has actually run
             cur.execute("""
                 SELECT COUNT(*),
                        SUM(CASE WHEN verdict LIKE 'CASHED%' THEN 1 ELSE 0 END),
                        SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
-                       SUM(CASE WHEN audit_completed = 0 THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN audit_completed = 0 AND start_time < ? THEN 1 ELSE 0 END),
                        SUM(COALESCE(net_profit, 0.0))
                 FROM tips
-            """)
+            """, (now_et,))
             row = cur.fetchone()
             if row:
                 stats.total_tips   = row[0] or 0
