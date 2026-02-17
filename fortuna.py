@@ -1150,13 +1150,13 @@ class SmartFetcher:
                 ua = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
                 bf_headers['User-Agent'] = ua
 
-                if "headers" in kwargs:
-                    # Merge - browserforge headers complement provided ones
-                    for k, v in bf_headers.items():
-                        if k not in kwargs["headers"]:
-                            kwargs["headers"][k] = v
-                else:
-                    kwargs["headers"] = bf_headers
+                # Copy headers before mutation to avoid leaking state across requests (GPT5 Fix)
+                headers = dict(kwargs.get("headers", {}))
+                # Merge - browserforge headers complement provided ones
+                for k, v in bf_headers.items():
+                    if k not in headers:
+                        headers[k] = v
+                kwargs["headers"] = headers
                 self.logger.debug("Applied browserforge headers", engine=engine.value)
             except Exception as e:
                 self.logger.warning("Failed to generate browserforge headers", error=str(e))
@@ -2228,7 +2228,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         # Try to extract venue from title as high-priority fallback
         title_node = parser.css_first("title")
         if title_node:
-            title_text = title_node_text(node).strip()
+            title_text = node_text(title_node).strip()
             # Title: "14:26 Oxford Greyhound Racecard..."
             tm = re.search(r'\d{1,2}:\d{2}\s+(.+?)\s+Greyhound', title_text)
             if tm:
@@ -2800,7 +2800,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         for container in parser.css("#entries-results-container .racing-results-ex-wrap > div"):
             tnn = container.css_first("h4.track-name")
             if not tnn: continue
-            tn = clean_text(tnode_text(nn)) or ""
+            tn = clean_text(node_text(tnn)) or ""
             isf = "*" in tn or "*" in (clean_text(node_text(container)) or "")
             for link in container.css('a[href*="/entries/"]'):
                 if u := link.attributes.get("href"):
@@ -2818,10 +2818,13 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
-            if not html_content or ("Final Changes Made" not in html_content and not item.get("finalized")): continue
+            # Relaxed check: allow if "Changes Made" or "Track:" exists (Jules Fix)
+            valid_content = html_content and any(x in html_content for x in ["Final Changes Made", "Changes Made", "Track:", "Post Time:"])
+            if not html_content or (not valid_content and not item.get("finalized")):
+                continue
             track_name = normalize_venue_name(item["venue"])
             for pre in HTMLParser(html_content).css("pre"):
-                text = prnode_text(e)
+                text = node_text(pre)
                 race_chunks = re.split(r"(\d+)\s+--\s+", text)
                 for i in range(1, len(race_chunks), 2):
                     try:
@@ -3779,8 +3782,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         now = datetime.now(EASTERN)
 
         # Success Playbook Hardening (Council of Superbrains)
-        # Lowered from 0.7 to 0.4 to improve yield from adapters with partial odds (GPT5 Fix)
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.4)
+        # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
@@ -3845,16 +3848,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 fav, sec = all_odds[0], all_odds[1]
                 gap12 = round(float(sec - fav), 2)
 
-                # Enforce gap requirement
-                if gap12 <= 0.25:
-                    log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # Enforce gap requirement (Relaxed from 0.25 to 0.15 for better yield)
+                if gap12 <= 0.15:
+                    log.debug("Insufficient gap detected (1Gap2 <= 0.15), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
                 else:
-                    # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
-                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
+                    # Goldmine = 2nd Fav >= 4.0, Field <= 14, Gap > 0.15 (Relaxed from 4.5 and 11)
+                    if len(active_runners) <= 14 and sec >= Decimal("4.0"):
                         is_goldmine = True
 
-                    # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
-                    if len(active_runners) <= 11 and sec >= Decimal("3.5"):
+                    # You Might Like = 2nd Fav >= 3.0, Field <= 14, Gap > 0.15 (Relaxed from 3.5 and 11)
+                    if len(active_runners) <= 14 and sec >= Decimal("3.0"):
                         is_best_bet = True
 
                 race.metadata['predicted_2nd_fav_odds'] = float(sec)
@@ -4426,9 +4429,11 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
                 st_str = to_eastern(dt).strftime('%H:%M')
             except Exception:
-                st_str = str(st)[11:16]
+                s_st = str(st)
+                st_str = s_st[11:16] if len(s_st) >= 16 else "??"
         else:
-            st_str = str(st)[11:16]
+            s_st = str(st)
+            st_str = s_st[11:16] if len(s_st) >= 16 else "??"
 
         is_gold = getattr(r, 'metadata', {}).get('is_goldmine', False)
         gold_badge = '<span class="badge gold">GOLD</span>' if is_gold else ''
@@ -4618,7 +4623,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         if not st or st < now - timedelta(minutes=10) or st > cutoff:
             continue
 
-        track = normalize_venue_name(get_field(race, 'venue'))
+        track = normalize_venue_name(get_field(race, 'venue')).replace("|", " ")
         canonical_track = get_canonical_venue(get_field(race, 'venue'))
         num = get_field(race, 'race_number')
         # Deduplication key: Use canonical track/num/date
@@ -4933,9 +4938,12 @@ class FortunaDB:
                 # check_same_thread=False is safe because we use a ThreadPoolExecutor(max_workers=1)
                 # and a connection lock for all direct cursor operations.
                 self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            # Enable WAL mode for better concurrency
-            self._conn.execute("PRAGMA journal_mode=WAL")
+                self._conn.row_factory = sqlite3.Row
+                # Enable WAL mode for better concurrency once during initialization (GPT5 Fix)
+                try:
+                    self._conn.execute("PRAGMA journal_mode=WAL")
+                except sqlite3.Error:
+                    pass
         return self._conn
 
     @asynccontextmanager
@@ -5005,7 +5013,8 @@ class FortunaDB:
                         top1_place_payout REAL,
                         top2_place_payout REAL,
                         predicted_2nd_fav_odds REAL,
-                        audit_timestamp TEXT
+                        audit_timestamp TEXT,
+                        field_size INTEGER
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5052,6 +5061,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN actual_2nd_fav_odds REAL")
                 if "selection_name" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN selection_name TEXT")
+                if "field_size" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN field_size INTEGER")
 
                 # Maintenance: Purge garbage data (Memory Directive Fix)
                 try:
@@ -5102,8 +5113,18 @@ class FortunaDB:
             await self._run_in_executor(_housekeeping)
             self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
 
+        if current_version < 5:
+            # Migration to version 5: Add field_size support (Jules Fix)
+            def _migrate_v5():
+                with self._get_conn() as conn:
+                    # Column already added in initialization PRAGMA check if missing,
+                    # but we ensure the version is bumped here.
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_migrate_v5)
+            self.logger.info("Schema migrated to version 5")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 4))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 5))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -5235,7 +5256,8 @@ class FortunaDB:
                         1 if tip.get("is_goldmine") else 0,
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
-                        float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None
+                        float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
+                        tip.get("field_size")
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5244,8 +5266,9 @@ class FortunaDB:
                     conn.executemany("""
                         INSERT OR IGNORE INTO tips (
                             race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
+                            field_size
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5303,7 +5326,8 @@ class FortunaDB:
                         superfecta_combination = ?,
                         top1_place_payout = ?,
                         top2_place_payout = ?,
-                        audit_timestamp = ?
+                        audit_timestamp = ?,
+                        field_size = COALESCE(field_size, ?)
                     WHERE id = (
                         SELECT id FROM tips
                         WHERE race_id = ? AND audit_completed = 0
@@ -5319,6 +5343,7 @@ class FortunaDB:
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
                     datetime.now(EASTERN).isoformat(),
+                    outcome.get("field_size"),
                     race_id
                 ))
         await self._run_in_executor(_update)
@@ -5346,7 +5371,8 @@ class FortunaDB:
                             superfecta_combination = ?,
                             top1_place_payout = ?,
                             top2_place_payout = ?,
-                            audit_timestamp = ?
+                            audit_timestamp = ?,
+                            field_size = COALESCE(field_size, ?)
                         WHERE id = (
                             SELECT id FROM tips
                             WHERE race_id = ? AND audit_completed = 0
@@ -5362,6 +5388,7 @@ class FortunaDB:
                         outcome.get("top1_place_payout"),
                         outcome.get("top2_place_payout"),
                         outcome.get("audit_timestamp"),
+                        outcome.get("field_size"),
                         race_id
                     ))
         await self._run_in_executor(_update)
@@ -5461,8 +5488,9 @@ class FortunaDB:
 
 class HotTipsTracker:
     """Logs reported opportunities to a SQLite database."""
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(self, db_path: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
         self.db = FortunaDB(db_path) if db_path else FortunaDB()
+        self.config = config or {}
         self.logger = structlog.get_logger(self.__class__.__name__)
 
     async def log_tips(self, races: List[Race]):
@@ -5474,8 +5502,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Future cutoff aligned with BET NOW window (MTP <= 120) (GPT5 Fix)
-        future_limit = now + timedelta(minutes=120)
+        # Future cutoff relaxed to allow advance tips (Jules Fix)
+        future_limit = now + timedelta(hours=24)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -5494,8 +5522,10 @@ class HotTipsTracker:
             if total_active > 0:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
-                if trust_ratio < 0.5:
-                    self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2))
+                # Relaxed to match SimplySuccessAnalyzer config (GPT5 alignment)
+                min_trust = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+                if trust_ratio < min_trust:
+                    self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2), required=min_trust)
                     continue
 
             st = r.start_time
@@ -5524,7 +5554,8 @@ class HotTipsTracker:
                 "top_five": r.top_five_numbers,
                 "selection_number": r.metadata.get('selection_number'),
                 "selection_name": r.metadata.get('selection_name'),
-                "predicted_2nd_fav_odds": r.metadata.get('predicted_2nd_fav_odds')
+                "predicted_2nd_fav_odds": r.metadata.get('predicted_2nd_fav_odds'),
+                "field_size": total_active
             }
             new_tips.append(tip_data)
 
@@ -5640,7 +5671,7 @@ class FavoriteToPlaceMonitor:
         self.all_races: List[RaceSummary] = []
         self.adapters: List = []
         self.logger = structlog.get_logger(self.__class__.__name__)
-        self.tracker = HotTipsTracker()
+        self.tracker = HotTipsTracker(config=self.config)
 
     async def initialize_adapters(self, adapter_names: Optional[List[str]] = None):
         """Initialize all adapters, optionally filtered by name."""
@@ -7205,7 +7236,7 @@ async def run_discovery(
         logger.info("Field Matrix Generated")
 
         # Log Hot Tips & Fetch recent historical results for the report
-        tracker = HotTipsTracker()
+        tracker = HotTipsTracker(config=config)
         await tracker.log_tips(qualified)
 
         historical_goldmines = await tracker.db.get_recent_audited_goldmines(limit=15)
@@ -7426,7 +7457,7 @@ async def start_desktop_app():
     else:
         print("⚠️ Error: GUI Server failed to start.")
 
-async def ensure_browsers():
+async def ensure_browsers(force_install: bool = False):
     """Ensure browser dependencies are available for scraping."""
 
     # Skip Playwright in frozen apps if binary doesn't exist - use HTTP-only adapters
@@ -7461,13 +7492,14 @@ async def ensure_browsers():
     # For now, we will assume it's NOT opt-in and ask for manual installation
     # because auto-pip-installing can be surprising.
     structlog.get_logger().warning("Browser dependencies (Playwright Chromium) missing.")
-    print("\n[bold red]Browser dependencies missing![/]")
+    print("\nBrowser dependencies missing!")
     print("To use browser-based adapters, please run:")
     print(f"  {sys.executable} -m pip install playwright==1.49.1")
-    print(f"  {sys.executable} -m playwright install chromium\n")
+    print(f"  {sys.executable} -m playwright install chromium")
+    print("Alternatively, run Fortuna with: --install-browsers\n")
 
-    # Check if we should auto-install via a hidden flag or environment variable
-    if os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
+    # Check if we should auto-install via flag or environment variable (GPT5 Fix)
+    if force_install or os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
         structlog.get_logger().info("Auto-installing browser dependencies as requested...")
         try:
             # Remove version pin to avoid conflicts (GPT5 Fix)
@@ -7525,6 +7557,7 @@ async def main_all_in_one():
     parser.add_argument("--show-log", action="store_true", help="Print recent fetch/audit highlights")
     parser.add_argument("--quick-help", action="store_true", help="Show friendly onboarding guide")
     parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
+    parser.add_argument("--install-browsers", action="store_true", help="Install required browser dependencies (Playwright Chromium)")
     args = parser.parse_args()
 
     # Handle early-exit arguments via helper (GPT5 Fix/Improvement)
@@ -7536,6 +7569,11 @@ async def main_all_in_one():
 
     # Print status card for all normal runs
     print_status_card(config)
+
+    if args.install_browsers:
+        await ensure_browsers(force_install=True)
+        print("Installation complete.")
+        return
 
     if args.gui:
         # Start GUI. It runs its own event loop for the webview.
