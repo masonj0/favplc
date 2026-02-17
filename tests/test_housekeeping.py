@@ -5,7 +5,7 @@ import aiosqlite
 import os
 
 @pytest.mark.asyncio
-async def test_hot_tips_tracker_120min_limit(tmp_path):
+async def test_hot_tips_tracker_24h_limit(tmp_path):
     db_file = tmp_path / "test_fortuna.db"
     tracker = HotTipsTracker(db_path=str(db_file))
 
@@ -22,12 +22,12 @@ async def test_hot_tips_tracker_120min_limit(tmp_path):
             metadata={"is_best_bet": True, "1Gap2": 1.5, "predicted_2nd_fav_odds": 4.5}
     )
 
-    # 2. Race in 130 mins (should be rejected - current limit is 120)
+    # 2. Race in 25 hours (should be rejected - current limit is 24h)
     race_too_far = Race(
         id="race_too_far",
         venue="Track A",
         race_number=2,
-        start_time=now + timedelta(minutes=130),
+        start_time=now + timedelta(hours=25),
         source="Test",
         runners=[],
             metadata={"is_best_bet": True, "1Gap2": 2.0, "predicted_2nd_fav_odds": 5.0}

@@ -3,6 +3,7 @@ name: List of Best Bets
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", ".github/workflows/build_monolith.yml", "docs/**"]
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
@@ -20,7 +21,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}
+  cancel-in-progress: true
 
 jobs:
   # PHASE 1: Parallel Discovery
@@ -89,24 +90,12 @@ jobs:
           DURATION=$((END_TIME - START_TIME))
           echo "::notice::${{ matrix.region }} discovery completed in ${DURATION}s"
 
-      - name: Run Results Audit (Parallel Matrix)
-        timeout-minutes: 15
-        env:
-          PYTHONPATH: .
-        run: |
-          python3 fortuna_analytics.py \
-            --region ${{ matrix.region }} \
-            --days "${{ github.event.inputs.days || '2' }}" \
-          || echo "::warning::Parallel audit failed"
-
       - name: Prepare Artifact
         if: always()
         run: |
           cp fortuna.db "fortuna_${{ matrix.slug }}.db"
           mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
             || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
-          mv results_harvest.json "results_harvest_${{ matrix.slug }}.json" 2>/dev/null \
-            || echo '{}' > "results_harvest_${{ matrix.slug }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -116,7 +105,6 @@ jobs:
             races_${{ matrix.slug }}.json
             fortuna_${{ matrix.slug }}.db
             discovery_harvest_${{ matrix.slug }}.json
-            results_harvest_${{ matrix.slug }}.json
           retention-days: 1
 
   # PHASE 2: Data Consolidation & Audit
@@ -133,10 +121,8 @@ jobs:
           python-version: '3.11'
       - uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pip
-            ~/.cache/ms-playwright
-          key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/pip
+          key: deps-${{ runner.os }}-py311-audit-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
         id: cache-db
@@ -151,7 +137,6 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
-          playwright install --with-deps chromium
 
       - name: Initialize DB if needed
         if: steps.cache-db.outputs.cache-hit != 'true'
@@ -205,7 +190,7 @@ jobs:
       - name: Prepare Audit Artifact
         if: always()
         run: |
-          mv results_harvest.json results_harvest_audit.json 2>/dev/null \
+          cp results_harvest.json results_harvest_audit.json 2>/dev/null \
             || echo '{}' > results_harvest_audit.json
 
       - uses: actions/upload-artifact@v4
@@ -286,6 +271,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: best-bet-reports-${{ github.run_number }}
+          if-no-files-found: warn
           path: |
             summary_grid.txt
             goldmine_report.txt
