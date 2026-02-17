@@ -4096,17 +4096,17 @@ def generate_field_matrix(races: List[Any]) -> str:
         track = normalize_venue_name(get_field(r, 'venue'))
         field_size = len([run for run in get_field(r, 'runners', []) if not get_field(run, 'scratched', False)])
 
-        # Only interested in field sizes 3-11 for this report
-        if 3 <= field_size <= 11:
+        # Only interested in field sizes 3-14 for this report (Jules Fix)
+        if 3 <= field_size <= 14:
             is_gold = get_field(r, 'metadata', {}).get('is_goldmine', False)
             race_num = get_field(r, 'race_number')
             matrix[track][field_size].append((race_num, is_gold))
 
     if not matrix:
-        return "No qualifying races for field matrix (3-11 runners)."
+        return "No qualifying races for field matrix (3-14 runners)."
 
-    # Header: Display sizes 3 to 11
-    display_sizes = range(3, 12)
+    # Header: Display sizes 3 to 14
+    display_sizes = range(3, 15)
 
     header = "| TRACK / FIELD | " + " | ".join(map(str, display_sizes)) + " |"
     separator = "| :--- | " + " | ".join([":---:"] * len(display_sizes)) + " |"

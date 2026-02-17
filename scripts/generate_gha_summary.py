@@ -739,7 +739,7 @@ def generate_summary() -> None:
             out.write(f"📦 {links}")
             out.write()
 
-        out.write("*Refreshes every 30 minutes*")
+        out.write("*Refreshes every hour*")
 
 
 if __name__ == "__main__":

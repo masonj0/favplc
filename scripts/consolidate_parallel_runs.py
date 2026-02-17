@@ -76,7 +76,8 @@ def ensure_schema(conn):
             top1_place_payout REAL,
             top2_place_payout REAL,
             predicted_2nd_fav_odds REAL,
-            audit_timestamp TEXT
+            audit_timestamp TEXT,
+            field_size INTEGER
         )
     """)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
@@ -140,7 +141,7 @@ def merge_databases(primary_db, secondary_dbs):
                     selection_position, actual_top_5, actual_2nd_fav_odds,
                     trifecta_payout, trifecta_combination, superfecta_payout,
                     superfecta_combination, top1_place_payout,
-                    top2_place_payout, audit_timestamp
+                    top2_place_payout, audit_timestamp, field_size
                 )
                 SELECT
                     race_id, venue, race_number, discipline, start_time, report_date,
@@ -149,7 +150,7 @@ def merge_databases(primary_db, secondary_dbs):
                     selection_position, actual_top_5, actual_2nd_fav_odds,
                     trifecta_payout, trifecta_combination, superfecta_payout,
                     superfecta_combination, top1_place_payout,
-                    top2_place_payout, audit_timestamp
+                    top2_place_payout, audit_timestamp, field_size
                 FROM sec.tips
                 WHERE true
                 ON CONFLICT(race_id) DO UPDATE SET
@@ -165,7 +166,8 @@ def merge_databases(primary_db, secondary_dbs):
                     superfecta_combination = excluded.superfecta_combination,
                     top1_place_payout = excluded.top1_place_payout,
                     top2_place_payout = excluded.top2_place_payout,
-                    audit_timestamp = excluded.audit_timestamp
+                    audit_timestamp = excluded.audit_timestamp,
+                    field_size = COALESCE(tips.field_size, excluded.field_size)
                 WHERE excluded.audit_completed = 1 OR tips.audit_completed = 0
             """)
 
