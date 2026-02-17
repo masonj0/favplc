@@ -85,7 +85,7 @@ typing-inspection==0.4.2
 tzdata==2023.3
 urllib3==2.1.0
 uvicorn[standard]==0.24.0
-watchfiles==0.20.0
+watchfiles==1.1.1
 winotify==1.1.0
 websockets==12.0
 wheel==0.45.1
