@@ -2818,7 +2818,10 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
-            if not html_content or ("Final Changes Made" not in html_content and not item.get("finalized")): continue
+            # Relaxed check: allow if "Changes Made" or "Track:" exists (Jules Fix)
+            valid_content = html_content and any(x in html_content for x in ["Final Changes Made", "Changes Made", "Track:", "Post Time:"])
+            if not html_content or (not valid_content and not item.get("finalized")):
+                continue
             track_name = normalize_venue_name(item["venue"])
             for pre in HTMLParser(html_content).css("pre"):
                 text = node_text(pre)
@@ -5474,8 +5477,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Future cutoff aligned with BET NOW window (MTP <= 120) (GPT5 Fix)
-        future_limit = now + timedelta(minutes=120)
+        # Future cutoff relaxed to allow advance tips (Jules Fix)
+        future_limit = now + timedelta(hours=24)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -5494,7 +5497,8 @@ class HotTipsTracker:
             if total_active > 0:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
-                if trust_ratio < 0.5:
+                # Relaxed from 0.5 to 0.25 to match SimplySuccessAnalyzer (Jules Fix)
+                if trust_ratio < 0.25:
                     self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2))
                     continue
 

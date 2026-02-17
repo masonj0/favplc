@@ -1810,8 +1810,9 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
-        "lonn", "wbsbsn", "flmn", "ridcn", "trrn", "kdun", "geodn",
-        "clntn", "hanon", "Dresn", "grvr", "leam", "kaww", "wood",
+        "lonn", "lon", "wbsbsn", "wbsb", "flmn", "flm", "ridcn", "rid",
+        "trrn", "kdun", "geodn", "clntn", "hanon", "Dresn", "grvr",
+        "leam", "kaww", "wood",
     )
 
     _PAYOUT_RE = re.compile(
@@ -1849,11 +1850,30 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         self, html: str, date_str: str, url: str,
     ) -> List[ResultRace]:
         parser = HTMLParser(html)
-        venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1")
-        if not venue_node:
+        # Relaxed venue detection: try headers first, then scan text if needed (Jules Fix)
+        venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1") or parser.css_first("h2") or parser.css_first("strong")
+
+        venue_text = ""
+        if venue_node:
+            venue_text = fortuna.node_text(venue_node).split("-")[0].strip()
+
+        if not venue_text:
+            # Fallback: search for track name in first 1000 chars
+            for track_match in ["Western Fair", "Mohawk", "Flamboro", "Rideau", "Woodbine"]:
+                if track_match.lower() in html[:1000].lower():
+                    venue_text = track_match
+                    break
+
+        if not venue_text:
+            # Last fallback: extract from URL if possible
+            for track_code, track_name in [("lonn", "Western Fair"), ("wbsbsn", "Mohawk"), ("flmn", "Flamboro")]:
+                if track_code in url.lower():
+                    venue_text = track_name
+                    break
+
+        if not venue_text:
             return []
 
-        venue_text = fortuna.node_text(venue_node).split("-")[0].strip()
         venue = fortuna.normalize_venue_name(venue_text)
 
         blocks = re.split(r"<a name='N(\d+)'></a>", html)
