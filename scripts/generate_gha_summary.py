@@ -17,6 +17,20 @@ from pathlib import Path
 from typing import Any, TextIO
 from zoneinfo import ZoneInfo
 
+# Ensure we can import from root (fortuna.py)
+import sys
+from pathlib import Path
+ROOT_DIR = Path(__file__).parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+try:
+    from fortuna import open_summary, SummaryWriter
+except ImportError:
+    # Fallback if imported from elsewhere or root not in path
+    SummaryWriter = None # type: ignore
+    open_summary = None # type: ignore
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 EASTERN = ZoneInfo("America/New_York")
@@ -161,40 +175,54 @@ class TipStats:
 
 # ── Writer ─────────────────────────────────────────────────────────────────────
 
-class SummaryWriter:
-    def __init__(self, stream: TextIO) -> None:
-        self._s = stream
+if SummaryWriter is None:
+    class SummaryWriter:
+        """A simple wrapper for GHA Step Summary writes with auto-flush."""
+        def __init__(self, stream: TextIO) -> None:
+            self._s = stream
 
-    def write(self, text: str = "") -> None:
-        self._s.write(text + "\n")
+        def write(self, text: str = "") -> None:
+            self._s.write(text + "\n")
+            self._s.flush()
 
-    def lines(self, rows: list[str]) -> None:
-        self._s.write("\n".join(rows) + "\n")
+        def lines(self, rows: list[str]) -> None:
+            self._s.write("\n".join(rows) + "\n")
+            self._s.flush()
 
 
-@contextmanager
-def open_summary():
-    path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if path:
-        with open(path, "a", encoding="utf-8") as fh:
-            yield SummaryWriter(fh)
-    else:
-        import sys
-        yield SummaryWriter(sys.stdout)
+if open_summary is None:
+    @contextmanager
+    def open_summary():
+        """Context manager for writing to GHA Job Summary with fallback to stdout."""
+        path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if path:
+            with open(path, "a", encoding="utf-8") as fh:
+                yield SummaryWriter(fh)
+        else:
+            import sys
+            yield SummaryWriter(sys.stdout)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+_JSON_CACHE: dict[str, Any] = {}
 
 def _now_et() -> datetime:
     return datetime.now(EASTERN)
 
 
 def _read_json(path: str | Path) -> dict | list | None:
+    path_str = str(path)
+    if path_str in _JSON_CACHE:
+        return _JSON_CACHE[path_str]
+
     p = Path(path)
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
+        _JSON_CACHE[path_str] = data
+        return data
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to read %s: %s", path, exc)
         return None
@@ -266,16 +294,18 @@ def _get_stats(db_path: str = "fortuna.db") -> TipStats:
     if not Path(db_path).exists():
         return stats
     try:
+        now_et = _now_et().isoformat()
         with sqlite3.connect(db_path) as conn:
             cur = conn.cursor()
+            # GPT5 Improvement: Only count 'Pending' if the race has actually run
             cur.execute("""
                 SELECT COUNT(*),
                        SUM(CASE WHEN verdict LIKE 'CASHED%' THEN 1 ELSE 0 END),
                        SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
-                       SUM(CASE WHEN audit_completed = 0 THEN 1 ELSE 0 END),
+                       SUM(CASE WHEN audit_completed = 0 AND start_time < ? THEN 1 ELSE 0 END),
                        SUM(COALESCE(net_profit, 0.0))
                 FROM tips
-            """)
+            """, (now_et,))
             row = cur.fetchone()
             if row:
                 stats.total_tips   = row[0] or 0
