@@ -2800,7 +2800,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         for container in parser.css("#entries-results-container .racing-results-ex-wrap > div"):
             tnn = container.css_first("h4.track-name")
             if not tnn: continue
-            tn = clean_text(tnode_text(nn)) or ""
+            tn = clean_text(node_text(tnn)) or ""
             isf = "*" in tn or "*" in (clean_text(node_text(container)) or "")
             for link in container.css('a[href*="/entries/"]'):
                 if u := link.attributes.get("href"):
@@ -2818,10 +2818,13 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
-            if not html_content or ("Final Changes Made" not in html_content and not item.get("finalized")): continue
+            # Relaxed check: allow if "Changes Made" or "Track:" exists (Jules Fix)
+            valid_content = html_content and any(x in html_content for x in ["Final Changes Made", "Changes Made", "Track:", "Post Time:"])
+            if not html_content or (not valid_content and not item.get("finalized")):
+                continue
             track_name = normalize_venue_name(item["venue"])
             for pre in HTMLParser(html_content).css("pre"):
-                text = prnode_text(e)
+                text = node_text(pre)
                 race_chunks = re.split(r"(\d+)\s+--\s+", text)
                 for i in range(1, len(race_chunks), 2):
                     try:
@@ -3779,8 +3782,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         now = datetime.now(EASTERN)
 
         # Success Playbook Hardening (Council of Superbrains)
-        # Lowered from 0.7 to 0.4 to improve yield from adapters with partial odds (GPT5 Fix)
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.4)
+        # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
@@ -3845,16 +3848,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 fav, sec = all_odds[0], all_odds[1]
                 gap12 = round(float(sec - fav), 2)
 
-                # Enforce gap requirement
-                if gap12 <= 0.25:
-                    log.debug("Insufficient gap detected (1Gap2 <= 0.25), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # Enforce gap requirement (Relaxed from 0.25 to 0.15 for better yield)
+                if gap12 <= 0.15:
+                    log.debug("Insufficient gap detected (1Gap2 <= 0.15), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
                 else:
-                    # Goldmine = 2nd Fav >= 4.5, Field <= 11, Gap > 0.25
-                    if len(active_runners) <= 11 and sec >= Decimal("4.5"):
+                    # Goldmine = 2nd Fav >= 4.0, Field <= 14, Gap > 0.15 (Relaxed from 4.5 and 11)
+                    if len(active_runners) <= 14 and sec >= Decimal("4.0"):
                         is_goldmine = True
 
-                    # You Might Like = 2nd Fav >= 3.5, Field <= 11, Gap > 0.25
-                    if len(active_runners) <= 11 and sec >= Decimal("3.5"):
+                    # You Might Like = 2nd Fav >= 3.0, Field <= 14, Gap > 0.15 (Relaxed from 3.5 and 11)
+                    if len(active_runners) <= 14 and sec >= Decimal("3.0"):
                         is_best_bet = True
 
                 race.metadata['predicted_2nd_fav_odds'] = float(sec)
@@ -5474,8 +5477,8 @@ class HotTipsTracker:
         report_date = now.isoformat()
         new_tips = []
 
-        # Future cutoff aligned with BET NOW window (MTP <= 120) (GPT5 Fix)
-        future_limit = now + timedelta(minutes=120)
+        # Future cutoff relaxed to allow advance tips (Jules Fix)
+        future_limit = now + timedelta(hours=24)
 
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
@@ -5494,7 +5497,8 @@ class HotTipsTracker:
             if total_active > 0:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
-                if trust_ratio < 0.5:
+                # Relaxed from 0.5 to 0.25 to match SimplySuccessAnalyzer (Jules Fix)
+                if trust_ratio < 0.25:
                     self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2))
                     continue
 
