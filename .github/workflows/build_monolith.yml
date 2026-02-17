@@ -6,9 +6,13 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: build-monolith-windows
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 30
 
     steps:
@@ -33,7 +37,6 @@ jobs:
           python -m pip install --prefer-binary -r requirements.txt
           python -m pip install --prefer-binary pyinstaller
           python -m browserforge update
-          python -m pip install playwright
           python -m playwright install --with-deps chromium
 
       - name: Build EXE
@@ -43,6 +46,14 @@ jobs:
           # Verify build succeeded
           if (!(Test-Path "dist/FortunaFaucetPortableApp.exe")) {
             Write-Error "Build failed: EXE not found"
+            exit 1
+          }
+
+          # Smoke test
+          Write-Host "Running smoke test..."
+          $result = Start-Process -FilePath "dist/FortunaFaucetPortableApp.exe" -ArgumentList "--help" -Wait -PassThru -NoNewWindow
+          if ($result.ExitCode -ne 0) {
+            Write-Error "Smoke test failed with exit code $($result.ExitCode)"
             exit 1
           }
 
@@ -68,4 +79,4 @@ jobs:
         with:
           name: FortunaMonolith-Windows-${{ github.sha }}
           path: dist/FortunaFaucetPortableApp.exe
-          retention-days: 7
+          retention-days: 30

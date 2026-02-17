@@ -5846,6 +5846,8 @@ class FavoriteToPlaceMonitor:
         now = datetime.now(EASTERN)
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
 
+        adapter_scores = await self.tracker.db.get_adapter_scores(days=30) if hasattr(self.tracker, 'db') else {}
+
         for race, adapter_name in races_with_adapters:
             try:
                 # Time window filtering
@@ -5865,12 +5867,22 @@ class FavoriteToPlaceMonitor:
                     race_map[key] = summary
                 else:
                     existing = race_map[key]
-                    # Prefer the one with valid second favorite odds
-                    if summary.second_fav_odds and not existing.second_fav_odds:
+                    incoming_odds = summary.second_fav_odds or 0.0
+                    existing_odds = existing.second_fav_odds or 0.0
+                    if incoming_odds > existing_odds:
+                        summary.superfecta_offered = summary.superfecta_offered or existing.superfecta_offered
                         race_map[key] = summary
-                    # Or prefer more detailed available bets
-                    elif summary.superfecta_offered and not existing.superfecta_offered:
-                        race_map[key] = summary
+                    elif incoming_odds == existing_odds:
+                        incoming_score = adapter_scores.get(summary.adapter, 0)
+                        existing_score = adapter_scores.get(existing.adapter, 0)
+                        if incoming_score > existing_score:
+                            summary.superfecta_offered = summary.superfecta_offered or existing.superfecta_offered
+                            race_map[key] = summary
+                        elif summary.superfecta_offered and not existing.superfecta_offered:
+                            existing.superfecta_offered = True
+                    else:
+                        if summary.superfecta_offered and not existing.superfecta_offered:
+                            existing.superfecta_offered = True
             except Exception: pass
 
         unique_summaries = list(race_map.values())
@@ -6080,6 +6092,8 @@ class FavoriteToPlaceMonitor:
             await self.build_race_summaries(raw, window_hours=12) # Use 12h window for monitor
             self.print_full_list()
             await self.print_bet_now_list()
+            for r in self.all_races:
+                r.mtp = self._calculate_mtp(r.start_time)
             self.save_to_json()
         finally:
             for a in self.adapters: await a.shutdown()

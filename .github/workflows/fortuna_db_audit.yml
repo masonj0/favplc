@@ -9,10 +9,15 @@ on:
     - cron: '0 18 * * *'  # After UK/IRE afternoon cards finish
     - cron: '0 4 * * *'   # After US evening cards finish
 
+concurrency:
+  group: fortuna-db-audit
+  cancel-in-progress: true
+
 jobs:
   inspect:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -21,14 +26,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Restore Master Database
         id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-master-
+          key: fortuna-db-master-READ-ONLY
           restore-keys: fortuna-db-master-
 
       - name: Verify database exists
