@@ -371,7 +371,7 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = {2.75}
+COMMON_PLACEHOLDERS: Final[set] = set()
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -665,6 +665,7 @@ VENUE_MAP = {
 "DEAUVILLE": "Deauville",
 "DED": "Delta Downs",
 "DELTA DOWNS": "Delta Downs",
+"Dover Downs": "Dover Downs",
 "DONCASTER": "Doncaster",
 "DOVER DOWNS": "Dover Downs",
 "DOWN ROYAL": "Down Royal",
@@ -674,6 +675,8 @@ VENUE_MAP = {
 "EPSOM DOWNS": "Epsom",
 "FG": "Fair Grounds",
 "FAIR GROUNDS": "Fair Grounds",
+"FLAMBORO": "Flamboro",
+"FLAMBORO DOWNS": "Flamboro",
 "FONTWELL": "Fontwell Park",
 "FONTWELL PARK": "Fontwell Park",
 "GREAT YARMOUTH": "Great Yarmouth",
@@ -700,6 +703,7 @@ VENUE_MAP = {
 "MOHAWK": "Mohawk",
 "MOHAWK PARK": "Mohawk",
 "MUSSELBURGH": "Musselburgh",
+"NORTHFIELD PARK": "Northfield Park",
 "NAAS": "Naas",
 "NEWCASTLE": "Newcastle",
 "NEWMARKET": "Newmarket",
@@ -733,6 +737,8 @@ VENUE_MAP = {
 "VINCENNES": "Vincennes",
 "WARWICK": "Warwick",
 "WETHERBY": "Wetherby",
+"WESTERN FAIR": "Western Fair",
+"WESTERN FAIR RACEWAY": "Western Fair",
 "WOLVERHAMPTON": "Wolverhampton",
 "WO": "Woodbine",
 "WOODBINE": "Woodbine",
@@ -1483,7 +1489,8 @@ class RacePageFetcherMixin:
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
     ADAPTER_TYPE: ClassVar[str] = "discovery"
-    PROVIDES_ODDS: ClassVar[bool] = True  # GPT5 Fix: discovery-only adapters set this to False
+    # Default to False to ensure races with partial odds data are analyzed (GPT5 Fix)
+    PROVIDES_ODDS: ClassVar[bool] = False
 
     def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
         self.source_name = source_name
@@ -1736,6 +1743,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
 class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
+    PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.skyracingworld.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -2291,6 +2299,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
 # ----------------------------------------
 class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "BoyleSports"
+    PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.boylesports.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -2360,6 +2369,7 @@ class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # ----------------------------------------
 class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SportingLife"
+    PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.sportinglife.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -2855,6 +2865,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 # ----------------------------------------
 class TabAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TAB"
+    PROVIDES_ODDS: ClassVar[bool] = False
     # Note: api.tab.com.au often has DNS resolution issues in some environments.
     # api.beta.tab.com.au is more reliable.
     BASE_URL: ClassVar[str] = "https://api.beta.tab.com.au/v1/tab-info-service/racing"
@@ -3016,6 +3027,7 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
 # ----------------------------------------
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
+    PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.equibase.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -3254,6 +3266,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 # ----------------------------------------
 class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TwinSpires"
+    PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.twinspires.com"
 
     RACE_CONTAINER_SELECTORS: ClassVar[List[str]] = ['div[class*="RaceCard"]', 'div[class*="race-card"]', 'div[data-testid*="race"]', 'div[data-race-id]', 'section[class*="race"]', 'article[class*="race"]', ".race-container", "[data-race]", 'div[class*="card"][class*="race" i]', 'div[class*="event"]']
@@ -3766,7 +3779,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         now = datetime.now(EASTERN)
 
         # Success Playbook Hardening (Council of Superbrains)
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
+        # Lowered from 0.7 to 0.4 to improve yield from adapters with partial odds (GPT5 Fix)
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.4)
 
         for race in races:
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)

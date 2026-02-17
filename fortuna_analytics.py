@@ -803,6 +803,7 @@ class PageFetchingResultsAdapter(
 
         compact_formats = (
             dt.strftime("%Y%m%d"),       # 20260209
+            dt.strftime("%m%d"),         # 0209
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1823,7 +1824,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     )
 
     _RUNNER_RE = re.compile(
-        r"(\d+)-([A-Za-z\s']{3,}?)\s+([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?",
+        r"(\d+)-(.+?)\s{2,}([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?\s*([\d.]+)?",
     )
 
     _BET_NAME_MAP: Final[Dict[str, str]] = {
@@ -1879,9 +1880,9 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         parser = HTMLParser(html)
 
         exotics: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
-        runners: List[ResultRunner] = []
-        position_counter = 1
+        runners_map: Dict[int, ResultRunner] = {}
 
+        # 1. Parse payouts and finishers from <strong> tags
         for s in parser.css("strong"):
             txt = fortuna.node_text(s).strip()
 
@@ -1897,32 +1898,92 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                         break
                 continue
 
-            # Check for runner line
+            # Check for finisher line (Top 3)
+            # Format: NUM-NAME   WIN_PAY  PLACE_PAY  SHOW_PAY  POOL
             m = self._RUNNER_RE.match(txt)
             if m:
                 num = int(m.group(1))
                 name = m.group(2).strip()
-                win_pay = parse_currency_value(m.group(3)) if m.group(3) else 0.0
-                place_pay = parse_currency_value(m.group(4)) if m.group(4) else 0.0
-                show_pay = parse_currency_value(m.group(5)) if m.group(5) else 0.0
-                odds_val = parse_currency_value(m.group(6)) if m.group(6) else 0.0
 
-                # Populating final_win_odds from win_payout or explicit odds (GPT5 Fix)
-                final_odds = odds_val
-                if final_odds <= 0 and win_pay > 0:
-                    final_odds = round(win_pay / 2.0, 2)
+                # Handling column-aware payouts based on available numbers
+                nums = [p for p in m.groups()[2:] if p is not None]
+                win_pay = place_pay = show_pay = 0.0
 
-                runners.append(ResultRunner(
+                # Standardbred Canada format:
+                # Winner: NUM-NAME WIN PLACE SHOW POOL
+                # 2nd:    NUM-NAME PLACE SHOW POOL
+                # 3rd:    NUM-NAME SHOW POOL
+                if len(nums) == 4: # Winner
+                    win_pay = parse_currency_value(nums[0])
+                    place_pay = parse_currency_value(nums[1])
+                    show_pay = parse_currency_value(nums[2])
+                elif len(nums) == 3: # 2nd place
+                    place_pay = parse_currency_value(nums[0])
+                    show_pay = parse_currency_value(nums[1])
+                elif len(nums) == 2: # 3rd place
+                    show_pay = parse_currency_value(nums[0])
+
+                runners_map[num] = ResultRunner(
                     name=name,
                     number=num,
-                    position=str(position_counter),
                     win_payout=win_pay,
                     place_payout=place_pay,
                     show_payout=show_pay,
-                    final_win_odds=final_odds if final_odds > 0 else None,
-                ))
-                position_counter += 1
+                )
 
+        # 2. Parse Horse table for odds and positions (Source of Truth for ALL runners)
+        in_horse_table = False
+        for line in html.splitlines():
+            clean_line = line.strip()
+            if clean_line.startswith("Horse ") and "Odds" in clean_line:
+                in_horse_table = True
+                continue
+            if in_horse_table:
+                if not clean_line or "Time:" in clean_line or "Temp:" in clean_line or "---" in clean_line:
+                    if clean_line and re.match(r"^\d+", clean_line):
+                        pass # Continue if it looks like a runner
+                    else:
+                        in_horse_table = False
+                        continue
+
+                # Table line: 2   Forefather(L)               2    9/14T ... 8.60   T Schlatman
+                rm = re.match(r"^(\d+)\s+(.+?)\s{2,}", clean_line)
+                if rm:
+                    num = int(rm.group(1))
+                    name = rm.group(2).split("(")[0].strip()
+
+                    # Extract odds (numeric value near the end, possibly with *)
+                    parts = clean_line.split()
+                    final_odds = None
+                    for p in reversed(parts[1:-1]): # Skip trainer at end
+                        os = p.replace("*", "")
+                        try:
+                            val = float(os)
+                            if 0.0 <= val < 1000.0:
+                                final_odds = val
+                                break
+                        except ValueError:
+                            continue
+
+                    # Extract position from "Finish" column (usually 7th or 8th part)
+                    # We pick the LAST one matching the pattern to avoid 1/4, 1/2, 3/4, Stretch calls
+                    pos = None
+                    for p in parts[3:]:
+                        if "/" in p and re.match(r"^\d+[A-Z]*/", p):
+                            pos = p.split("/")[0]
+
+                    if num in runners_map:
+                        runners_map[num].final_win_odds = final_odds
+                        if pos: runners_map[num].position = pos
+                    else:
+                        runners_map[num] = ResultRunner(
+                            name=name,
+                            number=num,
+                            position=pos,
+                            final_win_odds=final_odds
+                        )
+
+        runners = list(runners_map.values())
         if not runners:
             return None
 
