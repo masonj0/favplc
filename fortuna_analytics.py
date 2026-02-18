@@ -3023,6 +3023,8 @@ async def run_analytics(
     *,
     include_lifetime_stats: bool = False,
     lookback_hours: Optional[int] = None,
+    include_adapters: Optional[List[str]] = None,
+    quality: Optional[str] = None,
 ) -> None:
     """Main analytics entry: harvest → audit → report → GHA summary."""
     valid_dates = [d for d in target_dates if validate_date_format(d)]
@@ -3060,6 +3062,15 @@ async def run_analytics(
                 _analytics_logger.info("Targeting venues", venues=sorted(target_venues))
 
         async with managed_adapters(region=region, target_venues=target_venues) as adapters:
+            # Filter adapters by quality or include list (Council of Superbrains strategy)
+            if include_adapters:
+                adapters = [a for a in adapters if a.source_name in include_adapters]
+
+            if quality:
+                if quality == "solid":
+                    adapters = [a for a in adapters if a.source_name in fortuna.SOLID_RESULTS_ADAPTERS]
+                else:
+                    adapters = [a for a in adapters if a.source_name not in fortuna.SOLID_RESULTS_ADAPTERS]
             harvest_summary: Dict[str, Dict[str, Any]] = {
                 a.source_name: {"count": 0, "max_odds": 0.0}
                 for a in adapters
@@ -3145,6 +3156,8 @@ def main() -> None:
         "--include-lifetime-stats", action="store_true",
         help="Include lifetime summary statistics in report",
     )
+    parser.add_argument("--include", help="Comma-separated adapter names to include")
+    parser.add_argument("--quality", choices=["solid", "lousy"], help="Filter by quality")
     args = parser.parse_args()
 
     if args.db_path != DEFAULT_DB_PATH:
@@ -3185,6 +3198,8 @@ def main() -> None:
             region=args.region,
             include_lifetime_stats=args.include_lifetime_stats,
             lookback_hours=args.lookback_hours,
+            include_adapters=args.include.split(",") if args.include else None,
+            quality=args.quality,
         ),
     )
 

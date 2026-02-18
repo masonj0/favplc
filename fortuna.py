@@ -376,6 +376,10 @@ INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingAndSportsResults", "TimeformResults"
 }
 
+# Quality-based Partitioning (JB/Council Strategy)
+SOLID_DISCOVERY_ADAPTERS: Final[set] = {"TwinSpires", "SkyRacingWorld", "RacingPost"}
+SOLID_RESULTS_ADAPTERS: Final[set] = {"StandardbredCanadaResults", "RacingPostResults", "SportingLifeResults"}
+
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
@@ -7734,6 +7738,7 @@ async def main_all_in_one():
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
     parser.add_argument("--region", type=str, choices=["USA", "INT", "GLOBAL"], help="Filter by region (USA, INT or GLOBAL)")
+    parser.add_argument("--quality", choices=["solid", "lousy"], help="Filter by adapter quality (Solid Top 3 vs others)")
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
     parser.add_argument("--save", type=str, help="Save races to JSON file")
     parser.add_argument("--load", type=str, help="Load races from JSON file(s), comma-separated")
@@ -7798,6 +7803,21 @@ async def main_all_in_one():
             adapter_filter = [n for n in adapter_filter if n in target_set]
         else:
             adapter_filter = list(target_set)
+
+    # Quality-based adapter filtering (Council of Superbrains Strategy)
+    if args.quality:
+        if args.quality == "solid":
+            if adapter_filter:
+                adapter_filter = [n for n in adapter_filter if n in SOLID_DISCOVERY_ADAPTERS]
+            else:
+                adapter_filter = list(SOLID_DISCOVERY_ADAPTERS)
+        else:
+            if adapter_filter:
+                adapter_filter = [n for n in adapter_filter if n not in SOLID_DISCOVERY_ADAPTERS]
+            else:
+                # All adapters except solid
+                all_names = [getattr(c, "SOURCE_NAME", c.__name__) for c in get_discovery_adapter_classes()]
+                adapter_filter = [n for n in all_names if n not in SOLID_DISCOVERY_ADAPTERS]
 
         # Special case: TwinSpires needs to know its region internally if it's not filtered out
         # We can pass the region via config if we were creating adapters manually,
