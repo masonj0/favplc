@@ -921,6 +921,13 @@ class SmartOddsExtractor:
     def extract_from_text(text: str) -> Optional[float]:
         if not text: return None
         # Try to find common odds patterns in the text
+        # 0. Check for specific keywords followed by odds (Jules Fix)
+        # Patterns like: "Odds: 5/2", "Line 4.0", "M/L 10-1"
+        keyword_match = re.search(r"(?:odds|line|m/l|ml)[:\s]+(\d+[/-]\d+|\d+\.\d+)", text, re.I)
+        if keyword_match:
+            if val := parse_odds_to_decimal(keyword_match.group(1)):
+                return val
+
         # 1. Decimal odds (e.g. 5.00, 10.5)
         decimals = re.findall(r"(\d+\.\d+)", text)
         for d in decimals:
@@ -1743,6 +1750,10 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
             odds_node = row.css_first(".odds-win")
             win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
 
+            # Advanced heuristic fallback
+            if win_odds is None:
+                win_odds = SmartOddsExtractor.extract_from_node(row)
+
             odds_data = {}
             if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                 odds_data[self.SOURCE_NAME] = ov
@@ -1864,10 +1875,25 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         if not header: return None
 
         header_text = clean_text(node_text(header))
+
+        # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+        # URL usually /form-guide/australia/wyong/2026-02-17/R1
+        venue = None
+        url_parts = url.lower().split("/")
+        if "form-guide" in url_parts:
+            idx = url_parts.index("form-guide")
+            # Skip discipline if present (thoroughbred, harness, greyhound)
+            if len(url_parts) > idx + 1 and url_parts[idx+1] in ["thoroughbred", "harness", "greyhound"]:
+                idx += 1
+            if len(url_parts) > idx + 2:
+                # idx+1 is country, idx+2 is track
+                venue = normalize_venue_name(url_parts[idx+2])
+
         match = re.search(r"(\d{1,2}:\d{2})\s+(.+)", header_text)
         if match:
             time_str = match.group(1)
-            venue = normalize_venue_name(match.group(2))
+            if not venue:
+                venue = normalize_venue_name(match.group(2))
         else:
             venue = normalize_venue_name(header_text)
             time_str = "12:00" # Fallback
@@ -2502,7 +2528,8 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             try:
                 parser = HTMLParser(html_content)
                 race = self._parse_from_next_data(parser, race_date, item.get("race_number"), html_content)
-                if not race: race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content)
+                if not race:
+                    race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content, item.get("url", ""))
                 if race: races.append(race)
             except Exception: pass
         return races
@@ -2552,7 +2579,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if not runners: return None
         return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
-    def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
+    def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
         if not h1: return None
         ht = clean_text(node_text(h1))
@@ -2561,7 +2588,16 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if not parts: return None
         try: start_time = datetime.combine(race_date, datetime.strptime(parts[0], "%H:%M").time())
         except Exception: return None
-        track_name = normalize_venue_name(" ".join(parts[1:]))
+
+        # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+        track_name = None
+        url_parts = url.lower().split("/")
+        if len(url_parts) >= 5:
+            # 0: '', 1: 'racing', 2: 'racecards', 3: 'date', 4: 'venue'
+            track_name = normalize_venue_name(url_parts[4])
+
+        if not track_name:
+            track_name = normalize_venue_name(" ".join(parts[1:]))
         runners = []
         for row in parser.css('div[class*="RunnerCard"]'):
             try:
@@ -2685,7 +2721,18 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                 if tn and cn: rts, tnr = clean_text(node_text(tn)) or "", clean_text(node_text(cn)) or ""
                 else: continue
             else: rts, tnr = m.group(1), m.group(2)
-            track_name = normalize_venue_name(tnr)
+
+            # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+            # URL usually /racing/racecards/ludlow/17-02-2026/
+            track_name = None
+            url_parts = item.get("url", "").lower().split("/")
+            if "racecards" in url_parts:
+                idx = url_parts.index("racecards")
+                if len(url_parts) > idx + 1:
+                    track_name = normalize_venue_name(url_parts[idx+1])
+
+            if not track_name:
+                track_name = normalize_venue_name(tnr)
             if not track_name: continue
             try: start_time = datetime.combine(race_date, datetime.strptime(rts, "%H:%M").time())
             except Exception: continue
@@ -2906,17 +2953,18 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         if dm: dist = dm.group(1)
         runners = []
         for line in content.split("\n"):
-            # Robust runner detection: starts with number, then name, possibly followed by (L) or other markers
-            m = re.search(r"^\s*(\d+)\s+([A-Z0-9' ]+)", line, re.I)
+            # Robust runner detection: starts with number, then name, possibly followed by (L), (B), or other markers
+            # Expanded name character set to handle hyphens, periods, etc. (Jules Fix)
+            m = re.search(r"^\s*(\d+)\s+([A-Z0-9'\-. ]+)", line, re.I)
             if m:
                 num, name = int(m.group(1)), m.group(2).strip()
-                # If name is followed by (L), strip it
-                name = re.sub(r"\(L\)$|\(L\)\s+", "", name).strip()
+                # If name is followed by (L), (B), (AE) etc, strip it
+                name = re.sub(r"\s*\([A-Z/]+\)\s*$", "", name).strip()
                 sc = "SCR" in line or "Scratched" in line
                 # Try smarter odds extraction from the line
-                # Harness entries often have ML odds like 5/2 or 5-2 near the end or after 'ML'
+                # Harness entries often have ML odds like 5/2 or 5-2 near the end or after 'ML', 'M/L', or 'Morning Line'
                 wo = None
-                ml_match = re.search(r"ML\s*(\d+[/-]\d+|[0-9.]+)", line, re.I)
+                ml_match = re.search(r"(?:ML|M/L|Morning Line)\s*(\d+[/-]\d+|[0-9.]+)", line, re.I)
                 if ml_match:
                     wo = parse_odds_to_decimal(ml_match.group(1))
 
@@ -6383,6 +6431,11 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 return None
 
             win_odds = parse_odds_to_decimal(odds_str)
+
+            # Advanced heuristic fallback
+            if win_odds is None:
+                win_odds = SmartOddsExtractor.extract_from_node(row)
+
             odds_dict = {}
             if odds_data := create_odds_data(self.source_name, win_odds):
                 odds_dict[self.source_name] = odds_data
@@ -6635,6 +6688,10 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 if odds_tag:
                     win_odds = parse_odds_to_decimal(clean_text(node_text(odds_tag)))
 
+            # Advanced heuristic fallback
+            if win_odds is None:
+                win_odds = SmartOddsExtractor.extract_from_node(row)
+
             odds_data = {}
             if odds_val := create_odds_data(self.source_name, win_odds):
                 odds_data[self.source_name] = odds_val
@@ -6886,6 +6943,11 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             odds = {}
             if not scratched:
                 win_odds = parse_odds_to_decimal(odds_str)
+
+                # Advanced heuristic fallback
+                if win_odds is None:
+                    win_odds = SmartOddsExtractor.extract_from_node(node)
+
                 if odds_data := create_odds_data(self.source_name, win_odds):
                     odds[self.source_name] = odds_data
 
