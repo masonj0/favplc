@@ -8,16 +8,19 @@ import platform
 import os
 
 if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
-    # Running as frozen EXE on Windows - force ProactorEventLoop by default
+    # Running as frozen EXE on Windows
     import asyncio
     try:
-        # GPT5 Fix: Allow override for curl_cffi compatibility if Playwright isn't needed
-        if os.getenv("FORTUNA_USE_SELECTOR_EVENT_LOOP") == "1":
+        # Check if Playwright is likely to be available
+        playwright_path = os.path.expanduser("~\\AppData\\Local\\ms-playwright")
+        has_playwright = os.path.exists(playwright_path)
+
+        # GPT5 Fix: Default to Selector loop if Playwright is missing to satisfy curl_cffi
+        if os.getenv("FORTUNA_USE_SELECTOR_EVENT_LOOP") == "1" or not has_playwright:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         else:
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except AttributeError:
-        # Fallback for older Python versions if needed, though 3.8+ is standard now
         pass
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # fortuna_discovery_engine.py
@@ -236,8 +239,8 @@ def print_status_card(config: Dict[str, Any]):
 
     # Reports
     reports = []
-    if Path("summary_grid.txt").exists(): reports.append("Summary")
-    if Path("fortuna_report.html").exists(): reports.append("HTML")
+    if get_writable_path("summary_grid.txt").exists(): reports.append("Summary")
+    if get_writable_path("fortuna_report.html").exists(): reports.append("HTML")
     if reports:
         print_func(f" 📁 Latest Reports: {', '.join(reports)}")
 
@@ -315,7 +318,7 @@ async def print_recent_logs():
 
 def open_report_in_browser():
     """Opens the HTML report in the default system browser."""
-    html_path = Path("fortuna_report.html")
+    html_path = get_writable_path("fortuna_report.html")
     if html_path.exists():
         print(f"Opening {html_path} in your browser...")
         try:
@@ -1471,7 +1474,7 @@ class DebugMixin:
     def _save_debug_snapshot(self, content: str, context: str, url: Optional[str] = None) -> None:
         if not content or not os.getenv("DEBUG_SNAPSHOTS"): return
         try:
-            d = Path("debug_snapshots")
+            d = get_writable_path("debug_snapshots")
             d.mkdir(parents=True, exist_ok=True)
             f = d / f"{context}_{datetime.now(EASTERN).strftime('%Y%m%d_%H%M%S')}.html"
             with open(f, "w", encoding="utf-8") as out:
@@ -1499,7 +1502,8 @@ class RacePageFetcherMixin:
                         resp = None
                         for attempt in range(2): # 1 retry
                             resp = await self.make_request("GET", url, headers=headers)
-                            if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 500:
+                            # Lowered threshold to 100 to avoid unnecessary retries for small valid data files (Jules Fix)
+                            if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 100:
                                 break
                             await asyncio.sleep(1 * (attempt + 1))
 
@@ -5040,16 +5044,23 @@ def write_job_summary(predictions_md: str, harvest_md: str, proof_md: str, artif
             structlog.get_logger().error("job_summary_write_failed", error=str(e))
 
 
-def get_db_path() -> str:
-    """Returns the path to the SQLite database, using AppData in frozen mode."""
+def get_writable_path(filename: str) -> Path:
+    """Returns a writable path for the given filename, using AppData in frozen mode."""
     if is_frozen() and sys.platform == "win32":
         appdata = os.getenv('APPDATA')
         if appdata:
-            db_dir = Path(appdata) / "Fortuna"
-            db_dir.mkdir(parents=True, exist_ok=True)
-            return str(db_dir / "fortuna.db")
+            out_dir = Path(appdata) / "Fortuna"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            target = out_dir / filename
+            # Ensure subdirectories within Fortuna folder exist (Jules Fix)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            return target
+    return Path(filename)
 
-    return os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
+
+def get_db_path() -> str:
+    """Returns the path to the SQLite database, using AppData in frozen mode."""
+    return str(get_writable_path("fortuna.db"))
 
 
 class FortunaDB:
@@ -6141,18 +6152,20 @@ class FavoriteToPlaceMonitor:
         bn = self.get_bet_now_races()
         yml = self.get_you_might_like_races(bet_now_races=bn)
 
+        target_file = get_writable_path(filename)
+        alert_file = get_writable_path("monitor_empty.alert")
+
         if not bn:
             self.logger.warning("🔭 Monitor found 0 BET NOW opportunities", total_checked=len(self.golden_zone_races))
             # Structured telemetry for monitoring
             structlog.get_logger("FortunaTelemetry").warning("empty_bet_now_list", golden_zone_count=len(self.golden_zone_races))
             # Create an indicator file for downstream monitoring (GPT5 Improvement)
             try:
-                Path("monitor_empty.alert").write_text(datetime.now(EASTERN).isoformat())
+                alert_file.write_text(datetime.now(EASTERN).isoformat())
             except Exception: pass
         else:
             # Clear alert if it exists
             try:
-                alert_file = Path("monitor_empty.alert")
                 if alert_file.exists(): alert_file.unlink()
             except Exception: pass
 
@@ -6168,11 +6181,11 @@ class FavoriteToPlaceMonitor:
         }
         try:
             # Ensure parent directory exists (GPT5 Improvement)
-            Path(filename).parent.mkdir(parents=True, exist_ok=True)
-            with open(filename, 'w', encoding='utf-8') as f:
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(target_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            self.logger.error("failed_saving_race_data", path=filename, error=str(e))
+            self.logger.error("failed_saving_race_data", path=str(target_file), error=str(e))
 
         # Persistent history log
         self._append_to_history(bn + yml)
@@ -6180,10 +6193,10 @@ class FavoriteToPlaceMonitor:
     def _append_to_history(self, races: List[RaceSummary]):
         """Append races to persistent history for future result matching."""
         if not races: return
-        history_file = "prediction_history.jsonl"
+        history_file = get_writable_path("prediction_history.jsonl")
         timestamp = datetime.now(EASTERN).isoformat()
         try:
-            with open(history_file, 'a') as f:
+            with open(history_file, 'a', encoding='utf-8') as f:
                 for r in races:
                     record = r.to_dict()
                     record["logged_at"] = timestamp
@@ -7202,8 +7215,9 @@ async def run_discovery(
             adapters = []
             # Ensure harvest files exist even for loaded runs (Memory Directive Fix)
             try:
-                if not os.path.exists("discovery_harvest.json"):
-                    with open("discovery_harvest.json", "w") as f:
+                harvest_file = get_writable_path("discovery_harvest.json")
+                if not harvest_file.exists():
+                    with open(harvest_file, "w") as f:
                         json.dump(harvest_summary, f)
             except Exception: pass
         else:
@@ -7281,9 +7295,10 @@ async def run_discovery(
             finally:
                 # Save discovery harvest summary for GHA reporting and DB persistence
                 try:
+                    harvest_file = get_writable_path("discovery_harvest.json")
                     # Only create if it doesn't exist or we have data
-                    if harvest_summary or not os.path.exists("discovery_harvest.json"):
-                        with open("discovery_harvest.json", "w") as f:
+                    if harvest_summary or not harvest_file.exists():
+                        with open(harvest_file, "w") as f:
                             json.dump(harvest_summary, f)
 
                     if harvest_summary:
@@ -7302,9 +7317,10 @@ async def run_discovery(
             logger.error("No races fetched from any adapter. Discovery aborted.")
             if save_path:
                 try:
-                    with open(save_path, "w") as f:
+                    target_save = get_writable_path(save_path)
+                    with open(target_save, "w") as f:
                         json.dump([], f)
-                    logger.info("Saved empty race list to file", path=save_path)
+                    logger.info("Saved empty race list to file", path=str(target_save))
                 except Exception as e:
                     logger.error("Failed to save empty race list", error=str(e))
             return
@@ -7385,9 +7401,10 @@ async def run_discovery(
         # Save raw fetched/merged races if requested (Save EVERYTHING unique)
         if save_path:
             try:
-                with open(save_path, "w") as f:
+                target_save = get_writable_path(save_path)
+                with open(target_save, "w") as f:
                     json.dump([r.model_dump(mode='json') for r in unique_races], f, indent=4)
-                logger.info("Saved all unique races to file", path=save_path)
+                logger.info("Saved all unique races to file", path=str(target_save))
             except Exception as e:
                 logger.error("Failed to save races", error=str(e))
 
@@ -7440,7 +7457,7 @@ async def run_discovery(
         # Generate friendly HTML report
         try:
             html_content = await generate_friendly_html_report(qualified, stats)
-            html_path = Path("fortuna_report.html")
+            html_path = get_writable_path("fortuna_report.html")
             html_path.write_text(html_content, encoding="utf-8")
             logger.info("Friendly HTML report generated", path=str(html_path))
 
@@ -7502,9 +7519,9 @@ async def run_discovery(
 
         # Always save reports to files (GPT5 Improvement: Defensive guards)
         try:
-            with open("summary_grid.txt", "w", encoding='utf-8') as f: f.write(grid)
-            with open("field_matrix.txt", "w", encoding='utf-8') as f: f.write(field_matrix)
-            with open("goldmine_report.txt", "w", encoding='utf-8') as f: f.write(gm_report)
+            with open(get_writable_path("summary_grid.txt"), "w", encoding='utf-8') as f: f.write(grid)
+            with open(get_writable_path("field_matrix.txt"), "w", encoding='utf-8') as f: f.write(field_matrix)
+            with open(get_writable_path("goldmine_report.txt"), "w", encoding='utf-8') as f: f.write(gm_report)
         except Exception as e:
             logger.error("failed_saving_text_reports", error=str(e))
 
@@ -7515,7 +7532,7 @@ async def run_discovery(
             "timestamp": datetime.now(EASTERN).isoformat(),
         }
         try:
-            with open("qualified_races.json", "w", encoding='utf-8') as f:
+            with open(get_writable_path("qualified_races.json"), "w", encoding='utf-8') as f:
                 json.dump(report_data, f, indent=4)
         except Exception as e:
             logger.error("failed_saving_qualified_races", error=str(e))
@@ -7849,13 +7866,11 @@ if __name__ == "__main__":
         os.makedirs("debug_snapshots", exist_ok=True)
     
     # Windows Event Loop Policy Fix (Project Hardening)
-    if sys.platform == 'win32':
+    if sys.platform == 'win32' and not getattr(sys, 'frozen', False):
         try:
-            # We prefer ProactorEventLoopPolicy for subprocess support (Playwright requirement)
-            # This is also set at the top of the file for frozen EXEs.
+            # For non-frozen mode, we prefer Proactor for full feature support
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
         except AttributeError:
-            # Fallback if Proactor is not available (should be rare on modern Windows)
             try:
                 asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
             except AttributeError:

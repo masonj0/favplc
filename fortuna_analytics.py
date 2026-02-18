@@ -2929,7 +2929,7 @@ async def _save_harvest_summary(
     region: Optional[str],
 ) -> None:
     try:
-        Path("results_harvest.json").write_text(
+        Path(fortuna.get_writable_path("results_harvest.json")).write_text(
             json.dumps(harvest_summary, indent=2), encoding="utf-8",
         )
     except OSError:
@@ -3006,7 +3006,7 @@ async def _generate_and_save_report(
     print(report)
 
     try:
-        Path("analytics_report.txt").write_text(report, encoding="utf-8")
+        Path(fortuna.get_writable_path("analytics_report.txt")).write_text(report, encoding="utf-8")
         _analytics_logger.info("Report saved", path="analytics_report.txt")
     except OSError:
         _analytics_logger.error("Failed to save report", exc_info=True)
