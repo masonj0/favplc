@@ -509,9 +509,14 @@ jobs:
           """)
           sample_tip = c.fetchone()
           if sample_tip:
-              emit(f"- **Sample race_id:** `{sample_tip[0]}`")
-              parts = sample_tip[0].split('|')
-              emit(f"- **Components:** venue=`{parts[0]}`, race=`{parts[1]}`, date=`{parts[2]}`, time=`{parts[3]}`, disc=`{parts[4]}`")
+              race_id = sample_tip[0]
+              emit(f"- **Sample race_id:** `{race_id}`")
+              parts = race_id.split('|')
+
+              if len(parts) >= 5:
+                  emit(f"- **Components:** venue=`{parts[0]}`, race=`{parts[1]}`, date=`{parts[2]}`, time=`{parts[3]}`, disc=`{parts[4]}`")
+              else:
+                  warning(f"Unexpected race_id format: `{race_id}` (found {len(parts)} parts, expected >= 5)")
 
               canonical = fortuna.get_canonical_venue(sample_tip[1])
               if canonical == "unknown":
