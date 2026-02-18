@@ -1600,6 +1600,9 @@ class BaseAdapterV3(ABC):
                     if best:
                         runner.win_odds = float(best)
                         trustworthy_runners += 1
+                    else:
+                        # Clear invalid or missing odds to maintain hygiene (GPT5 Fix)
+                        runner.win_odds = None
                     total_runners += 1
 
         if total_runners > 0:

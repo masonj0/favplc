@@ -11,12 +11,11 @@ from fortuna import FortunaDB
 
 async def purge_records():
     """
-    One-time cleanup script to purge all records from the database EXCEPT those
-    fully matching Feb 17, 2026 (USA EST).
+    CRITICAL ONE-TIME CLEANUP: Purges all records from the database EXCEPT those
+    strictly occurring on Feb 17, 2026 (USA EST).
 
-    Target:
-    - tips: report_date must be Feb 17 AND start_time must be Feb 17.
-    - harvest_logs: timestamp must be Feb 17.
+    This ensures that 2/16 (past) and 2/18 (future) records are removed,
+    preserving only the high-signal data from today.
     """
     db = FortunaDB()
     # Initialize ensures tables exist and applies migrations
@@ -30,10 +29,10 @@ async def purge_records():
         cursor = conn.cursor()
 
         # Target date: 2026-02-17
-        # In Fortuna, all timestamps are stored in US Eastern Time (EST/EDT).
+        # Timestamps are stored in US Eastern Time (EST/EDT).
         target_prefix = '2026-02-17'
 
-        print(f"CRITICAL CLEANUP: Purging all records NOT strictly on {target_prefix} USA EST...")
+        print(f"Purging all records NOT strictly on {target_prefix} USA EST...")
 
         # 1. Purge 'tips' table
         cursor.execute("SELECT COUNT(*) FROM tips")
@@ -67,13 +66,12 @@ async def purge_records():
 
         conn.commit()
 
-        total_deleted = tips_deleted + logs_deleted
-        if total_deleted > 0:
-            print("  • VACUUMing database for optimal storage and performance...")
+        if (tips_deleted + logs_deleted) > 0:
+            print("  • VACUUMing database...")
             conn.execute("VACUUM")
             print("  • VACUUM complete.")
 
-        print(f"\n✅ Cleanup Complete. Only Feb 17, 2026 USA EST strictly-contained records remain in {db_path}.")
+        print(f"\n✅ SUCCESS: Only Feb 17, 2026 USA EST strictly-contained records remain in {db_path}.")
 
     finally:
         conn.close()
