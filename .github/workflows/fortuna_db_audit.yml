@@ -1,293 +1,48 @@
-name: Fortuna DB Audit
+name: Nightly Database Audit
 
 on:
-  workflow_dispatch:
+  schedule:
+    - cron: '0 4,18 * * *'  # 4:00 and 18:00 UTC
   workflow_run:
     workflows: ["List of Best Bets"]
-    types: [completed]
-  schedule:
-    - cron: '0 18 * * *'  # After UK/IRE afternoon cards finish
-    - cron: '0 4 * * *'   # After US evening cards finish
-
-concurrency:
-  group: fortuna-db-audit
-  cancel-in-progress: true
+    types:
+      - completed
+  workflow_dispatch:
 
 jobs:
-  inspect:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+  audit-only:
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Restore Master Database
-        id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-READ-ONLY
+          key: fortuna-db-v3-master-${{ github.run_number }}
           restore-keys: fortuna-db-v3-master-
 
-      - name: Verify database exists
+      - name: Install dependencies
         run: |
-          if [ ! -f fortuna.db ]; then
-            echo "::error::Database not found after cache restore. Check that the analytics workflow saves with key 'fortuna-db-master-*'"
-            echo "## ❌ Database Not Found" >> "$GITHUB_STEP_SUMMARY"
-            echo "Cache restore failed. The analytics workflow must save the DB with a key matching \`fortuna-db-master-*\`." >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-          echo "DB size: $(stat -f%z fortuna.db 2>/dev/null || stat -c%s fortuna.db) bytes"
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
 
-      - name: Run inspector
-        id: inspect
-        run: |
-          python scripts/fortuna_db_inspector.py fortuna.db -o full_report.txt
+      - name: Run Analytics Audit
+        env:
+          PYTHONPATH: .
+        run: python3 fortuna_analytics.py --days 3 --lookback-hours 72 --include-lifetime-stats
 
-          # ── Build a compact markdown summary for the job ──
-          cat <<'PYEOF' > _summary.py
-          import sqlite3, sys, os
-          from datetime import datetime
-
-          db = sys.argv[1]
-          if not os.path.exists(db):
-              print(f"## ⚠️ Error: Database {db} not found")
-              sys.exit(0)
-
-          conn = sqlite3.connect(db)
-          conn.row_factory = sqlite3.Row
-          c = conn.cursor()
-
-          size_kb = os.path.getsize(db) / 1024
-
-          # Discover tables
-          tables = [r["name"] for r in c.execute(
-              "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-          ).fetchall()]
-
-          # Row counts
-          counts = {}
-          for t in tables:
-              c.execute(f"SELECT COUNT(*) as n FROM '{t}'")
-              counts[t] = c.fetchone()["n"]
-
-          # Try to find tips/verdict/profit columns dynamically
-          def find_table(frag):
-              fl = frag.lower()
-              # Exact or plural match first
-              for t in tables:
-                  if t.lower() in (fl, fl + "s"):
-                      return t
-              # Then substring
-              return next((t for t in tables if fl in t.lower()), None)
-
-          def find_col(tbl, *frags):
-              cols = [r["name"] for r in c.execute(f"PRAGMA table_info('{tbl}')").fetchall()]
-              for f in frags:
-                  for co in cols:
-                      if f in co.lower():
-                          return co
-              return None
-
-          tips_t = find_table("tip")
-          verdict_col = find_col(tips_t, "verdict") if tips_t else None
-          profit_col  = find_col(tips_t, "net_profit", "profit", "pnl") if tips_t else None
-          date_col    = find_col(tips_t, "start_time", "date", "created") if tips_t else None
-
-          md = []
-          md.append("## 🏇 Fortuna DB Snapshot")
-          md.append(f"**Generated:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}  ")
-          md.append(f"**DB size:** {size_kb:.0f} KB\n")
-
-          # Table overview
-          def format_monospace_table(header, rows):
-              if not rows: return "No data"
-              col_widths = [len(h) for h in header]
-              for row in rows:
-                  for i, val in enumerate(row):
-                      col_widths[i] = max(col_widths[i], len(str(val)))
-              fmt = " | ".join([f"{{:<{w}}}" for w in col_widths])
-              lines = ["```text", fmt.format(*header), "-+-".join(["-" * w for w in col_widths])]
-              for row in rows:
-                  lines.append(fmt.format(*row))
-              lines.append("```")
-              return "\n".join(lines)
-
-          # Table overview
-          md.append("### Tables\n")
-          table_rows = [(t, f"{counts[t]:,}") for t in tables]
-          md.append(format_monospace_table(["Table", "Rows"], table_rows))
-
-          # Verdict + P&L block
-          if tips_t and verdict_col:
-              md.append("\n### Audit Summary\n")
-              v_rows = c.execute(f"""
-                  SELECT {verdict_col} as v, COUNT(*) as n
-                  FROM '{tips_t}'
-                  WHERE {verdict_col} IS NOT NULL AND {verdict_col} != ''
-                  GROUP BY v ORDER BY n DESC
-              """).fetchall()
-
-              total_audited = sum(r["n"] for r in v_rows)
-              cashed = sum(r["n"] for r in v_rows if "CASH" in (r["v"] or "").upper())
-              burned = sum(r["n"] for r in v_rows if "BURN" in (r["v"] or "").upper())
-              decided = cashed + burned
-              strike = f"{cashed/decided*100:.1f}%" if decided else "N/A"
-
-              verdict_data = []
-              for r in v_rows:
-                  pct = f"{r['n']/total_audited*100:.1f}%" if total_audited else ""
-                  verdict_data.append((r['v'], f"{r['n']:,}", pct))
-
-              md.append(format_monospace_table(["Verdict", "Count", "%"], verdict_data))
-              md.append(f"\n**Strike rate:** {strike} ({cashed}W / {burned}L of {decided} decided)")
-
-              if profit_col:
-                  md.append("\n### 📉 P&L Matrix\n")
-                  # Bucket by field size if column exists
-                  has_field_size = "field_size" in [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]
-
-                  if has_field_size:
-                      buckets = [
-                          ("Overall", "1=1"),
-                          ("Small (<=7)", "field_size <= 7"),
-                          ("Med (8-10)", "field_size BETWEEN 8 AND 10"),
-                          ("Large (11+)", "field_size >= 11")
-                      ]
-                  else:
-                      buckets = [("Overall", "1=1")]
-
-                  pnl_metrics = [
-                      ("Total P&L", "SUM({pc})"),
-                      ("Avg per tip", "AVG({pc})"),
-                      ("Best", "MAX({pc})"),
-                      ("Worst", "MIN({pc})"),
-                      ("Wins", "SUM(CASE WHEN {vc} LIKE 'CASH%' THEN 1 ELSE 0 END)"),
-                      ("Tips", "COUNT(*)")
-                  ]
-
-                  pnl_grid = []
-                  header = ["Metric"] + [b[0] for b in buckets]
-
-                  for label, agg in pnl_metrics:
-                      row = [label]
-                      for _, cond in buckets:
-                          sql = f"SELECT {agg.format(pc=profit_col, vc=verdict_col)} FROM '{tips_t}' WHERE {profit_col} IS NOT NULL AND {cond}"
-                          val = c.execute(sql).fetchone()[0]
-                          if val is None:
-                              row.append("-")
-                          elif label in ["Total P&L", "Avg per tip", "Best", "Worst"]:
-                              row.append(f"{val:+.2f}")
-                          else:
-                              row.append(f"{int(val):,}")
-                      pnl_grid.append(row)
-
-                  md.append(format_monospace_table(header, pnl_grid))
-
-              # Last 7 days mini-trend
-              if date_col and profit_col:
-                  week = c.execute(f"""
-                      SELECT DATE({date_col}) as d,
-                             COUNT(*) as n,
-                             SUM(CASE WHEN {verdict_col} LIKE '%CASH%' THEN 1 ELSE 0 END) as w,
-                             SUM({profit_col}) as pnl
-                      FROM '{tips_t}'
-                      WHERE {date_col} IS NOT NULL AND {verdict_col} IS NOT NULL
-                            AND {verdict_col} != ''
-                      GROUP BY d ORDER BY d DESC LIMIT 7
-                  """).fetchall()
-                  if week:
-                      md.append("\n### Last 7 Active Days\n")
-                      week_data = [(wr['d'], f"{wr['n']}", f"{wr['w']}", f"{(wr['pnl'] or 0):+.2f}") for wr in reversed(week)]
-                      md.append(format_monospace_table(["Date", "Tips", "Wins", "P&L"], week_data))
-
-          # ── Matching gap analysis ──
-          if tips_t and verdict_col:
-              total_tips = counts[tips_t]
-              unverified = c.execute(f"""
-                  SELECT COUNT(*) as n FROM '{tips_t}'
-                  WHERE {verdict_col} IS NULL OR {verdict_col} = ''
-              """).fetchone()["n"]
-
-              if unverified > 0:
-                  md.append(f"\n### 🔍 Matching Gap\n")
-                  md.append(f"**{unverified:,} / {total_tips:,} tips ({unverified/total_tips*100:.0f}%) have NO verdict.**\n")
-
-                  # Which venues are stuck?
-                  if "venue" in [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]:
-                      stuck = c.execute(f"""
-                          SELECT venue, COUNT(*) as n
-                          FROM '{tips_t}'
-                          WHERE {verdict_col} IS NULL OR {verdict_col} = ''
-                          GROUP BY venue ORDER BY n DESC LIMIT 10
-                      """).fetchall()
-
-                      results_t = find_table("result")
-                      result_venues = set()
-                      if results_t and "venue" in [r["name"] for r in c.execute(f"PRAGMA table_info('{results_t}')").fetchall()]:
-                          result_venues = {r["venue"].lower().strip() for r in c.execute(
-                              f"SELECT DISTINCT venue FROM '{results_t}'"
-                          ).fetchall() if r["venue"]}
-
-                      stuck_data = []
-                      for s in stuck:
-                          has_results = "YES" if s["venue"] and s["venue"].lower().strip() in result_venues else "NO"
-                          stuck_data.append((s['venue'], f"{s['n']}", has_results))
-
-                      md.append(format_monospace_table(["Venue", "Stuck Tips", "Results?"], stuck_data))
-
-                  # Age of oldest unverified tip
-                  if date_col:
-                      oldest = c.execute(f"""
-                          SELECT MIN({date_col}) as oldest
-                          FROM '{tips_t}'
-                          WHERE {verdict_col} IS NULL OR {verdict_col} = ''
-                      """).fetchone()
-                      if oldest["oldest"]:
-                          md.append(f"\n**Oldest unverified tip:** {oldest['oldest']}")
-                          md.append(f"_(Tips older than 48h will likely never be matched — results adapters only look back 2 days)_")
-
-          # Data quality flags
-          warnings = []
-          for t in tables:
-              if counts[t] == 0:
-                  warnings.append(f"⚠️ `{t}` is empty")
-          if tips_t:
-              cols = [r["name"] for r in c.execute(f"PRAGMA table_info('{tips_t}')").fetchall()]
-              for col in cols:
-                  c.execute(f"SELECT COUNT(*) as n FROM '{tips_t}' WHERE {col} IS NOT NULL")
-                  nn = c.fetchone()["n"]
-                  if nn == 0 and counts[tips_t] > 0:
-                      warnings.append(f"⚠️ `{tips_t}.{col}` is entirely NULL")
-
-          if warnings:
-              md.append("\n### ⚠️ Data Quality Flags\n")
-              for w in warnings:
-                  md.append(f"- {w}")
-
-          md.append(f"\n---\n*Full report attached as artifact.*")
-
-          conn.close()
-
-          # Write to GHA step summary
-          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "_summary.md")
-          with open(summary_path, "a") as f:
-              f.write("\n".join(md) + "\n")
-          PYEOF
-
-          python3 _summary.py fortuna.db
-
-      - name: Upload detailed report
+      - name: Generate Job Summary
         if: always()
-        uses: actions/upload-artifact@v4
+        run: python3 scripts/generate_gha_summary.py
+
+      - name: Save Master Database
+        if: always()
+        uses: actions/cache/save@v4
         with:
-          name: fortuna-db-report-${{ github.run_number }}
-          path: full_report.txt
-          retention-days: 7
+          path: fortuna.db
+          key: fortuna-db-v3-master-${{ github.run_number }}
