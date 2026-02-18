@@ -647,12 +647,21 @@ RACING_KEYWORDS = [
 "4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
 "DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
 "NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
-"SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS"
+"SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS",
+"SUZUKI", "MATCHBOOK", "STALLION", "GRADUATION", "QUALIFIER", "NOVICES", "HANDICAP"
 ]
 
 
 VENUE_MAP = {
 "ABU DHABI": "Abu Dhabi",
+"LUDLOW": "Ludlow",
+"SOUTHWELL": "Southwell",
+"PUNCHESTOWN": "Punchestown",
+"MARKET RASEN": "Market Rasen",
+"NEWBURY": "Newbury",
+"TAUNTON": "Taunton",
+"HEREFORD": "Hereford",
+"WOLVERHAMPTON": "Wolverhampton",
 "AQU": "Aqueduct",
 "AQUEDUCT": "Aqueduct",
 "ARGENTAN": "Argentan",
@@ -782,6 +791,11 @@ def normalize_venue_name(name: Optional[str]) -> str:
         idx = upper_name.find(" " + kw)
         if idx != -1:
             earliest_idx = min(earliest_idx, idx)
+
+    # Added: also look for first numeric digit preceded by a space (e.g. "Ludlow 13:30") (Jules Fix)
+    digit_match = re.search(r"\s\d", cleaned)
+    if digit_match:
+        earliest_idx = min(earliest_idx, digit_match.start())
 
     track_part = cleaned[:earliest_idx].strip()
     if not track_part:
@@ -2041,16 +2055,30 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
     def _parse_single_race(self, html_content: str, url_path: str, race_date: date, race_number_fallback: Optional[int]) -> Optional[Race]:
         parser = HTMLParser(html_content)
         track_name, time_str, header_text = None, None, ""
+
+        # Strategy 0: Extract track name from URL if possible (most reliable for UK tracks) (Jules Fix)
+        # URL usually /racecard/ludlow/2026-02-17/1330
+        url_parts = url_path.lower().split("/")
+        for marker in ["racecard", "racecards"]:
+            if marker in url_parts:
+                idx = url_parts.index(marker)
+                for candidate in url_parts[idx+1:]:
+                    if candidate and candidate not in ["international", "uk-ire", "usa"] and not re.match(r"\d{4}-\d{2}-\d{2}", candidate) and not re.match(r"\d{4}", candidate):
+                        track_name = normalize_venue_name(candidate)
+                        break
+                if track_name: break
+
         header = parser.css_first(".race-header__details") or parser.css_first(".racecard-header")
         if header:
             header_text = clean_text(node_text(header)) or ""
             time_match = re.search(r"(\d{1,2}:\d{2})", header_text)
             if time_match:
                 time_str = time_match.group(1)
-                track_raw = re.sub(r"\d{1,2}\s+[A-Za-z]{3}\s+\d{4}", "", header_text.replace(time_str, "")).strip()
-                track_raw = re.split(r"\s+Race\s+\d+", track_raw, flags=re.I)[0]
-                track_raw = re.sub(r"^\d+\s+", "", track_raw).split(" - ")[0].split("|")[0].strip()
-                track_name = normalize_venue_name(track_raw)
+                if not track_name:
+                    track_raw = re.sub(r"\d{1,2}\s+[A-Za-z]{3}\s+\d{4}", "", header_text.replace(time_str, "")).strip()
+                    track_raw = re.split(r"\s+Race\s+\d+", track_raw, flags=re.I)[0]
+                    track_raw = re.sub(r"^\d+\s+", "", track_raw).split(" - ")[0].split("|")[0].strip()
+                    track_name = normalize_venue_name(track_raw)
         if not track_name:
             details = parser.css_first(".race-header__details--primary")
             if details:
@@ -2485,7 +2513,18 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         race_info = data.get("props", {}).get("pageProps", {}).get("race")
         if not race_info: return None
         summary = race_info.get("race_summary") or {}
-        track_name = normalize_venue_name(race_info.get("meeting_name") or summary.get("course_name") or "Unknown")
+
+        # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+        # /racing/racecards/2026-02-18/punchestown/1340/
+        track_name = None
+        current_url = data.get("query", {}).get("url", "")
+        url_parts = current_url.lower().split("/")
+        if len(url_parts) >= 5:
+            # 0: '', 1: 'racing', 2: 'racecards', 3: 'date', 4: 'venue'
+            track_name = normalize_venue_name(url_parts[4])
+
+        if not track_name:
+            track_name = normalize_venue_name(race_info.get("meeting_name") or summary.get("course_name") or "Unknown")
         rt = race_info.get("time") or summary.get("time") or race_info.get("off_time") or race_info.get("start_time")
         if not rt:
             def f(o):
@@ -2667,7 +2706,13 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                     if nt:
                         try: number = int(nt)
                         except Exception: pass
-                onode = node.css_first(".sdc-site-racing-card__betting-odds")
+                onode = (
+                    node.css_first(".sdc-site-racing-card__betting-odds")
+                    or node.css_first(".sdc-site-racing-card__odds")
+                    or node.css_first(".odds")
+                    or node.css_first("[class*='odds']")
+                    or node.css_first("[class*='price']")
+                )
                 wo = parse_odds_to_decimal(clean_text(node_text(onode)) if onode else "")
 
                 # Advanced heuristic fallback
@@ -2861,15 +2906,26 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         if dm: dist = dm.group(1)
         runners = []
         for line in content.split("\n"):
-            m = re.search(r"^\s*(\d+)\s+([^(]+)", line)
+            # Robust runner detection: starts with number, then name, possibly followed by (L) or other markers
+            m = re.search(r"^\s*(\d+)\s+([A-Z0-9' ]+)", line, re.I)
             if m:
                 num, name = int(m.group(1)), m.group(2).strip()
+                # If name is followed by (L), strip it
                 name = re.sub(r"\(L\)$|\(L\)\s+", "", name).strip()
                 sc = "SCR" in line or "Scratched" in line
                 # Try smarter odds extraction from the line
-                wo = SmartOddsExtractor.extract_from_text(line)
+                # Harness entries often have ML odds like 5/2 or 5-2 near the end or after 'ML'
+                wo = None
+                ml_match = re.search(r"ML\s*(\d+[/-]\d+|[0-9.]+)", line, re.I)
+                if ml_match:
+                    wo = parse_odds_to_decimal(ml_match.group(1))
+
                 if wo is None:
-                    om = re.search(r"(\d+-\d+|[0-9.]+)\s*$", line)
+                    wo = SmartOddsExtractor.extract_from_text(line)
+
+                if wo is None:
+                    # Look for anything that looks like odds at the end of the line
+                    om = re.search(r"(\d+-\d+|\d+/\d+|[0-9.]+)\s*$", line)
                     if om: wo = parse_odds_to_decimal(om.group(1))
 
                 odds_data = {}
@@ -5903,13 +5959,13 @@ class FavoriteToPlaceMonitor:
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            # Broaden window to 18 hours to ensure yield for "News"
-            if -45 < mtp <= 1080: # 18 hours
+            # Timing window limited to 8 hours to ensure yield is audit-able (Jules Fix)
+            if -45 < mtp <= 480: # 8 hours
                 timing_window_summaries.append(summary)
 
         self.golden_zone_races = timing_window_summaries
         if not self.golden_zone_races:
-            self.logger.warning("🔭 Monitor found 0 races in the Broadened Window (-45m to 18h)", total_unique=len(unique_summaries))
+            self.logger.warning("🔭 Monitor found 0 races in the timing window (-45m to 8h)", total_unique=len(unique_summaries))
 
     def print_full_list(self):
         """Log all fetched races."""
@@ -7245,8 +7301,8 @@ async def run_discovery(
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            # Broaden window to 18 hours to ensure yield for "News"
-            if -45 < mtp <= 1080: # 18 hours = 1080 mins
+            # Timing window limited to 8 hours to ensure yield is audit-able (Jules Fix)
+            if -45 < mtp <= 480: # 8 hours = 480 mins
                 timing_window_races.append(race)
                 if mtp <= 45:
                     logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
