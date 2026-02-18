@@ -1267,6 +1267,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         odds_text = fortuna.clean_text(fortuna.node_text(cols[3])) if len(cols) > 3 else ""
         final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
+        # Advanced heuristic fallback (Jules Fix)
+        if final_odds is None:
+            final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+
         win_pay = place_pay = show_pay = 0.0
         if len(cols) >= 7:
             win_pay = parse_currency_value(fortuna.node_text(cols[4]))
@@ -1466,6 +1470,10 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 if sp_node else 0.0
             )
 
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=name,
                 number=number,
@@ -1649,14 +1657,20 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             num_node = row.css_first(".result-racecard__saddle-cloth")
             odds_node = row.css_first(".result-racecard__odds")
 
+            final_odds = (
+                parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
+                if odds_node else 0.0
+            )
+
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=(
-                    parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
-                    if odds_node else 0.0
-                ),
+                final_win_odds=final_odds,
             ))
         return runners
 
@@ -1707,20 +1721,58 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                 return set()
             self._save_debug_snapshot(resp.text, f"atr_grey_results_index_{url_date}")
             parser = HTMLParser(resp.text)
-            return self._extract_grey_links(parser, date_str)
+
+            # Strategy 1: page-content JSON payload (most reliable)
+            links = self._extract_grey_links_from_payload(parser, date_str)
+            if links:
+                return links
+
+            # Strategy 2: standard <a> tag scraping
+            return self._extract_grey_links_from_html(parser, date_str)
         except Exception:
             self.logger.debug("ATR Greyhound index fetch failed", exc_info=True)
             return set()
 
-    def _extract_grey_links(self, parser: HTMLParser, date_str: str) -> Set[str]:
+    def _extract_grey_links_from_payload(self, parser: HTMLParser, date_str: str) -> Set[str]:
         links: Set[str] = set()
-        for a in parser.css("a[href*='/results/']"):
+        pc = parser.css_first("page-content")
+        if not pc:
+            return links
+
+        items_raw = pc.attributes.get(":items") or pc.attributes.get(":modules")
+        if not items_raw:
+            return links
+
+        try:
+            # Unescape and parse JSON
+            import html as py_html
+            modules = json.loads(py_html.unescape(items_raw))
+            for module in modules:
+                # Look for result items
+                for item in module.get("data", {}).get("items", []):
+                    # Check both 'items' list and direct 'cta'
+                    sub_items = item.get("items", [item])
+                    for sub in sub_items:
+                        href = sub.get("cta", {}).get("href")
+                        if href and "/result/" in href:
+                            if self._link_matches_date(href, date_str):
+                                full = href if href.startswith("http") else f"{self.BASE_URL}{href}"
+                                links.add(full)
+        except Exception:
+            self.logger.debug("Failed to parse ATR Grey JSON payload", exc_info=True)
+
+        return links
+
+    def _extract_grey_links_from_html(self, parser: HTMLParser, date_str: str) -> Set[str]:
+        links: Set[str] = set()
+        # ATR Greyhound uses /result/ for individual pages and /results/ for index
+        for a in parser.css("a[href*='/result/']"):
             href = a.attributes.get("href", "")
             if not href:
                 continue
             if not self._link_matches_date(href, date_str):
                 continue
-            if re.search(r"/results/.*?/.*?/\d+", href):
+            if re.search(r"/result/.*?/.*?/\d+", href):
                 full = (
                     href if href.startswith("http") else f"{self.BASE_URL}{href}"
                 )
@@ -1956,10 +2008,15 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             pos_node = row.css_first(
                 'div[class*="ResultRunner__StyledRunnerPositionContainer"]',
             )
+
+            # Extract odds from HTML fallback (Jules Fix)
+            final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
+                final_win_odds=final_odds,
             ))
 
         if not runners:
@@ -2026,6 +2083,10 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     def _parse_page(
         self, html: str, date_str: str, url: str,
     ) -> List[ResultRace]:
+        if "ALL RACES CANCELLED" in html.upper():
+            self.logger.warning("Races cancelled for venue", url=url)
+            return []
+
         parser = HTMLParser(html)
         # Relaxed venue detection: try headers first, then scan text if needed (Jules Fix)
         venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1") or parser.css_first("h2") or parser.css_first("strong")
@@ -2283,11 +2344,16 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             win_node = row.css_first(".payout-win")
             place_node = row.css_first(".payout-place")
 
+            final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0,
+                final_win_odds=final_odds,
                 win_payout=parse_currency_value(fortuna.node_text(win_node)) if win_node else 0.0,
                 place_payout=parse_currency_value(fortuna.node_text(place_node)) if place_node else 0.0,
             ))
@@ -2498,13 +2564,18 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             number_node = row.css_first(".sdc-site-racing-card__number")
             odds_node = row.css_first(".sdc-site-racing-card__odds")
 
+            final_odds = parse_fractional_odds(
+                fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
+            )
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(number_node)) if number_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=parse_fractional_odds(
-                    fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
-                ),
+                final_win_odds=final_odds,
             ))
         return runners
 

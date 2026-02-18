@@ -2573,6 +2573,11 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if not name: continue
             num = rd.get("saddle_cloth_number") or rd.get("cloth_number") or 0
             wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
+
+            # Advanced heuristic fallback (Jules Fix)
+            if wo is None:
+                wo = SmartOddsExtractor.extract_from_text(str(rd))
+
             odds_data = {}
             if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
             runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
@@ -2953,9 +2958,9 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         if dm: dist = dm.group(1)
         runners = []
         for line in content.split("\n"):
-            # Robust runner detection: starts with number, then name, possibly followed by (L), (B), or other markers
-            # Expanded name character set to handle hyphens, periods, etc. (Jules Fix)
-            m = re.search(r"^\s*(\d+)\s+([A-Z0-9'\-. ]+)", line, re.I)
+            # Robust runner detection: starts with number, then name. (Jules Fix)
+            # Stops at multiple spaces or common odds markers to prevent swallowing odds into the name.
+            m = re.search(r"^\s*(\d+)\s+([A-Z0-9'\-. ]+?)(?:\s{2,}|ML|M/L|Morning Line|$)", line, re.I)
             if m:
                 num, name = int(m.group(1)), m.group(2).strip()
                 # If name is followed by (L), (B), (AE) etc, strip it
