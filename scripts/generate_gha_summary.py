@@ -109,7 +109,6 @@ DISCOVERY_HARVEST_FILES = [
     "discovery_harvest_global.json",
 ]
 RESULTS_HARVEST_FILES = [
-    "results_harvest.json",
     "results_harvest_audit.json",
 ]
 
