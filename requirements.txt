@@ -8,7 +8,7 @@ bottle==0.13.4
 browserforge>=1.2.4
 build==1.0.3
 camoufox==0.4.11
-cefpython3==66.0
+cefpython3==66.1
 certifi==2024.7.4
 cffi==1.16.0
 charset-normalizer==3.3.2
