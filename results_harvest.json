@@ -1,0 +1,30 @@
+{
+  "AtTheRacesGreyhoundResults": {
+    "count": 0,
+    "max_odds": 0.0
+  },
+  "TimeformResults": {
+    "count": 3,
+    "max_odds": 0.0
+  },
+  "AtTheRacesResults": {
+    "count": 0,
+    "max_odds": 0.0
+  },
+  "EquibaseResults": {
+    "count": 0,
+    "max_odds": 0.0
+  },
+  "RacingAndSportsResults": {
+    "count": 0,
+    "max_odds": 0.0
+  },
+  "SkySportsResults": {
+    "count": 50,
+    "max_odds": 251.0
+  },
+  "RacingPostTote": {
+    "count": 0,
+    "max_odds": 0.0
+  }
+}
