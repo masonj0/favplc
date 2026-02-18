@@ -33,12 +33,18 @@ jobs:
     strategy:
       matrix:
         include:
-          - region: USA
-            slug: usa
-          - region: INT
-            slug: int
-          - region: GLOBAL
-            slug: global
+          - type: entry
+            quality: solid
+            slug: entry-solid
+          - type: entry
+            quality: lousy
+            slug: entry-lousy
+          - type: results
+            quality: solid
+            slug: results-solid
+          - type: results
+            quality: lousy
+            slug: results-lousy
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -73,22 +79,32 @@ jobs:
         if: steps.cache-db.outputs.cache-hit != 'true'
         run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
 
-      - name: Run Discovery
+      - name: Run Fetcher (Entry or Results)
         timeout-minutes: 20
         env:
           PYTHONPATH: .
         run: |
           START_TIME=$(date +%s)
 
-          python3 fortuna.py \
-            --region ${{ matrix.region }} \
-            --save "races_${{ matrix.slug }}.json" \
-            --hours "${{ github.event.inputs.hours || '8' }}" \
-          || echo '[]' > "races_${{ matrix.slug }}.json"
+          if [[ "${{ matrix.type }}" == "entry" ]]; then
+            echo "Running Solid/Lousy Entry Discovery..."
+            python3 fortuna.py \
+              --quality ${{ matrix.quality }} \
+              --save "races_${{ matrix.slug }}.json" \
+              --hours "${{ github.event.inputs.hours || '8' }}" \
+            || echo '[]' > "races_${{ matrix.slug }}.json"
+          else
+            echo "Running Solid/Lousy Results Harvesting..."
+            python3 fortuna_analytics.py \
+              --quality ${{ matrix.quality }} \
+              --days "${{ github.event.inputs.days || '3' }}" \
+            || echo "Results harvest failed"
+            echo '[]' > "races_${{ matrix.slug }}.json"
+          fi
 
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - START_TIME))
-          echo "::notice::${{ matrix.region }} discovery completed in ${DURATION}s"
+          echo "::notice::${{ matrix.slug }} completed in ${DURATION}s"
 
       - name: Prepare Artifact
         if: always()
@@ -96,6 +112,8 @@ jobs:
           cp fortuna.db "fortuna_${{ matrix.slug }}.db"
           mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
             || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
+          mv results_harvest.json "results_harvest_${{ matrix.slug }}.json" 2>/dev/null \
+            || echo '{}' > "results_harvest_${{ matrix.slug }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -148,24 +166,24 @@ jobs:
       - name: Consolidate Discovery Data
         run: |
           set -eo pipefail
-          echo "Validating discovery artifacts..."
+          echo "Validating parallel artifacts..."
 
           ARTIFACT_COUNT=0
-          for region in usa int global; do
-            DIR="results-${region}"
+          for slug in entry-solid entry-lousy results-solid results-lousy; do
+            DIR="results-${slug}"
             if [ -d "$DIR" ]; then
               ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
-              cp "$DIR/races_${region}.json" . 2>/dev/null || echo '[]' > "races_${region}.json"
+              cp "$DIR/races_${slug}.json" . 2>/dev/null || echo '[]' > "races_${slug}.json"
               # Try to get the regional DB, fallback to master ONLY if it exists
-              cp "$DIR/fortuna_${region}.db" . 2>/dev/null || { [ -f fortuna.db ] && cp fortuna.db "fortuna_${region}.db" || true; }
-              cp "$DIR/discovery_harvest_${region}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${region}.json"
-              cp "$DIR/results_harvest_${region}.json" . 2>/dev/null || echo '{}' > "results_harvest_${region}.json"
+              cp "$DIR/fortuna_${slug}.db" . 2>/dev/null || { [ -f fortuna.db ] && cp fortuna.db "fortuna_${slug}.db" || true; }
+              cp "$DIR/discovery_harvest_${slug}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${slug}.json"
+              cp "$DIR/results_harvest_${slug}.json" . 2>/dev/null || echo '{}' > "results_harvest_${slug}.json"
             else
               echo "::warning::Artifact directory $DIR missing"
-              echo '[]' > "races_${region}.json"
-              [ -f fortuna.db ] && cp fortuna.db "fortuna_${region}.db" || true
-              echo '{}' > "discovery_harvest_${region}.json"
-              echo '{}' > "results_harvest_${region}.json"
+              echo '[]' > "races_${slug}.json"
+              [ -f fortuna.db ] && cp fortuna.db "fortuna_${slug}.db" || true
+              echo '{}' > "discovery_harvest_${slug}.json"
+              echo '{}' > "results_harvest_${slug}.json"
             fi
           done
 
