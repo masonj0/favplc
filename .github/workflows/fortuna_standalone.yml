@@ -185,7 +185,7 @@ jobs:
         timeout-minutes: 15
         env:
           PYTHONPATH: .
-        run: python3 fortuna_analytics.py --days "${{ github.event.inputs.days || '2' }}"
+        run: python3 fortuna_analytics.py --days "${{ github.event.inputs.days || '3' }}"
 
       - name: Prepare Audit Artifact
         if: always()

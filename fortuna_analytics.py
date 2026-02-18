@@ -323,11 +323,11 @@ class AuditorEngine:
                 continue
 
             try:
-                result = self._match_tip_to_result(tip_key, results_map, race_id)
+                result, confidence = self._match_tip_to_result(tip_key, results_map, race_id)
                 if not result:
                     continue
 
-                outcome = self._evaluate_tip(tip, result)
+                outcome = self._evaluate_tip(tip, result, confidence=confidence)
                 outcomes_to_batch.append((race_id, outcome))
                 audited.append({**tip, **outcome, "audit_completed": True})
 
@@ -384,15 +384,16 @@ class AuditorEngine:
         tip_key: str,
         results_map: Dict[str, ResultRace],
         race_id: str,
-    ) -> Optional[ResultRace]:
+    ) -> Tuple[Optional[ResultRace], str]:
+        """Matches a tip to a result, returning the result and match confidence."""
         # Exact canonical match
         result = results_map.get(tip_key)
         if result:
-            return result
+            return result, "exact"
 
         parts = tip_key.split("|")
         if len(parts) < 5:
-            return None
+            return None, "none"
 
         # Fallback 1: drop time, keep discipline
         relaxed = f"{parts[0]}|{parts[1]}|{parts[2]}|{parts[4]}"
@@ -403,7 +404,7 @@ class AuditorEngine:
                 race_id=race_id,
                 match_key=result.canonical_key,
             )
-            return result
+            return result, "relaxed"
 
         # Fallback 2: drop discipline, keep venue|race|date
         prefix = f"{parts[0]}|{parts[1]}|{parts[2]}"
@@ -417,7 +418,7 @@ class AuditorEngine:
                 race_id=race_id,
                 match_key=matches[0].canonical_key,
             )
-            return matches[0]
+            return matches[0], "relaxed"
         if len(matches) > 1:
             self.logger.warning(
                 "Ambiguous discipline fallback — skipping",
@@ -428,6 +429,15 @@ class AuditorEngine:
         # Fallback 3: ±1 race number, same venue/date/discipline
         try:
             venue_part, race_str, date_str, _, disc = parts
+
+            # Guard: only allow shift if the original race was NOT found anywhere
+            # (checked via relaxed key)
+            original_relaxed = f"{venue_part}|{race_str}|{date_str}|{disc}"
+            if original_relaxed in results_map:
+                # The result exists for the correct race number but time/discipline didn't match perfectly.
+                # Don't shift to a different race.
+                return None, "none"
+
             for delta in (-1, +1):
                 shifted_num = int(race_str) + delta
                 if shifted_num < 1:
@@ -442,7 +452,7 @@ class AuditorEngine:
                         matched_race_num=shifted_num,
                         match_key=result.canonical_key,
                     )
-                    return result
+                    return result, "shifted"
         except (ValueError, IndexError):
             pass
 
@@ -456,7 +466,7 @@ class AuditorEngine:
                 venue_candidates_in_results=venue_candidates,
             )
 
-        return None
+        return None, "none"
 
     # -- key generation ----------------------------------------------------
 
@@ -486,7 +496,10 @@ class AuditorEngine:
     # -- evaluation --------------------------------------------------------
 
     def _evaluate_tip(
-        self, tip: Dict[str, Any], result: ResultRace,
+        self,
+        tip: Dict[str, Any],
+        result: ResultRace,
+        confidence: str = "exact",
     ) -> Dict[str, Any]:
         selection_num = self._extract_selection_number(tip)
         selection_name = tip.get("selection_name")
@@ -508,7 +521,8 @@ class AuditorEngine:
         verdict, profit = self._compute_verdict(sel_result, result)
 
         return {
-            "field_size": len([r for r in result.runners if not r.scratched]),
+            "field_size": len(result.active_runners),
+            "match_confidence": confidence,
             "actual_top_5": ", ".join(actual_top_5),
             "actual_2nd_fav_odds": actual_2nd_fav_odds,
             "verdict": verdict.value,
@@ -608,6 +622,14 @@ class AuditorEngine:
         if sel is not None:
             try:
                 return int(sel)
+            except (ValueError, TypeError):
+                pass
+        # Fallback: first entry in top_five prediction
+        top_five = tip.get("top_five", "")
+        if top_five:
+            first = str(top_five).split(",")[0].strip()
+            try:
+                return int(first)
             except (ValueError, TypeError):
                 pass
         return None
@@ -752,10 +774,13 @@ class PageFetchingResultsAdapter(
     _BLOCK_SIGNATURES: Final[tuple[str, ...]] = (
         "pardon our interruption",
         "checking your browser",
+        "just a moment",
         "cloudflare",
         "access denied",
         "captcha",
         "please verify",
+        "attention required",
+        "one more step",
     )
     _BLOCK_MAX_LENGTH: Final[int] = 15_000
 
@@ -789,23 +814,38 @@ class PageFetchingResultsAdapter(
     # -- anti-bot detection ------------------------------------------------
 
     def _check_for_block(self, html: str, url: str) -> bool:
-        """Detect anti-bot block pages (only flags short pages)."""
+        """Detect anti-bot block pages."""
         if len(html) > self._BLOCK_MAX_LENGTH:
             return False
+
+        html_lower = html.lower()
+        # Check full text for very short pages (likely block pages)
+        if len(html) < 5000:
+            for sig in self._BLOCK_SIGNATURES:
+                if sig in html_lower:
+                    self.logger.error(
+                        "Bot blocked (body text match)",
+                        source=self.SOURCE_NAME,
+                        url=url,
+                        signature=sig,
+                    )
+                    return True
+
+        # For medium pages, check only title/h1
         parser = HTMLParser(html)
-        title_node = parser.css_first("title") or parser.css_first("h1")
-        if not title_node:
-            return False
-        title_text = fortuna.node_text(title_node).lower()
-        for sig in self._BLOCK_SIGNATURES:
-            if sig in title_text:
-                self.logger.error(
-                    "Bot blocked",
-                    source=self.SOURCE_NAME,
-                    url=url,
-                    signature=sig,
-                )
-                return True
+        for selector in ("title", "h1"):
+            node = parser.css_first(selector)
+            if node:
+                text = fortuna.node_text(node).lower()
+                for sig in self._BLOCK_SIGNATURES:
+                    if sig in text:
+                        self.logger.error(
+                            "Bot blocked (title/h1 match)",
+                            source=self.SOURCE_NAME,
+                            url=url,
+                            signature=sig,
+                        )
+                        return True
         return False
 
     # -- date guard --------------------------------------------------------
@@ -826,7 +866,6 @@ class PageFetchingResultsAdapter(
 
         compact_formats = (
             dt.strftime("%Y%m%d"),       # 20260209
-            dt.strftime("%m%d"),         # 0209
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1228,6 +1267,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         odds_text = fortuna.clean_text(fortuna.node_text(cols[3])) if len(cols) > 3 else ""
         final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
+        # Advanced heuristic fallback (Jules Fix)
+        if final_odds is None:
+            final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+
         win_pay = place_pay = show_pay = 0.0
         if len(cols) >= 7:
             win_pay = parse_currency_value(fortuna.node_text(cols[4]))
@@ -1427,6 +1470,10 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 if sp_node else 0.0
             )
 
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=name,
                 number=number,
@@ -1610,14 +1657,20 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             num_node = row.css_first(".result-racecard__saddle-cloth")
             odds_node = row.css_first(".result-racecard__odds")
 
+            final_odds = (
+                parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
+                if odds_node else 0.0
+            )
+
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=(
-                    parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
-                    if odds_node else 0.0
-                ),
+                final_win_odds=final_odds,
             ))
         return runners
 
@@ -1668,18 +1721,58 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                 return set()
             self._save_debug_snapshot(resp.text, f"atr_grey_results_index_{url_date}")
             parser = HTMLParser(resp.text)
-            return self._extract_grey_links(parser, date_str)
+
+            # Strategy 1: page-content JSON payload (most reliable)
+            links = self._extract_grey_links_from_payload(parser, date_str)
+            if links:
+                return links
+
+            # Strategy 2: standard <a> tag scraping
+            return self._extract_grey_links_from_html(parser, date_str)
         except Exception:
             self.logger.debug("ATR Greyhound index fetch failed", exc_info=True)
             return set()
 
-    def _extract_grey_links(self, parser: HTMLParser, date_str: str) -> Set[str]:
+    def _extract_grey_links_from_payload(self, parser: HTMLParser, date_str: str) -> Set[str]:
         links: Set[str] = set()
-        for a in parser.css("a[href*='/results/']"):
+        pc = parser.css_first("page-content")
+        if not pc:
+            return links
+
+        items_raw = pc.attributes.get(":items") or pc.attributes.get(":modules")
+        if not items_raw:
+            return links
+
+        try:
+            # Unescape and parse JSON
+            import html as py_html
+            modules = json.loads(py_html.unescape(items_raw))
+            for module in modules:
+                # Look for result items
+                for item in module.get("data", {}).get("items", []):
+                    # Check both 'items' list and direct 'cta'
+                    sub_items = item.get("items", [item])
+                    for sub in sub_items:
+                        href = sub.get("cta", {}).get("href")
+                        if href and "/result/" in href:
+                            if self._link_matches_date(href, date_str):
+                                full = href if href.startswith("http") else f"{self.BASE_URL}{href}"
+                                links.add(full)
+        except Exception:
+            self.logger.debug("Failed to parse ATR Grey JSON payload", exc_info=True)
+
+        return links
+
+    def _extract_grey_links_from_html(self, parser: HTMLParser, date_str: str) -> Set[str]:
+        links: Set[str] = set()
+        # ATR Greyhound uses /result/ for individual pages and /results/ for index
+        for a in parser.css("a[href*='/result/']"):
             href = a.attributes.get("href", "")
             if not href:
                 continue
-            if re.search(r"/results/.*?/.*?/\d+", href):
+            if not self._link_matches_date(href, date_str):
+                continue
+            if re.search(r"/result/.*?/.*?/\d+", href):
                 full = (
                     href if href.startswith("http") else f"{self.BASE_URL}{href}"
                 )
@@ -1915,10 +2008,15 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             pos_node = row.css_first(
                 'div[class*="ResultRunner__StyledRunnerPositionContainer"]',
             )
+
+            # Extract odds from HTML fallback (Jules Fix)
+            final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
+                final_win_odds=final_odds,
             ))
 
         if not runners:
@@ -1985,6 +2083,10 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     def _parse_page(
         self, html: str, date_str: str, url: str,
     ) -> List[ResultRace]:
+        if "ALL RACES CANCELLED" in html.upper():
+            self.logger.warning("Races cancelled for venue", url=url)
+            return []
+
         parser = HTMLParser(html)
         # Relaxed venue detection: try headers first, then scan text if needed (Jules Fix)
         venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1") or parser.css_first("h2") or parser.css_first("strong")
@@ -2242,11 +2344,16 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             win_node = row.css_first(".payout-win")
             place_node = row.css_first(".payout-place")
 
+            final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0,
+                final_win_odds=final_odds,
                 win_payout=parse_currency_value(fortuna.node_text(win_node)) if win_node else 0.0,
                 place_payout=parse_currency_value(fortuna.node_text(place_node)) if place_node else 0.0,
             ))
@@ -2299,11 +2406,11 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
         parser = HTMLParser(resp.text)
         links: Set[str] = set()
 
-        for a in parser.css("a[href*='/horse-racing/results/']"):
+        for a in parser.css("a[href*='/horse-racing/result/']"):
             href = a.attributes.get("href", "")
             if not href:
                 continue
-            if "/horse-racing/results/" in href and len(href.split("/")) >= 6:
+            if "/horse-racing/result/" in href and len(href.split("/")) >= 6:
                 if not self._link_matches_date(href, date_str):
                     continue
                 if self._venue_matches(fortuna.node_text(a), href):
@@ -2330,7 +2437,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             race_num = _safe_int(num_match.group(1), default=1)
 
         runners: List[ResultRunner] = []
-        for row in parser.css("tbody.rp-horse-row"):
+        for row in parser.css("tbody.rp-table-row"):
             name_node = row.css_first("a.rp-horse")
             if not name_node:
                 continue
@@ -2457,13 +2564,18 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             number_node = row.css_first(".sdc-site-racing-card__number")
             odds_node = row.css_first(".sdc-site-racing-card__odds")
 
+            final_odds = parse_fractional_odds(
+                fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
+            )
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(number_node)) if number_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=parse_fractional_odds(
-                    fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
-                ),
+                final_win_odds=final_odds,
             ))
         return runners
 
@@ -2698,15 +2810,12 @@ async def managed_adapters(
     classes = get_results_adapter_classes()
     logger = structlog.get_logger("managed_adapters")
 
-    if region:
-        if region == "GLOBAL":
-            allowed = set(fortuna.USA_RESULTS_ADAPTERS) | set(fortuna.INT_RESULTS_ADAPTERS)
-        else:
-            allowed = (
-                set(fortuna.USA_RESULTS_ADAPTERS)
-                if region == "USA"
-                else set(fortuna.INT_RESULTS_ADAPTERS)
-            )
+    if region and region != "GLOBAL":
+        allowed = (
+            set(fortuna.USA_RESULTS_ADAPTERS)
+            if region == "USA"
+            else set(fortuna.INT_RESULTS_ADAPTERS)
+        )
         classes = [
             c for c in classes
             if getattr(c, "SOURCE_NAME", "") in allowed
@@ -2928,22 +3037,6 @@ async def run_analytics(
         region=target_region,
     )
 
-    expected_adapters: Set[str]
-    if target_region == "GLOBAL":
-        expected_adapters = (
-            set(fortuna.USA_RESULTS_ADAPTERS)
-            | set(fortuna.INT_RESULTS_ADAPTERS)
-            | {"StandardbredCanadaResults", "RacingAndSportsResults", "TimeformResults"}
-        )
-    elif target_region == "USA":
-        expected_adapters = set(fortuna.USA_RESULTS_ADAPTERS)
-    else:
-        expected_adapters = set(fortuna.INT_RESULTS_ADAPTERS)
-
-    harvest_summary: Dict[str, Dict[str, Any]] = {
-        name: {"count": 0, "max_odds": 0.0} for name in expected_adapters
-    }
-
     async with AuditorEngine() as auditor:
         if lookback_hours is None:
             lookback_hours = 72 if target_region == "GLOBAL" else 48
@@ -2967,6 +3060,10 @@ async def run_analytics(
                 _analytics_logger.info("Targeting venues", venues=sorted(target_venues))
 
         async with managed_adapters(region=region, target_venues=target_venues) as adapters:
+            harvest_summary: Dict[str, Dict[str, Any]] = {
+                a.source_name: {"count": 0, "max_odds": 0.0}
+                for a in adapters
+            }
             try:
                 all_results = await _harvest_results(adapters, valid_dates, harvest_summary)
                 _analytics_logger.info("Total results harvested", count=len(all_results))
