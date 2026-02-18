@@ -168,7 +168,7 @@ def merge_databases(primary_db, secondary_dbs):
                     top2_place_payout = excluded.top2_place_payout,
                     audit_timestamp = excluded.audit_timestamp,
                     field_size = COALESCE(tips.field_size, excluded.field_size)
-                WHERE excluded.audit_completed = 1 OR tips.audit_completed = 0
+                WHERE excluded.audit_completed = 1 AND tips.audit_completed = 0
             """)
 
             # Merge harvest_logs table
