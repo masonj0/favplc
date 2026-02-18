@@ -12,9 +12,11 @@ from fortuna import FortunaDB
 async def purge_records():
     """
     One-time cleanup script to purge all records from the database EXCEPT those
-    logged on Feb 17, 2026 (USA EST).
+    fully matching Feb 17, 2026 (USA EST).
 
-    This helps clean up legacy data while preserving today's high-signal records.
+    Target:
+    - tips: report_date must be Feb 17 AND start_time must be Feb 17.
+    - harvest_logs: timestamp must be Feb 17.
     """
     db = FortunaDB()
     # Initialize ensures tables exist and applies migrations
@@ -28,17 +30,22 @@ async def purge_records():
         cursor = conn.cursor()
 
         # Target date: 2026-02-17
-        # In Fortuna, all timestamps (report_date in 'tips', timestamp in 'harvest_logs')
-        # are stored in US Eastern Time (EST/EDT) as per Project Convention.
+        # In Fortuna, all timestamps are stored in US Eastern Time (EST/EDT).
         target_prefix = '2026-02-17'
 
-        print(f"CRITICAL CLEANUP: Purging all records NOT from {target_prefix} (USA EST)...")
+        print(f"CRITICAL CLEANUP: Purging all records NOT strictly on {target_prefix} USA EST...")
 
-        # 1. Purge 'tips' table (Predictions and results)
+        # 1. Purge 'tips' table
         cursor.execute("SELECT COUNT(*) FROM tips")
         tips_before = cursor.fetchone()[0]
 
-        cursor.execute(f"DELETE FROM tips WHERE report_date NOT LIKE '{target_prefix}%'")
+        # Delete if EITHER report_date OR start_time is not today.
+        # This clears past (2/16) and future (2/18) records.
+        cursor.execute(f"""
+            DELETE FROM tips
+            WHERE report_date NOT LIKE '{target_prefix}%'
+               OR start_time NOT LIKE '{target_prefix}%'
+        """)
         tips_deleted = cursor.rowcount
 
         cursor.execute("SELECT COUNT(*) FROM tips")
@@ -46,7 +53,7 @@ async def purge_records():
 
         print(f"  • Tips: {tips_before} -> {tips_after} (Deleted {tips_deleted})")
 
-        # 2. Purge 'harvest_logs' table (Adapter performance metrics)
+        # 2. Purge 'harvest_logs' table
         cursor.execute("SELECT COUNT(*) FROM harvest_logs")
         logs_before = cursor.fetchone()[0]
 
@@ -66,7 +73,7 @@ async def purge_records():
             conn.execute("VACUUM")
             print("  • VACUUM complete.")
 
-        print(f"\n✅ Cleanup Complete. Only Feb 17, 2026 USA EST records remain in {db_path}.")
+        print(f"\n✅ Cleanup Complete. Only Feb 17, 2026 USA EST strictly-contained records remain in {db_path}.")
 
     finally:
         conn.close()
