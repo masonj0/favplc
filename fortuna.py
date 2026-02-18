@@ -1502,7 +1502,8 @@ class RacePageFetcherMixin:
                         resp = None
                         for attempt in range(2): # 1 retry
                             resp = await self.make_request("GET", url, headers=headers)
-                            if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 500:
+                            # Lowered threshold to 100 to avoid unnecessary retries for small valid data files (Jules Fix)
+                            if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 100:
                                 break
                             await asyncio.sleep(1 * (attempt + 1))
 
@@ -5050,7 +5051,10 @@ def get_writable_path(filename: str) -> Path:
         if appdata:
             out_dir = Path(appdata) / "Fortuna"
             out_dir.mkdir(parents=True, exist_ok=True)
-            return out_dir / filename
+            target = out_dir / filename
+            # Ensure subdirectories within Fortuna folder exist (Jules Fix)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            return target
     return Path(filename)
 
 
@@ -7313,9 +7317,10 @@ async def run_discovery(
             logger.error("No races fetched from any adapter. Discovery aborted.")
             if save_path:
                 try:
-                    with open(save_path, "w") as f:
+                    target_save = get_writable_path(save_path)
+                    with open(target_save, "w") as f:
                         json.dump([], f)
-                    logger.info("Saved empty race list to file", path=save_path)
+                    logger.info("Saved empty race list to file", path=str(target_save))
                 except Exception as e:
                     logger.error("Failed to save empty race list", error=str(e))
             return
@@ -7396,9 +7401,10 @@ async def run_discovery(
         # Save raw fetched/merged races if requested (Save EVERYTHING unique)
         if save_path:
             try:
-                with open(save_path, "w") as f:
+                target_save = get_writable_path(save_path)
+                with open(target_save, "w") as f:
                     json.dump([r.model_dump(mode='json') for r in unique_races], f, indent=4)
-                logger.info("Saved all unique races to file", path=save_path)
+                logger.info("Saved all unique races to file", path=str(target_save))
             except Exception as e:
                 logger.error("Failed to save races", error=str(e))
 
