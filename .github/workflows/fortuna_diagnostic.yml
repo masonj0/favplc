@@ -134,7 +134,7 @@ jobs:
               if row[0]:
                   emit(row[0] + ";\n")
           emit("```")
-          </details>\n")
+          emit("</details>\n")
 
           conn.close()
           flush()
