@@ -37,8 +37,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-master-
-          restore-keys: fortuna-db-master-
+          key: fortuna-db-v3-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v3-master-
 
       # ┌──────────────────────────────────────────────────────────┐
       # │ CONTEXT LAYERS: What Opus added                         │
@@ -477,15 +477,14 @@ jobs:
               emit("4. Network issues")
 
           # ── DATE CALCULATION ─────────────────────────────────────
-          section("Date Calculation Test")
+          section("Date Coverage Test")
 
           now = datetime.now(EASTERN)
           info(f"Current time (ET): {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-          # Test with dummy main logic from fortuna_analytics if possible or manual
           for lookback_days in [1, 2, 3]:
-              dates = [(now - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(lookback_days)]
-              emit(f"- `--days {lookback_days}` (manual): {dates}")
+              dates = fortuna_analytics._build_target_dates(None, lookback_days)
+              emit(f"- `--days {lookback_days}`: {dates}")
 
           conn = sqlite3.connect(db_path)
           c = conn.cursor()
@@ -493,13 +492,13 @@ jobs:
           tip_dates = [r[0] for r in c.fetchall()]
           emit(f"- **Dates in tips table:** {tip_dates}")
 
-          target_dates_2 = [(now - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(2)]
+          target_dates_2 = fortuna_analytics._build_target_dates(None, 2)
           uncovered = [d for d in tip_dates if d not in target_dates_2]
 
           if uncovered:
               warning(f"Tips exist for dates not covered by --days 2: {uncovered}")
           else:
-              success("--days 2 covers recent tip dates")
+              success("--days 2 covers all tip dates")
 
           # ── MATCHING LOGIC ──────────────────────────────────────
           section("Matching Logic Test")
@@ -511,12 +510,16 @@ jobs:
           sample_tip = c.fetchone()
           if sample_tip:
               emit(f"- **Sample race_id:** `{sample_tip[0]}`")
+              parts = sample_tip[0].split('|')
+              emit(f"- **Components:** venue=`{parts[0]}`, race=`{parts[1]}`, date=`{parts[2]}`, time=`{parts[3]}`, disc=`{parts[4]}`")
 
               canonical = fortuna.get_canonical_venue(sample_tip[1])
               if canonical == "unknown":
                   error(f"Venue '{sample_tip[1]}' → 'unknown' — **matching will always fail**")
+              elif parts[0] == canonical:
+                  success(f"race_id venue matches canonical: `{canonical}`")
               else:
-                  success(f"Venue '{sample_tip[1]}' → `{canonical}`")
+                  warning(f"Mismatch: race_id has `{parts[0]}` but canonical is `{canonical}`")
 
           conn.close()
 
@@ -542,14 +545,16 @@ jobs:
 
           if uncovered:
               emit(f"### 🟡 MEDIUM: Date gap")
-              emit(f"1. Use `--days 3` or more to cover all tips")
+              emit(f"1. Use `--days {len(tip_dates)}` to cover all tips")
+              emit(f"2. Or use `--lookback-hours 72`\n")
 
           if working > 0 and audited == 0:
               emit("### 🟢 PROMISING: Adapters work but matching broken")
-              emit("1. Check matching logic in `AuditorEngine` in `fortuna_analytics.py`")
+              emit("1. Check matching logic in `AuditorEngine`")
+              emit("2. Verify tip UPDATE queries execute\n")
 
           emit("---")
-          emit("*Paste this entire summary to Jules for next steps.*")
+          emit("*Paste this entire summary to Claude for next steps.*")
 
           flush()
           PYEOF
