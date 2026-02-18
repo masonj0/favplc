@@ -1267,6 +1267,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         odds_text = fortuna.clean_text(fortuna.node_text(cols[3])) if len(cols) > 3 else ""
         final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
+        # Advanced heuristic fallback (Jules Fix)
+        if final_odds is None:
+            final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+
         win_pay = place_pay = show_pay = 0.0
         if len(cols) >= 7:
             win_pay = parse_currency_value(fortuna.node_text(cols[4]))
@@ -1466,6 +1470,10 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 if sp_node else 0.0
             )
 
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=name,
                 number=number,
@@ -1649,14 +1657,20 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             num_node = row.css_first(".result-racecard__saddle-cloth")
             odds_node = row.css_first(".result-racecard__odds")
 
+            final_odds = (
+                parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
+                if odds_node else 0.0
+            )
+
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=(
-                    parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
-                    if odds_node else 0.0
-                ),
+                final_win_odds=final_odds,
             ))
         return runners
 
@@ -1994,10 +2008,15 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             pos_node = row.css_first(
                 'div[class*="ResultRunner__StyledRunnerPositionContainer"]',
             )
+
+            # Extract odds from HTML fallback (Jules Fix)
+            final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
+                final_win_odds=final_odds,
             ))
 
         if not runners:
@@ -2325,11 +2344,16 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             win_node = row.css_first(".payout-win")
             place_node = row.css_first(".payout-place")
 
+            final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0,
+                final_win_odds=final_odds,
                 win_payout=parse_currency_value(fortuna.node_text(win_node)) if win_node else 0.0,
                 place_payout=parse_currency_value(fortuna.node_text(place_node)) if place_node else 0.0,
             ))
@@ -2540,13 +2564,18 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             number_node = row.css_first(".sdc-site-racing-card__number")
             odds_node = row.css_first(".sdc-site-racing-card__odds")
 
+            final_odds = parse_fractional_odds(
+                fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
+            )
+            # Advanced heuristic fallback (Jules Fix)
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(number_node)) if number_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
-                final_win_odds=parse_fractional_odds(
-                    fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
-                ),
+                final_win_odds=final_odds,
             ))
         return runners
 

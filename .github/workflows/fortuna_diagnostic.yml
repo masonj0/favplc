@@ -1,0 +1,557 @@
+name: 🔍 Fortuna Pipeline Diagnostic (Combined)
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_date:
+        description: 'Date to test results fetching (YYYY-MM-DD)'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  group: fortuna-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+
+      - name: Restore Database
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-master-
+          restore-keys: fortuna-db-master-
+
+      # ┌──────────────────────────────────────────────────────────┐
+      # │ CONTEXT LAYERS: What Opus added                         │
+      # └──────────────────────────────────────────────────────────┘
+
+      - name: "🗂️ Repo structure + DB discovery"
+        if: always()
+        run: |
+          python3 << 'PYEOF'
+          import os, glob
+
+          S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          buf = []
+          def emit(line=""):
+              buf.append(line)
+          def flush():
+              with open(S, "a") as f:
+                  f.write("\n".join(buf) + "\n")
+
+          emit("## 🗂️ Repo Structure & DB Discovery")
+          emit("")
+
+          # File tree (compact)
+          emit("<details><summary>Full file tree</summary>\n")
+          emit("```")
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".mypy_cache", "node_modules")]
+              level = root.replace(".", "").count(os.sep)
+              indent = "  " * level
+              emit(f"{indent}{os.path.basename(root)}/")
+              sub = "  " * (level + 1)
+              for f in sorted(files):
+                  fpath = os.path.join(root, f)
+                  sz = os.path.getsize(fpath)
+                  label = f"{sz/1024:.0f}KB" if sz > 1024 else f"{sz}B"
+                  emit(f"{sub}{f}  ({label})")
+          emit("```")
+          emit("</details>\n")
+
+          # Find ALL SQLite databases by magic bytes
+          db_files = []
+          for root, dirs, files in os.walk("."):
+              dirs[:] = [d for d in dirs if d != ".git"]
+              for f in files:
+                  fp = os.path.join(root, f)
+                  try:
+                      with open(fp, "rb") as fh:
+                          if fh.read(16) == b"SQLite format 3\x00":
+                              db_files.append(fp)
+                  except:
+                      pass
+
+          if not db_files:
+              emit("⚠️ **No SQLite databases found anywhere (by magic bytes)**\n")
+          else:
+              emit(f"Found **{len(db_files)}** SQLite file(s):")
+              for dbf in db_files:
+                  emit(f"- `{dbf}` ({os.path.getsize(dbf)/1024:.1f} KB)")
+              emit("")
+
+          flush()
+          PYEOF
+
+      - name: "📜 Schema DDL dump"
+        if: always()
+        run: |
+          python3 << 'PYEOF'
+          import sqlite3, os
+          from pathlib import Path
+
+          S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          buf = []
+          def emit(line=""):
+              buf.append(line)
+          def flush():
+              with open(S, "a") as f:
+                  f.write("\n".join(buf) + "\n")
+
+          db = Path("fortuna.db")
+          if not db.exists():
+              emit("## 📜 Schema DDL\n⚠️ No database to inspect.\n")
+              flush()
+              exit()
+
+          conn = sqlite3.connect(db)
+          c = conn.cursor()
+
+          emit("## 📜 Full Schema DDL")
+          emit("")
+          emit("<details><summary>Click to expand schema</summary>\n")
+          emit("```sql")
+          for row in c.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name"):
+              if row[0]:
+                  emit(row[0] + ";\n")
+          emit("```")
+          </details>\n")
+
+          conn.close()
+          flush()
+          PYEOF
+
+      - name: "🔗 Network reachability"
+        if: always()
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, os
+
+          S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          buf = []
+          def emit(line=""):
+              buf.append(line)
+          def flush():
+              with open(S, "a") as f:
+                  f.write("\n".join(buf) + "\n")
+
+          emit("## 🔗 Network Reachability\n")
+          emit("```")
+
+          targets = [
+              ("Google (baseline)", "https://www.google.com"),
+              ("Racing Post", "https://www.racingpost.com"),
+              ("At The Races", "https://www.attheraces.com"),
+              ("Sporting Life", "https://www.sportinglife.com"),
+              ("Timeform", "https://www.timeform.com"),
+              ("GBGB (greyhounds)", "https://www.gbgb.org.uk"),
+              ("Equibase", "https://www.equibase.com"),
+              ("Standardbred Canada", "https://www.standardbredcanada.ca"),
+          ]
+
+          for label, url in targets:
+              try:
+                  req = urllib.request.Request(url, method="HEAD")
+                  req.add_header("User-Agent", "Mozilla/5.0")
+                  resp = urllib.request.urlopen(req, timeout=8)
+                  emit(f"  ✅ {label:30s} → {resp.status}")
+              except Exception as e:
+                  emit(f"  ❌ {label:30s} → {type(e).__name__}: {str(e)[:60]}")
+
+          emit("```\n")
+          flush()
+          PYEOF
+
+      - name: "🔑 Secrets existence check"
+        if: always()
+        env:
+          HAS_RAPID_API: ${{ secrets.RAPID_API_KEY != '' }}
+          HAS_API_KEY: ${{ secrets.API_KEY != '' }}
+          HAS_RESULTS_API: ${{ secrets.RESULTS_API_KEY != '' }}
+        run: |
+          python3 << 'PYEOF'
+          import os
+
+          S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          buf = []
+          def emit(line=""):
+              buf.append(line)
+          def flush():
+              with open(S, "a") as f:
+                  f.write("\n".join(buf) + "\n")
+
+          emit("## 🔑 Secrets Probe\n")
+          emit("```")
+          for key in ["HAS_RAPID_API", "HAS_API_KEY", "HAS_RESULTS_API"]:
+              val = os.environ.get(key, "not checked")
+              icon = "✅" if val == "true" else "❌" if val == "false" else "❓"
+              emit(f"  {icon} {key}: {val}")
+          emit("```\n")
+          flush()
+          PYEOF
+
+      - name: "📋 Workflow files dump"
+        if: always()
+        run: |
+          python3 << 'PYEOF'
+          import glob, os
+
+          S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          buf = []
+          def emit(line=""):
+              buf.append(line)
+          def flush():
+              with open(S, "a") as f:
+                  f.write("\n".join(buf) + "\n")
+
+          emit("## 📋 Workflow Files\n")
+          wfs = sorted(glob.glob(".github/workflows/*.yml") + glob.glob(".github/workflows/*.yaml"))
+
+          # Check if audit step exists in main workflow
+          has_audit_step = False
+          main_wf = ".github/workflows/fortuna_standalone.yml"
+          if os.path.exists(main_wf):
+              with open(main_wf) as f:
+                  content = f.read()
+                  if "fortuna_analytics" in content or "Run Results Audit" in content:
+                      has_audit_step = True
+
+          if has_audit_step:
+              emit("✅ **Main workflow contains analytics/audit step**\n")
+          else:
+              emit("❌ **Main workflow does NOT contain analytics/audit step**\n")
+              emit("This is likely why zero tips are audited.\n")
+
+          for wf in wfs:
+              emit(f"<details><summary><code>{wf}</code></summary>\n")
+              emit("```yaml")
+              with open(wf) as f:
+                  emit(f.read())
+              emit("```\n</details>\n")
+
+          if not wfs:
+              emit("⚠️ No workflow files found.\n")
+
+          flush()
+          PYEOF
+
+      - name: "📜 Git history (last 20)"
+        if: always()
+        run: |
+          echo "## 📜 Git History" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          git log --oneline --decorate -20 >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+      # ┌──────────────────────────────────────────────────────────┐
+      # │ CORE DIAGNOSTIC: Tests actual pipeline components       │
+      # └──────────────────────────────────────────────────────────┘
+
+      - name: "🔬 Run Pipeline Diagnostic"
+        run: |
+          cat > diagnostic.py <<'PYEOF'
+          import sqlite3
+          import sys
+          import os
+          import asyncio
+          from datetime import datetime, timedelta, timezone
+          from pathlib import Path
+
+          sys.path.insert(0, '.')
+          import fortuna
+          import fortuna_analytics
+
+          EASTERN = timezone(timedelta(hours=-5))
+
+          S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
+          buf = []
+          def emit(line=""):
+              buf.append(line)
+          def flush():
+              with open(S, "a") as f:
+                  f.write("\n".join(buf) + "\n")
+              buf.clear()
+
+          def section(title):
+              emit(f"\n## {title}\n")
+          def success(msg):
+              emit(f"- ✅ {msg}")
+          def warning(msg):
+              emit(f"- ⚠️ {msg}")
+          def error(msg):
+              emit(f"- ❌ {msg}")
+          def info(msg):
+              emit(f"- ℹ️ {msg}")
+
+          emit("## 🔬 Pipeline Diagnostic\n")
+
+          # ── DATABASE ─────────────────────────────────────────────
+          section("Database Status")
+
+          db_path = Path("fortuna.db")
+          if not db_path.exists():
+              error("fortuna.db does not exist!")
+              emit("\nThis means:")
+              emit("- No cache restore happened")
+              emit("- OR database was never created")
+              emit("- OR wrong cache key used")
+              flush()
+              sys.exit(1)
+
+          success(f"Database exists ({db_path.stat().st_size / 1024:.1f} KB)")
+
+          conn = sqlite3.connect(db_path)
+          conn.row_factory = sqlite3.Row
+          c = conn.cursor()
+
+          tables = [r['name'] for r in c.execute(
+              "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+          ).fetchall()]
+
+          emit("\n```")
+          for table in tables:
+              count = c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+              emit(f"  {table:20} {count:6,} rows")
+          emit("```\n")
+
+          if 'tips' not in tables:
+              error("Tips table does not exist!")
+              flush()
+              sys.exit(1)
+
+          total = c.execute("SELECT COUNT(*) FROM tips").fetchone()[0]
+          audited = c.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1").fetchone()[0]
+          unverified = total - audited
+
+          emit(f"- **Total tips:** {total:,}")
+          emit(f"- **Audited:** {audited:,} ({audited/total*100 if total else 0:.1f}%)")
+          emit(f"- **Unverified:** {unverified:,} ({unverified/total*100 if total else 0:.1f}%)")
+
+          if total == 0:
+              warning("No tips in database!")
+              flush()
+              sys.exit(1)
+
+          if audited == 0:
+              error("**ZERO tips have been audited — results pipeline completely non-functional**")
+          else:
+              success(f"{audited} tips successfully audited")
+
+          # ── DATE RANGE ───────────────────────────────────────────
+          section("Date Range")
+
+          emit("```")
+          for row in c.execute("""
+              SELECT DATE(start_time) as date, COUNT(*) as count,
+                     MIN(start_time) as earliest, MAX(start_time) as latest
+              FROM tips GROUP BY DATE(start_time) ORDER BY date DESC LIMIT 5
+          """):
+              emit(f"  {row['date']}: {row['count']:3} tips  ({row['earliest'][:16]} → {row['latest'][:16]})")
+          emit("```\n")
+
+          # ── VENUES ───────────────────────────────────────────────
+          section("Unverified Tips by Venue")
+
+          venues_needing_audit = []
+          emit("```")
+          for row in c.execute("""
+              SELECT venue, discipline, COUNT(*) as count
+              FROM tips WHERE audit_completed = 0
+              GROUP BY venue, discipline ORDER BY count DESC LIMIT 15
+          """):
+              disc_name = {'H': 'Harness', 'T': 'Thoroughbred', 'G': 'Greyhound'}.get(
+                  row['discipline'], row['discipline'])
+              emit(f"  {row['venue']:30} [{disc_name:12}] {row['count']:3} tips")
+              venues_needing_audit.append((row['venue'], row['discipline'], row['count']))
+          emit("```\n")
+
+          conn.close()
+
+          # ── VENUE NORMALIZATION ──────────────────────────────────
+          section("Venue Normalization Test")
+
+          test_venues = [v[0] for v in venues_needing_audit[:10]] if venues_needing_audit else \
+                        ["Western Fair", "Flamboro", "Mohawk", "Harlow", "Valley"]
+
+          unknown_count = 0
+          for venue in test_venues:
+              canonical = fortuna.get_canonical_venue(venue)
+              if canonical == "unknown":
+                  error(f"`{venue}` → `{canonical}` **(WILL BE FILTERED OUT)**")
+                  unknown_count += 1
+              else:
+                  success(f"`{venue}` → `{canonical}`")
+
+          if unknown_count > 0:
+              warning(f"{unknown_count} venues normalize to 'unknown' — excluded from results fetch")
+
+          # ── RESULTS ADAPTERS ─────────────────────────────────────
+          section("Results Adapter Tests")
+
+          test_date_str = os.environ.get('TEST_DATE', '')
+          if not test_date_str:
+              test_date = (datetime.now(EASTERN) - timedelta(days=1)).strftime('%Y-%m-%d')
+          else:
+              test_date = test_date_str
+
+          info(f"Testing for date: **{test_date}**")
+
+          async def test_adapter(adapter_class, name):
+              try:
+                  adapter = adapter_class()
+                  start = datetime.now()
+                  results = await adapter.fetch_results(test_date)
+                  elapsed = (datetime.now() - start).total_seconds()
+
+                  if not results:
+                      warning(f"`{name}` → **0 results** in {elapsed:.1f}s")
+                      return 0
+
+                  venues = list(set(r.venue for r in results[:20]))
+                  success(f"`{name}` → **{len(results)} results** in {elapsed:.1f}s (venues: {', '.join(venues[:5])})")
+                  return len(results)
+              except Exception as e:
+                  import traceback
+                  error(f"`{name}` → **EXCEPTION:** `{str(e)[:80]}`")
+                  emit(f"  ```\n  {traceback.format_exc()[:300]}\n  ```")
+                  return -1
+
+          async def test_all_adapters():
+              adapters_to_test = [
+                  (fortuna_analytics.StandardbredCanadaResultsAdapter, "StandardbredCanadaResults"),
+                  (fortuna_analytics.EquibaseResultsAdapter, "EquibaseResults"),
+                  (fortuna_analytics.AtTheRacesResultsAdapter, "AtTheRacesResults"),
+                  (fortuna_analytics.RacingPostResultsAdapter, "RacingPostResults"),
+                  (fortuna_analytics.SportingLifeResultsAdapter, "SportingLifeResults"),
+                  (fortuna_analytics.AtTheRacesGreyhoundResultsAdapter, "AtTheRacesGreyhoundResults"),
+                  (fortuna_analytics.TimeformResultsAdapter, "TimeformResults"),
+              ]
+
+              results = {}
+              for adapter_class, name in adapters_to_test:
+                  try:
+                      count = await test_adapter(adapter_class, name)
+                      results[name] = count
+                  except Exception as e:
+                      error(f"Failed to instantiate `{name}`: `{e}`")
+                      results[name] = -1
+
+              return results
+
+          adapter_results = asyncio.run(test_all_adapters())
+
+          total_results = sum(v for v in adapter_results.values() if v > 0)
+          working = sum(1 for v in adapter_results.values() if v > 0)
+          empty = sum(1 for v in adapter_results.values() if v == 0)
+          errors = sum(1 for v in adapter_results.values() if v < 0)
+
+          emit(f"\n**Summary:** ✅ {working} working, ⚠️ {empty} empty, ❌ {errors} errors, 📊 {total_results} total results\n")
+
+          if total_results == 0:
+              error("**ALL ADAPTERS RETURNED ZERO RESULTS**")
+              emit("\nPossible causes:")
+              emit("1. No races on the test date")
+              emit("2. GitHub Actions IPs blocked")
+              emit("3. Site structure changed")
+              emit("4. Network issues")
+
+          # ── DATE CALCULATION ─────────────────────────────────────
+          section("Date Calculation Test")
+
+          now = datetime.now(EASTERN)
+          info(f"Current time (ET): {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+          # Test with dummy main logic from fortuna_analytics if possible or manual
+          for lookback_days in [1, 2, 3]:
+              dates = [(now - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(lookback_days)]
+              emit(f"- `--days {lookback_days}` (manual): {dates}")
+
+          conn = sqlite3.connect(db_path)
+          c = conn.cursor()
+          c.execute("SELECT DISTINCT DATE(start_time) as d FROM tips ORDER BY d DESC LIMIT 5")
+          tip_dates = [r[0] for r in c.fetchall()]
+          emit(f"- **Dates in tips table:** {tip_dates}")
+
+          target_dates_2 = [(now - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(2)]
+          uncovered = [d for d in tip_dates if d not in target_dates_2]
+
+          if uncovered:
+              warning(f"Tips exist for dates not covered by --days 2: {uncovered}")
+          else:
+              success("--days 2 covers recent tip dates")
+
+          # ── MATCHING LOGIC ──────────────────────────────────────
+          section("Matching Logic Test")
+
+          c.execute("""
+              SELECT race_id, venue, race_number, start_time, discipline
+              FROM tips WHERE audit_completed = 0 LIMIT 1
+          """)
+          sample_tip = c.fetchone()
+          if sample_tip:
+              emit(f"- **Sample race_id:** `{sample_tip[0]}`")
+
+              canonical = fortuna.get_canonical_venue(sample_tip[1])
+              if canonical == "unknown":
+                  error(f"Venue '{sample_tip[1]}' → 'unknown' — **matching will always fail**")
+              else:
+                  success(f"Venue '{sample_tip[1]}' → `{canonical}`")
+
+          conn.close()
+
+          # ── RECOMMENDATIONS ─────────────────────────────────────
+          section("🎯 Recommendations")
+
+          if audited == 0 and total > 0:
+              emit("### 🔴 CRITICAL: Results pipeline never completed")
+              emit("1. Check if 'Run Results Audit' step exists in production workflow")
+              emit("2. If it exists, check logs for exceptions")
+              emit("3. Verify `--days` parameter matches tip dates\n")
+
+          if total_results == 0:
+              emit("### 🔴 CRITICAL: All adapters returning zero")
+              emit("1. Try a different test date")
+              emit("2. Check if GHA IPs are blocked by racing sites")
+              emit("3. Manually test one adapter\n")
+
+          if unknown_count > 3:
+              emit("### 🟡 MEDIUM: Many venues unmapped")
+              emit("1. Expand `VENUE_MAP` with missing venue names")
+              emit("2. Improve `get_canonical_venue()` fuzzy matching\n")
+
+          if uncovered:
+              emit(f"### 🟡 MEDIUM: Date gap")
+              emit(f"1. Use `--days 3` or more to cover all tips")
+
+          if working > 0 and audited == 0:
+              emit("### 🟢 PROMISING: Adapters work but matching broken")
+              emit("1. Check matching logic in `AuditorEngine` in `fortuna_analytics.py`")
+
+          emit("---")
+          emit("*Paste this entire summary to Jules for next steps.*")
+
+          flush()
+          PYEOF
+
+          TEST_DATE="${{ github.event.inputs.test_date }}" python3 diagnostic.py

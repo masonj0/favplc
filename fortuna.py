@@ -2573,6 +2573,11 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if not name: continue
             num = rd.get("saddle_cloth_number") or rd.get("cloth_number") or 0
             wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
+
+            # Advanced heuristic fallback (Jules Fix)
+            if wo is None:
+                wo = SmartOddsExtractor.extract_from_text(str(rd))
+
             odds_data = {}
             if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
             runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
