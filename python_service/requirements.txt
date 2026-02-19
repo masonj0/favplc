@@ -44,7 +44,7 @@ platformdirs==4.0.0
 pluggy==1.3.0
 proxy-tools==0.1.0
 psutil==5.9.6
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.11
 pycparser==2.21
 pydantic==2.5.0
 pydantic-core==2.14.1
