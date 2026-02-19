@@ -3997,16 +3997,14 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 fav, sec = all_odds[0], all_odds[1]
                 gap12 = round(float(sec - fav), 2)
 
-                # Enforce gap requirement (Relaxed from 0.25 to 0.15 for better yield)
-                if gap12 <= 0.15:
-                    log.debug("Insufficient gap detected (1Gap2 <= 0.15), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # Enforce gap requirement (Tightened to 0.75 per user request)
+                if gap12 < 0.75:
+                    log.debug("Insufficient gap detected (1Gap2 < 0.75), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
                 else:
-                    # Goldmine = 2nd Fav >= 4.0, Field <= 14, Gap > 0.15 (Relaxed from 4.5 and 11)
-                    if len(active_runners) <= 14 and sec >= Decimal("4.0"):
+                    # Preferred Predictions (Tightened per user request)
+                    # 2ndFav Odds >= 4.5, 1gap2 >= 0.75, field_size <= 9
+                    if len(active_runners) <= 9 and sec >= Decimal("4.5"):
                         is_goldmine = True
-
-                    # You Might Like = 2nd Fav >= 3.0, Field <= 14, Gap > 0.15 (Relaxed from 3.5 and 11)
-                    if len(active_runners) <= 14 and sec >= Decimal("3.0"):
                         is_best_bet = True
 
                 race.metadata['predicted_2nd_fav_odds'] = float(sec)
