@@ -1964,17 +1964,13 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
 
                     # startingPrice might be "11/4" or numeric
                     sp_raw = str(item.get("sp") or item.get("startingPrice") or "0")
-                    win_p = parse_currency_value(sp_raw)
-
-                    # If win_p is low, it might be fractional odds
-                    if win_p < 1.0 and "/" in sp_raw:
-                        win_p = float(fortuna.parse_odds_to_decimal(sp_raw) or 0.0)
+                    final_odds = parse_fractional_odds(sp_raw)
 
                     runners.append(ResultRunner(
                         name=name,
                         number=num,
                         position=str(pos) if pos else None,
-                        win_payout=win_p,
+                        final_win_odds=final_odds if final_odds > 0 else None,
                     ))
 
                 if runners and venue:
@@ -2267,7 +2263,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
 
         venue = fortuna.normalize_venue_name(venue_text)
 
-        # Split by race anchors
+        # Split by race anchors (Legacy format)
         blocks = re.split(r"<a name='N?(\d+)'></a>", html)
 
         races: List[ResultRace] = []
@@ -2281,21 +2277,35 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                         races.append(race)
                 except (ValueError, IndexError):
                     self.logger.debug("Failed to parse SC race block", exc_info=True)
-        else:
-            # Fallback: try split by "RACE #" text or plain digits if anchors are missing
-            blocks = re.split(r"(?:RACE\s*#?\s*|Jump to race:.*?\s+)(\d+)\s*\n", html, flags=re.IGNORECASE | re.DOTALL)
-            if len(blocks) <= 1:
-                blocks = re.split(r"RACE\s*#?\s*(\d+)", html, flags=re.IGNORECASE)
 
-            for i in range(1, len(blocks), 2):
-                try:
-                    race_num = int(blocks[i])
-                    race_html = blocks[i + 1].split("RACE")[0].split("<hr/>")[0]
-                    race = self._parse_race_block(race_html, venue, date_str, race_num)
-                    if race:
-                        races.append(race)
-                except (ValueError, IndexError):
-                    pass
+        # If no races found, try more aggressive splitting (Newer format)
+        if not races:
+            # Try splitting by "RACE #" or similar headers in the page text
+            # We look for "RACE" followed by a number, often in bold or as a text header
+            blocks = re.split(r"(?:RACE\s*#?\s*|Jump to race:.*?\s+)(\d+)\s*", html, flags=re.IGNORECASE)
+
+            # If still nothing, try looking for the Horse table headers which usually mark a race
+            if len(blocks) <= 1:
+                blocks = re.split(r"(?:^|\n)\s*(\d+)\s+(?:[A-Z][a-z]+\s+){1,3}(?:\(L\)|\(ES\))?\s+\d+\s+[\d/]+[A-Z]*", html)
+
+            if len(blocks) > 1:
+                for i in range(1, len(blocks), 2):
+                    try:
+                        race_num = int(blocks[i])
+                        if race_num > 20: continue # Sanity check
+
+                        race_html = blocks[i + 1]
+                        # Trim until the next "RACE" or end of page
+                        next_race_match = re.search(r"RACE\s*#?\s*\d+", race_html, re.I)
+                        if next_race_match:
+                            race_html = race_html[:next_race_match.start()]
+
+                        race = self._parse_race_block(race_html, venue, date_str, race_num)
+                        if race:
+                            races.append(race)
+                    except (ValueError, IndexError):
+                        pass
+
         return races
 
     def _parse_race_block(

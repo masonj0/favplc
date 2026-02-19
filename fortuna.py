@@ -2079,7 +2079,14 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                         diff = (rt - now_site).total_seconds() / 60
                         if not (-45 < diff <= 1080):
                             continue
-                        meta.append({"url": r["url"], "race_number": 1, "venue_raw": track})
+
+                        # Try to extract race number from URL if it ends in /1, /2 etc.
+                        rn = 1
+                        u_parts = r["url"].rstrip("/").split("/")
+                        if u_parts and u_parts[-1].isdigit() and len(u_parts[-1]) <= 2:
+                            rn = int(u_parts[-1])
+
+                        meta.append({"url": r["url"], "race_number": rn, "venue_raw": track})
                     except Exception: pass
 
         if not meta:
@@ -2126,10 +2133,22 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             if time_match:
                 time_str = time_match.group(1)
                 if not track_name:
-                    track_raw = re.sub(r"\d{1,2}\s+[A-Za-z]{3}\s+\d{4}", "", header_text.replace(time_str, "")).strip()
-                    track_raw = re.split(r"\s+Race\s+\d+", track_raw, flags=re.I)[0]
-                    track_raw = re.sub(r"^\d+\s+", "", track_raw).split(" - ")[0].split("|")[0].strip()
-                    track_name = normalize_venue_name(track_raw)
+                    # More aggressive stripping of race titles from venue
+                    # We use the VENUE_MAP to try and find a known track name in the header.
+                    upper_header = header_text.upper()
+                    found_track = None
+                    for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
+                        if known_track in upper_header:
+                            found_track = VENUE_MAP[known_track]
+                            break
+
+                    if found_track:
+                        track_name = found_track
+                    else:
+                        track_raw = re.sub(r"\d{1,2}\s+[A-Za-z]{3}\s+\d{4}", "", header_text.replace(time_str, "")).strip()
+                        track_raw = re.split(r"\s+Race\s+\d+", track_raw, flags=re.I)[0]
+                        track_raw = re.sub(r"^\d+\s+", "", track_raw).split(" - ")[0].split("|")[0].strip()
+                        track_name = normalize_venue_name(track_raw)
         if not track_name:
             details = parser.css_first(".race-header__details--primary")
             if details:
@@ -2149,7 +2168,18 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         if not track_name or not time_str: return None
         try: start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
         except Exception: return None
+
+        # Extract correct race number from header or URL
         race_number = race_number_fallback or 1
+        rn_match = re.search(r"Race\s+(\d+)", header_text, re.I)
+        if rn_match:
+            race_number = int(rn_match.group(1))
+        else:
+            # Fallback to URL if it ends in a small number
+            url_rn_match = re.search(r"/(\d{1,2})$", url_path.rstrip("/"))
+            if url_rn_match:
+                race_number = int(url_rn_match.group(1))
+
         distance = None
         dist_match = re.search(r"\|\s*(\d+[mfy].*)", header_text, re.I)
         if dist_match: distance = dist_match.group(1).strip()
