@@ -1,6 +1,6 @@
 aiosqlite==0.19.0
 altgraph==0.17.3
-annotated-types==0.6.0
+annotated-types==0.7.0
 anyio==3.7.1
 beautifulsoup4==4.12.2
 black==23.12.0
