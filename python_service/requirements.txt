@@ -86,5 +86,5 @@ playwright==1.49.1
 pyee==12.0.0
 setuptools==69.5.1
 wheel==0.45.1
-wrapt==1.16.0
+wrapt==2.1.1
 wsproto==1.2.0
