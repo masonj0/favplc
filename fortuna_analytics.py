@@ -192,6 +192,21 @@ def _apply_exotics_to_race(
     }
 
 
+def _race_quality(race: "ResultRace") -> int:
+    """Heuristic to score a result by completeness (higher is better)."""
+    score = len(race.runners)
+    # Give significant weight to having odds and numeric positions
+    score += sum(10 for r in race.runners if r.final_win_odds and r.final_win_odds > 0)
+    score += sum(5 for r in race.runners if r.place_payout and r.place_payout > 0)
+    score += sum(3 for r in race.runners if r.position_numeric is not None)
+    # Exotic payouts are a good indicator of high-quality data (e.g. Equibase)
+    if race.trifecta_payout:
+        score += 20
+    if race.superfecta_payout:
+        score += 20
+    return score
+
+
 # -- MODELS -------------------------------------------------------------------
 
 class ResultRunner(fortuna.Runner):
@@ -395,7 +410,35 @@ class AuditorEngine:
         if len(parts) < 5:
             return None, "none"
 
-        # Fallback 1: drop time, keep discipline
+        # Fallback 1: closest time match within 90 minutes (same discipline)
+        prefix_with_disc = f"{parts[0]}|{parts[1]}|{parts[2]}"
+        try:
+            tip_minutes = int(parts[3][:2]) * 60 + int(parts[3][2:])
+            candidates = []
+            for key, obj in results_map.items():
+                # We only check canonical keys (those with 5 parts) to avoid double-matching relaxed keys
+                kp = key.split("|")
+                if len(kp) == 5 and kp[0] == parts[0] and kp[1] == parts[1] and kp[2] == parts[2] and kp[4] == parts[4]:
+                    try:
+                        res_minutes = int(kp[3][:2]) * 60 + int(kp[3][2:])
+                        delta = abs(tip_minutes - res_minutes)
+                        if delta <= 90:
+                            candidates.append((delta, obj))
+                    except (ValueError, IndexError):
+                        pass
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                res = candidates[0][1]
+                self.logger.info(
+                    "Time-window fallback match",
+                    race_id=race_id,
+                    match_key=res.canonical_key,
+                )
+                return res, "relaxed"
+        except (ValueError, IndexError):
+            pass
+
+        # Fallback 1.1: drop time entirely, keep discipline (any time)
         relaxed = f"{parts[0]}|{parts[1]}|{parts[2]}|{parts[4]}"
         result = results_map.get(relaxed)
         if result:
@@ -781,6 +824,8 @@ class PageFetchingResultsAdapter(
         "please verify",
         "attention required",
         "one more step",
+        "incapsula",
+        "incident id",
     )
     _BLOCK_MAX_LENGTH: Final[int] = 15_000
 
@@ -1019,7 +1064,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT_LEGACY,
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
@@ -1233,6 +1278,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             race_number=race_num,
             start_time=start_time,
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
             **_apply_exotics_to_race(exotics),
@@ -1371,9 +1417,12 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             return None
         raw_venue = venue_node.text(strip=True)
         # RP often includes time and date in the venue node: "1:30 Market Rasen 17 Feb"
-        # We strip time (HH:MM) and date (DD MMM) patterns if present
+        # We capture the time (HH:MM) and then strip it and the date (DD MMM) patterns
+        time_match = re.match(r"^(\d{1,2}:\d{2})\s*", raw_venue)
+        race_time_str = time_match.group(1) if time_match else None
+
         raw_venue = re.sub(r"^\d{1,2}:\d{2}\s*", "", raw_venue)
-        raw_venue = re.sub(r"\s+\d{1,2}\s+[A-Z][a-z]{2}.*$", "", raw_venue)
+        raw_venue = re.sub(r"[,\s]+\d{1,2}\s+[A-Z][a-z]{2}.*$", "", raw_venue)
         venue = fortuna.normalize_venue_name(raw_venue.strip())
 
         dividends = self._parse_tote_dividends(parser)
@@ -1389,8 +1438,9 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             id=self._make_race_id("rp_res", venue, date_str, race_num),
             venue=venue,
             race_number=race_num,
-            start_time=build_start_time(date_str),
+            start_time=build_start_time(date_str, race_time_str),
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
@@ -1527,8 +1577,18 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     IMPERSONATE = "chrome120"
     TIMEOUT = 60
 
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+            network_idle=True,
+        )
+
     _ATR_LINK_SELECTORS: Final[tuple[str, ...]] = (
         "a[href*='/results/']",
+        "a[href*='/racecard/']",
         "a[data-test-selector*='result']",
         ".meeting-summary a",
         ".p-results__item a",
@@ -1539,6 +1599,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     _ATR_RUNNER_SELECTORS: Final[tuple[str, ...]] = (
         ".result-racecard__row",
         ".card-cell--horse",
+        ".card-entry",
         "atr-result-horse",
         "div[class*='RacecardResultItem']",
         ".p-results__item",
@@ -1591,11 +1652,13 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
     @staticmethod
     def _is_atr_race_link(href: str) -> bool:
+        if "userprofile" in href:
+            return False
         return bool(
-            re.search(r"/results/.*?/\d{4}", href)
-            or re.search(r"/results/\d{2}-.*?-\d{4}/", href)
-            or re.search(r"/results/.*?/\d+$", href)
-            or ("/results/" in href and len(href.split("/")) >= 4)
+            re.search(r"/(?:results|racecard)/.*?/\d{4}", href)
+            or re.search(r"/(?:results|racecard)/\d{2}-.*?-\d{4}/", href)
+            or re.search(r"/(?:results|racecard)/.*?/\d+$", href)
+            or (("/results/" in href or "/racecard/" in href) and len(href.split("/")) >= 4)
         )
 
     # -- single-race page parsing ------------------------------------------
@@ -1605,16 +1668,20 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     ) -> Optional[ResultRace]:
         parser = HTMLParser(html)
 
-        venue = self._extract_atr_venue(parser)
+        venue, race_time_str = self._extract_atr_venue(parser)
         if not venue:
             return None
 
-        url_match = re.search(r"/R(\d+)$", url)
+        # Robust race number extraction from URL (last numeric part)
+        url_match = re.search(r"/(\d+)$", url.rstrip("/"))
         race_num = int(url_match.group(1)) if url_match else 1
 
         runners = self._parse_atr_runners(parser)
 
-        div_table = parser.css_first(".result-racecard__dividends-table")
+        div_table = (
+            parser.css_first(".result-racecard__dividends-table")
+            or next((t for t in parser.css("table") if "Trifecta" in t.text()), None)
+        )
         exotics: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
         if div_table:
             exotics = extract_exotic_payouts([div_table])
@@ -1627,57 +1694,82 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             id=self._make_race_id("atr_res", venue, date_str, race_num),
             venue=venue,
             race_number=race_num,
-            start_time=build_start_time(date_str),
+            start_time=build_start_time(date_str, race_time_str),
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
 
     @staticmethod
-    def _extract_atr_venue(parser: HTMLParser) -> Optional[str]:
+    def _extract_atr_venue(parser: HTMLParser) -> Tuple[Optional[str], Optional[str]]:
         header = (
             parser.css_first(".race-header__details--primary")
             or parser.css_first(".racecard-header")
             or parser.css_first(".race-header")
         )
         if not header:
-            return None
+            return None, None
         venue_node = (
             header.css_first("h2")
             or header.css_first("h1")
             or header.css_first(".track-name")
         )
         if not venue_node:
-            return None
-        return fortuna.normalize_venue_name(venue_node.text(strip=True))
+            return None, None
+        venue_text = venue_node.text(strip=True)
+        # Strip leading time if present (e.g. "14:20 Southwell")
+        time_match = re.match(r"^(\d{1,2}:\d{2})\s*", venue_text)
+        race_time = time_match.group(1) if time_match else None
+        venue_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", venue_text)
+        return fortuna.normalize_venue_name(venue_text), race_time
 
     def _parse_atr_runners(self, parser: HTMLParser) -> List[ResultRunner]:
-        rows: list[Node] = []
-        for selector in self._ATR_RUNNER_SELECTORS:
-            rows = parser.css(selector)
-            if rows:
-                break
+        # Favor the full-result tab if present (new layout)
+        tab = parser.css_first("#tab-full-result")
+        if tab:
+            rows = tab.css(".card-entry")
+        else:
+            rows = []
+            for selector in self._ATR_RUNNER_SELECTORS:
+                rows = parser.css(selector)
+                if rows:
+                    break
 
         runners: List[ResultRunner] = []
         for row in rows:
             name_node = (
-                row.css_first(".result-racecard__horse-name a")
+                row.css_first(".horse__link")
+                or row.css_first(".result-racecard__horse-name a")
                 or row.css_first(".horse-name a")
-                or row.css_first("a[href*='/horse/']")
+                or row.css_first("a[href*='/form/horse/']")
                 or row.css_first("[class*='HorseName']")
             )
             if not name_node:
                 continue
 
             pos_node = (
-                row.css_first(".result-racecard__pos")
+                row.css_first(".card-no-draw .p--large")
+                or row.css_first(".result-racecard__pos")
                 or row.css_first(".pos")
                 or row.css_first(".position")
                 or row.css_first("[class*='Position']")
             )
 
-            num_node = row.css_first(".result-racecard__saddle-cloth")
-            odds_node = row.css_first(".result-racecard__odds")
+            num_node = (
+                row.css_first(".card-cell--horse h2 span")
+                or row.css_first(".result-racecard__saddle-cloth")
+            )
+
+            # Saddle cloth might have a dot, e.g. "1."
+            num_text = fortuna.node_text(num_node)
+            if num_text and "." in num_text:
+                num_text = num_text.split(".")[0]
+
+            odds_node = (
+                row.css_first(".card-cell--odds")
+                or row.css_first(".result-racecard__odds")
+            )
 
             final_odds = (
                 parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
@@ -1690,7 +1782,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
-                number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
+                number=_safe_int(num_text) if num_text else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
             ))
@@ -1780,6 +1872,11 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                             if self._link_matches_date(href, date_str):
                                 full = href if href.startswith("http") else f"{self.BASE_URL}{href}"
                                 links.add(full)
+
+            if not links:
+                module_types = [m.get('type') for m in modules[:10]]
+                self.logger.warning('ATR Grey: no links found in payload', module_types=module_types, date=date_str)
+
         except Exception:
             self.logger.debug("Failed to parse ATR Grey JSON payload", exc_info=True)
 
@@ -1827,18 +1924,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
         races: List[ResultRace] = []
         venue, race_time_str, race_num = "", "", 1
 
-        # Extract race number from the URL
-        # e.g., https://greyhounds.attheraces.com/result/GB/central-park/18-February-2026/1906
-        # Often the last part is a time or ID, not a race number.
-        num_matches = re.findall(r"/(\d+)", url)
-        if num_matches:
-            for m in reversed(num_matches):
-                val = int(m)
-                if 1 <= val <= 30:
-                    race_num = val
-                    break
-
-        # Heuristic: Extract venue and time from HTML title if modules are sparse
+        # Initial Heuristic: Extract venue and time from HTML title if modules are sparse
         if html:
             title_match = re.search(
                 r"<title>\s*(\d{1,2}:\d{2})\s+([^|]+?)\s+Greyhound", html,
@@ -1847,11 +1933,23 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                 race_time_str = title_match.group(1)
                 venue = fortuna.normalize_venue_name(title_match.group(2))
 
+        # URL fallback if race_num wasn't found in title (only check last segment)
+        if race_num == 1:
+            last_segment = url.rstrip("/").split("/")[-1]
+            if last_segment.isdigit():
+                val = int(last_segment)
+                if 1 <= val <= 15:
+                    race_num = val
+
         for module in modules:
             m_type, m_data = module.get("type"), module.get("data", {})
             if m_type == "RacecardHero":
                 venue = fortuna.normalize_venue_name(m_data.get("track", ""))
                 race_time_str = m_data.get("time", "")
+                # Prefer race number from module data
+                rn = m_data.get("raceNumber")
+                if rn and isinstance(rn, (int, str)) and str(rn).isdigit():
+                    race_num = int(rn)
             elif m_type in ("RaceResult", "RacecardResultForm"):
                 runners: List[ResultRunner] = []
                 # Handle both module structures
@@ -1989,6 +2087,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             race_number=race_num,
             start_time=start_time,
             runners=runners,
+            discipline="Thoroughbred",
             trifecta_payout=trifecta_pay,
             superfecta_payout=superfecta_pay,
             source=self.SOURCE_NAME,
@@ -2093,8 +2192,8 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
-        "lonn", "lon", "wbsbsn", "wbsb", "flmn", "flm", "ridcn", "rid",
-        "trrn", "kdun", "geodn", "clntn", "hanon", "Dresn", "grvr",
+        "lonn", "lon", "wbsbsn", "wbsb", "flmn", "flm", "flmdn", "ridcn", "rid",
+        "trrn", "kdun", "geodn", "clntn", "hanon", "dresn", "grvr",
         "leam", "kaww", "wood",
     )
 
@@ -2146,15 +2245,19 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
 
         if not venue_text:
             # Fallback: search for track name in first 1000 chars
-            for track_match in ["Western Fair", "Mohawk", "Flamboro", "Rideau", "Woodbine"]:
+            for track_match in ["Western Fair", "London", "Mohawk", "Flamboro", "Rideau", "Woodbine"]:
                 if track_match.lower() in html[:1000].lower():
                     venue_text = track_match
                     break
 
         if not venue_text:
             # Last fallback: extract from URL if possible
-            for track_code, track_name in [("lonn", "Western Fair"), ("wbsbsn", "Mohawk"), ("flmn", "Flamboro")]:
-                if track_code in url.lower():
+            url_lower = url.lower()
+            for track_code, track_name in [
+                ("lon", "Western Fair"), ("wbsb", "Mohawk"), ("flm", "Flamboro"),
+                ("rid", "Rideau"), ("wood", "Woodbine")
+            ]:
+                if track_code in url_lower:
                     venue_text = track_name
                     break
 
@@ -2178,12 +2281,15 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                 except (ValueError, IndexError):
                     self.logger.debug("Failed to parse SC race block", exc_info=True)
         else:
-            # Fallback: try split by "RACE #" text if anchors are missing
-            blocks = re.split(r"RACE\s*#?\s*(\d+)", html, flags=re.IGNORECASE)
+            # Fallback: try split by "RACE #" text or plain digits if anchors are missing
+            blocks = re.split(r"(?:RACE\s*#?\s*|Jump to race:.*?\s+)(\d+)\s*\n", html, flags=re.IGNORECASE | re.DOTALL)
+            if len(blocks) <= 1:
+                blocks = re.split(r"RACE\s*#?\s*(\d+)", html, flags=re.IGNORECASE)
+
             for i in range(1, len(blocks), 2):
                 try:
                     race_num = int(blocks[i])
-                    race_html = blocks[i + 1].split("RACE")[0]
+                    race_html = blocks[i + 1].split("RACE")[0].split("<hr/>")[0]
                     race = self._parse_race_block(race_html, venue, date_str, race_num)
                     if race:
                         races.append(race)
@@ -2390,6 +2496,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             race_number=race_num,
             start_time=build_start_time(date_str),
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
@@ -2511,9 +2618,18 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             if not name_node:
                 continue
             pos_node = row.css_first(".rp-entry-number")
+            num_node = row.css_first(".rp-saddle-cloth") or row.css_first(".rp-cloth")
+            odds_node = row.css_first(".rp-odds") or row.css_first(".rp-sp")
+
+            final_odds = fortuna.parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            if final_odds <= 0.01:
+                final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
+                number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
+                final_win_odds=final_odds,
             ))
 
         if not runners:
@@ -2525,6 +2641,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             race_number=race_num,
             start_time=build_start_time(date_str),
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
         )
 
@@ -2617,6 +2734,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             race_number=race_num,
             start_time=start_time,
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
@@ -2957,8 +3075,8 @@ async def _harvest_results(
     ]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    all_races: List[ResultRace] = []
-    seen_keys: Set[str] = set()
+    # canonical_key -> race
+    seen_races: Dict[str, ResultRace] = {}
 
     for res in raw_results:
         if isinstance(res, Exception):
@@ -2967,29 +3085,36 @@ async def _harvest_results(
 
         name, races = res
 
-        # Deduplicate across adapters
-        unique_races: List[ResultRace] = []
+        # Deduplicate across adapters with quality scoring
+        deduped_for_this_adapter: List[ResultRace] = []
         for race in races:
-            if race.canonical_key not in seen_keys:
-                seen_keys.add(race.canonical_key)
-                unique_races.append(race)
-
-        all_races.extend(unique_races)
+            key = race.canonical_key
+            if key in seen_races:
+                # Keep the higher quality version
+                if _race_quality(race) > _race_quality(seen_races[key]):
+                    seen_races[key] = race
+                    # Note: this might slightly under-count for the previous adapter
+                    # and over-count for this one in harvest_summary, but the
+                    # final all_races list will be optimal.
+                    deduped_for_this_adapter.append(race)
+            else:
+                seen_races[key] = race
+                deduped_for_this_adapter.append(race)
 
         max_odds = max(
             (
                 float(r.final_win_odds)
-                for race in unique_races
+                for race in deduped_for_this_adapter
                 for r in race.runners
                 if r.final_win_odds
             ),
             default=0.0,
         )
         entry = harvest_summary.setdefault(name, {"count": 0, "max_odds": 0.0})
-        entry["count"] += len(unique_races)
+        entry["count"] += len(deduped_for_this_adapter)
         entry["max_odds"] = max(entry["max_odds"], max_odds)
 
-    return all_races
+    return list(seen_races.values())
 
 
 async def _save_harvest_summary(
