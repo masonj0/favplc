@@ -1362,10 +1362,19 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     ) -> Optional[ResultRace]:
         parser = HTMLParser(html)
 
-        venue_node = parser.css_first(".rp-raceTimeCourseName__course")
+        venue_node = (
+            parser.css_first(".rp-raceTimeCourseName__course")
+            or parser.css_first(".rp-course__name")
+            or parser.css_first("h1")
+        )
         if not venue_node:
             return None
-        venue = fortuna.normalize_venue_name(venue_node.text(strip=True))
+        raw_venue = venue_node.text(strip=True)
+        # RP often includes time and date in the venue node: "1:30 Market Rasen 17 Feb"
+        # We strip time (HH:MM) and date (DD MMM) patterns if present
+        raw_venue = re.sub(r"^\d{1,2}:\d{2}\s*", "", raw_venue)
+        raw_venue = re.sub(r"\s+\d{1,2}\s+[A-Z][a-z]{2}.*$", "", raw_venue)
+        venue = fortuna.normalize_venue_name(raw_venue.strip())
 
         dividends = self._parse_tote_dividends(parser)
         trifecta_pay, trifecta_combo = self._exotic_from_dividends(dividends, "trifecta")
@@ -1450,13 +1459,26 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         dividends: Dict[str, str],
     ) -> List[ResultRunner]:
         runners: List[ResultRunner] = []
-        for row in parser.css(".rp-horseTable__table__row"):
-            name_node = row.css_first(".rp-horseTable__horse__name")
+        # Try both old and new selectors for runner rows
+        rows = (
+            parser.css(".rp-horseTable__table__row")
+            or parser.css(".rp-horseTable__mainRow")
+            or parser.css("tr.rp-horseTable__mainRow")
+        )
+
+        for row in rows:
+            name_node = (
+                row.css_first(".rp-horseTable__horse__name")
+                or row.css_first("a.rp-horseTable__horse__name")
+            )
             if not name_node:
                 continue
             name = fortuna.clean_text(fortuna.node_text(name_node))
 
-            pos_node = row.css_first(".rp-horseTable__pos__number")
+            pos_node = (
+                row.css_first(".rp-horseTable__pos__number")
+                or row.css_first(".rp-horseTable__pos")
+            )
             pos = fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None
 
             num_node = row.css_first(".rp-horseTable__saddleClothNo")
@@ -1790,10 +1812,9 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
             )
             if items_raw:
                 try:
-                    modules = json.loads(
-                        re.sub(r"&quot;", '"', items_raw),
-                    )
-                    return self._parse_from_modules(modules, date_str, url)
+                    import html as py_html
+                    modules = json.loads(py_html.unescape(items_raw))
+                    return self._parse_from_modules(modules, date_str, url, html=html)
                 except Exception:
                     self.logger.debug(
                         "Failed to parse ATR Grey JSON", exc_info=True,
@@ -1801,27 +1822,55 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
         return []
 
     def _parse_from_modules(
-        self, modules: List[Any], date_str: str, url: str,
+        self, modules: List[Any], date_str: str, url: str, html: str = "",
     ) -> List[ResultRace]:
         races: List[ResultRace] = []
         venue, race_time_str, race_num = "", "", 1
 
-        url_match = re.search(r"/(\d+)$", url)
-        if url_match:
-            race_num = int(url_match.group(1))
+        # Extract race number from the URL
+        # e.g., https://greyhounds.attheraces.com/result/GB/central-park/18-February-2026/1906
+        # Often the last part is a time or ID, not a race number.
+        num_matches = re.findall(r"/(\d+)", url)
+        if num_matches:
+            for m in reversed(num_matches):
+                val = int(m)
+                if 1 <= val <= 30:
+                    race_num = val
+                    break
+
+        # Heuristic: Extract venue and time from HTML title if modules are sparse
+        if html:
+            title_match = re.search(
+                r"<title>\s*(\d{1,2}:\d{2})\s+([^|]+?)\s+Greyhound", html,
+            )
+            if title_match:
+                race_time_str = title_match.group(1)
+                venue = fortuna.normalize_venue_name(title_match.group(2))
 
         for module in modules:
             m_type, m_data = module.get("type"), module.get("data", {})
             if m_type == "RacecardHero":
                 venue = fortuna.normalize_venue_name(m_data.get("track", ""))
                 race_time_str = m_data.get("time", "")
-            elif m_type == "RaceResult":
+            elif m_type in ("RaceResult", "RacecardResultForm"):
                 runners: List[ResultRunner] = []
-                for item in m_data.get("items", []):
+                # Handle both module structures
+                items = m_data.get("items")
+                if items is None and "form" in m_data:
+                    items = m_data["form"].get("data", [])
+
+                for item in items or []:
                     name = item.get("name", "")
                     num = item.get("trap") or item.get("number") or 0
                     pos = item.get("position")
-                    win_p = parse_currency_value(str(item.get("sp", "0")))
+
+                    # startingPrice might be "11/4" or numeric
+                    sp_raw = str(item.get("sp") or item.get("startingPrice") or "0")
+                    win_p = parse_currency_value(sp_raw)
+
+                    # If win_p is low, it might be fractional odds
+                    if win_p < 1.0 and "/" in sp_raw:
+                        win_p = float(fortuna.parse_odds_to_decimal(sp_raw) or 0.0)
 
                     runners.append(ResultRunner(
                         name=name,
@@ -2114,18 +2163,32 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
 
         venue = fortuna.normalize_venue_name(venue_text)
 
-        blocks = re.split(r"<a name='N(\d+)'></a>", html)
+        # Split by race anchors
+        blocks = re.split(r"<a name='N?(\d+)'></a>", html)
 
         races: List[ResultRace] = []
-        for i in range(1, len(blocks), 2):
-            try:
-                race_num = int(blocks[i])
-                race_html = blocks[i + 1].split("<hr/>")[0]
-                race = self._parse_race_block(race_html, venue, date_str, race_num)
-                if race:
-                    races.append(race)
-            except (ValueError, IndexError):
-                self.logger.debug("Failed to parse SC race block", exc_info=True)
+        if len(blocks) > 1:
+            for i in range(1, len(blocks), 2):
+                try:
+                    race_num = int(blocks[i])
+                    race_html = blocks[i + 1].split("<hr/>")[0]
+                    race = self._parse_race_block(race_html, venue, date_str, race_num)
+                    if race:
+                        races.append(race)
+                except (ValueError, IndexError):
+                    self.logger.debug("Failed to parse SC race block", exc_info=True)
+        else:
+            # Fallback: try split by "RACE #" text if anchors are missing
+            blocks = re.split(r"RACE\s*#?\s*(\d+)", html, flags=re.IGNORECASE)
+            for i in range(1, len(blocks), 2):
+                try:
+                    race_num = int(blocks[i])
+                    race_html = blocks[i + 1].split("RACE")[0]
+                    race = self._parse_race_block(race_html, venue, date_str, race_num)
+                    if race:
+                        races.append(race)
+                except (ValueError, IndexError):
+                    pass
         return races
 
     def _parse_race_block(
@@ -2432,9 +2495,15 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         race_num = 1
-        num_match = re.search(r"/(\d+)/[^/]+$", url)
-        if num_match:
-            race_num = _safe_int(num_match.group(1), default=1)
+        # Extract race number from the last numeric part of the URL (e.g., .../33/3)
+        # We assume race numbers are <= 100
+        num_matches = re.findall(r"/(\d+)", url)
+        if num_matches:
+            for m in reversed(num_matches):
+                val = int(m)
+                if 1 <= val <= 100:
+                    race_num = val
+                    break
 
         runners: List[ResultRunner] = []
         for row in parser.css("tbody.rp-table-row"):

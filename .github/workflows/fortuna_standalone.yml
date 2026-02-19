@@ -16,7 +16,7 @@ on:
       days:
         description: 'Audit lookback days'
         required: false
-        default: '2'
+        default: '4'
         type: string
 
 concurrency:
@@ -25,8 +25,7 @@ concurrency:
 
 jobs:
   # PHASE 1: Parallel Discovery
-  # Fetches racing data from three distinct regional sets of adapters.
-  # GLOBAL region includes adapters that cover multiple continents (e.g. Oddschecker, RacingPost).
+  # Fetches racing data from distinct sets of adapters.
   fetch:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -39,12 +38,6 @@ jobs:
           - type: entry
             quality: lousy
             slug: entry-lousy
-          - type: results
-            quality: solid
-            slug: results-solid
-          - type: results
-            quality: lousy
-            slug: results-lousy
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -79,28 +72,19 @@ jobs:
         if: steps.cache-db.outputs.cache-hit != 'true'
         run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
 
-      - name: Run Fetcher (Entry or Results)
+      - name: Run Discovery
         timeout-minutes: 20
         env:
           PYTHONPATH: .
         run: |
           START_TIME=$(date +%s)
 
-          if [[ "${{ matrix.type }}" == "entry" ]]; then
-            echo "Running Solid/Lousy Entry Discovery..."
-            python3 fortuna.py \
-              --quality ${{ matrix.quality }} \
-              --save "races_${{ matrix.slug }}.json" \
-              --hours "${{ github.event.inputs.hours || '8' }}" \
-            || echo '[]' > "races_${{ matrix.slug }}.json"
-          else
-            echo "Running Solid/Lousy Results Harvesting..."
-            python3 fortuna_analytics.py \
-              --quality ${{ matrix.quality }} \
-              --days "${{ github.event.inputs.days || '3' }}" \
-            || echo "Results harvest failed"
-            echo '[]' > "races_${{ matrix.slug }}.json"
-          fi
+          echo "Running ${{ matrix.quality }} Entry Discovery..."
+          python3 fortuna.py \
+            --quality ${{ matrix.quality }} \
+            --save "races_${{ matrix.slug }}.json" \
+            --hours "${{ github.event.inputs.hours || '8' }}" \
+          || echo '[]' > "races_${{ matrix.slug }}.json"
 
           END_TIME=$(date +%s)
           DURATION=$((END_TIME - START_TIME))
@@ -112,8 +96,6 @@ jobs:
           cp fortuna.db "fortuna_${{ matrix.slug }}.db"
           mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
             || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
-          mv results_harvest.json "results_harvest_${{ matrix.slug }}.json" 2>/dev/null \
-            || echo '{}' > "results_harvest_${{ matrix.slug }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -166,10 +148,10 @@ jobs:
       - name: Consolidate Discovery Data
         run: |
           set -eo pipefail
-          echo "Validating parallel artifacts..."
+          echo "Validating discovery artifacts..."
 
           ARTIFACT_COUNT=0
-          for slug in entry-solid entry-lousy results-solid results-lousy; do
+          for slug in entry-solid entry-lousy; do
             DIR="results-${slug}"
             if [ -d "$DIR" ]; then
               ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
@@ -203,7 +185,7 @@ jobs:
         timeout-minutes: 15
         env:
           PYTHONPATH: .
-        run: python3 fortuna_analytics.py --days "${{ github.event.inputs.days || '3' }}"
+        run: python3 fortuna_analytics.py --days "${{ github.event.inputs.days || '4' }}"
 
       - name: Prepare Audit Artifact
         if: always()
