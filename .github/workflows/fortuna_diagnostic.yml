@@ -264,18 +264,42 @@ jobs:
           async def browser_ping(domains):
               from playwright.async_api import async_playwright
               async with async_playwright() as p:
-                  browser = await p.chromium.launch(headless=True)
-                  context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                  browser = await p.chromium.launch(headless=True, args=["--disable-gpu"])
+                  # Curated subset for stealth rendering test
+                  test_urls = [
+                      "https://www.racingpost.com/results",
+                      "https://www.equibase.com/static/chart/summary/index.html",
+                      "https://www.attheraces.com/results"
+                  ]
+                  # Add other discovered domains
+                  for d in domains:
+                      if d and d not in test_urls: test_urls.append(d)
 
-                  for url in domains[:5]: # Limit to 5 for speed
+                  context = await browser.new_context(
+                      user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                      viewport={'width': 1280, 'height': 720}
+                  )
+
+                  block_sigs = ["cloudflare", "incapsula", "just a moment", "pardon our interruption", "attention required"]
+
+                  for url in test_urls[:8]: # Cap at 8
                       try:
                           page = await context.new_page()
                           start = datetime.now()
-                          resp = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                          resp = await page.goto(url, wait_until="networkidle", timeout=20000)
                           elapsed = (datetime.now() - start).total_seconds()
+
+                          content = await page.content()
+                          content_len = len(content)
+                          title = await page.title()
                           status = resp.status if resp else "no_resp"
-                          content_len = len(await page.content())
-                          emit(f"- ✅ `{url}` → Status: {status} ({content_len} chars) in {elapsed:.1f}s")
+
+                          blocked = any(sig in content.lower() or sig in title.lower() for sig in block_sigs)
+
+                          if blocked:
+                              emit(f"- ❌ `{url}` → **BOT BLOCKED** (Title: {title}) Status: {status}")
+                          else:
+                              emit(f"- ✅ `{url}` → Title: {title[:40]}... | Status: {status} ({content_len} chars) in {elapsed:.1f}s")
                           await page.close()
                       except Exception as e:
                           emit(f"- ❌ `{url}` → Failed: `{str(e)[:60]}`")
@@ -319,22 +343,31 @@ jobs:
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           emit("## Q7: DB Shadow Comparison\n")
 
+          # Try to produce a fresh snapshot if consolidation script exists
+          if os.path.exists("scripts/consolidate_parallel_runs.py"):
+              # Only run consolidation if we see other regional DBs
+              if any(f.endswith('.db') and f != 'fortuna.db' for f in os.listdir('.')):
+                  import subprocess
+                  subprocess.run(["python3", "scripts/consolidate_parallel_runs.py", "--output-db", "fortuna_rebuilt_snapshot.db"])
+
           # Look for other DB files
           db_files = [f for f in os.listdir('.') if f.endswith('.db') and f != 'fortuna.db']
           if not db_files:
               emit("ℹ️ No shadow database files found to compare against.\n")
           else:
+              import subprocess
               for dbf in db_files:
                   try:
-                      s_conn = sqlite3.connect(dbf)
-                      s_count = s_conn.execute("SELECT COUNT(*) FROM tips").fetchone()[0]
-                      m_count = conn.execute("SELECT COUNT(*) FROM tips").fetchone()[0]
-                      emit(f"- `{dbf}`: {s_count} tips vs `fortuna.db`: {m_count} tips")
-                      if s_count > m_count:
-                          emit(f"  ⚠️ Shadow DB has MORE tips than master. Potential cache mismatch.")
-                      s_conn.close()
+                      emit(f"### Comparing `fortuna.db` with `{dbf}`")
+                      res = subprocess.run(["python3", "scripts/db_shadow_compare.py", "fortuna.db", dbf], capture_output=True, text=True)
+                      emit("```")
+                      emit(res.stdout)
+                      if res.returncode != 0:
+                          emit(f"❌ DB Integrity Mismatch found in {dbf}")
+                          emit(res.stderr)
+                      emit("```")
                   except Exception as e:
-                      emit(f"- ❌ Error comparing `{dbf}`: {e}")
+                      emit(f"- ❌ Error running shadow comparison for `{dbf}`: {e}")
 
           conn.close()
 
