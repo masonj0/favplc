@@ -781,6 +781,8 @@ class PageFetchingResultsAdapter(
         "please verify",
         "attention required",
         "one more step",
+        "incapsula",
+        "incident id",
     )
     _BLOCK_MAX_LENGTH: Final[int] = 15_000
 
@@ -1019,7 +1021,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT_LEGACY,
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
@@ -1373,7 +1375,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         # RP often includes time and date in the venue node: "1:30 Market Rasen 17 Feb"
         # We strip time (HH:MM) and date (DD MMM) patterns if present
         raw_venue = re.sub(r"^\d{1,2}:\d{2}\s*", "", raw_venue)
-        raw_venue = re.sub(r"\s+\d{1,2}\s+[A-Z][a-z]{2}.*$", "", raw_venue)
+        raw_venue = re.sub(r"[,\s]+\d{1,2}\s+[A-Z][a-z]{2}.*$", "", raw_venue)
         venue = fortuna.normalize_venue_name(raw_venue.strip())
 
         dividends = self._parse_tote_dividends(parser)
@@ -1527,8 +1529,18 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     IMPERSONATE = "chrome120"
     TIMEOUT = 60
 
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+            network_idle=True,
+        )
+
     _ATR_LINK_SELECTORS: Final[tuple[str, ...]] = (
         "a[href*='/results/']",
+        "a[href*='/racecard/']",
         "a[data-test-selector*='result']",
         ".meeting-summary a",
         ".p-results__item a",
@@ -1539,6 +1551,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     _ATR_RUNNER_SELECTORS: Final[tuple[str, ...]] = (
         ".result-racecard__row",
         ".card-cell--horse",
+        ".card-entry",
         "atr-result-horse",
         "div[class*='RacecardResultItem']",
         ".p-results__item",
@@ -1591,11 +1604,13 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
     @staticmethod
     def _is_atr_race_link(href: str) -> bool:
+        if "userprofile" in href:
+            return False
         return bool(
-            re.search(r"/results/.*?/\d{4}", href)
-            or re.search(r"/results/\d{2}-.*?-\d{4}/", href)
-            or re.search(r"/results/.*?/\d+$", href)
-            or ("/results/" in href and len(href.split("/")) >= 4)
+            re.search(r"/(?:results|racecard)/.*?/\d{4}", href)
+            or re.search(r"/(?:results|racecard)/\d{2}-.*?-\d{4}/", href)
+            or re.search(r"/(?:results|racecard)/.*?/\d+$", href)
+            or (("/results/" in href or "/racecard/" in href) and len(href.split("/")) >= 4)
         )
 
     # -- single-race page parsing ------------------------------------------
@@ -1609,12 +1624,16 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         if not venue:
             return None
 
-        url_match = re.search(r"/R(\d+)$", url)
+        # Robust race number extraction from URL (last numeric part)
+        url_match = re.search(r"/(\d+)$", url.rstrip("/"))
         race_num = int(url_match.group(1)) if url_match else 1
 
         runners = self._parse_atr_runners(parser)
 
-        div_table = parser.css_first(".result-racecard__dividends-table")
+        div_table = (
+            parser.css_first(".result-racecard__dividends-table")
+            or next((t for t in parser.css("table") if "Trifecta" in t.text()), None)
+        )
         exotics: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
         if div_table:
             exotics = extract_exotic_payouts([div_table])
@@ -1649,35 +1668,57 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         )
         if not venue_node:
             return None
-        return fortuna.normalize_venue_name(venue_node.text(strip=True))
+        venue_text = venue_node.text(strip=True)
+        # Strip leading time if present (e.g. "14:20 Southwell")
+        venue_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", venue_text)
+        return fortuna.normalize_venue_name(venue_text)
 
     def _parse_atr_runners(self, parser: HTMLParser) -> List[ResultRunner]:
-        rows: list[Node] = []
-        for selector in self._ATR_RUNNER_SELECTORS:
-            rows = parser.css(selector)
-            if rows:
-                break
+        # Favor the full-result tab if present (new layout)
+        tab = parser.css_first("#tab-full-result")
+        if tab:
+            rows = tab.css(".card-entry")
+        else:
+            rows = []
+            for selector in self._ATR_RUNNER_SELECTORS:
+                rows = parser.css(selector)
+                if rows:
+                    break
 
         runners: List[ResultRunner] = []
         for row in rows:
             name_node = (
-                row.css_first(".result-racecard__horse-name a")
+                row.css_first(".horse__link")
+                or row.css_first(".result-racecard__horse-name a")
                 or row.css_first(".horse-name a")
-                or row.css_first("a[href*='/horse/']")
+                or row.css_first("a[href*='/form/horse/']")
                 or row.css_first("[class*='HorseName']")
             )
             if not name_node:
                 continue
 
             pos_node = (
-                row.css_first(".result-racecard__pos")
+                row.css_first(".card-no-draw .p--large")
+                or row.css_first(".result-racecard__pos")
                 or row.css_first(".pos")
                 or row.css_first(".position")
                 or row.css_first("[class*='Position']")
             )
 
-            num_node = row.css_first(".result-racecard__saddle-cloth")
-            odds_node = row.css_first(".result-racecard__odds")
+            num_node = (
+                row.css_first(".card-cell--horse h2 span")
+                or row.css_first(".result-racecard__saddle-cloth")
+            )
+
+            # Saddle cloth might have a dot, e.g. "1."
+            num_text = fortuna.node_text(num_node)
+            if num_text and "." in num_text:
+                num_text = num_text.split(".")[0]
+
+            odds_node = (
+                row.css_first(".card-cell--odds")
+                or row.css_first(".result-racecard__odds")
+            )
 
             final_odds = (
                 parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
@@ -1690,7 +1731,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
-                number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
+                number=_safe_int(num_text) if num_text else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
             ))
@@ -1780,6 +1821,11 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                             if self._link_matches_date(href, date_str):
                                 full = href if href.startswith("http") else f"{self.BASE_URL}{href}"
                                 links.add(full)
+
+            if not links:
+                module_types = [m.get('type') for m in modules[:10]]
+                self.logger.warning('ATR Grey: no links found in payload', module_types=module_types, date=date_str)
+
         except Exception:
             self.logger.debug("Failed to parse ATR Grey JSON payload", exc_info=True)
 
@@ -2093,7 +2139,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
-        "lonn", "lon", "wbsbsn", "wbsb", "flmn", "flm", "ridcn", "rid",
+        "lonn", "lon", "wbsbsn", "wbsb", "flmn", "flm", "flmdn", "ridcn", "rid",
         "trrn", "kdun", "geodn", "clntn", "hanon", "Dresn", "grvr",
         "leam", "kaww", "wood",
     )
@@ -2146,15 +2192,19 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
 
         if not venue_text:
             # Fallback: search for track name in first 1000 chars
-            for track_match in ["Western Fair", "Mohawk", "Flamboro", "Rideau", "Woodbine"]:
+            for track_match in ["Western Fair", "London", "Mohawk", "Flamboro", "Rideau", "Woodbine"]:
                 if track_match.lower() in html[:1000].lower():
                     venue_text = track_match
                     break
 
         if not venue_text:
             # Last fallback: extract from URL if possible
-            for track_code, track_name in [("lonn", "Western Fair"), ("wbsbsn", "Mohawk"), ("flmn", "Flamboro")]:
-                if track_code in url.lower():
+            url_lower = url.lower()
+            for track_code, track_name in [
+                ("lon", "Western Fair"), ("wbsb", "Mohawk"), ("flm", "Flamboro"),
+                ("rid", "Rideau"), ("wood", "Woodbine")
+            ]:
+                if track_code in url_lower:
                     venue_text = track_name
                     break
 
@@ -2178,12 +2228,15 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                 except (ValueError, IndexError):
                     self.logger.debug("Failed to parse SC race block", exc_info=True)
         else:
-            # Fallback: try split by "RACE #" text if anchors are missing
-            blocks = re.split(r"RACE\s*#?\s*(\d+)", html, flags=re.IGNORECASE)
+            # Fallback: try split by "RACE #" text or plain digits if anchors are missing
+            blocks = re.split(r"(?:RACE\s*#?\s*|Jump to race:.*?\s+)(\d+)\s*\n", html, flags=re.IGNORECASE | re.DOTALL)
+            if len(blocks) <= 1:
+                blocks = re.split(r"RACE\s*#?\s*(\d+)", html, flags=re.IGNORECASE)
+
             for i in range(1, len(blocks), 2):
                 try:
                     race_num = int(blocks[i])
-                    race_html = blocks[i + 1].split("RACE")[0]
+                    race_html = blocks[i + 1].split("RACE")[0].split("<hr/>")[0]
                     race = self._parse_race_block(race_html, venue, date_str, race_num)
                     if race:
                         races.append(race)
