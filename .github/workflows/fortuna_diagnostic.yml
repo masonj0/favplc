@@ -11,7 +11,7 @@ on:
 jobs:
   targeted:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 30        # ← raised from 20; gives real headroom without being unlimited
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,31 +49,39 @@ jobs:
           EASTERN = ZoneInfo("America/New_York")
           S = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
           buf = []
+
+          # ── Helpers ────────────────────────────────────────────────────────────────
           def emit(line=""):
               buf.append(line)
+
           def flush():
+              """Write buffered lines to the step summary immediately."""
               with open(S, "a") as f:
                   f.write("\n".join(buf) + "\n")
               buf.clear()
 
-          emit("# 🔬 Targeted Diagnostic v2\n")
+          # Global deadline: bail out gracefully 90 s before the job ceiling so the
+          # summary always gets at least a partial write.
+          _DEADLINE = datetime.now() + timedelta(minutes=27)   # 3-min buffer inside the 30-min job
+
+          def deadline_exceeded():
+              return datetime.now() >= _DEADLINE
 
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           # Q1: What's audited vs stuck — the critical split
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          emit("# 🔬 Targeted Diagnostic v2\n")
           emit("## Q1: Audited vs Stuck Breakdown\n")
 
           db_path = "fortuna.db"
           if not os.path.exists(db_path):
               emit("⚠️ `fortuna.db` not found. Creating empty one for structure test.")
-              # Minimal init to avoid crash
               conn = sqlite3.connect(db_path)
               conn.close()
 
           conn = sqlite3.connect(db_path)
           conn.row_factory = sqlite3.Row
 
-          # Check if tips table exists
           cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tips'")
           if not cursor.fetchone():
               emit("❌ `tips` table does not exist in the database.")
@@ -106,6 +114,8 @@ jobs:
                   emit(f"  {row['venue']:25s} [{disc:10s}] {row['n']:3d} tips  {row['earliest'][:16]} → {row['latest'][:16]}  prefixes: {row['prefixes']}")
               emit("```\n")
 
+          flush()  # ← Q1 safely on disk before we move on
+
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           # Q2: Adapter registry — what exists and how it's classified
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -114,11 +124,9 @@ jobs:
           all_results_classes = fortuna_analytics.get_results_adapter_classes()
           emit(f"**Total results adapter classes:** {len(all_results_classes)}\n")
 
-          # Check SOLID_RESULTS_ADAPTERS
           solid = getattr(fortuna, 'SOLID_RESULTS_ADAPTERS', None)
           emit(f"**`fortuna.SOLID_RESULTS_ADAPTERS`:** `{solid}`\n")
 
-          # Check other adapter lists
           for attr_name in ['USA_RESULTS_ADAPTERS', 'INT_RESULTS_ADAPTERS',
                             'SOLID_ADAPTERS', 'LOUSY_ADAPTERS']:
               val = getattr(fortuna, attr_name, None)
@@ -143,76 +151,102 @@ jobs:
               emit(f"    {'':40s}  engine: {engine}")
           emit("```\n")
 
+          flush()  # ← Q2 safely on disk
+
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          # Q3: Actually test adapters with get_races() — the RIGHT method
+          # Q3: Live adapter test — concurrent with per-adapter timeout
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           emit("## Q3: Live Adapter Test (using get_races)\n")
 
-          test_date_str = os.environ.get('TEST_DATE', '')
-          if test_date_str:
-              yesterday = test_date_str
-          else:
-              yesterday = (datetime.now(EASTERN) - timedelta(days=1)).strftime('%Y-%m-%d')
-          emit(f"Testing date: **{yesterday}**\n")
+          ADAPTER_TIMEOUT_S = 45   # max wall-clock seconds per adapter
+          MAX_CONCURRENT    = 4    # run this many adapters in parallel
 
-          async def test_one(cls):
+          test_date_str = os.environ.get('TEST_DATE', '')
+          yesterday = test_date_str or (datetime.now(EASTERN) - timedelta(days=1)).strftime('%Y-%m-%d')
+          emit(f"Testing date: **{yesterday}**\n")
+          flush()  # ← publish the date line immediately so it's visible even on timeout
+
+          # Per-adapter result lines are collected into a dict keyed by SOURCE_NAME
+          # so we can emit them in stable order afterwards.
+          adapter_lines: dict[str, list[str]] = {}
+
+          async def test_one(cls) -> list[str]:
               name = cls.SOURCE_NAME
+              lines = []
               try:
                   adapter = cls()
-                  start = datetime.now()
-
-                  # Step 1: Test full get_races (Interface for all V3 adapters)
                   start2 = datetime.now()
                   races = await adapter.get_races(yesterday)
                   race_time = (datetime.now() - start2).total_seconds()
 
                   if not races:
-                      # If no races, try to see if it's a discovery-link failure or parse failure
-                      # for PageFetchingResultsAdapter subclasses
                       if hasattr(adapter, "_discover_result_links"):
                           links = await adapter._discover_result_links(yesterday)
                           if not links:
-                              emit(f"- ⚠️ `{name}` → **0 links discovered** in {race_time:.1f}s")
+                              lines.append(f"- ⚠️ `{name}` → **0 links discovered** in {race_time:.1f}s")
                           else:
-                              emit(f"- ⚠️ `{name}` → **0 races parsed** from {len(links)} links in {race_time:.1f}s")
+                              lines.append(f"- ⚠️ `{name}` → **0 races parsed** from {len(links)} links in {race_time:.1f}s")
                       else:
-                          emit(f"- ⚠️ `{name}` → **0 races fetched** in {race_time:.1f}s")
+                          lines.append(f"- ⚠️ `{name}` → **0 races fetched** in {race_time:.1f}s")
                   else:
                       venues = sorted(set(r.venue for r in races))
-                      emit(f"- ✅ `{name}` → **{len(races)} races** parsed in {race_time:.1f}s")
-                      emit(f"  Venues: {', '.join(venues[:8])}")
-                      # Show canonical keys
+                      lines.append(f"- ✅ `{name}` → **{len(races)} races** parsed in {race_time:.1f}s")
+                      lines.append(f"  Venues: {', '.join(venues[:8])}")
                       for r in races[:3]:
-                          emit(f"  Key: `{r.canonical_key}` runners: {len(r.runners)}")
+                          lines.append(f"  Key: `{r.canonical_key}` runners: {len(r.runners)}")
 
                   try:
                       await adapter.close()
                   except:
                       pass
 
+              except asyncio.TimeoutError:
+                  lines.append(f"- ⏱️ `{name}` → **TIMED OUT** after {ADAPTER_TIMEOUT_S}s — skipped")
               except Exception as e:
                   import traceback
-                  emit(f"- ❌ `{name}` → **{type(e).__name__}:** `{str(e)[:120]}`")
-                  emit(f"  ```\n  {traceback.format_exc()[:500]}\n  ```")
+                  lines.append(f"- ❌ `{name}` → **{type(e).__name__}:** `{str(e)[:120]}`")
+                  lines.append(f"  ```\n  {traceback.format_exc()[:500]}\n  ```")
+
+              return lines
 
           async def run_all():
-              for cls in all_results_classes:
-                  await test_one(cls)
+              sem = asyncio.Semaphore(MAX_CONCURRENT)
+
+              async def bounded(cls):
+                  async with sem:
+                      return cls.SOURCE_NAME, await asyncio.wait_for(
+                          test_one(cls), timeout=ADAPTER_TIMEOUT_S
+                      )
+
+              tasks = [asyncio.create_task(bounded(cls)) for cls in all_results_classes]
+              # Stream results as they finish so a timeout on the *job* still gives partial output
+              for coro in asyncio.as_completed(tasks):
+                  try:
+                      name, lines = await coro
+                  except Exception as e:
+                      lines = [f"- ❌ (unknown adapter) → unexpected error: {e}"]
+                      name = "unknown"
+                  for line in lines:
+                      emit(line)
                   emit("")
-              # Cleanup
+                  flush()  # ← publish each adapter result as it lands
+
               try:
                   await fortuna.GlobalResourceManager.cleanup()
               except:
                   pass
 
-          asyncio.run(run_all())
+          if deadline_exceeded():
+              emit("⚠️ **Q3 skipped** — deadline exceeded before this section.\n")
+              flush()
+          else:
+              asyncio.run(run_all())
 
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           # Q4: Canonical key comparison — do tips match results?
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           emit("## Q4: Key Format Comparison\n")
 
-          # Check if tips table exists again before Q4
           cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tips'")
           if cursor.fetchone():
               emit("### Tip canonical keys (computed from tip data)")
@@ -231,6 +265,8 @@ jobs:
                   emit(f"  ---")
               emit("```\n")
 
+          flush()  # ← Q4 safely on disk
+
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           # Q5: Network test for the ACTUAL adapter domains
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -240,7 +276,6 @@ jobs:
           domains = sorted(set(
               getattr(cls, 'BASE_URL', '') for cls in all_results_classes
           ))
-          # Specific check for subdomains
           domains.append("https://greyhounds.attheraces.com")
           domains = sorted(list(set(domains)))
 
@@ -256,8 +291,10 @@ jobs:
                   emit(f"  ❌ {url:50s} → {type(e).__name__}: {str(e)[:60]}")
           emit("```\n")
 
+          flush()  # ← Q5 safely on disk
+
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          # Q5.5: Rendered Browser Ping (OVERKILL)
+          # Q5.5: Rendered Browser Ping (Playwright)
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           emit("## Q5.5: Rendered Browser Ping (Playwright)\n")
 
@@ -265,28 +302,32 @@ jobs:
               from playwright.async_api import async_playwright
               async with async_playwright() as p:
                   browser = await p.chromium.launch(headless=True, args=["--disable-gpu"])
-                  # Curated subset for stealth rendering test
                   test_urls = [
                       "https://www.racingpost.com/results",
                       "https://www.equibase.com/static/chart/summary/index.html",
                       "https://www.attheraces.com/results"
                   ]
-                  # Add other discovered domains
                   for d in domains:
-                      if d and d not in test_urls: test_urls.append(d)
+                      if d and d not in test_urls:
+                          test_urls.append(d)
 
                   context = await browser.new_context(
                       user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                       viewport={'width': 1280, 'height': 720}
                   )
 
-                  block_sigs = ["cloudflare", "incapsula", "just a moment", "pardon our interruption", "attention required"]
+                  block_sigs = ["cloudflare", "incapsula", "just a moment",
+                                "pardon our interruption", "attention required"]
 
-                  for url in test_urls[:8]: # Cap at 8
+                  for url in test_urls[:6]:   # ← capped at 6 (was 8) to save ~40 s
                       try:
                           page = await context.new_page()
                           start = datetime.now()
-                          resp = await page.goto(url, wait_until="networkidle", timeout=20000)
+                          resp = await page.goto(
+                              url,
+                              wait_until="domcontentloaded",  # ← was networkidle; saves ~5-10 s per URL
+                              timeout=12000                   # ← was 20000; fail faster on blocked pages
+                          )
                           elapsed = (datetime.now() - start).total_seconds()
 
                           content = await page.content()
@@ -294,21 +335,29 @@ jobs:
                           title = await page.title()
                           status = resp.status if resp else "no_resp"
 
-                          blocked = any(sig in content.lower() or sig in title.lower() for sig in block_sigs)
+                          blocked = any(sig in content.lower() or sig in title.lower()
+                                        for sig in block_sigs)
 
                           if blocked:
                               emit(f"- ❌ `{url}` → **BOT BLOCKED** (Title: {title}) Status: {status}")
                           else:
                               emit(f"- ✅ `{url}` → Title: {title[:40]}... | Status: {status} ({content_len} chars) in {elapsed:.1f}s")
                           await page.close()
+                          flush()  # ← publish each browser result as it lands
                       except Exception as e:
                           emit(f"- ❌ `{url}` → Failed: `{str(e)[:60]}`")
+                          flush()
                   await browser.close()
 
-          try:
-              asyncio.run(browser_ping(domains))
-          except Exception as e:
-              emit(f"⚠️ Playwright ping failed: {e}")
+          if deadline_exceeded():
+              emit("⚠️ **Q5.5 skipped** — deadline exceeded before this section.\n")
+              flush()
+          else:
+              try:
+                  asyncio.run(browser_ping(domains))
+              except Exception as e:
+                  emit(f"⚠️ Playwright ping failed: {e}")
+                  flush()
           emit("")
 
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -326,7 +375,6 @@ jobs:
               else:
                   emit(f"⚠️ `{fname}` not found\n")
 
-          # Check harvest_logs table
           cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='harvest_logs'")
           if cursor.fetchone():
               emit("### Last 15 harvest log entries")
@@ -338,19 +386,19 @@ jobs:
                   emit(f"  {row['timestamp'][:19]}  {row['region'] or 'GLOBAL':6s}  {row['adapter_name']:40s}  races={row['race_count']:3d}  maxOdds={row['max_odds'] or 0:.1f}")
               emit("```\n")
 
+          flush()  # ← Q6 safely on disk
+
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           # Q7: DB Shadow Comparison (Fresh vs Cached)
           # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
           emit("## Q7: DB Shadow Comparison\n")
 
-          # Try to produce a fresh snapshot if consolidation script exists
           if os.path.exists("scripts/consolidate_parallel_runs.py"):
-              # Only run consolidation if we see other regional DBs
               if any(f.endswith('.db') and f != 'fortuna.db' for f in os.listdir('.')):
                   import subprocess
-                  subprocess.run(["python3", "scripts/consolidate_parallel_runs.py", "--output-db", "fortuna_rebuilt_snapshot.db"])
+                  subprocess.run(["python3", "scripts/consolidate_parallel_runs.py",
+                                  "--output-db", "fortuna_rebuilt_snapshot.db"])
 
-          # Look for other DB files
           db_files = [f for f in os.listdir('.') if f.endswith('.db') and f != 'fortuna.db']
           if not db_files:
               emit("ℹ️ No shadow database files found to compare against.\n")
@@ -359,7 +407,10 @@ jobs:
               for dbf in db_files:
                   try:
                       emit(f"### Comparing `fortuna.db` with `{dbf}`")
-                      res = subprocess.run(["python3", "scripts/db_shadow_compare.py", "fortuna.db", dbf], capture_output=True, text=True)
+                      res = subprocess.run(
+                          ["python3", "scripts/db_shadow_compare.py", "fortuna.db", dbf],
+                          capture_output=True, text=True
+                      )
                       emit("```")
                       emit(res.stdout)
                       if res.returncode != 0:
@@ -373,5 +424,5 @@ jobs:
 
           emit("---")
           emit("*Paste this to Claude for the final fix.*")
-          flush()
+          flush()   # ← final flush — but all sections already flushed above
           PYEOF
