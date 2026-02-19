@@ -423,6 +423,6 @@ jobs:
           conn.close()
 
           emit("---")
-          emit(\"*Paste this to Claude for the final fix.*\")
+          emit("*Paste this to Claude for the final fix.*")
           flush()   # ← final flush — but all sections already flushed above
           PYEOF
