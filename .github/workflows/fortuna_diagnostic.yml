@@ -1,4 +1,4 @@
-name: "🔬 Fortuna Targeted v2"
+name: "Fortuna Troubleshooter - Intense Diagnostic Rept"
 on:
   workflow_dispatch:
     inputs:
