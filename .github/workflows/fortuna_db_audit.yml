@@ -1,4 +1,4 @@
-name: Nightly Database Audit
+name: DB Auditor 
 
 on:
   schedule:
