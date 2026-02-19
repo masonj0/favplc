@@ -2176,6 +2176,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             race_number=1,
             start_time=start_time,
             runners=runners,
+            discipline="Thoroughbred",
             source=self.SOURCE_NAME,
         )
 
@@ -2621,7 +2622,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             num_node = row.css_first(".rp-saddle-cloth") or row.css_first(".rp-cloth")
             odds_node = row.css_first(".rp-odds") or row.css_first(".rp-sp")
 
-            final_odds = fortuna.parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
 
