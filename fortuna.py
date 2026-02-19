@@ -369,7 +369,12 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "RacingAndSports"
 }
 
-USA_RESULTS_ADAPTERS: Final[set] = {"EquibaseResults", "SportingLifeResults", "StandardbredCanadaResults"}
+USA_RESULTS_ADAPTERS: Final[set] = {
+    "EquibaseResults",
+    "SportingLifeResults",
+    "StandardbredCanadaResults",
+    "RacingPostUSAResults",
+}
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
     "AtTheRacesGreyhoundResults", "SportingLifeResults", "SkySportsResults",
