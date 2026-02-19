@@ -72,7 +72,7 @@ jobs:
         if: steps.cache-db.outputs.cache-hit != 'true'
         run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
 
-      - name: Run Discovery
+      - name: Run Fetcher (Entry or Results)
         timeout-minutes: 20
         env:
           PYTHONPATH: .
@@ -96,6 +96,8 @@ jobs:
           cp fortuna.db "fortuna_${{ matrix.slug }}.db"
           mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
             || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
+          mv results_harvest.json "results_harvest_${{ matrix.slug }}.json" 2>/dev/null \
+            || echo '{}' > "results_harvest_${{ matrix.slug }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -148,7 +150,7 @@ jobs:
       - name: Consolidate Discovery Data
         run: |
           set -eo pipefail
-          echo "Validating discovery artifacts..."
+          echo "Validating parallel artifacts..."
 
           ARTIFACT_COUNT=0
           for slug in entry-solid entry-lousy; do
