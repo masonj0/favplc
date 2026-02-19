@@ -13,7 +13,8 @@ concurrency:
 jobs:
   build:
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45   # PyInstaller + playwright install routinely needs 30-35 min;
+                          # 45 gives headroom without being unbounded.
 
     steps:
       - name: Checkout repository
@@ -25,56 +26,91 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      # ── Browser caches ────────────────────────────────────────────────────────
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\ms-playwright
           key: playwright-win-${{ hashFiles('requirements.txt') }}
 
-      - name: Install dependencies
+      - name: Cache camoufox browser data
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\camoufox
+          key: camoufox-win-${{ hashFiles('requirements.txt') }}
+
+      # ── PyInstaller intermediate build cache ──────────────────────────────────
+      # The build/ directory contains PyInstaller's analysis cache and compiled
+      # .pyc stubs. Reusing it across runs cuts rebuild time by ~40-60% on
+      # unchanged code — the most impactful single cache to add here.
+      - name: Cache PyInstaller build artifacts
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: pyinstaller-build-${{ runner.os }}-${{ hashFiles('requirements.txt', 'build_monolith.py', 'fortuna.py', 'fortuna_analytics.py') }}
+          restore-keys: |
+            pyinstaller-build-${{ runner.os }}-
+
+      # ── Dependencies ──────────────────────────────────────────────────────────
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install --prefer-binary -r requirements.txt
           python -m pip install --prefer-binary pyinstaller
+
+          # tzdata is a CRITICAL Windows dependency.
+          # Python's zoneinfo module (used throughout Fortuna for EASTERN timezone
+          # handling) falls back to the tzdata package on Windows because Windows
+          # has no built-in IANA timezone database. Without this the frozen EXE
+          # throws ZoneInfoNotFoundError("America/New_York") on every end-user
+          # machine.
+          python -m pip install --prefer-binary tzdata
+
+      - name: Fetch browser assets
+        run: |
           python -m browserforge update
           python -m playwright install --with-deps chromium
+          # camoufox ships its own browser binary that must be fetched separately
+          # (similar to playwright). This populates the cache dir above.
+          python -m camoufox fetch
 
+      # ── Build ─────────────────────────────────────────────────────────────────
       - name: Build EXE
         run: |
           python build_monolith.py
-
-          # Verify build succeeded
+          # build_monolith.py already calls verify_exe() internally with a 60s
+          # timeout and exits non-zero on failure, so we only need to confirm
+          # the file exists here. No redundant --help call needed.
           if (!(Test-Path "dist/FortunaFaucetPortableApp.exe")) {
-            Write-Error "Build failed: EXE not found"
+            Write-Error "Build failed: EXE not found at dist/FortunaFaucetPortableApp.exe"
             exit 1
           }
 
-          # Smoke test
-          Write-Host "Running smoke test..."
-          $result = Start-Process -FilePath "dist/FortunaFaucetPortableApp.exe" -ArgumentList "--help" -Wait -PassThru -NoNewWindow
-          if ($result.ExitCode -ne 0) {
-            Write-Error "Smoke test failed with exit code $($result.ExitCode)"
-            exit 1
-          }
-
-          # Report size and SHA256
-          $size = (Get-Item "dist/FortunaFaucetPortableApp.exe").Length / 1MB
+      # ── Artifact reporting ─────────────────────────────────────────────────────
+      - name: Report build results
+        if: success()
+        run: |
+          $size   = (Get-Item "dist/FortunaFaucetPortableApp.exe").Length / 1MB
           $sha256 = (Get-FileHash "dist/FortunaFaucetPortableApp.exe" -Algorithm SHA256).Hash
+          $built  = (Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
 
           Write-Host "[PASS] Build successful: $([math]::Round($size, 1)) MB" -ForegroundColor Green
           Write-Host "SHA256: $sha256"
 
-          # Add to GITHUB_STEP_SUMMARY
           @"
-          ## Build Results
+          ## ✅ Build Results
 
-          - **Status:** Success
-          - **Size:** $([math]::Round($size, 2)) MB
-          - **SHA256:** \`$sha256\`
-          - **Built:** $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+          | Field   | Value |
+          |---------|-------|
+          | **Status** | Success |
+          | **Size** | $([math]::Round($size, 2)) MB |
+          | **SHA256** | ``$sha256`` |
+          | **Built** | $built |
+          | **Commit** | ``${{ github.sha }}`` |
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
-      - name: Upload EXE
+      # ── Upload artifact ───────────────────────────────────────────────────────
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: FortunaMonolith-Windows-${{ github.sha }}

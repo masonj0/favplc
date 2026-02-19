@@ -6,6 +6,7 @@ import json
 import subprocess
 from datetime import datetime
 
+
 def create_version_info():
     """Creates version_info.txt for the Windows EXE metadata."""
     year = datetime.now().year
@@ -50,7 +51,7 @@ def create_version_info():
 def get_data_files():
     """Collect data files to bundle. Returns flat list of strings for args.extend()."""
     data_files = []
-    # Platform-specific separator
+    # PyInstaller uses ';' on Windows, ':' on POSIX
     sep = ';' if platform.system() == 'Windows' else ':'
 
     # Directories
@@ -63,13 +64,13 @@ def get_data_files():
         if os.path.exists(filename):
             data_files.extend(["--add-data", f"{filename}{sep}."])
 
-    # Optional reports
+    # Optional reports bundled at build time
     report_files = [
         "summary_grid.txt",
         "goldmine_report.txt",
         "analytics_report.txt",
         "fortuna_report.html",
-        "race_data.json"
+        "race_data.json",
     ]
     for f in report_files:
         if os.path.exists(f):
@@ -86,10 +87,13 @@ def create_build_metadata():
         "platform": platform.platform(),
     }
 
-    # Try to get git info
     try:
-        metadata["git_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-        metadata["git_branch"] = subprocess.check_output(["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True).strip()
+        metadata["git_commit"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True
+        ).strip()
+        metadata["git_branch"] = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
+        ).strip()
     except Exception:
         metadata["git_commit"] = "unknown"
         metadata["git_branch"] = "unknown"
@@ -98,7 +102,8 @@ def create_build_metadata():
         with open("build_info.json", "w") as f:
             json.dump(metadata, f, indent=2)
         print("Created build_info.json")
-        return ["--add-data", f"build_info.json{';' if platform.system() == 'Windows' else ':'}."]
+        sep = ';' if platform.system() == 'Windows' else ':'
+        return ["--add-data", f"build_info.json{sep}."]
     except Exception as e:
         print(f"Warning: Could not create build_info.json: {e}")
         return []
@@ -107,22 +112,13 @@ def create_build_metadata():
 def verify_exe(exe_path):
     """Verify the EXE can launch without errors."""
     print("\nVerifying EXE...")
-    if platform.system() != 'Windows' and not exe_path.endswith('.exe'):
-        # On non-windows, the output might not have .exe extension
-        # but for this repo we are focused on Windows EXE.
-        pass
-
     try:
-        # Try to run with --help (should be fast)
-        # Note: This might not work on the build machine if it's Linux building for Windows
-        # but in GHA we are on Windows.
         result = subprocess.run(
             [exe_path, "--help"],
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=60,  # onefile EXEs need time to self-extract before running
         )
-
         if result.returncode == 0:
             print("[PASS] EXE verification passed")
             return True
@@ -131,14 +127,10 @@ def verify_exe(exe_path):
             print(f"stderr: {result.stderr}")
             return False
     except subprocess.TimeoutExpired:
-        print("[FAIL] EXE timed out (might be stuck)")
+        print("[FAIL] EXE timed out during self-extraction or startup")
         return False
     except Exception as e:
         print(f"[FAIL] Could not verify EXE: {e}")
-        # If we are on Linux but built a Windows EXE, verification will fail here.
-        if platform.system() != 'Windows':
-            print("  (This is expected when cross-compiling or building on Linux)")
-            return True
         return False
 
 
@@ -155,12 +147,16 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     if not os.path.exists("version_info.txt"):
         create_version_info()
 
-    # Base arguments
+    # ── Base arguments ─────────────────────────────────────────────────────────
     args = [
         str(script_path),
         "--onefile",
         "--name=FortunaFaucetPortableApp",
         "--clean",
+        # Extract to a predictable temp location; avoids permission issues when
+        # the EXE is run from a read-only directory (e.g. Downloads on some
+        # Windows configs).
+        "--runtime-tmpdir=.",
     ]
 
     if os.path.exists("version_info.txt"):
@@ -175,81 +171,144 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     if os.path.exists("assets/icon.ico"):
         args.append("--icon=assets/icon.ico")
 
-    # Packages that NEED their data files (use --collect-all)
+    # ── --collect-all: packages whose data files are required at runtime ───────
+    # Rule of thumb: if the package loads JSON/YAML/browser assets from its own
+    # directory (rather than the OS or a URL), it needs --collect-all.
     collect_all_packages = [
-        "browserforge",
-        "scrapling",
-        "curl_cffi",
-        "camoufox",
-        "selectolax",
-        "rich",
+        # Scraping / browser-impersonation stack
+        "browserforge",     # fingerprint headers/data JSON files
+        "scrapling",        # internal JS assets and adapters
+        "curl_cffi",        # pre-compiled .dll/.so curl binaries
+        "camoufox",         # browser profile data and configs
+        "selectolax",       # compiled Modest/Lexbor parser
+        # Playwright: the _impl/_json/ protocol specs are loaded at import time;
+        # hidden imports alone are NOT enough to make it work frozen.
+        "playwright",
+        # UI / display
+        "rich",             # color themes and markup definitions
+        # pywebview ships JS bridge assets + platform-specific DLLs
+        "webview",
+        # Pydantic v2 uses pydantic_core (compiled) + JSON schema data files;
+        # --collect-submodules misses the data, --collect-all covers everything.
+        "pydantic",
+        "pydantic_core",
+        # structlog has lazy-loaded processors discovered via inspect
+        "structlog",
+        # tomli / tomllib: pure-Python but some builds ship a compiled C extension
         "tomli",
     ]
     for pkg in collect_all_packages:
         args.append(f"--collect-all={pkg}")
 
-    # Packages that need submodules but not data (use --collect-submodules)
+    # ── --collect-submodules: packages that register plugins/backends lazily ───
     collect_submodules = [
-        "uvicorn",
-        "fastapi",
-        "starlette",
-        "pydantic",
+        "uvicorn",      # server implementations, protocols, loops
+        "fastapi",      # routing, dependency injection internals
+        "starlette",    # middleware and exception handler registrations
     ]
     for pkg in collect_submodules:
         args.append(f"--collect-submodules={pkg}")
 
-    # Individual hidden imports
+    # ── Hidden imports ─────────────────────────────────────────────────────────
     hidden_imports = [
-        # Async & DB
-        "aiosqlite", "sqlite3", "asyncio",
-        # Data processing
-        "pandas", "numpy", "structlog", "tenacity", "tomli",
-        # Notifications
-        "winotify", "win10toast_py3",
-        # Build tools (needed by pkg_resources)
-        "setuptools", "pkg_resources",
-        # HTTP clients
-        "httpx", "httpx._transports", "httpx._transports.default",
-        "h11", "anyio", "anyio._backends", "anyio._backends._asyncio", "sniffio",
-        # Encodings
-        "encodings", "encodings.utf_8", "encodings.ascii",
-        "encodings.latin_1", "encodings.idna",
-        # Misc
-        "multiprocessing", "concurrent.futures", "json", "orjson", "msgspec",
-        # Webview
-        "webview",
-        # Playwright support
-        "playwright",
-        "playwright.async_api",
-        "playwright._impl._api_types",
-        "playwright._impl._connection",
-        "playwright._impl._transport",
+        # ── Fortuna modules (imported dynamically via sys.path tricks) ─────────
+        "fortuna_analytics",    # imported at runtime in diagnostic/auditor paths
+
+        # ── Async & DB ─────────────────────────────────────────────────────────
+        "aiosqlite",
+        "sqlite3",
+        "asyncio",
+        "aiofiles",
+
+        # ── Timezone (CRITICAL on Windows) ────────────────────────────────────
+        # Windows has no built-in IANA timezone database, so zoneinfo falls back
+        # to the `tzdata` package. Without this the EXE crashes with
+        # ZoneInfoNotFoundError("America/New_York") on any Windows machine that
+        # hasn't manually installed tzdata — i.e. all of them.
+        "zoneinfo",
+        "tzdata",
+
+        # ── Data processing ────────────────────────────────────────────────────
+        "pandas",
+        "numpy",
+        "tenacity",
+        "orjson",
+        "msgspec",
+
+        # ── Notifications (Windows-only) ───────────────────────────────────────
+        "winotify",
+        "win10toast_py3",
+
+        # ── pkg_resources / importlib.metadata ────────────────────────────────
+        "setuptools",
+        "pkg_resources",
+        "importlib.metadata",
+        "importlib.resources",
+
+        # ── HTTP client stack ──────────────────────────────────────────────────
+        # httpcore is the actual transport backend for httpx; omitting it causes
+        # "No module named httpcore" at runtime even though httpx is collected.
+        "httpx",
+        "httpx._transports",
+        "httpx._transports.default",
+        "httpcore",
+        "httpcore._async",
+        "httpcore._sync",
+        "h11",
+
+        # ── anyio / sniffio (async backends) ──────────────────────────────────
+        "anyio",
+        "anyio._backends",
+        "anyio._backends._asyncio",
+        # The trio backend import is attempted and suppressed at anyio startup;
+        # if it's missing entirely from the frozen archive PyInstaller can emit
+        # noisy tracebacks at startup.
+        "anyio._backends._trio",
+        "sniffio",
+
+        # ── Encodings (belt-and-suspenders for frozen builds) ─────────────────
+        "encodings",
+        "encodings.utf_8",
+        "encodings.ascii",
+        "encodings.latin_1",
+        "encodings.idna",
+
+        # ── Stdlib / multiprocessing ───────────────────────────────────────────
+        "multiprocessing",
+        "concurrent.futures",
+        "json",
     ]
     for imp in hidden_imports:
         args.append(f"--hidden-import={imp}")
 
-    # Add data files
+    # ── Data files ─────────────────────────────────────────────────────────────
     args.extend(get_data_files())
-
-    # Add build metadata
     args.extend(create_build_metadata())
 
-    # Exclude bloat
+    # ── Exclusions (reduce EXE bloat) ─────────────────────────────────────────
     excludes = [
-        "matplotlib", "PIL", "tkinter", "scipy",
-        "pytest", "hypothesis",
-        "wheel", "pip",
-        "IPython", "jupyter", "notebook",
-        "pandas.tests", "numpy.tests",
-        "tornado", "sphinx", "docutils", "jedi", "parso",
-        # Additional bloat
+        # Visualisation / ML (never used at runtime)
+        "matplotlib", "PIL", "scipy",
         "cv2", "opencv", "torch", "tensorflow",
-        "PIL.ImageQt", "PyQt5", "setuptools._distutils",
+        "PIL.ImageQt",
+        # GUI toolkits (webview uses its own; tkinter would pull in Tcl/Tk DLLs)
+        "tkinter", "PyQt5",
+        # Dev/test tooling
+        "pytest", "hypothesis",
+        "IPython", "jupyter", "notebook",
+        "sphinx", "docutils", "jedi", "parso",
+        # Package management (no reason to ship pip inside the EXE)
+        "wheel", "pip",
+        "setuptools._distutils",
+        # Test sub-packages of bundled libraries
+        "pandas.tests", "numpy.tests",
+        # tornado conflicts with uvicorn's event loop management when frozen
+        "tornado",
     ]
     for exc in excludes:
         args.append(f"--exclude-module={exc}")
 
-    # FINAL HARNESS: Ensure all args are strings and fail loudly if not
+    # ── Argument sanity check ──────────────────────────────────────────────────
     errors = []
     final_args = []
     for i, arg in enumerate(args):
@@ -267,25 +326,28 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     print(f"\nRunning PyInstaller with {len(final_args)} arguments...")
     print("=" * 60)
 
-    # Run PyInstaller
     PyInstaller.__main__.run(final_args)
 
-    # Verify output
-    exe_name = "FortunaFaucetPortableApp.exe" if platform.system() == 'Windows' else "FortunaFaucetPortableApp"
+    # ── Post-build verification ────────────────────────────────────────────────
+    exe_name = (
+        "FortunaFaucetPortableApp.exe"
+        if platform.system() == "Windows"
+        else "FortunaFaucetPortableApp"
+    )
     exe_path = os.path.join("dist", exe_name)
 
     if os.path.exists(exe_path):
         size_mb = os.path.getsize(exe_path) / (1024 * 1024)
         print("\n" + "=" * 60)
-        print(f"[SUCCESS] Build complete!")
+        print("[SUCCESS] Build complete!")
         print(f"   Output: {exe_path}")
         print(f"   Size:   {size_mb:.1f} MB")
 
         if verify_exe(exe_path):
-             print("=" * 60)
+            print("=" * 60)
         else:
-             print("[WARN] EXE built but verification failed")
-             sys.exit(1)
+            print("[WARN] EXE built but verification failed")
+            sys.exit(1)
     else:
         print("\n[ERROR] Build finished but EXE not found")
         sys.exit(1)
@@ -295,9 +357,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Build Fortuna Monolith EXE")
-    parser.add_argument("--gui", action="store_true", help="Hide console window")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("--gui", action="store_true", help="Hide console window (--noconsole)")
+    parser.add_argument("--debug", action="store_true", help="Enable PyInstaller debug mode")
 
-    args = parser.parse_args()
-
-    build_exe(console_mode=not args.gui, debug=args.debug)
+    parsed = parser.parse_args()
+    build_exe(console_mode=not parsed.gui, debug=parsed.debug)
