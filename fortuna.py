@@ -361,7 +361,7 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # Single-continent adapters remain in USA/INT jobs.
 # Multi-continental adapters move to the GLOBAL parallel fetch job.
 # AtTheRaces is duplicated into USA as per explicit request.
-USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces"}
+USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRA"}
 INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
@@ -374,6 +374,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
+    "NYRAResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
@@ -698,6 +699,8 @@ VENUE_MAP = {
 "WOLVERHAMPTON": "Wolverhampton",
 "AQU": "Aqueduct",
 "AQUEDUCT": "Aqueduct",
+"BELMONT": "Belmont Park",
+"BELMONT PARK": "Belmont Park",
 "ARGENTAN": "Argentan",
 "ASCOT": "Ascot",
 "AYR": "Ayr",
@@ -778,6 +781,7 @@ VENUE_MAP = {
 "OP": "Oaklawn Park",
 "PEN": "Penn National",
 "POCONO DOWNS": "Pocono Downs",
+"SARATOGA": "Saratoga",
 "SAM HOUSTON": "Sam Houston",
 "SAM HOUSTON RACE PARK": "Sam Houston",
 "SANDOWN": "Sandown Park",
@@ -3397,6 +3401,148 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
 # ----------------------------------------
 # EquibaseAdapter
 # ----------------------------------------
+class NYRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for NYRA (New York Racing Association) covering Aqueduct, Belmont, and Saratoga.
+    """
+    SOURCE_NAME: ClassVar[str] = "NYRA"
+    BASE_URL: ClassVar[str] = "https://www.nyra.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        # NYRA uses strong protection; Playwright with network_idle is most reliable
+        return FetchStrategy(
+            primary_engine=BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=120,
+            network_idle=True
+        )
+
+    def _get_headers(self, track: str) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.nyra.com", referer=f"https://www.nyra.com/{track}/")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        tracks = ["aqueduct", "belmont", "saratoga"]
+        all_pages = []
+
+        for track in tracks:
+            url = f"/{track}/racing/entries/?day={date}&limit=entries"
+            resp = await self.make_request("GET", url, headers=self._get_headers(track))
+            if resp and resp.text and "Race 1" in resp.text:
+                self._save_debug_snapshot(resp.text, f"nyra_entries_{track}_{date}")
+                all_pages.append({"html": resp.text, "track": track, "url": url})
+
+        if not all_pages:
+            self.logger.warning("No entries found on NYRA for date", date=date)
+            return None
+
+        return {"pages": all_pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        date_str = raw_data["date"]
+        races: List[Race] = []
+
+        for p_data in raw_data["pages"]:
+            html_content = p_data["html"]
+            track_slug = p_data["track"]
+            parser = HTMLParser(html_content)
+
+            # Common NYRA race entry selectors
+            race_blocks = (
+                parser.css(".entries-race-container")
+                or parser.css(".race-entries-table")
+                or parser.css("div[id^='race-']")
+                or parser.css(".race-entry")
+            )
+
+            # If still no blocks, try to find by identifying race headers
+            if not race_blocks:
+                # Find all nodes that contain "Race " followed by digits
+                # This is a bit complex with selectolax, we might need to iterate
+                pass
+
+            for block in race_blocks:
+                try:
+                    # Race Number
+                    race_num = 1
+                    header = block.css_first("h3") or block.css_first(".race-number") or block.css_first(".race-header")
+                    if header:
+                        rn_match = re.search(r"Race\s+(\d+)", node_text(header), re.I)
+                        if rn_match: race_num = int(rn_match.group(1))
+
+                    venue = normalize_venue_name(track_slug)
+
+                    # Post Time
+                    time_node = block.css_first(".post-time") or block.css_first(".race-time")
+                    time_str = node_text(time_node) if time_node else "12:00"
+
+                    # S5: Race Type
+                    race_type = None
+                    # Search in block text for common race type patterns
+                    text = block.text()
+                    rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', text, re.I)
+                    if rt_match: race_type = rt_match.group(1)
+
+                    runners = []
+                    # Runner rows
+                    for r_node in block.css("tr") or block.css(".runner-row") or block.css(".horse-entry"):
+                        name_node = r_node.css_first(".horse-name") or r_node.css_first("a[href*='/profiles/']")
+                        if not name_node: continue
+                        name = clean_text(node_text(name_node))
+                        if not name or name.upper() in ["HORSE", "NAME"]: continue
+
+                        num_node = r_node.css_first(".saddle-cloth") or r_node.css_first(".program-number") or r_node.css_first(".runner-number")
+                        number = 0
+                        if num_node:
+                            digits = "".join(filter(str.isdigit, node_text(num_node)))
+                            if digits: number = int(digits)
+
+                        # ML Odds
+                        ml_node = r_node.css_first(".ml-odds") or r_node.css_first(".odds")
+                        win_odds = parse_odds_to_decimal(node_text(ml_node)) if ml_node else None
+
+                        if win_odds is None:
+                            win_odds = SmartOddsExtractor.extract_from_node(r_node)
+
+                        od = {}
+                        if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                            od[self.SOURCE_NAME] = ov
+
+                        runners.append(Runner(name=name, number=number, odds=od, win_odds=win_odds))
+
+                    if runners:
+                        # Normalize start time
+                        tm_match = re.search(r"(\d{1,2}:\d{2})\s*([ap])", time_str.lower())
+                        if tm_match:
+                            hhmm = tm_match.group(1)
+                            ampm = "PM" if tm_match.group(2) == "p" else "AM"
+                            try:
+                                dt_obj = datetime.strptime(f"{date_str} {hhmm} {ampm}", "%Y-%m-%d %I:%M %p")
+                                start_time = dt_obj.replace(tzinfo=EASTERN)
+                            except:
+                                start_time = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=EASTERN)
+                        else:
+                            start_time = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=EASTERN)
+
+                        races.append(Race(
+                            id=generate_race_id("nyra", venue, start_time, race_num),
+                            venue=venue,
+                            race_number=race_num,
+                            start_time=start_time,
+                            runners=runners,
+                            race_type=race_type,
+                            source=self.SOURCE_NAME,
+                            available_bets=scrape_available_bets(block.html)
+                        ))
+                except Exception:
+                    continue
+
+        return races
+
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
     PROVIDES_ODDS: ClassVar[bool] = False
