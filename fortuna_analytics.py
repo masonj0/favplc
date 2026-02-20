@@ -1049,6 +1049,133 @@ class PageFetchingResultsAdapter(
 
 # -- EQUIBASE RESULTS ADAPTER ------------------------------------------------
 
+class NYRAResultsAdapter(PageFetchingResultsAdapter):
+    """
+    Adapter for NYRA (New York Racing Association) race results covering Aqueduct, Belmont, and Saratoga.
+    """
+    SOURCE_NAME = "NYRAResults"
+    BASE_URL = "https://www.nyra.com"
+    HOST = "www.nyra.com"
+    IMPERSONATE = "chrome120"
+    TIMEOUT = 60
+
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        tracks = ["aqueduct", "belmont", "saratoga"]
+        links = set()
+
+        for track in tracks:
+            url = f"/{track}/racing/results/?day={date_str}&limit=results"
+            resp = await self.make_request("GET", url, headers=self._get_headers())
+            if resp and resp.text and "Race 1" in resp.text:
+                links.add(url)
+
+        return links
+
+    def _parse_page(self, html: str, date_str: str, url: str) -> List[ResultRace]:
+        parser = HTMLParser(html)
+
+        venue_slug = "unknown"
+        for slug in ["aqueduct", "belmont", "saratoga"]:
+            if slug in url:
+                venue_slug = slug
+                break
+        venue = fortuna.normalize_venue_name(venue_slug)
+
+        # NYRA results blocks
+        race_blocks = (
+            parser.css(".results-race-container")
+            or parser.css(".race-results-table")
+            or parser.css("div[id^='race-']")
+            or parser.css(".race-result")
+        )
+
+        races = []
+        for block in race_blocks:
+            try:
+                # Race number
+                race_num = 1
+                header = block.css_first("h3") or block.css_first(".race-number") or block.css_first(".race-header")
+                if header:
+                    rn_match = re.search(r"Race\s+(\d+)", fortuna.node_text(header), re.I)
+                    if rn_match: race_num = int(rn_match.group(1))
+
+                # S5: Race type
+                race_type = None
+                text = block.text()
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', text, re.I)
+                if rt_match: race_type = rt_match.group(1)
+
+                # Time
+                time_node = block.css_first(".post-time") or block.css_first(".race-time")
+                time_str = fortuna.node_text(time_node) if time_node else "12:00"
+                start_time = build_start_time(date_str, time_str)
+
+                runners = []
+                # Payouts table (Win/Place/Show)
+                for row in block.css("table.results-table tbody tr") or block.css("table tr"):
+                    cols = row.css("td")
+                    if len(cols) < 3: continue
+
+                    num_node = row.css_first(".saddle-cloth") or row.css_first(".program-number") or cols[0]
+                    number = _safe_int(fortuna.node_text(num_node))
+
+                    name_node = row.css_first(".horse-name") or row.css_first("a[href*='/profiles/']") or cols[1]
+                    name = fortuna.clean_text(fortuna.node_text(name_node))
+                    if not name or name.upper() in ["HORSE", "NAME"]: continue
+
+                    win_pay = place_pay = show_pay = 0.0
+                    # Standard order: Number, Horse, Win, Place, Show
+                    if len(cols) >= 5:
+                         win_pay = parse_currency_value(fortuna.node_text(cols[2]))
+                         place_pay = parse_currency_value(fortuna.node_text(cols[3]))
+                         show_pay = parse_currency_value(fortuna.node_text(cols[4]))
+                    elif len(cols) == 4:
+                         # Likely Number, Horse, Place, Show
+                         place_pay = parse_currency_value(fortuna.node_text(cols[2]))
+                         show_pay = parse_currency_value(fortuna.node_text(cols[3]))
+                    elif len(cols) == 3:
+                         # Likely Number, Horse, Show
+                         show_pay = parse_currency_value(fortuna.node_text(cols[2]))
+
+                    runners.append(ResultRunner(
+                        name=name,
+                        number=number,
+                        win_payout=win_pay,
+                        place_payout=place_pay,
+                        show_payout=show_pay,
+                        position=str(len(runners)+1)
+                    ))
+
+                # Also Rans
+                for ar_node in block.css(".also-rans") or block.css(".field-list"):
+                    for a_node in ar_node.css("li") or ar_node.css("span"):
+                        atxt = fortuna.node_text(a_node)
+                        am = re.search(r"(\d+)\s*-\s*(.+)", atxt)
+                        if am:
+                            runners.append(ResultRunner(
+                                number=int(am.group(1)),
+                                name=fortuna.clean_text(am.group(2)),
+                                position=str(len(runners)+1)
+                            ))
+
+                if runners:
+                    exotics = extract_exotic_payouts(block.css("table"))
+
+                    races.append(ResultRace(
+                        id=self._make_race_id("nyra_res", venue, date_str, race_num),
+                        venue=venue,
+                        race_number=race_num,
+                        start_time=start_time,
+                        runners=runners,
+                        discipline="Thoroughbred",
+                        race_type=race_type,
+                        source=self.SOURCE_NAME,
+                        **_apply_exotics_to_race(exotics)
+                    ))
+            except Exception:
+                continue
+        return races
+
 class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     """Equibase summary charts — primary US thoroughbred results source."""
 
@@ -1273,6 +1400,11 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("eqb_res", venue, date_str, race_num),
             venue=venue,
@@ -1280,6 +1412,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             start_time=start_time,
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
             **_apply_exotics_to_race(exotics),
@@ -1435,6 +1568,13 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_node.text(strip=True), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("rp_res", venue, date_str, race_num),
             venue=venue,
@@ -1442,6 +1582,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
@@ -1791,6 +1932,13 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_node.text(strip=True), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("atr_res", venue, date_str, race_num),
             venue=venue,
@@ -1798,6 +1946,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
@@ -2215,6 +2364,13 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             race_data.get("place_win", ""), runners,
         )
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        # Try summary header or card info
+        header_text = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("sl_res", venue, date_val, race_num),
             venue=venue,
@@ -2222,6 +2378,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             start_time=start_time,
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             trifecta_payout=trifecta_pay,
             superfecta_payout=superfecta_pay,
             source=self.SOURCE_NAME,
