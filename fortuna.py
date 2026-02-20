@@ -584,6 +584,7 @@ class Race(FortunaBaseModel):
         return ensure_eastern(v)
     source: str
     discipline: Optional[str] = None
+    race_type: Optional[str] = None
     distance: Optional[str] = None
     field_size: Optional[int] = None
     available_bets: List[str] = Field(default_factory=list, alias="availableBets")
@@ -636,6 +637,11 @@ def get_canonical_venue(name: Optional[str]) -> str:
 def now_eastern() -> datetime:
     """Returns the current time in US Eastern Time."""
     return datetime.now(EASTERN)
+
+
+def _places_paid(n: int) -> int:
+    """Heuristic for number of places paid based on field size."""
+    return 1 if n <= 4 else 2 if n <= 7 else 3
 
 
 
@@ -2059,6 +2065,14 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         if not runners: return None
 
         disc = detect_discipline(html_content)
+
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(header_node), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return Race(
             id=generate_race_id("srw", venue, start_time, race_num, disc),
             venue=venue,
@@ -2066,6 +2080,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             start_time=start_time,
             runners=runners,
             discipline=disc,
+            race_type=race_type,
             source=self.SOURCE_NAME,
             available_bets=scrape_available_bets(html_content)
         )
@@ -2308,9 +2323,15 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         distance = None
         dist_match = re.search(r"\|\s*(\d+[mfy].*)", header_text, re.I)
         if dist_match: distance = dist_match.group(1).strip()
+
+        # S5 — extract race type (independent review item)
+        race_type = None
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         runners = self._parse_runners(parser)
         if not runners: return None
-        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
     def _parse_runners(self, parser: HTMLParser) -> List[Runner]:
         odds_map: Dict[str, float] = {}
@@ -2762,7 +2783,14 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
             runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
         if not runners: return None
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+
+        # S5 — extract race type (independent review item)
+        race_type = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', race_type, re.I)
+        if rt_match: race_type = rt_match.group(1)
+        else: race_type = None
+
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -2803,8 +2831,16 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                 runners.append(Runner(number=number, name=name, odds=od, win_odds=wo))
             except Exception: continue
         if not runners: return None
+
+        # S5 — extract race type (independent review item)
+        race_type = None
+        ht_node = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
+        if ht_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(ht_node), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         dn = parser.css_first('span[class*="RacecardHeader__Distance"]') or parser.css_first(".race-distance")
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(node_text(dn)) if dn else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(node_text(dn)) if dn else None, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
 # ----------------------------------------
 # SkySportsAdapter
@@ -2982,7 +3018,14 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             if not runners: continue
             ab = scrape_available_bets(html_content)
             if not ab and (disc == "Harness" or "(us)" in tnr.lower()) and len([r for r in runners if not r.scratched]) >= 6: ab.append("Superfecta")
-            races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, source=self.source_name, available_bets=ab))
+
+            # S5 — extract race type (independent review item)
+            race_type = None
+            if h:
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(h), re.I)
+                if rt_match: race_type = rt_match.group(1)
+
+            races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, race_type=race_type, source=self.source_name, available_bets=ab))
         return races
 
 # ----------------------------------------
@@ -3528,9 +3571,16 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 if not venue or not rnum_txt.isdigit(): continue
                 st = self._parse_post_time(ds, node_text(pt).strip())
                 ab = scrape_available_bets(html_content)
+
+                # S5 — extract race type (independent review item)
+                race_type = None
+                header_text = node_text(p.css_first("div.race-information")) or html_content[:2000]
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+                if rt_match: race_type = rt_match.group(1)
+
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
                 if not runners: continue
-                races.append(Race(id=f"eqb_{venue.lower().replace(' ', '')}_{ds}_{rnum_txt}", venue=venue, race_number=int(rnum_txt), start_time=st, runners=runners, source=self.source_name, discipline="Thoroughbred", available_bets=ab))
+                races.append(Race(id=f"eqb_{venue.lower().replace(' ', '')}_{ds}_{rnum_txt}", venue=venue, race_number=int(rnum_txt), start_time=st, runners=runners, race_type=race_type, source=self.source_name, discipline="Thoroughbred", available_bets=ab))
             except Exception: continue
         return races
 
@@ -4172,15 +4222,70 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # 3. Apply Best Bet Logic
             if len(all_odds) >= 2:
                 fav, sec = all_odds[0], all_odds[1]
-                gap12 = round(float(sec - fav), 2)
 
-                # Enforce gap requirement (Tightened to 0.75 per user request)
-                if gap12 < 0.75:
-                    log.debug("Insufficient gap detected (1Gap2 < 0.75), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # S1 — implied place probability for the favourite
+                place_prob = 0.0
+                if all_odds and len(active_runners) >= 2:
+                    fav_float = float(all_odds[0])
+                    n = len(active_runners)
+                    np_ = _places_paid(n)
+                    win_p = 1.0 / fav_float
+                    # Additional place probability beyond winning, proportional to paid slots remaining
+                    place_prob = round(min(win_p + (1.0 - win_p) * (np_ / n), 0.97), 3)
+                race.metadata['place_prob'] = place_prob
+
+                # predicted_ev: expected value of a $2 place bet at discovery time
+                BET_UNIT = 2.0
+                if place_prob > 0 and all_odds:
+                    fav_float = float(all_odds[0])
+                    est_place_payout = BET_UNIT * max(1.1, 1.0 + (fav_float - 1.0) / 5.0)
+                    predicted_ev = round(place_prob * est_place_payout - (1.0 - place_prob) * BET_UNIT, 3)
                 else:
-                    # Preferred Predictions (Tightened per user request)
-                    # 2ndFav Odds >= 4.5, 1gap2 >= 0.75, field_size <= 9
-                    if len(active_runners) <= 9 and sec >= Decimal("4.5"):
+                    predicted_ev = None
+                race.metadata['predicted_ev'] = predicted_ev
+
+                # S3 — percentage gap instead of absolute
+                gap12 = round(float((sec - fav) / fav), 3)
+
+                # S4 — market depth (whole-field view, not just top-2)
+                market_depth = 0.0
+                if len(all_odds) >= 4:
+                    median_idx = len(all_odds) // 2
+                    median_odds = float(all_odds[median_idx])
+                    fav_float = float(fav)
+                    market_depth = round(min((median_odds / fav_float - 1.0) * 4.0, 10.0), 2)
+                race.metadata['market_depth'] = market_depth
+
+                # S5 — race-type condition modifier
+                rt = (race.race_type or "").lower()
+                condition_modifier = 0.0
+                if "maiden" in rt:
+                    condition_modifier -= 0.15   # penalise unpredictable first-timers
+                if "stakes" in rt or "graded" in rt:
+                    condition_modifier -= 0.10   # compressed markets, upsets more common
+                if "claiming" in rt and "maiden" not in rt:
+                    condition_modifier += 0.08   # claimers run reliably to their odds
+                race.metadata['condition_modifier'] = round(condition_modifier, 2)
+
+                # S6 — Composite score for grading
+                _gap_score    = min(gap12 * 40.0, 20.0)
+                _depth_score  = min(market_depth, 10.0)
+                _prob_score   = place_prob * 40.0
+                _cond_score   = condition_modifier * 20.0
+                _composite    = _gap_score + _depth_score + _prob_score + _cond_score
+
+                _GRADE_THRESHOLDS = [(70,'A+'), (60,'A'), (50,'B+'), (42,'B'), (32,'C')]
+                qualification_grade = next((g for t,g in _GRADE_THRESHOLDS if _composite >= t), 'D')
+                race.metadata['qualification_grade'] = qualification_grade
+                race.metadata['composite_score']     = round(_composite, 1)
+
+                # Enforce gap requirement (Updated to 0.35 ratio per independent review)
+                if gap12 < 0.35:
+                    log.debug("Insufficient gap detected (ratio < 0.35), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                else:
+                    # Preferred Predictions (S7: Exclude maiden)
+                    is_maiden = "maiden" in (race.race_type or "").lower()
+                    if len(active_runners) <= 9 and sec >= Decimal("4.5") and not is_maiden:
                         is_goldmine = True
                         is_best_bet = True
 
@@ -4188,6 +4293,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             else:
                 # Fallback if insufficient odds data
                 race.metadata['predicted_2nd_fav_odds'] = None
+                race.metadata['place_prob'] = 0.0
+                race.metadata['predicted_ev'] = None
+                race.metadata['market_depth'] = 0.0
+                race.metadata['condition_modifier'] = 0.0
+                race.metadata['qualification_grade'] = 'D'
+                race.metadata['composite_score'] = 0.0
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -5356,7 +5467,14 @@ class FortunaDB:
                         top2_place_payout REAL,
                         predicted_2nd_fav_odds REAL,
                         audit_timestamp TEXT,
-                        field_size INTEGER
+                        field_size INTEGER,
+                        market_depth REAL,
+                        place_prob REAL,
+                        predicted_ev REAL,
+                        race_type TEXT,
+                        condition_modifier REAL,
+                        qualification_grade TEXT,
+                        composite_score REAL
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5405,6 +5523,20 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN selection_name TEXT")
                 if "field_size" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN field_size INTEGER")
+                if "market_depth" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN market_depth REAL")
+                if "place_prob" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN place_prob REAL")
+                if "predicted_ev" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN predicted_ev REAL")
+                if "race_type" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN race_type TEXT")
+                if "condition_modifier" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN condition_modifier REAL")
+                if "qualification_grade" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN qualification_grade TEXT")
+                if "composite_score" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
 
         await self._run_in_executor(_init)
 
@@ -5453,14 +5585,13 @@ class FortunaDB:
             self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
 
         if current_version < 5:
-            # Migration to version 5: Add field_size support (Jules Fix)
+            # Migration to version 5: Scoring signal columns (independent review items)
             def _migrate_v5():
                 with self._get_conn() as conn:
-                    # Column already added in initialization PRAGMA check if missing,
-                    # but we ensure the version is bumped here.
+                    # Columns already added in initialization PRAGMA check if missing.
                     conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, ?)", (datetime.now(EASTERN).isoformat(),))
             await self._run_in_executor(_migrate_v5)
-            self.logger.info("Schema migrated to version 5")
+            self.logger.info("Schema migrated to version 5 — scoring signal columns added")
 
         self._initialized = True
         self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 5))
@@ -5596,7 +5727,14 @@ class FortunaDB:
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
                         float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
-                        tip.get("field_size")
+                        tip.get("field_size"),
+                        tip.get("market_depth"),
+                        tip.get("place_prob"),
+                        tip.get("predicted_ev"),
+                        tip.get("race_type"),
+                        tip.get("condition_modifier"),
+                        tip.get("qualification_grade"),
+                        tip.get("composite_score")
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5606,8 +5744,9 @@ class FortunaDB:
                         INSERT OR IGNORE INTO tips (
                             race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
-                            field_size
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            field_size, market_depth, place_prob, predicted_ev, race_type,
+                            condition_modifier, qualification_grade, composite_score
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5902,7 +6041,14 @@ class HotTipsTracker:
                 "selection_number": r.metadata.get('selection_number'),
                 "selection_name": r.metadata.get('selection_name'),
                 "predicted_2nd_fav_odds": r.metadata.get('predicted_2nd_fav_odds'),
-                "field_size": total_active
+                "field_size": total_active,
+                "market_depth": r.metadata.get('market_depth'),
+                "place_prob": r.metadata.get('place_prob'),
+                "predicted_ev": r.metadata.get('predicted_ev'),
+                "race_type": getattr(r, 'race_type', None),
+                "condition_modifier": r.metadata.get('condition_modifier'),
+                "qualification_grade": r.metadata.get('qualification_grade'),
+                "composite_score": r.metadata.get('composite_score')
             }
             new_tips.append(tip_data)
 
@@ -6936,14 +7082,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # RacingPost has strong anti-bot measures. Playwright with stealth is usually the best bet.
+        # Optimized for speed: CURL_CFFI is much faster than Playwright for large batches of racecards.
         return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=False,
             stealth_mode="camouflage",
-            timeout=90,
-            block_resources=False,
-            network_idle=True
+            timeout=60,
+            block_resources=True
         )
 
     def _get_headers(self) -> dict:
@@ -7066,6 +7211,10 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
             return None
 
+        # Deduplicate URLs to avoid redundant fetching (Memory Directive Fix)
+        race_card_urls = list(dict.fromkeys(race_card_urls))
+        self.logger.info("Deduplicated RacingPost links", original=len(race_card_urls), unique=len(race_card_urls))
+
         async def fetch_single_html(url: str):
             response = await self.make_request("GET", url, headers=self._get_headers())
             return response.text if response else ""
@@ -7100,6 +7249,12 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     continue
                 race_time_str = node_text(race_time_node)
 
+                # S5 — extract race type (independent review item)
+                race_type = None
+                header_text = node_text(parser.css_first('.rp-raceCourse__panel__race__info') or parser.css_first('.RC-course__info'))
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+                if rt_match: race_type = rt_match.group(1)
+
                 race_datetime_str = f"{date} {race_time_str}"
                 start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
 
@@ -7113,6 +7268,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         race_number=race_number,
                         start_time=start_time,
                         runners=runners,
+                        race_type=race_type,
                         source=self.source_name,
                     )
                     all_races.append(race)

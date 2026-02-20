@@ -1273,6 +1273,11 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("eqb_res", venue, date_str, race_num),
             venue=venue,
@@ -1280,6 +1285,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             start_time=start_time,
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
             **_apply_exotics_to_race(exotics),
@@ -1435,6 +1441,13 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_node.text(strip=True), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("rp_res", venue, date_str, race_num),
             venue=venue,
@@ -1442,6 +1455,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
@@ -1791,6 +1805,13 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_node.text(strip=True), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("atr_res", venue, date_str, race_num),
             venue=venue,
@@ -1798,6 +1819,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
@@ -2215,6 +2237,13 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             race_data.get("place_win", ""), runners,
         )
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        # Try summary header or card info
+        header_text = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("sl_res", venue, date_val, race_num),
             venue=venue,
@@ -2222,6 +2251,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             start_time=start_time,
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             trifecta_payout=trifecta_pay,
             superfecta_payout=superfecta_pay,
             source=self.SOURCE_NAME,
