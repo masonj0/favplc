@@ -604,11 +604,6 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
 
 
 
-def _places_paid(n: int) -> int:
-    """Heuristic for number of places paid based on field size."""
-    return 1 if n <= 4 else 2 if n <= 7 else 3
-
-
 
 
 
@@ -1946,20 +1941,27 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             if number == 0 or number > 40:
                 number = fallback_number
             win_odds = None
+            odds_source = None
             if horse_link := row.css_first('a[href*="/form/horse/"]'):
                 if m := re.search(r"/(\d+)(\?|$)", horse_link.attributes.get("href", "")):
                     win_odds = odds_map.get(m.group(1))
+                    if win_odds is not None:
+                        odds_source = "extracted"
             if win_odds is None:
                 if odds_node := row.css_first(".horse-in-racecard__odds"):
                     win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node)))
+                    if win_odds is not None:
+                        odds_source = "extracted"
 
             # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
+                if win_odds is not None:
+                    odds_source = "smart_extractor"
 
             odds: Dict[str, OddsData] = {}
             if od := create_odds_data(self.source_name, win_odds): odds[self.source_name] = od
-            return Runner(number=number, name=name, odds=odds, win_odds=win_odds)
+            return Runner(number=number, name=name, odds=odds, win_odds=win_odds, odds_source=odds_source)
         except Exception: return None
 
 # ----------------------------------------
@@ -2116,15 +2118,18 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                     g_id_match = re.search(r"/greyhound/(\d+)", t.get("href", ""))
                     g_id = g_id_match.group(1) if g_id_match else None
                     win_odds = odds_map.get(str(g_id)) if g_id else None
+                    odds_source = "extracted" if win_odds is not None else None
 
                     # Advanced heuristic fallback
                     if win_odds is None:
                         win_odds = SmartOddsExtractor.extract_from_text(str(t))
+                        if win_odds is not None:
+                            odds_source = "smart_extractor"
 
 
                     odds_data = {}
                     if ov := create_odds_data(self.source_name, win_odds): odds_data[self.source_name] = ov
-                    runners.append(Runner(number=trap_num or 0, name=name, odds=odds_data, win_odds=win_odds))
+                    runners.append(Runner(number=trap_num or 0, name=name, odds=odds_data, win_odds=win_odds, odds_source=odds_source))
 
         url_parts = url_path.split("/")
         if not venue:
@@ -2797,21 +2802,29 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
                 # Try smarter odds extraction from the line
                 # Harness entries often have ML odds like 5/2 or 5-2 near the end or after 'ML', 'M/L', or 'Morning Line'
                 wo = None
+                odds_source = None
                 ml_match = re.search(r"(?:ML|M/L|Morning Line)\s*(\d+[/-]\d+|[0-9.]+)", line, re.I)
                 if ml_match:
                     wo = parse_odds_to_decimal(ml_match.group(1))
+                    if wo is not None:
+                        odds_source = "morning_line"
 
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_text(line)
+                    if wo is not None:
+                        odds_source = "smart_extractor"
 
                 if wo is None:
                     # Look for anything that looks like odds at the end of the line
                     om = re.search(r"(\d+-\d+|\d+/\d+|[0-9.]+)\s*$", line)
-                    if om: wo = parse_odds_to_decimal(om.group(1))
+                    if om:
+                        wo = parse_odds_to_decimal(om.group(1))
+                        if wo is not None:
+                            odds_source = "extracted"
 
                 odds_data = {}
                 if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
-                runners.append(Runner(number=num, name=name, scratched=sc, odds=odds_data, win_odds=wo))
+                runners.append(Runner(number=num, name=name, scratched=sc, odds=odds_data, win_odds=wo, odds_source=odds_source))
         if not runners: return None
         return Race(discipline="Harness", id=generate_race_id("sc", track_name, st, race_num, "Harness"), venue=track_name, race_number=race_num, start_time=st, runners=runners, distance=dist, source=self.source_name, available_bets=ab)
 
@@ -2896,9 +2909,12 @@ class TabAdapter(BaseAdapterV3):
 
                     # Try to get win odds
                     win_odds = None
+                    odds_source = None
                     fixed_odds = runner_data.get("fixedOdds", {})
                     if fixed_odds:
                         win_odds = fixed_odds.get("returnWin") or fixed_odds.get("win")
+                        if win_odds is not None:
+                            odds_source = "extracted"
 
                     odds_dict = {}
                     if win_odds:
@@ -2910,6 +2926,7 @@ class TabAdapter(BaseAdapterV3):
                         number=num,
                         win_odds=win_odds,
                         odds=odds_dict,
+                        odds_source=odds_source,
                         scratched=runner_data.get("scratched", False)
                     ))
 
@@ -2998,6 +3015,14 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             timeout=45
         )
 
+    def _get_headers(self) -> Dict[str, str]:
+        # Using the base domain as host to avoid internal API 403s (Fix 3)
+        h = self._get_browser_headers(host="brk0201-iapi-webservice.nyrabets.com")
+        h["Origin"] = "https://www.nyrabets.com"
+        h["Referer"] = "https://www.nyrabets.com/"
+        h["X-Requested-With"] = "XMLHttpRequest"
+        return h
+
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # 1. Get Cards (Meetings)
         nyra_date = f"{date_str}T00:00:00.000"
@@ -3026,7 +3051,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             resp = await self.smart_fetcher.fetch(
                 f"{self.API_URL}/ListRaces.ashx",
                 method="POST",
-                data={"request": json.dumps(races_payload)}
+                data={"request": json.dumps(races_payload)},
+                headers=self._get_headers()
             )
             if not resp or not resp.text: return None
             list_races_data = json.loads(resp.text)
@@ -3045,7 +3071,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 resp = await self.smart_fetcher.fetch(
                     f"{self.API_URL}/GetRaces.ashx",
                     method="POST",
-                    data={"request": json.dumps(get_races_payload)}
+                    data={"request": json.dumps(get_races_payload)},
+                    headers=self._get_headers()
                 )
                 if resp and resp.text:
                     chunk_data = json.loads(resp.text)
@@ -3083,8 +3110,11 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 number = int(number_str) if number_str else 0
                 name = runner.get("runnerName", "Unknown")
                 win_odds = runner.get("currentWinPrice")
+                odds_source = "extracted" if win_odds and win_odds > 1.0 else None
                 if not win_odds or win_odds <= 1.0:
                     win_odds = runner.get("morningLineOdds")
+                    if win_odds and win_odds > 1.0:
+                        odds_source = "morning_line"
                 wo = float(win_odds) if win_odds else None
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
@@ -3314,6 +3344,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             sc = "scratched" in node.attributes.get("class", "").lower() or "SCR" in (clean_text(node_text(node)) or "")
 
             odds, wo = {}, None
+            odds_source = None
             if not sc:
                 # Odds column can be 9 or 10 (blind indexing fallback)
                 for idx in [9, 8, 10]:
@@ -3321,12 +3352,18 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                         o_text = clean_text(node_text(cols[idx]))
                         if o_text:
                             wo = parse_odds_to_decimal(o_text)
-                            if wo: break
+                            if wo:
+                                odds_source = "extracted"
+                                break
 
-                if wo is None: wo = SmartOddsExtractor.extract_from_node(node)
+                if wo is None:
+                    wo = SmartOddsExtractor.extract_from_node(node)
+                    if wo is not None:
+                        odds_source = "smart_extractor"
+
                 if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
 
-            return Runner(number=number, name=name, odds=odds, win_odds=wo, scratched=sc)
+            return Runner(number=number, name=name, odds=odds, win_odds=wo, odds_source=odds_source, scratched=sc)
         except Exception as e:
             self.logger.debug("equibase_runner_parse_failed", error=str(e))
             return None
@@ -6755,24 +6792,31 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                         if val <= 40: number = val
 
             win_odds = None
+            odds_source = None
             if forecast_map:
                 win_odds = parse_odds_to_decimal(forecast_map.get(name.lower()))
+                if win_odds is not None:
+                    odds_source = "morning_line"
 
             # Try to find live odds button if available (old selector)
             if not win_odds:
                 odds_tag = row.css_first("button.rp-bet-placer-btn__odds")
                 if odds_tag:
                     win_odds = parse_odds_to_decimal(clean_text(node_text(odds_tag)))
+                    if win_odds is not None:
+                        odds_source = "extracted"
 
             # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
+                if win_odds is not None:
+                    odds_source = "smart_extractor"
 
             odds_data = {}
             if odds_val := create_odds_data(self.source_name, win_odds):
                 odds_data[self.source_name] = odds_val
 
-            return Runner(number=number, name=name, odds=odds_data)
+            return Runner(number=number, name=name, win_odds=win_odds, odds=odds_data, odds_source=odds_source)
         except (AttributeError, ValueError, TypeError):
             return None
 
@@ -7015,7 +7059,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             if not all([number_node, name_node, odds_node]):
                 return None
 
-            number_str = clean_text(number_node_text(node))
+            number_str = clean_text(node_text(number_node))
             number = 0
             if number_str:
                 num_txt = "".join(filter(str.isdigit, number_str))
@@ -7027,17 +7071,23 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             scratched = "NR" in odds_str.upper() or not odds_str
 
             odds = {}
+            win_odds = None
+            odds_source = None
             if not scratched:
                 win_odds = parse_odds_to_decimal(odds_str)
+                if win_odds is not None:
+                    odds_source = "extracted"
 
                 # Advanced heuristic fallback
                 if win_odds is None:
                     win_odds = SmartOddsExtractor.extract_from_node(node)
+                    if win_odds is not None:
+                        odds_source = "smart_extractor"
 
                 if odds_data := create_odds_data(self.source_name, win_odds):
                     odds[self.source_name] = odds_data
 
-            return Runner(number=number, name=name, odds=odds, scratched=scratched)
+            return Runner(number=number, name=name, odds=odds, win_odds=win_odds, odds_source=odds_source, scratched=scratched)
         except (ValueError, AttributeError):
             self.logger.warning("Could not parse RacingPost runner, skipping.", exc_info=True)
             return None
@@ -7179,7 +7229,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             if not name_node: continue
             name = clean_text(node_text(name_node))
             pos_node = row.css_first('span.rp-resultRunner__position')
-            pos = clean_text(pos_node_text(node)) if pos_node else "?"
+            pos = clean_text(node_text(pos_node)) if pos_node else "?"
 
             # Try to find saddle number
             number = 0
@@ -7190,9 +7240,12 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
             # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
             win_odds = None
+            odds_source = None
             sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
             if sp_node:
                 win_odds = parse_odds_to_decimal(clean_text(node_text(sp_node)))
+                if win_odds is not None:
+                    odds_source = "starting_price"
 
             odds_data = {}
             if ov := create_odds_data(self.source_name, win_odds):
@@ -7203,6 +7256,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 number=number,
                 win_odds=win_odds,
                 odds=odds_data,
+                odds_source=odds_source,
                 metadata={"position": pos}
             ))
 

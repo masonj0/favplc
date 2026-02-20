@@ -28,7 +28,7 @@ from fortuna_utils import (
     VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
     clean_text, node_text, get_canonical_venue, normalize_venue_name,
     parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
-    is_valid_odds, now_eastern, to_eastern, ensure_eastern, _places_paid
+    is_valid_odds, now_eastern, to_eastern, ensure_eastern, get_places_paid
 )
 import fortuna
 
@@ -1053,6 +1053,16 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
             timeout=45
         )
 
+    def _get_headers(self) -> Dict[str, str]:
+        # Minimal headers to satisfy the internal API (Fix 3)
+        return {
+            "Origin": "https://www.nyrabets.com",
+            "Referer": "https://www.nyrabets.com/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Requested-With": "XMLHttpRequest"
+        }
+
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
         # 1. Get Cards for the date
         nyra_date = f"{date_str}T00:00:00.000"
@@ -1067,7 +1077,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
             resp = await self.smart_fetcher.fetch(
                 f"{self.API_URL}/ListCards.ashx",
                 method="POST",
-                data={"request": json.dumps(cards_payload)}
+                data={"request": json.dumps(cards_payload)},
+                headers=self._get_headers()
             )
             if not resp or not resp.text: return None
             cards_data = json.loads(resp.text)
@@ -1081,7 +1092,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
             resp = await self.smart_fetcher.fetch(
                 f"{self.API_URL}/ListRaces.ashx",
                 method="POST",
-                data={"request": json.dumps(races_payload)}
+                data={"request": json.dumps(races_payload)},
+                headers=self._get_headers()
             )
             if not resp or not resp.text: return None
             list_races_data = json.loads(resp.text)
@@ -1098,7 +1110,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
                 resp = await self.smart_fetcher.fetch(
                     f"{self.API_URL}/GetResults.ashx",
                     method="POST",
-                    data={"request": json.dumps(get_results_payload)}
+                    data={"request": json.dumps(get_results_payload)},
+                    headers=self._get_headers()
                 )
                 if resp and resp.text:
                     chunk_data = json.loads(resp.text)
@@ -1129,7 +1142,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
                 win_payout = (float(final_odds) * 2.0) if final_odds else None
                 runners.append(ResultRunner(
                     name=name, number=number, position=str(pos) if pos else None,
-                    position_numeric=pos, win_payout=win_payout, final_win_odds=final_odds
+                    position_numeric=pos, win_payout=win_payout, final_win_odds=final_odds,
+                    odds_source="extracted" if final_odds else None
                 ))
             if not runners: continue
             results.append(ResultRace(
@@ -1407,9 +1421,13 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         odds_text = fortuna.clean_text(fortuna.node_text(cols[3])) if len(cols) > 3 else ""
         final_odds = fortuna.parse_odds_to_decimal(odds_text)
 
+        odds_source = "extracted" if final_odds is not None else None
+
         # Advanced heuristic fallback (Jules Fix)
         if final_odds is None:
             final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
+            if final_odds is not None:
+                odds_source = "smart_extractor"
 
         win_pay = place_pay = show_pay = 0.0
         if len(cols) >= 7:
@@ -1422,6 +1440,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             number=_safe_int(num_text),
             position=pos_text,
             final_win_odds=final_odds,
+            odds_source=odds_source,
             win_payout=win_pay,
             place_payout=place_pay,
             show_payout=show_pay,
@@ -1643,10 +1662,13 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 parse_fractional_odds(fortuna.clean_text(fortuna.node_text(sp_node)))
                 if sp_node else 0.0
             )
+            odds_source = "starting_price" if final_odds > 0.01 else None
 
             # Advanced heuristic fallback (Jules Fix)
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+                if final_odds > 0.01:
+                    odds_source = "smart_extractor"
 
             runners.append(ResultRunner(
                 name=name,
@@ -1654,6 +1676,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
                 position=pos,
                 place_payout=place_payout,
                 final_win_odds=final_odds,
+                odds_source=odds_source
             ))
         return runners
 
@@ -2000,16 +2023,20 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
                 parse_fractional_odds(fortuna.clean_text(fortuna.node_text(odds_node)))
                 if odds_node else 0.0
             )
+            odds_source = "starting_price" if final_odds > 0.01 else None
 
             # Advanced heuristic fallback (Jules Fix)
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+                if final_odds > 0.01:
+                    odds_source = "smart_extractor"
 
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(num_text) if num_text else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
+                odds_source=odds_source
             ))
         return runners
 
@@ -2233,6 +2260,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                         number=num,
                         position=str(pos) if pos else None,
                         final_win_odds=final_odds if final_odds > 0 else None,
+                        odds_source="starting_price" if final_odds > 0 else None
                     ))
 
                 if runners and venue:
@@ -2373,11 +2401,13 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
                 or item.get("sp")
                 or item.get("betting", {}).get("current_odds", "")
             )
+            final_odds = parse_fractional_odds(str(sp_raw))
             runners.append(ResultRunner(
                 name=name,
                 number=item.get("cloth_number") or item.get("saddle_cloth_number", 0),
                 position=str(item.get("finish_position", item.get("position", ""))),
-                final_win_odds=parse_fractional_odds(str(sp_raw)),
+                final_win_odds=final_odds,
+                odds_source="starting_price" if final_odds else None
             ))
         return runners
 
@@ -2431,6 +2461,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
                 number=0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
+                odds_source="smart_extractor" if final_odds else None
             ))
 
         if not runners:
@@ -2685,13 +2716,15 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
 
                     if num in runners_map:
                         runners_map[num].final_win_odds = final_odds
+                        runners_map[num].odds_source = "extracted" if final_odds is not None else None
                         if pos: runners_map[num].position = pos
                     else:
                         runners_map[num] = ResultRunner(
                             name=name,
                             number=num,
                             position=pos,
-                            final_win_odds=final_odds
+                            final_win_odds=final_odds,
+                            odds_source="extracted" if final_odds is not None else None
                         )
 
         runners = list(runners_map.values())
@@ -2796,15 +2829,20 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             place_node = row.css_first(".payout-place")
 
             final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            odds_source = "starting_price" if final_odds > 0.01 else None
+
             # Advanced heuristic fallback (Jules Fix)
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+                if final_odds > 0.01:
+                    odds_source = "smart_extractor"
 
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
+                odds_source=odds_source,
                 win_payout=parse_currency_value(fortuna.node_text(win_node)) if win_node else 0.0,
                 place_payout=parse_currency_value(fortuna.node_text(place_node)) if place_node else 0.0,
             ))
@@ -2903,14 +2941,19 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
             odds_node = row.css_first(".rp-odds") or row.css_first(".rp-sp")
 
             final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
+            odds_source = "starting_price" if final_odds > 0.01 else None
+
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+                if final_odds > 0.01:
+                    odds_source = "smart_extractor"
 
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(num_node)) if num_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
+                odds_source=odds_source
             ))
 
         if not runners:
@@ -3093,15 +3136,20 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             final_odds = parse_fractional_odds(
                 fortuna.clean_text(fortuna.node_text(odds_node)) if odds_node else "",
             )
+            odds_source = "starting_price" if final_odds > 0.01 else None
+
             # Advanced heuristic fallback (Jules Fix)
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
+                if final_odds > 0.01:
+                    odds_source = "smart_extractor"
 
             runners.append(ResultRunner(
                 name=fortuna.clean_text(fortuna.node_text(name_node)),
                 number=_safe_int(fortuna.node_text(number_node)) if number_node else 0,
                 position=fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None,
                 final_win_odds=final_odds,
+                odds_source=odds_source
             ))
         return runners
 

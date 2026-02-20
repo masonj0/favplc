@@ -127,6 +127,13 @@ def merge_databases(primary_db, secondary_dbs):
                 cursor.execute("DETACH DATABASE sec")
                 continue
 
+            # Check available columns in secondary tips table to avoid errors (Fix 2)
+            cursor.execute("PRAGMA sec.table_info(tips)")
+            sec_columns = [col[1] for col in cursor.fetchall()]
+
+            def col_or_null(name):
+                return name if name in sec_columns else f"NULL AS {name}"
+
             # Merge tips table
             # We want to keep the one that is audited if there is a conflict
             # Or just update the fields if sec has more info.
@@ -134,7 +141,7 @@ def merge_databases(primary_db, secondary_dbs):
             # UPSERT strategy for the 'tips' table (Gemini Memo Fix)
             # This ensures that audited rows from secondary overwrite pending rows in primary,
             # but we also preserve audited rows in primary if secondary is pending.
-            cursor.execute("""
+            insert_sql = f"""
                 INSERT INTO tips (
                     race_id, venue, race_number, discipline, start_time, report_date,
                     is_goldmine, gap12, top_five, selection_number, selection_name,
@@ -149,9 +156,11 @@ def merge_databases(primary_db, secondary_dbs):
                     is_goldmine, gap12, top_five, selection_number, selection_name,
                     predicted_2nd_fav_odds, audit_completed, verdict, net_profit,
                     selection_position, actual_top_5, actual_2nd_fav_odds,
-                    trifecta_payout, trifecta_combination, superfecta_payout,
-                    superfecta_combination, top1_place_payout,
-                    top2_place_payout, audit_timestamp, field_size, match_confidence
+                    {col_or_null('trifecta_payout')}, {col_or_null('trifecta_combination')},
+                    {col_or_null('superfecta_payout')}, {col_or_null('superfecta_combination')},
+                    {col_or_null('top1_place_payout')}, {col_or_null('top2_place_payout')},
+                    {col_or_null('audit_timestamp')}, {col_or_null('field_size')},
+                    {col_or_null('match_confidence')}
                 FROM sec.tips
                 WHERE true
                 ON CONFLICT(race_id) DO UPDATE SET
@@ -161,17 +170,18 @@ def merge_databases(primary_db, secondary_dbs):
                     selection_position = excluded.selection_position,
                     actual_top_5 = excluded.actual_top_5,
                     actual_2nd_fav_odds = excluded.actual_2nd_fav_odds,
-                    trifecta_payout = excluded.trifecta_payout,
-                    trifecta_combination = excluded.trifecta_combination,
-                    superfecta_payout = excluded.superfecta_payout,
-                    superfecta_combination = excluded.superfecta_combination,
-                    top1_place_payout = excluded.top1_place_payout,
-                    top2_place_payout = excluded.top2_place_payout,
-                    audit_timestamp = excluded.audit_timestamp,
+                    trifecta_payout = COALESCE(excluded.trifecta_payout, tips.trifecta_payout),
+                    trifecta_combination = COALESCE(excluded.trifecta_combination, tips.trifecta_combination),
+                    superfecta_payout = COALESCE(excluded.superfecta_payout, tips.superfecta_payout),
+                    superfecta_combination = COALESCE(excluded.superfecta_combination, tips.superfecta_combination),
+                    top1_place_payout = COALESCE(excluded.top1_place_payout, tips.top1_place_payout),
+                    top2_place_payout = COALESCE(excluded.top2_place_payout, tips.top2_place_payout),
+                    audit_timestamp = COALESCE(excluded.audit_timestamp, tips.audit_timestamp),
                     field_size = COALESCE(tips.field_size, excluded.field_size),
-                    match_confidence = excluded.match_confidence
-                WHERE excluded.audit_completed = 1 AND tips.audit_completed = 0
-            """)
+                    match_confidence = COALESCE(excluded.match_confidence, tips.match_confidence)
+                WHERE (excluded.audit_completed = 1 AND tips.audit_completed = 0) OR (tips.audit_completed = 0)
+            """
+            cursor.execute(insert_sql)
 
             # Merge harvest_logs table
             cursor.execute("""
