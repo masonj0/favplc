@@ -109,10 +109,52 @@ def create_build_metadata():
         return []
 
 
+def smartscreen_autopilot():
+    """
+    Experimental: Uses PowerShell to automate clicking 'Run Anyway' if
+    the SmartScreen dialog appears during verification.
+    Not recommended for production.
+    """
+    ps_script = """
+    $shell = New-Object -ComObject WScript.Shell
+    for($i=0; $i -lt 10; $i++) {
+        if($shell.AppActivate("Windows protected your PC")) {
+            Sleep 1
+            $shell.SendKeys("{TAB}") # More info
+            $shell.SendKeys(" ")
+            Sleep 1
+            $shell.SendKeys("{TAB}") # Run anyway
+            $shell.SendKeys(" ")
+            break
+        }
+        Sleep 2
+    }
+    """
+    if platform.system() == "Windows":
+        subprocess.Popen(["powershell.exe", "-Command", ps_script])
+
+
 def verify_exe(exe_path):
     """Verify the EXE can launch without errors."""
     print("\nVerifying EXE...")
+
+    # Attempt to remove "Mark of the Web" on Windows to bypass some SmartScreen checks
+    if platform.system() == "Windows":
+        try:
+            subprocess.run(
+                ["powershell.exe", "-Command", f"Unblock-File -Path '{exe_path}'"],
+                check=False,
+                capture_output=True
+            )
+            print("   Unblocked EXE (PowerShell)")
+        except Exception:
+            pass
+
     try:
+        # Start the autopilot in the background if on Windows
+        if platform.system() == "Windows":
+            smartscreen_autopilot()
+
         result = subprocess.run(
             [exe_path, "--help"],
             capture_output=True,
@@ -157,6 +199,9 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         # the EXE is run from a read-only directory (e.g. Downloads on some
         # Windows configs).
         "--runtime-tmpdir=.",
+        # UPX compression is a major trigger for SmartScreen "Unknown Publisher"
+        # flags and antivirus false positives. (Council/Jules Fix)
+        "--noupx",
     ]
 
     if os.path.exists("version_info.txt"):

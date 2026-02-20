@@ -231,6 +231,7 @@ class ResultRace(fortuna.Race):
     """Race with full result data."""
 
     runners: List[ResultRunner] = Field(default_factory=list)
+    race_type: Optional[str] = None
     official_dividends: Dict[str, float] = Field(default_factory=dict)
     chart_url: Optional[str] = None
     is_fully_parsed: bool = False
@@ -1049,6 +1050,106 @@ class PageFetchingResultsAdapter(
 
 # -- EQUIBASE RESULTS ADAPTER ------------------------------------------------
 
+class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
+    """
+    Adapter for NYRABets.com race results using internal JSON API.
+    """
+    SOURCE_NAME = "NYRABetsResults"
+    BASE_URL = "https://www.nyrabets.com"
+    API_URL = "https://brk0201-iapi-webservice.nyrabets.com"
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            timeout=45
+        )
+
+    async def _fetch_data(self, date_str: str) -> Optional[Any]:
+        # 1. Get Cards for the date
+        nyra_date = f"{date_str}T00:00:00.000"
+        header = {
+            "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
+        }
+        cards_payload = {
+            "header": header, "cohort": "A--", "wageringCohort": "NBI",
+            "cardDate": nyra_date, "wantFeaturedContent": True
+        }
+        try:
+            resp = await self.smart_fetcher.fetch(
+                f"{self.API_URL}/ListCards.ashx",
+                method="POST",
+                data={"request": json.dumps(cards_payload)}
+            )
+            if not resp or not resp.text: return None
+            cards_data = json.loads(resp.text)
+            card_ids = [c["cardId"] for c in cards_data.get("cards", [])]
+            if not card_ids: return None
+
+            # 2. List Races
+            races_payload = {
+                "header": header, "cohort": "A--", "wageringCohort": "NBI", "cardIds": card_ids
+            }
+            resp = await self.smart_fetcher.fetch(
+                f"{self.API_URL}/ListRaces.ashx",
+                method="POST",
+                data={"request": json.dumps(races_payload)}
+            )
+            if not resp or not resp.text: return None
+            list_races_data = json.loads(resp.text)
+            race_ids = [r["raceId"] for r in list_races_data.get("races", [])]
+            if not race_ids: return None
+
+            # 3. GetResults (chunked)
+            all_results = []
+            for i in range(0, len(race_ids), 50):
+                chunk = race_ids[i:i+50]
+                get_results_payload = {
+                    "header": header, "cohort": "A--", "wageringCohort": "NBI", "raceIds": chunk
+                }
+                resp = await self.smart_fetcher.fetch(
+                    f"{self.API_URL}/GetResults.ashx",
+                    method="POST",
+                    data={"request": json.dumps(get_results_payload)}
+                )
+                if resp and resp.text:
+                    chunk_data = json.loads(resp.text)
+                    all_results.extend(chunk_data.get("races", []))
+            return all_results
+        except Exception as e:
+            self.logger.error("NYRABetsResults fetch failed", error=str(e))
+            return None
+
+    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
+        if not raw_data: return []
+        results = []
+        for r in raw_data:
+            venue = fortuna.normalize_venue_name(r["raceMeetingName"])
+            race_num = r["raceNumber"]
+            try:
+                # 2026-02-19T10:48:37Z
+                start_time = datetime.strptime(r["postTime"], "%Y-%m-%dT%H:%M:%SZ")
+            except Exception: continue
+            runners = []
+            for runner in r.get("runners", []):
+                name = runner.get("runnerName")
+                num_str = "".join(filter(str.isdigit, str(runner.get("programNumber", "0"))))
+                number = int(num_str) if num_str else 0
+                fpos = runner.get("finishPosition")
+                pos = int(fpos) if fpos and fpos.isdigit() else None
+                final_odds = runner.get("currentWinPrice")
+                win_payout = (float(final_odds) * 2.0) if final_odds else None
+                runners.append(ResultRunner(
+                    name=name, number=number, position=str(pos) if pos else None,
+                    position_numeric=pos, win_payout=win_payout, final_win_odds=final_odds
+                ))
+            if not runners: continue
+            results.append(ResultRace(
+                id=fortuna.generate_race_id("nyrab", venue, start_time, race_num),
+                venue=venue, race_number=race_num, start_time=start_time,
+                runners=runners, discipline="Thoroughbred"
+            ))
+        return results
+
 class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     """Equibase summary charts — primary US thoroughbred results source."""
 
@@ -1273,6 +1374,11 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("eqb_res", venue, date_str, race_num),
             venue=venue,
@@ -1280,6 +1386,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             start_time=start_time,
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
             **_apply_exotics_to_race(exotics),
@@ -1416,7 +1523,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         )
         if not venue_node:
             return None
-        raw_venue = venue_node.text(strip=True)
+        raw_venue = fortuna.node_text(venue_node)
         # RP often includes time and date in the venue node: "1:30 Market Rasen 17 Feb"
         # We capture the time (HH:MM) and then strip it and the date (DD MMM) patterns
         time_match = re.match(r"^(\d{1,2}:\d{2})\s*", raw_venue)
@@ -1435,6 +1542,13 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', fortuna.node_text(header_node), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("rp_res", venue, date_str, race_num),
             venue=venue,
@@ -1442,6 +1556,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
@@ -1791,6 +1906,13 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', fortuna.node_text(header_node), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("atr_res", venue, date_str, race_num),
             venue=venue,
@@ -1798,6 +1920,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
@@ -1818,7 +1941,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         )
         if not venue_node:
             return None, None
-        venue_text = venue_node.text(strip=True)
+        venue_text = fortuna.node_text(venue_node)
         # Strip leading time if present (e.g. "14:20 Southwell")
         time_match = re.match(r"^(\d{1,2}:\d{2})\s*", venue_text)
         race_time = time_match.group(1) if time_match else None
@@ -2215,6 +2338,13 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             race_data.get("place_win", ""), runners,
         )
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        # Try summary header or card info
+        header_text = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("sl_res", venue, date_val, race_num),
             venue=venue,
@@ -2222,6 +2352,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             start_time=start_time,
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             trifecta_payout=trifecta_pay,
             superfecta_payout=superfecta_pay,
             source=self.SOURCE_NAME,
@@ -2604,7 +2735,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
                 venue_cell = row.css_first("td.venue-name")
                 if not venue_cell:
                     continue
-                if not self._venue_matches(venue_cell.text(strip=True)):
+                if not self._venue_matches(fortuna.node_text(venue_cell)):
                     continue
                 for link in row.css("td a.race-link"):
                     race_url = link.attributes.get("href", "")
@@ -2621,7 +2752,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
         if not header:
             return None
 
-        header_text = header.text(strip=True)
+        header_text = fortuna.node_text(header)
         parts = header_text.split("-")
         venue = fortuna.normalize_venue_name(parts[0].strip())
 
