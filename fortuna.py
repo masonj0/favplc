@@ -7051,14 +7051,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # RacingPost has strong anti-bot measures. Playwright with stealth is usually the best bet.
+        # Optimized for speed: CURL_CFFI is much faster than Playwright for large batches of racecards.
         return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=False,
             stealth_mode="camouflage",
-            timeout=90,
-            block_resources=False,
-            network_idle=True
+            timeout=60,
+            block_resources=True
         )
 
     def _get_headers(self) -> dict:
@@ -7180,6 +7179,10 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         if not race_card_urls:
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
             return None
+
+        # Deduplicate URLs to avoid redundant fetching (Memory Directive Fix)
+        race_card_urls = list(dict.fromkeys(race_card_urls))
+        self.logger.info("Deduplicated RacingPost links", original=len(race_card_urls), unique=len(race_card_urls))
 
         async def fetch_single_html(url: str):
             response = await self.make_request("GET", url, headers=self._get_headers())
