@@ -1,0 +1,113 @@
+# .github/workflows/fortuna_purge.yml
+name: "🧹 Purge Corrupted Data"
+
+on:
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: 'Actually purge (false = dry run)'
+        required: true
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      aggressive:
+        description: 'Also delete stale tips'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+
+permissions:
+  contents: read
+  actions: write    # needed for cache deletion
+
+jobs:
+  purge:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m browserforge update
+
+      - name: Restore Master Database
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-v3-master-
+          restore-keys: fortuna-db-v3-master-
+
+      - name: Check DB exists
+        run: |
+          if [ ! -f fortuna.db ]; then
+            echo "::error::fortuna.db not found after cache restore"
+            exit 1
+          fi
+          ls -la fortuna.db
+
+      - name: Run Purge
+        env:
+          PYTHONPATH: .
+        run: |
+          FLAGS=""
+          if [ "${{ inputs.execute }}" = "true" ]; then
+            FLAGS="$FLAGS --execute"
+          fi
+          if [ "${{ inputs.aggressive }}" = "true" ]; then
+            FLAGS="$FLAGS --aggressive"
+          fi
+          python3 scripts/purge_corrupted_data.py $FLAGS
+
+      - name: Save Cleaned Database
+        if: inputs.execute == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-v3-master-${{ github.run_number }}
+
+      - name: Clear Old Caches
+        if: inputs.execute == 'true'
+        run: |
+          echo "## 🗄️ Clearing stale GHA caches" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # List and delete all regional caches (they contain corrupted data)
+          for pattern in "fortuna-db-v3-entry" "fortuna-db-v3-results"; do
+            echo "Clearing caches matching: $pattern"
+            gh cache list --json key -q ".[].key" | \
+              grep "$pattern" | \
+              while read -r key; do
+                echo "  Deleting: $key"
+                gh cache delete "$key" 2>/dev/null || true
+              done
+          done
+
+          # Delete old master caches (keep none — we just saved a fresh one)
+          gh cache list --json key -q ".[].key" | \
+            grep "fortuna-db-v3-master-" | \
+            grep -v "${{ github.run_number }}" | \
+            while read -r key; do
+              echo "  Deleting old master: $key"
+              gh cache delete "$key" 2>/dev/null || true
+            done
+
+          echo "✅ Cache cleanup complete" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Cleaned DB
+        if: inputs.execute == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fortuna-db-cleaned-${{ github.run_number }}
+          path: fortuna.db
+          retention-days: 7

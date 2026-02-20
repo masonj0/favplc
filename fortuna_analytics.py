@@ -2801,6 +2801,35 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     """Sky Sports Racing results (UK / IRE)."""
 
     SOURCE_NAME = "SkySportsResults"
+
+    def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
+        """Override to assign sequential race numbers per venue (Jules Fix)."""
+        races: List[ResultRace] = super()._parse_races(raw_data)
+        if not races:
+            return races
+
+        groups: Dict[tuple, List[ResultRace]] = defaultdict(list)
+        for r in races:
+            key = (
+                fortuna.get_canonical_venue(r.venue),
+                r.start_time.strftime("%Y%m%d"),
+            )
+            groups[key].append(r)
+
+        fixed: List[ResultRace] = []
+        for group in groups.values():
+            group.sort(key=lambda r: r.start_time)
+            for i, race in enumerate(group, start=1):
+                date_str = race.start_time.strftime("%Y-%m-%d")
+                fixed.append(
+                    race.model_copy(update={
+                        "race_number": i,
+                        "id": self._make_race_id(
+                            "sky_res", race.venue, date_str, i,
+                        ),
+                    })
+                )
+        return fixed
     BASE_URL = "https://www.skysports.com"
     HOST = "www.skysports.com"
     IMPERSONATE = "chrome120"

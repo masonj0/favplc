@@ -990,7 +990,8 @@ class SmartOddsExtractor:
 
 
 def generate_race_id(prefix: str, venue: str, start_time: datetime, race_number: int, discipline: Optional[str] = None) -> str:
-    venue_slug = re.sub(r"[^a-z0-9]", "", venue.lower())
+    # Always canonicalize venue to ensure consistent IDs across sources
+    venue_slug = get_canonical_venue(venue)
     date_str = start_time.strftime("%Y%m%d")
     time_str = start_time.strftime("%H%M")
 
@@ -2056,43 +2057,63 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
         for link in parser.css('a[href*="/racecard/"]'):
             url = link.attributes.get("href")
-            if not url: continue
+            if not url:
+                continue
             # Look for time at end of URL: /racecard/venue/date/1330
             time_match = re.search(r"/(\d{4})$", url)
             if not time_match:
                 # Might be just a race number: /racecard/venue/date/1
-                if not re.search(r"/\d{1,2}$", url): continue
+                if not re.search(r"/\d{1,2}$", url):
+                    continue
 
             parts = url.split("/")
             if len(parts) >= 3:
-                track_name = parts[2]
-                time_str = time_match.group(1) if time_match else None
-                track_map[track_name].append({"url": url, "time_str": time_str})
+                raw_slug = parts[2]
+                # Apply venue prefix matching to group races correctly (Fix 2)
+                words = raw_slug.replace('-', ' ').split()
+                track_name = None
+                for end in range(len(words), 0, -1):
+                    test = ' '.join(words[:end])
+                    if get_canonical_venue(test) != "unknown":
+                        track_name = test
+                        break
+                if not track_name and words:
+                    track_name = words[0]
+
+                if track_name:
+                    time_str = time_match.group(1) if time_match else None
+                    track_map[track_name].append({"url": url, "time_str": time_str})
 
         # Site usually shows UK time
         site_tz = ZoneInfo("Europe/London")
         now_site = datetime.now(site_tz)
 
+        # After building track_map, assign sequential race numbers per track (Fix 2)
         for track, race_infos in track_map.items():
-            # Broaden window to capture multiple races (Memory Directive Fix)
-            for r in race_infos:
+            # Sort by time to get correct sequence
+            race_infos_sorted = sorted(
+                race_infos,
+                key=lambda r: r["time_str"] or "0000",
+            )
+            for race_idx, r in enumerate(race_infos_sorted, start=1):
                 if r["time_str"]:
                     try:
                         rt = datetime.strptime(r["time_str"], "%H%M").replace(
-                            year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
+                            year=target_date.year,
+                            month=target_date.month,
+                            day=target_date.day,
+                            tzinfo=site_tz,
                         )
                         diff = (rt - now_site).total_seconds() / 60
                         if not (-45 < diff <= 1080):
                             continue
-
-                        # Try to extract race number from URL if it ends in /1, /2 etc.
-                        rn = 1
-                        u_parts = r["url"].rstrip("/").split("/")
-                        if u_parts and u_parts[-1].isdigit() and len(u_parts[-1]) <= 2:
-                            rn = int(u_parts[-1])
-
-                        meta.append({"url": r["url"], "race_number": rn, "venue_raw": track})
-                    except Exception: pass
+                        meta.append({
+                            "url": r["url"],
+                            "race_number": race_idx,  # ← sequential, not from URL
+                            "venue_raw": track,
+                        })
+                    except Exception:
+                        pass
 
         if not meta:
             for meeting in (parser.css(".meeting-summary") or parser.css(".p-meetings__item")):
@@ -2119,17 +2140,39 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         parser = HTMLParser(html_content)
         track_name, time_str, header_text = None, None, ""
 
-        # Strategy 0: Extract track name from URL if possible (most reliable for UK tracks) (Jules Fix)
-        # URL usually /racecard/ludlow/2026-02-17/1330
+        # Strategy 0: Extract track name from URL (most reliable for UK tracks) (Fix 1)
+        # ATR URLs: /racecard/[race-title-slug]/date/time
+        # e.g., /racecard/ludlow-suzuki-king-quad/2026-02-18/1705
+        # We need "Ludlow" from "ludlow-suzuki-king-quad"
         url_parts = url_path.lower().split("/")
         for marker in ["racecard", "racecards"]:
             if marker in url_parts:
                 idx = url_parts.index(marker)
                 for candidate in url_parts[idx+1:]:
-                    if candidate and candidate not in ["international", "uk-ire", "usa"] and not re.match(r"\d{4}-\d{2}-\d{2}", candidate) and not re.match(r"\d{4}", candidate):
-                        track_name = normalize_venue_name(candidate)
+                    if (candidate
+                        and candidate not in ["international", "uk-ire", "usa"]
+                        and not re.match(r"\d{4}-\d{2}-\d{2}", candidate)
+                        and not re.match(r"^\d{4}$", candidate)):
+
+                        # Try progressively shorter prefixes of the slug
+                        # against known venues (longest match wins)
+                        words = candidate.replace('-', ' ').split()
+                        matched = False
+                        for end in range(len(words), 0, -1):
+                            test_name = ' '.join(words[:end])
+                            if get_canonical_venue(test_name) != "unknown":
+                                track_name = normalize_venue_name(test_name)
+                                matched = True
+                                break
+
+                        # If no known venue matched, use first word only
+                        # (venue names rarely exceed 3 words; race titles always do)
+                        if not matched and words:
+                            track_name = normalize_venue_name(words[0])
+
                         break
-                if track_name: break
+                if track_name:
+                    break
 
         header = parser.css_first(".race-header__details") or parser.css_first(".racecard-header")
         if header:
@@ -2724,9 +2767,19 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         meetings = parser.css(".sdc-site-concertina-block") or parser.css(".page-details__section") or parser.css(".racing-meetings__meeting")
         for meeting in meetings:
             hn = meeting.css_first(".sdc-site-concertina-block__title") or meeting.css_first(".racing-meetings__meeting-title")
-            if not hn: continue
+            if not hn:
+                continue
             vr = clean_text(node_text(hn)) or ""
-            if "ABD:" in vr: continue
+            if "ABD:" in vr:
+                continue
+
+            # Strip qualifiers from venue name using prefix matching (Fix 3)
+            words = vr.replace('-', ' ').split()
+            for end in range(len(words), 0, -1):
+                test = ' '.join(words[:end])
+                if get_canonical_venue(test) != "unknown":
+                    vr = test
+                    break
 
             # Updated Sky Sports event discovery logic
             events = meeting.css(".sdc-site-racing-meetings__event") or meeting.css(".racing-meetings__event")
@@ -2787,14 +2840,23 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                 else: continue
             else: rts, tnr = m.group(1), m.group(2)
 
-            # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+            # Strategy 0: Extract track name from URL (most reliable) (Fix 3)
             # URL usually /racing/racecards/ludlow/17-02-2026/
+            # We strip meeting qualifiers like "midi" using prefix matching.
             track_name = None
             url_parts = item.get("url", "").lower().split("/")
             if "racecards" in url_parts:
                 idx = url_parts.index("racecards")
                 if len(url_parts) > idx + 1:
-                    track_name = normalize_venue_name(url_parts[idx+1])
+                    slug = url_parts[idx + 1]
+                    words = slug.replace('-', ' ').split()
+                    for end in range(len(words), 0, -1):
+                        test = ' '.join(words[:end])
+                        if get_canonical_venue(test) != "unknown":
+                            track_name = normalize_venue_name(test)
+                            break
+                    if not track_name and words:
+                        track_name = normalize_venue_name(slug)
 
             if not track_name:
                 track_name = normalize_venue_name(tnr)
@@ -2805,6 +2867,12 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             for d in parser.css(".sdc-site-racing-header__detail-item"):
                 dt = clean_text(node_text(d)) or ""
                 if "Distance:" in dt: dist = dt.replace("Distance:", "").strip(); break
+
+            disc = detect_discipline(html_content)
+            # Fix: SkySports sometimes misidentifies UK Thoroughbred tracks as Harness
+            if disc == "Harness" and any(k in track_name.upper() for k in ["SOUTHWELL", "KEMPTON", "LUDLOW"]):
+                 disc = "Thoroughbred"
+
             runners = []
             for i, node in enumerate(parser.css(".sdc-site-racing-card__item")):
                 nn = node.css_first(".sdc-site-racing-card__name a")
@@ -2837,7 +2905,6 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
                 runners.append(Runner(number=number, name=name, scratched=scratched, odds=od, win_odds=wo))
             if not runners: continue
-            disc = detect_discipline(html_content)
             ab = scrape_available_bets(html_content)
             if not ab and (disc == "Harness" or "(us)" in tnr.lower()) and len([r for r in runners if not r.scratched]) >= 6: ab.append("Superfecta")
             races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, source=self.source_name, available_bets=ab))
