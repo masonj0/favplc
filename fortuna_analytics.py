@@ -1805,6 +1805,13 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_node.text(strip=True), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return ResultRace(
             id=self._make_race_id("atr_res", venue, date_str, race_num),
             venue=venue,
@@ -1812,6 +1819,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str, race_time_str),
             runners=runners,
             discipline="Thoroughbred",
+            race_type=race_type,
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
