@@ -538,6 +538,8 @@ class Runner(FortunaBaseModel):
     odds: Dict[str, OddsData] = Field(default_factory=dict)
     win_odds: Optional[float] = Field(None, alias="winOdds")
     odds_source: Optional[str] = Field(None, description="How win_odds was obtained: 'extracted', 'smart_extractor', 'default', or the source adapter name")
+    trainer: Optional[str] = None
+    jockey: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
@@ -582,9 +584,11 @@ class Race(FortunaBaseModel):
     def validate_eastern(cls, v: datetime) -> datetime:
         """Ensures all race start times are in US Eastern Time."""
         return ensure_eastern(v)
+
     source: str
-    discipline: Optional[str] = None
+    discipline: str = "Thoroughbred"
     race_type: Optional[str] = None
+    surface: Optional[str] = None
     distance: Optional[str] = None
     field_size: Optional[int] = None
     available_bets: List[str] = Field(default_factory=list, alias="availableBets")
@@ -1067,9 +1071,13 @@ class AdapterMetrics:
         self.total_latency_ms = 0.0
         self.consecutive_failures = 0
         self.last_failure_reason: Optional[str] = None
+        self.parse_warnings = 0
+        self.parse_errors = 0
+
     @property
     def success_rate(self) -> float:
         return self.successful_requests / self.total_requests if self.total_requests > 0 else 1.0
+
     async def record_success(self, latency_ms: float) -> None:
         with self._lock:
             self.total_requests += 1
@@ -1084,13 +1092,24 @@ class AdapterMetrics:
             self.failed_requests += 1
             self.consecutive_failures += 1
             self.last_failure_reason = error
+
+    def record_parse_warning(self) -> None:
+        with self._lock:
+            self.parse_warnings += 1
+
+    def record_parse_error(self) -> None:
+        with self._lock:
+            self.parse_errors += 1
+
     def snapshot(self) -> Dict[str, Any]:
         return {
             "total_requests": self.total_requests,
             "success_rate": self.success_rate,
             "failed_requests": self.failed_requests,
             "consecutive_failures": self.consecutive_failures,
-            "last_failure_reason": getattr(self, "last_failure_reason", None)
+            "last_failure_reason": getattr(self, "last_failure_reason", None),
+            "parse_warnings": self.parse_warnings,
+            "parse_errors": self.parse_errors
         }
 
 
@@ -1402,6 +1421,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                     })
 
         if not metadata:
+            self.metrics.record_parse_warning()
             return None
 
         # Limit for sanity
@@ -1537,6 +1557,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         if not metadata:
             self.logger.warning("No metadata found", context="SRW Index Parsing", url=index_url)
+            self.metrics.record_parse_warning()
             return None
         # Limit to first 50 to avoid hammering
         pages = await self._fetch_race_pages_concurrent(metadata[:50], self._get_headers(), semaphore_limit=5)
@@ -1553,7 +1574,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             try:
                 race = self._parse_single_race(html_content, item.get("url", ""), race_date)
                 if race: races.append(race)
-            except Exception: pass
+            except Exception:
+                self.metrics.record_parse_error()
         return races
 
     def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
@@ -1711,6 +1733,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
         if not metadata:
             self.logger.warning("No metadata found", context="ATR Index Parsing", date=date)
+            self.metrics.record_parse_warning()
             return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
@@ -1799,7 +1822,8 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             try:
                 race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("race_number"))
                 if race: races.append(race)
-            except Exception: pass
+            except Exception:
+                self.metrics.record_parse_error()
         return races
 
     def _parse_single_race(self, html_content: str, url_path: str, race_date: date, race_number_fallback: Optional[int]) -> Optional[Race]:
@@ -2005,6 +2029,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
             metadata = [{"url": l, "race_number": 0} for l in set(links)]
         if not metadata:
             self.logger.warning("No metadata found", context="ATR Greyhound Index Parsing", url=index_url)
+            self.metrics.record_parse_warning()
             return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
@@ -2244,6 +2269,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         metadata = self._extract_race_metadata(parser, date)
         if not metadata:
             self.logger.warning("No metadata found", context="SportingLife Index Parsing", url=index_url)
+            self.metrics.record_parse_warning()
             return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=8)
         return {"pages": pages, "date": date}
@@ -2516,6 +2542,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
 
         if not metadata:
             self.logger.warning("No metadata found", context="SkySports Index Parsing", url=index_url)
+            self.metrics.record_parse_warning()
             return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=10)
         return {"pages": pages, "date": date}
@@ -2752,6 +2779,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
                     metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
         if not metadata:
             self.logger.warning("No metadata found", context="StandardbredCanada Index Parsing")
+            self.metrics.record_parse_warning()
             return None
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=3)
         return {"pages": pages, "date": date}
@@ -2858,7 +2886,9 @@ class TabAdapter(BaseAdapterV3):
         if not resp: return None
         try: data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
         except Exception: return None
-        if not data or "meetings" not in data: return None
+        if not data or "meetings" not in data:
+            self.metrics.record_parse_warning()
+            return None
 
         # TAB meetings often only have race headers. We need to fetch each meeting's details
         # to get runners and odds.
@@ -2958,7 +2988,10 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
     async def _fetch_data(self, date: str) -> Optional[StringIO]:
         endpoint = f"?date={date}&presenter=RatingsPresenter&csv=true"
         resp = await self.make_request("GET", endpoint)
-        return StringIO(resp.text) if resp and resp.text else None
+        if not resp or not resp.text:
+            self.metrics.record_parse_warning()
+            return None
+        return StringIO(resp.text)
 
     def _parse_races(self, raw_data: Optional[StringIO]) -> List[Race]:
         if not raw_data: return []
@@ -3037,7 +3070,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             resp = await self.smart_fetcher.fetch(
                 f"{self.API_URL}/ListCards.ashx",
                 method="POST",
-                data={"request": json.dumps(cards_payload)}
+                data={"request": json.dumps(cards_payload)},
+                headers=self._get_headers()
             )
             if not resp or not resp.text: return None
             cards_data = json.loads(resp.text)
@@ -3059,7 +3093,9 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             all_races = list_races_data.get("races", [])
             # Filter US races for discovery efficiency as per memo focus
             us_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") == "US"]
-            if not us_race_ids: return {"races": [], "details": {}}
+            if not us_race_ids:
+                self.metrics.record_parse_warning()
+                return {"races": [], "details": {}}
 
             # 3. Get Details (Runners) - chunked
             details = {}
@@ -3119,7 +3155,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
                 runners.append(Runner(
-                    number=number, name=name, odds=od, win_odds=wo,
+                    number=number, name=name, odds=od, win_odds=wo, odds_source=odds_source,
                     trainer=runner.get("trainer"), jockey=runner.get("jockey")
                 ))
             if not runners: continue
@@ -3230,6 +3266,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         if not links:
             self.logger.warning("No links found", context="Equibase Index Parsing", date=date)
+            self.metrics.record_parse_warning()
             return None
 
         # Fetch initial set of pages
@@ -3723,7 +3760,7 @@ class BaseAnalyzer(ABC):
         self.config = config or {}
 
     @abstractmethod
-    def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
+    def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
         """The core method every analyzer must implement."""
         pass
 
@@ -3749,13 +3786,14 @@ class TrifectaAnalyzer(BaseAnalyzer):
         self.min_second_favorite_odds = Decimal(str(min_second_favorite_odds))
         self.notifier = RaceNotifier()
 
-    def is_race_qualified(self, race: Race) -> bool:
+    def is_race_qualified(self, race: Race, now: Optional[datetime] = None) -> bool:
         """A race is qualified for a trifecta if it has at least 3 non-scratched runners."""
         if not race or not race.runners:
             return False
 
         # Apply global timing cutoff (45m ago, 120m future)
-        now = datetime.now(EASTERN)
+        if now is None:
+            now = datetime.now(EASTERN)
         past_cutoff = now - timedelta(minutes=45)
         future_cutoff = now + timedelta(minutes=120)
         st = race.start_time
@@ -3767,13 +3805,13 @@ class TrifectaAnalyzer(BaseAnalyzer):
         active_runners = sum(1 for r in race.runners if not r.scratched)
         return active_runners >= 3
 
-    def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
+    def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
         """Scores all races and returns a dictionary with criteria and a sorted list."""
         qualified_races = []
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
 
         for race in races:
-            if not self.is_race_qualified(race):
+            if not self.is_race_qualified(race, now=now):
                 continue
 
             active_runners = [r for r in race.runners if not r.scratched]
@@ -3899,10 +3937,11 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
     def name(self) -> str:
         return "simply_success"
 
-    def qualify_races(self, races: List[Race]) -> Dict[str, Any]:
+    def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
         """Returns races with a perfect score, applying global timing and chalk filters."""
         qualified = []
-        now = datetime.now(EASTERN)
+        if now is None:
+            now = datetime.now(EASTERN)
 
         # Success Playbook Hardening (Council of Superbrains)
         # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
@@ -5118,6 +5157,26 @@ def get_db_path() -> str:
     return str(get_writable_path("fortuna.db"))
 
 
+def validate_artifact_freshness(filepath: str, max_age_hours: int = 12) -> bool:
+    """Verifies that the given artifact exists and is not too old (Improvement 1)."""
+    p = Path(filepath)
+    if not p.exists():
+        return False
+    mtime = p.stat().st_mtime
+    age_hours = (time.time() - mtime) / 3600
+    return age_hours <= max_age_hours
+
+
+def _write_github_output(name: str, value: Any) -> None:
+    """Writes a value to GitHub Actions output if environment variable is present (Improvement 1)."""
+    if 'GITHUB_OUTPUT' in os.environ:
+        try:
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                f.write(f"{name}={value}\n")
+        except Exception:
+            pass
+
+
 class FortunaDB:
     """
     Thread-safe SQLite backend for Fortuna using the standard library.
@@ -5222,7 +5281,8 @@ class FortunaDB:
                         race_type TEXT,
                         condition_modifier REAL,
                         qualification_grade TEXT,
-                        composite_score REAL
+                        composite_score REAL,
+                        match_confidence TEXT
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5285,6 +5345,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN qualification_grade TEXT")
                 if "composite_score" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
+                if "match_confidence" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
 
         await self._run_in_executor(_init)
 
@@ -6438,6 +6500,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if not metadata:
             self.logger.warning("No metadata found", context="Oddschecker Index Parsing", url=index_url)
+            self.metrics.record_parse_warning()
             return None
 
         async def fetch_single_html(url_path: str):
@@ -6656,6 +6719,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
         if not links:
             self.logger.warning("No metadata found", context="Timeform Index Parsing", url=index_url)
+            self.metrics.record_parse_warning()
             return None
 
         async def fetch_single_html(url_path: str):
@@ -6964,6 +7028,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if not race_card_urls:
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
+            self.metrics.record_parse_warning()
             return None
 
         # Deduplicate URLs to avoid redundant fetching (Memory Directive Fix)
@@ -7303,7 +7368,8 @@ async def run_discovery(
     live_dashboard: bool = False,
     track_odds: bool = False,
     region: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None
+    config: Optional[Dict[str, Any]] = None,
+    now: Optional[datetime] = None
 ):
     logger = structlog.get_logger("run_discovery")
     logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
@@ -7312,7 +7378,8 @@ async def run_discovery(
     await db.initialize()
 
     try:
-        now = datetime.now(EASTERN)
+        if now is None:
+            now = datetime.now(EASTERN)
         cutoff = now + timedelta(hours=window_hours) if window_hours else None
 
         all_races_raw = []
@@ -7545,7 +7612,7 @@ async def run_discovery(
 
         # Analyze ALL unique races to ensure Grid is populated with Top 5 info (News Mode)
         analyzer = SimplySuccessAnalyzer(config=config)
-        result = analyzer.qualify_races(unique_races)
+        result = analyzer.qualify_races(unique_races, now=now)
         qualified = result.get("races", [])
 
         # Generate Grid & Goldmine (Grid uses unique_races for the broader context)
@@ -7656,15 +7723,23 @@ async def run_discovery(
         except Exception as e:
             logger.error("failed_saving_text_reports", error=str(e))
 
-        # Save qualified races to JSON
+        # Save qualified races to JSON using atomic write (Improvement 1)
         report_data = {
             "races": [r.model_dump(mode='json') for r in qualified],
             "analysis_metadata": result.get("criteria", {}),
             "timestamp": datetime.now(EASTERN).isoformat(),
         }
+        qualified_path = get_writable_path("qualified_races.json")
+        temp_path = qualified_path.with_suffix(".tmp")
         try:
-            with open(get_writable_path("qualified_races.json"), "w", encoding='utf-8') as f:
+            with open(temp_path, "w", encoding='utf-8') as f:
                 json.dump(report_data, f, indent=4)
+            temp_path.replace(qualified_path)
+
+            # Record freshness in GHA output
+            is_fresh = validate_artifact_freshness(str(qualified_path))
+            _write_github_output("qualified_fresh", "1" if is_fresh else "0")
+            _write_github_output("qualified_count", len(qualified))
         except Exception as e:
             logger.error("failed_saving_qualified_races", error=str(e))
 
