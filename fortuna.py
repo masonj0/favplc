@@ -383,7 +383,14 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 
 # Quality-based Partitioning (JB/Council Strategy)
 SOLID_DISCOVERY_ADAPTERS: Final[set] = {"TwinSpires", "SkyRacingWorld", "RacingPost"}
-SOLID_RESULTS_ADAPTERS: Final[set] = {"StandardbredCanadaResults", "RacingPostResults", "SportingLifeResults"}
+SOLID_RESULTS_ADAPTERS: Final[set] = {
+    "StandardbredCanadaResults",
+    "RacingPostResults",
+    "SportingLifeResults",
+    "AtTheRacesGreyhoundResults",
+    "TimeformResults",
+    "SkySportsResults",
+}
 
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
@@ -560,6 +567,15 @@ class Race(FortunaBaseModel):
     race_number: int = Field(..., alias="raceNumber", ge=1, le=100)
     start_time: datetime = Field(..., alias="startTime")
     runners: List[Runner] = Field(default_factory=list)
+
+    @field_validator("venue", mode="after")
+    @classmethod
+    def normalize_venue(cls, v: str) -> str:
+        """Ensure venue is normalized through VENUE_MAP."""
+        if not v or v == "Unknown":
+            return v
+        normalized = normalize_venue_name(v)
+        return normalized if normalized != "Unknown" else v
 
     @field_validator("start_time", mode="after")
     @classmethod
@@ -790,6 +806,37 @@ VENUE_MAP = {
 "YARMOUTH": "Great Yarmouth",
 "YONKERS": "Yonkers",
 "YONKERS RACEWAY": "Yonkers",
+"HARLOW": "Harlow",
+"HOVE": "Hove",
+"KILKENNY": "Kilkenny",
+"MONMORE": "Monmore",
+"MONMORE GREEN": "Monmore",
+"ROMFORD": "Romford",
+"TOWCESTER": "Towcester",
+"NOTTINGHAM": "Nottingham",
+"VALLEY": "Valley",
+"CRAYFORD": "Crayford",
+"SUNDERLAND": "Sunderland",
+"PERRY BARR": "Perry Barr",
+"CAGNES SUR MER": "Cagnes Sur Mer",
+"CAGNES-SUR-MER": "Cagnes Sur Mer",
+"CAGNES SUR MER MIDI": "Cagnes Sur Mer",
+"CAGNES SUR MER QUEYRAS": "Cagnes Sur Mer",
+"CAGNES SUR MER MENTHE POIVREE": "Cagnes Sur Mer",
+"CAGNES SUR MER ANTOINE CAPOZZI": "Cagnes Sur Mer",
+"LYON": "Lyon",
+"LYON LA SOIE": "Lyon",
+"PORNICHET": "Pornichet",
+"LAVAL": "Laval",
+"SCOTTSVILLE": "Scottsville",
+"MAHONING VALLEY": "Mahoning Valley",
+"TURFWAY": "Turfway Park",
+"TURFWAY PARK": "Turfway Park",
+"TURF PARADISE": "Turf Paradise",
+"SUNLAND": "Sunland Park",
+"KEMPTON": "Kempton Park",
+"GREAT YARMOUTH": "Great Yarmouth",
+"YARMOUTH": "Great Yarmouth",
 }
 
 
@@ -801,27 +848,23 @@ def normalize_venue_name(name: Optional[str]) -> str:
     if not name:
         return "Unknown"
 
-    # 1. Initial Cleaning: Replace dashes and strip all parenthetical info
-    # Handle full-width parentheses and brackets often found in international data
-    name = str(name).replace("-", " ")
-    name = re.sub(r"[\(\[（].*?[\)\]）]", " ", name)
+    # 1. Initial Cleaning
+    name = str(name).replace("-", " ").replace("_", " ")
+    name = re.sub(r"[\(\[\uff08].*?[\)\]\uff09]", " ", name)
 
     cleaned = clean_text(name)
     if not cleaned:
         return "Unknown"
 
     # 2. Aggressive Race/Meeting Name Stripping
-    # If these keywords are found, assume everything after is the race name.
-
     upper_name = cleaned.upper()
     earliest_idx = len(cleaned)
     for kw in RACING_KEYWORDS:
-        # Check for keyword with leading space
         idx = upper_name.find(" " + kw)
         if idx != -1:
             earliest_idx = min(earliest_idx, idx)
 
-    # Added: also look for first numeric digit preceded by a space (e.g. "Ludlow 13:30") (Jules Fix)
+    # Strip from first digit preceded by space (e.g. "Ludlow 13:30")
     digit_match = re.search(r"\s\d", cleaned)
     if digit_match:
         earliest_idx = min(earliest_idx, digit_match.start())
@@ -830,23 +873,38 @@ def normalize_venue_name(name: Optional[str]) -> str:
     if not track_part:
         track_part = cleaned
 
-    # Handle repetition check (e.g., "Bahrain Bahrain" -> "Bahrain")
+    # Handle repetition (e.g., "Bahrain Bahrain" -> "Bahrain")
     words = track_part.split()
     if len(words) > 1 and words[0].lower() == words[1].lower():
         track_part = words[0]
 
     upper_track = track_part.upper()
 
-    # 3. High-Confidence Mapping
-    # Map raw/cleaned names to canonical display names.
-
-    # Direct match
+    # 3. High-Confidence Mapping — direct match
     if upper_track in VENUE_MAP:
         return VENUE_MAP[upper_track]
 
-    # Prefix match (sort by length desc to avoid partial matches on shorter names)
+    # 4. Word-boundary prefix match (longest known venue first)
+    # "Ludlow Suzuki King Quad" → try "Ludlow Suzuki King Quad", then
+    # "Ludlow Suzuki King", then "Ludlow Suzuki", then "Ludlow" — first
+    # match in VENUE_MAP wins.
+    track_words = upper_track.split()
+    for end in range(len(track_words), 0, -1):
+        candidate = " ".join(track_words[:end])
+        if candidate in VENUE_MAP:
+            return VENUE_MAP[candidate]
+
+    # 5. Same approach on the full (unstripped) cleaned name
+    # Catches cases where RACING_KEYWORDS didn't strip properly
+    full_words = upper_name.split()
+    for end in range(min(len(full_words), 4), 0, -1):  # max 4-word venue names
+        candidate = " ".join(full_words[:end])
+        if candidate in VENUE_MAP:
+            return VENUE_MAP[candidate]
+
+    # 6. Legacy prefix match (substring-based, for backward compat)
     for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
-        if upper_name.startswith(known_track):
+        if upper_name.startswith(known_track + " ") or upper_name == known_track:
             return VENUE_MAP[known_track]
 
     return track_part.title()
@@ -989,18 +1047,42 @@ class SmartOddsExtractor:
         return None
 
 
-def generate_race_id(prefix: str, venue: str, start_time: datetime, race_number: int, discipline: Optional[str] = None) -> str:
-    # Always canonicalize venue to ensure consistent IDs across sources
+def generate_race_id(
+    prefix: str,
+    venue: str,
+    start_time: datetime,
+    race_number: int,
+    discipline: Optional[str] = None,
+) -> str:
     venue_slug = get_canonical_venue(venue)
+
+    # Defense: warn on suspiciously long venue slugs (likely race title contamination)
+    if len(venue_slug) > 25:
+        _log = structlog.get_logger("generate_race_id")
+        _log.warning(
+            "suspiciously_long_venue_slug",
+            raw_venue=venue,
+            slug=venue_slug,
+            prefix=prefix,
+        )
+        # Attempt recovery: try first word only
+        first_word = venue.split()[0] if venue else venue
+        recovered = get_canonical_venue(first_word)
+        if recovered != "unknown":
+            venue_slug = recovered
+
     date_str = start_time.strftime("%Y%m%d")
     time_str = start_time.strftime("%H%M")
 
-    # Always include a discipline suffix for consistency and better matching
     dl = (discipline or "Thoroughbred").lower()
-    if "harness" in dl: disc_suffix = "_h"
-    elif "greyhound" in dl: disc_suffix = "_g"
-    elif "quarter" in dl: disc_suffix = "_q"
-    else: disc_suffix = "_t"
+    if "harness" in dl:
+        disc_suffix = "_h"
+    elif "greyhound" in dl:
+        disc_suffix = "_g"
+    elif "quarter" in dl:
+        disc_suffix = "_q"
+    else:
+        disc_suffix = "_t"
 
     return f"{prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}"
 
@@ -2059,38 +2141,35 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             url = link.attributes.get("href")
             if not url:
                 continue
-            # Look for time at end of URL: /racecard/venue/date/1330
             time_match = re.search(r"/(\d{4})$", url)
             if not time_match:
-                # Might be just a race number: /racecard/venue/date/1
                 if not re.search(r"/\d{1,2}$", url):
                     continue
 
             parts = url.split("/")
             if len(parts) >= 3:
                 raw_slug = parts[2]
-                # Apply venue prefix matching to group races correctly (Fix 2)
-                words = raw_slug.replace('-', ' ').split()
+
+                # Normalize venue from URL slug using word-boundary matching
+                slug_words = raw_slug.replace('-', ' ').upper().split()
                 track_name = None
-                for end in range(len(words), 0, -1):
-                    test = ' '.join(words[:end])
-                    if get_canonical_venue(test) != "unknown":
-                        track_name = test
+                for end in range(len(slug_words), 0, -1):
+                    candidate = " ".join(slug_words[:end])
+                    if candidate in VENUE_MAP:
+                        track_name = VENUE_MAP[candidate]
                         break
-                if not track_name and words:
-                    track_name = words[0]
+                if not track_name:
+                    track_name = normalize_venue_name(raw_slug)
 
-                if track_name:
-                    time_str = time_match.group(1) if time_match else None
-                    track_map[track_name].append({"url": url, "time_str": time_str})
+                time_str = time_match.group(1) if time_match else None
+                track_map[track_name].append({"url": url, "time_str": time_str})
 
-        # Site usually shows UK time
         site_tz = ZoneInfo("Europe/London")
         now_site = datetime.now(site_tz)
 
         # After building track_map, assign sequential race numbers per track (Fix 2)
         for track, race_infos in track_map.items():
-            # Sort by time to get correct sequence
+            # Sort by time to assign correct sequential race numbers
             race_infos_sorted = sorted(
                 race_infos,
                 key=lambda r: r["time_str"] or "0000",
@@ -2109,7 +2188,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                             continue
                         meta.append({
                             "url": r["url"],
-                            "race_number": race_idx,  # ← sequential, not from URL
+                            "race_number": race_idx,
                             "venue_raw": track,
                         })
                     except Exception:
@@ -2140,7 +2219,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         parser = HTMLParser(html_content)
         track_name, time_str, header_text = None, None, ""
 
-        # Strategy 0: Extract track name from URL (most reliable for UK tracks) (Fix 1)
+        # Strategy 0: Extract track name from URL (most reliable for UK tracks)
         # ATR URLs: /racecard/[race-title-slug]/date/time
         # e.g., /racecard/ludlow-suzuki-king-quad/2026-02-18/1705
         # We need "Ludlow" from "ludlow-suzuki-king-quad"
@@ -2154,22 +2233,20 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                         and not re.match(r"\d{4}-\d{2}-\d{2}", candidate)
                         and not re.match(r"^\d{4}$", candidate)):
 
-                        # Try progressively shorter prefixes of the slug
-                        # against known venues (longest match wins)
-                        words = candidate.replace('-', ' ').split()
-                        matched = False
-                        for end in range(len(words), 0, -1):
-                            test_name = ' '.join(words[:end])
-                            if get_canonical_venue(test_name) != "unknown":
-                                track_name = normalize_venue_name(test_name)
-                                matched = True
+                        # Word-boundary venue matching against VENUE_MAP
+                        slug_words = candidate.replace('-', ' ').upper().split()
+                        for end in range(len(slug_words), 0, -1):
+                            test = " ".join(slug_words[:end])
+                            if test in VENUE_MAP:
+                                track_name = VENUE_MAP[test]
                                 break
-
-                        # If no known venue matched, use first word only
-                        # (venue names rarely exceed 3 words; race titles always do)
-                        if not matched and words:
-                            track_name = normalize_venue_name(words[0])
-
+                        else:
+                            # No known venue found — use first word as fallback
+                            # (venue names are 1-3 words; race titles are 4+)
+                            if len(slug_words) >= 4:
+                                track_name = normalize_venue_name(slug_words[0])
+                            else:
+                                track_name = normalize_venue_name(candidate)
                         break
                 if track_name:
                     break
@@ -2773,12 +2850,12 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             if "ABD:" in vr:
                 continue
 
-            # Strip qualifiers from venue name using prefix matching (Fix 3)
-            words = vr.replace('-', ' ').split()
-            for end in range(len(words), 0, -1):
-                test = ' '.join(words[:end])
-                if get_canonical_venue(test) != "unknown":
-                    vr = test
+            # Normalize meeting name to strip session qualifiers (Fix 6)
+            vr_words = vr.upper().split()
+            for end in range(len(vr_words), 0, -1):
+                test = " ".join(vr_words[:end])
+                if test in VENUE_MAP:
+                    vr = VENUE_MAP[test]
                     break
 
             # Updated Sky Sports event discovery logic
@@ -2840,22 +2917,20 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                 else: continue
             else: rts, tnr = m.group(1), m.group(2)
 
-            # Strategy 0: Extract track name from URL (most reliable) (Fix 3)
-            # URL usually /racing/racecards/ludlow/17-02-2026/
-            # We strip meeting qualifiers like "midi" using prefix matching.
+            # Strategy 0: Extract track name from URL with word-boundary matching (Fix 6)
             track_name = None
             url_parts = item.get("url", "").lower().split("/")
             if "racecards" in url_parts:
                 idx = url_parts.index("racecards")
                 if len(url_parts) > idx + 1:
                     slug = url_parts[idx + 1]
-                    words = slug.replace('-', ' ').split()
-                    for end in range(len(words), 0, -1):
-                        test = ' '.join(words[:end])
-                        if get_canonical_venue(test) != "unknown":
-                            track_name = normalize_venue_name(test)
+                    slug_words = slug.replace('-', ' ').upper().split()
+                    for end in range(len(slug_words), 0, -1):
+                        test = " ".join(slug_words[:end])
+                        if test in VENUE_MAP:
+                            track_name = VENUE_MAP[test]
                             break
-                    if not track_name and words:
+                    if not track_name:
                         track_name = normalize_venue_name(slug)
 
             if not track_name:
@@ -5331,14 +5406,6 @@ class FortunaDB:
                 if "field_size" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN field_size INTEGER")
 
-                # Maintenance: Purge garbage data (Memory Directive Fix)
-                try:
-                    res = conn.execute("DELETE FROM tips WHERE selection_name = 'Runner 2' OR predicted_2nd_fav_odds IN (2.75)")
-                    if res.rowcount > 0:
-                        self.logger.info("Garbage data purged", count=res.rowcount)
-                except Exception as e:
-                    self.logger.error("Failed to purge garbage data", error=str(e))
-
         await self._run_in_executor(_init)
 
         # Track and execute migrations based on schema version
@@ -5370,13 +5437,18 @@ class FortunaDB:
 
         if current_version < 4:
             # Migration to version 4: Housekeeping & Long-term retention.
-            # 1. Clear the tips table for a fresh start as requested by JB.
-            # 2. Historical retention is now enabled (auto-cleanup removed from future migrations).
             def _housekeeping():
-                self.logger.warning("Applying destructive migration: Clearing all historical tips for version 4 fresh start.")
                 with self._get_conn() as conn:
-                    conn.execute("DELETE FROM tips")
-                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)", (datetime.now(EASTERN).isoformat(),))
+                    # v4 was a one-time historical wipe. If we're initializing
+                    # a fresh DB, just bump the version without deleting.
+                    existing = conn.execute("SELECT COUNT(*) FROM tips").fetchone()[0]
+                    if existing > 0 and current_version == 3:
+                        self.logger.warning("v4 migration: clearing legacy v3 tips")
+                        conn.execute("DELETE FROM tips")
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)",
+                        (datetime.now(EASTERN).isoformat(),),
+                    )
             await self._run_in_executor(_housekeeping)
             self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
 
@@ -5660,15 +5732,23 @@ class FortunaDB:
                     ))
         await self._run_in_executor(_update)
 
-    async def get_all_audited_tips(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Returns recent audited tips for reporting (capped for performance - GPT5 Improvement)."""
-        if not self._initialized: await self.initialize()
+    async def get_all_audited_tips(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Returns audited tips for reporting. Pass limit=N for recent only."""
+        if not self._initialized:
+            await self.initialize()
+
         def _get():
-            cursor = self._get_conn().execute(
-                "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC LIMIT ?",
-                (limit,)
-            )
+            if limit:
+                cursor = self._get_conn().execute(
+                    "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC LIMIT ?",
+                    (limit,),
+                )
+            else:
+                cursor = self._get_conn().execute(
+                    "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+                )
             return [dict(row) for row in cursor.fetchall()]
+
         return await self._run_in_executor(_get)
 
     async def get_recent_audited_goldmines(self, limit: int = 15) -> List[Dict[str, Any]]:
