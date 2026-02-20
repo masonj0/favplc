@@ -568,6 +568,7 @@ class Race(FortunaBaseModel):
     race_number: int = Field(..., alias="raceNumber", ge=1, le=100)
     start_time: datetime = Field(..., alias="startTime")
     runners: List[Runner] = Field(default_factory=list)
+    race_type: Optional[str] = None
 
     @field_validator("venue", mode="after")
     @classmethod

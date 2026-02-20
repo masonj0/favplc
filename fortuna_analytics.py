@@ -220,6 +220,7 @@ class ResultRace(fortuna.Race):
     """Race with full result data."""
 
     runners: List[ResultRunner] = Field(default_factory=list)
+    race_type: Optional[str] = None
     official_dividends: Dict[str, float] = Field(default_factory=dict)
     chart_url: Optional[str] = None
     is_fully_parsed: bool = False
