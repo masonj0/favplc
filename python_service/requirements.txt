@@ -75,7 +75,7 @@ sqlalchemy==2.0.23
 starlette==0.27.0
 structlog==23.2.0
 tenacity==8.2.3
-typing-extensions==4.12.0
+typing-extensions==4.15.0
 typing-inspection==0.4.2
 tzdata==2023.3
 urllib3==2.1.0
