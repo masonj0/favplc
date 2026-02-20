@@ -3037,8 +3037,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             resp = await self.smart_fetcher.fetch(
                 f"{self.API_URL}/ListCards.ashx",
                 method="POST",
-                data={"request": json.dumps(cards_payload)},
-                headers=self._get_headers()
+                data={"request": json.dumps(cards_payload)}
             )
             if not resp or not resp.text: return None
             cards_data = json.loads(resp.text)
@@ -3120,7 +3119,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
                 runners.append(Runner(
-                    number=number, name=name, odds=od, win_odds=wo, odds_source=odds_source,
+                    number=number, name=name, odds=od, win_odds=wo,
                     trainer=runner.get("trainer"), jockey=runner.get("jockey")
                 ))
             if not runners: continue
@@ -5223,8 +5222,7 @@ class FortunaDB:
                         race_type TEXT,
                         condition_modifier REAL,
                         qualification_grade TEXT,
-                        composite_score REAL,
-                        match_confidence TEXT
+                        composite_score REAL
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5287,8 +5285,6 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN qualification_grade TEXT")
                 if "composite_score" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
-                if "match_confidence" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
 
         await self._run_in_executor(_init)
 
