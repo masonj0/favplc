@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import defaultdict
 import json
 import logging
 import os
@@ -1566,6 +1567,106 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         return None
 
 
+class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
+    """Racing Post results restricted to North American thoroughbred tracks.
+
+    Uses Racing Post's battle-tested data (same format as UK results) as a
+    more reliable replacement for Equibase, which aggressively blocks
+    headless browsers.  Covers every major US/Canadian dirt and turf track
+    including Turfway, Turf Paradise, Tampa Bay Downs, Gulfstream, Oaklawn,
+    Aqueduct, and Woodbine.
+    """
+
+    SOURCE_NAME = "RacingPostUSAResults"
+    # BASE_URL, HOST, IMPERSONATE, TIMEOUT, and all parsing methods are
+    # inherited from RacingPostResultsAdapter — nothing else to change.
+
+    # Racing Post uses hyphenated lowercase venue slugs in their result URLs.
+    # e.g. https://www.racingpost.com/results/turfway-park/2026-02-18/834891/4
+    _USA_TRACK_SLUGS: Final[frozenset[str]] = frozenset({
+        # ── US thoroughbred ───────────────────────────────────────────────
+        "aqueduct",
+        "belmont-park",
+        "saratoga",
+        "gulfstream-park",
+        "gulfstream-park-west",
+        "santa-anita-park",
+        "del-mar",
+        "churchill-downs",
+        "keeneland",
+        "oaklawn-park",
+        "laurel-park",
+        "pimlico",
+        "tampa-bay-downs",
+        "turfway-park",
+        "turf-paradise",
+        "fair-grounds",
+        "fair-grounds-race-course",
+        "monmouth-park",
+        "remington-park",
+        "sam-houston-race-park",
+        "los-alamitos",
+        "golden-gate-fields",
+        "penn-national",
+        "charles-town",
+        "presque-isle-downs",
+        "mahoning-valley",
+        "finger-lakes",
+        "hawthorne",
+        "indiana-grand",
+        "parx-racing",
+        "suffolk-downs",
+        "will-rogers-downs",
+        "emerald-downs",
+        "sunland-park",
+        "lone-star-park",
+        "delta-downs",
+        "evangeline-downs",
+        "ellis-park",
+        "kentucky-downs",
+        "thistledown",
+        "belterra-park",
+        # ── US harness (in case RP covers them) ───────────────────────────
+        "meadowlands",
+        "yonkers-raceway",
+        "pocono-downs",
+        "dover-downs",
+        "northfield-park",
+        "scioto-downs",
+        "miami-valley-raceway",
+        "hoosier-park",
+        # ── Canadian thoroughbred + harness ───────────────────────────────
+        "woodbine",
+        "fort-erie",
+        "hastings-park",
+        "woodbine-mohawk-park",
+        "flamboro-downs",
+        "western-fair",
+        "rideau-carleton",
+    })
+
+    async def _discover_result_links(self, date_str: str) -> Set[str]:
+        """Fetch RP's full results index and keep only North American links."""
+        all_links = await super()._discover_result_links(date_str)
+        usa_links = {
+            link for link in all_links
+            if self._is_usa_link(link)
+        }
+        self.logger.info(
+            "RacingPostUSA: filtered links",
+            total=len(all_links),
+            usa=len(usa_links),
+            date=date_str,
+        )
+        return usa_links
+
+    @classmethod
+    def _is_usa_link(cls, href: str) -> bool:
+        """Return True if the RP result URL contains a known NA track slug."""
+        href_lower = href.lower()
+        return any(slug in href_lower for slug in cls._USA_TRACK_SLUGS)
+
+
 # -- AT THE RACES RESULTS ADAPTER ---------------------------------------------
 
 class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
@@ -1917,6 +2018,43 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                         "Failed to parse ATR Grey JSON", exc_info=True,
                     )
         return []
+
+    def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
+        """Override to assign sequential race numbers per venue.
+
+        The parent implementation calls _parse_page → _parse_from_modules for
+        each fetched URL.  Because ATR greyhound URLs contain no race number,
+        every race comes back with race_number = 1.  Here we fix that by
+        sorting each venue's races by start_time and numbering them 1, 2, 3…
+        """
+        races: List[ResultRace] = super()._parse_races(raw_data)
+        if not races:
+            return races
+
+        # Group by canonical venue + date so multi-venue days don't bleed
+        groups: Dict[tuple, List[ResultRace]] = defaultdict(list)
+        for r in races:
+            key = (
+                fortuna.get_canonical_venue(r.venue),
+                r.start_time.strftime("%Y%m%d"),
+            )
+            groups[key].append(r)
+
+        fixed: List[ResultRace] = []
+        for group in groups.values():
+            group.sort(key=lambda r: r.start_time)
+            for i, race in enumerate(group, start=1):
+                date_str = race.start_time.strftime("%Y-%m-%d")
+                fixed.append(
+                    race.model_copy(update={
+                        "race_number": i,
+                        "id": self._make_race_id(
+                            "atrg_res", race.venue, date_str, i,
+                        ),
+                    })
+                )
+
+        return fixed
 
     def _parse_from_modules(
         self, modules: List[Any], date_str: str, url: str, html: str = "",
@@ -2667,6 +2805,35 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     HOST = "www.skysports.com"
     IMPERSONATE = "chrome120"
     TIMEOUT = 45
+
+    def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
+        """Override to assign sequential race numbers per venue (Jules Fix)."""
+        races: List[ResultRace] = super()._parse_races(raw_data)
+        if not races:
+            return races
+
+        groups: Dict[tuple, List[ResultRace]] = defaultdict(list)
+        for r in races:
+            key = (
+                fortuna.get_canonical_venue(r.venue),
+                r.start_time.strftime("%Y%m%d"),
+            )
+            groups[key].append(r)
+
+        fixed: List[ResultRace] = []
+        for group in groups.values():
+            group.sort(key=lambda r: r.start_time)
+            for i, race in enumerate(group, start=1):
+                date_str = race.start_time.strftime("%Y-%m-%d")
+                fixed.append(
+                    race.model_copy(update={
+                        "race_number": i,
+                        "id": self._make_race_id(
+                            "sky_res", race.venue, date_str, i,
+                        ),
+                    })
+                )
+        return fixed
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
