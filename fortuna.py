@@ -42,6 +42,7 @@ import json
 import logging
 import os
 import random
+import weakref
 import re
 import time
 from abc import ABC, abstractmethod
@@ -354,7 +355,14 @@ T = TypeVar("T")
 RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
-EASTERN = ZoneInfo("America/New_York")
+from fortuna_utils import (
+    EASTERN, MAX_VALID_ODDS, MIN_VALID_ODDS, DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
+    VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
+    clean_text, node_text, get_canonical_venue, normalize_venue_name,
+    parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
+    is_valid_odds, scrape_available_bets, detect_discipline,
+    now_eastern, to_eastern, ensure_eastern, get_places_paid
+)
 DEFAULT_REGION: Final[str] = "GLOBAL"
 
 # Region-based adapter lists (Refined by Council of Superbrains Directive)
@@ -393,10 +401,6 @@ SOLID_RESULTS_ADAPTERS: Final[set] = {
     "SkySportsResults",
 }
 
-MAX_VALID_ODDS: Final[float] = 1000.0
-MIN_VALID_ODDS: Final[float] = 1.01
-DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = set()
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -422,33 +426,16 @@ CHROME_SEC_CH_UA: Final[str] = (
     '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"'
 )
 
-# Bet type keywords mapping (lowercase key -> display name)
-BET_TYPE_KEYWORDS: Final[Dict[str, str]] = {
-    "superfecta": "Superfecta",
-    "spr": "Superfecta",
-    "trifecta": "Trifecta",
-    "tri": "Trifecta",
-    "exacta": "Exacta",
-    "ex": "Exacta",
-    "quinella": "Quinella",
-    "qn": "Quinella",
-    "daily double": "Daily Double",
-    "dbl": "Daily Double",
-    "pick 3": "Pick 3",
-    "pick 4": "Pick 4",
-    "pick 5": "Pick 5",
-    "pick 6": "Pick 6",
-    "first 4": "Superfecta",
-    "forecast": "Exacta",
-    "tricast": "Trifecta",
-}
+MOBILE_USER_AGENT: Final[str] = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+)
 
-# Discipline detection keywords
-DISCIPLINE_KEYWORDS: Final[Dict[str, List[str]]] = {
-    "Harness": ["harness", "trotter", "pacer", "standardbred", "trot", "pace"],
-    "Greyhound": ["greyhound", "dog", "dogs"],
-    "Quarter Horse": ["quarter horse", "quarterhorse"],
-}
+MOBILE_SEC_CH_UA: Final[str] = (
+    '"Safari";v="17", "Mobile";v="1.0", "Not.A/Brand";v="24"'
+)
+
+# Bet type keywords mapping (lowercase key -> display name)
 
 
 # --- EXCEPTIONS ---
@@ -533,6 +520,16 @@ class OddsData(FortunaBaseModel):
         return ensure_eastern(v)
 
 
+def create_odds_data(source: str, win_odds: Optional[float]) -> Optional[OddsData]:
+    """Helper to create an OddsData object for a given source and win odds."""
+    if win_odds is None:
+        return None
+    try:
+        return OddsData(source=source, win=Decimal(str(win_odds)))
+    except Exception:
+        return None
+
+
 class Runner(FortunaBaseModel):
     id: Optional[str] = None
     name: str
@@ -540,6 +537,7 @@ class Runner(FortunaBaseModel):
     scratched: bool = False
     odds: Dict[str, OddsData] = Field(default_factory=dict)
     win_odds: Optional[float] = Field(None, alias="winOdds")
+    odds_source: Optional[str] = Field(None, description="How win_odds was obtained: 'extracted', 'smart_extractor', 'default', or the source adapter name")
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
@@ -604,41 +602,6 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     return getattr(obj, field_name, default)
 
 
-def clean_text(text: Any) -> str:
-    """Strips leading/trailing whitespace and collapses internal whitespace."""
-    if not text:
-        return ""
-    return " ".join(str(text).strip().split())
-
-
-def node_text(n: Any) -> str:
-    """Consistently extracts text from Scrapling Selectors and Selectolax Nodes."""
-    if n is None:
-        return ""
-    # Selectolax nodes have a .text() method, Scrapling Selectors have a .text property
-    txt = getattr(n, "text", None)
-    if txt is None:
-        return ""
-    return txt().strip() if callable(txt) else str(txt).strip()
-
-
-@lru_cache(maxsize=1024)
-def get_canonical_venue(name: Optional[str]) -> str:
-    """Returns a sanitized canonical form for deduplication keys."""
-    if not name:
-        return "unknown"
-    # Call normalization first to strip race titles and ads
-    norm = normalize_venue_name(name)
-    # Remove everything in parentheses (extra safety)
-    norm = re.sub(r"[\(\[（].*?[\)\]）]", "", norm)
-    # Remove special characters, lowercase, strip
-    res = re.sub(r"[^a-z0-9]", "", norm.lower())
-    return res or "unknown"
-
-
-def now_eastern() -> datetime:
-    """Returns the current time in US Eastern Time."""
-    return datetime.now(EASTERN)
 
 
 def _places_paid(n: int) -> int:
@@ -648,426 +611,8 @@ def _places_paid(n: int) -> int:
 
 
 
-def to_eastern(dt: datetime) -> datetime:
-    """Converts a datetime object to US Eastern Time."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=EASTERN)
-    return dt.astimezone(EASTERN)
 
 
-def ensure_eastern(dt: datetime) -> datetime:
-    """Ensures datetime is timezone-aware and in Eastern time. More strict than to_eastern."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=EASTERN)
-    if dt.tzinfo is not EASTERN:
-        try:
-            return dt.astimezone(EASTERN)
-        except Exception:
-            # Fallback for rare cases where conversion fails (e.g. invalid times during DST transitions)
-            return dt.replace(tzinfo=EASTERN)
-    return dt
-
-
-RACING_KEYWORDS = [
-"PRIX", "CHASE", "HURDLE", "HANDICAP", "STAKES", "CUP", "LISTED", "GBB",
-"RACE", "MEETING", "NOVICE", "TRIAL", "PLATE", "TROPHY", "CHAMPIONSHIP",
-"JOCKEY", "TRAINER", "BEST ODDS", "GUARANTEED", "PRO/AM", "AUCTION",
-"HUNT", "MARES", "FILLIES", "COLTS", "GELDINGS", "JUVENILE", "SELLING",
-"CLAIMING", "OPTIONAL", "ALLOWANCE", "MAIDEN", "OPEN", "INVITATIONAL",
-"CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
-"FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
-"CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
-"GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
-"PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
-"BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
-"4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
-"DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-"NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
-"SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS",
-"SUZUKI", "MATCHBOOK", "STALLION", "GRADUATION", "QUALIFIER", "NOVICES", "HANDICAP"
-]
-
-
-VENUE_MAP = {
-"ABU DHABI": "Abu Dhabi",
-"LUDLOW": "Ludlow",
-"SOUTHWELL": "Southwell",
-"PUNCHESTOWN": "Punchestown",
-"MARKET RASEN": "Market Rasen",
-"NEWBURY": "Newbury",
-"TAUNTON": "Taunton",
-"HEREFORD": "Hereford",
-"WOLVERHAMPTON": "Wolverhampton",
-"AQU": "Aqueduct",
-"AQUEDUCT": "Aqueduct",
-"BELMONT": "Belmont Park",
-"BELMONT PARK": "Belmont Park",
-"ARGENTAN": "Argentan",
-"ASCOT": "Ascot",
-"AYR": "Ayr",
-"BAHRAIN": "Bahrain",
-"BANGOR ON DEE": "Bangor-on-Dee",
-"CATTERICK": "Catterick",
-"CATTERICK BRIDGE": "Catterick",
-"CT": "Charles Town",
-"CENTRAL PARK": "Central Park",
-"CHELMSFORD": "Chelmsford",
-"CHELMSFORD CITY": "Chelmsford",
-"CURRAGH": "Curragh",
-"DEAUVILLE": "Deauville",
-"DED": "Delta Downs",
-"DELTA DOWNS": "Delta Downs",
-"Dover Downs": "Dover Downs",
-"DONCASTER": "Doncaster",
-"DOVER DOWNS": "Dover Downs",
-"DOWN ROYAL": "Down Royal",
-"DUNDALK": "Dundalk",
-"DUNSTALL PARK": "Wolverhampton",
-"EPSOM": "Epsom",
-"EPSOM DOWNS": "Epsom",
-"FG": "Fair Grounds",
-"FAIR GROUNDS": "Fair Grounds",
-"FLAMBORO": "Flamboro",
-"FLAMBORO DOWNS": "Flamboro",
-"WESTERN FAIR DISTRICT": "Western Fair",
-"WESTERN FAIR RACEWAY": "Western Fair",
-"LONDON": "Western Fair",
-"WESTERN FAIR": "Western Fair",
-"WOODBINE MOHAWK PARK": "Mohawk",
-"WOODBINE MOHAWK": "Mohawk",
-"RIDEAU CARLETON": "Rideau",
-"RIDEAU CARLETON RACEWAY": "Rideau",
-"RIDEAU": "Rideau",
-"WOODBINE RACETRACK": "Woodbine",
-"DRESDEN RACEWAY": "Dresden",
-"CLINTON RACEWAY": "Clinton",
-"HANOVER RACEWAY": "Hanover",
-"GRAND RIVER RACEWAY": "Grand River",
-"GEORGETOWN": "Grand River",
-"KAWARTHA DOWNS": "Kawartha",
-"KEE": "Keeneland",
-"KEENELAND": "Keeneland",
-"LEAMINGTON RACEWAY": "Leamington",
-"FONTWELL": "Fontwell Park",
-"FONTWELL PARK": "Fontwell Park",
-"GREAT YARMOUTH": "Great Yarmouth",
-"GG": "Golden Gate Fields",
-"GOLDEN GATE": "Golden Gate Fields",
-"GP": "Gulfstream Park",
-"GULFSTREAM": "Gulfstream Park",
-"GULFSTREAM PARK": "Gulfstream Park",
-"HAYDOCK": "Haydock Park",
-"HAYDOCK PARK": "Haydock Park",
-"HOOSIER PARK": "Hoosier Park",
-"HOVE": "Hove",
-"KEMPTON": "Kempton Park",
-"KEMPTON PARK": "Kempton Park",
-"LRL": "Laurel Park",
-"LAUREL PARK": "Laurel Park",
-"LINGFIELD": "Lingfield Park",
-"LINGFIELD PARK": "Lingfield Park",
-"LOS ALAMITOS": "Los Alamitos",
-"MARONAS": "Maronas",
-"MEADOWLANDS": "Meadowlands",
-"MEYDAN": "Meydan",
-"MTH": "Monmouth Park",
-"MONMOUTH PARK": "Monmouth Park",
-"MIAMI VALLEY": "Miami Valley",
-"MIAMI VALLEY RACEWAY": "Miami Valley",
-"MVR": "Mahoning Valley",
-"MOHAWK": "Mohawk",
-"MOHAWK PARK": "Mohawk",
-"MUSSELBURGH": "Musselburgh",
-"NORTHFIELD PARK": "Northfield Park",
-"NAAS": "Naas",
-"NEWCASTLE": "Newcastle",
-"NEWMARKET": "Newmarket",
-"NORTHFIELD PARK": "Northfield Park",
-"OXFORD": "Oxford",
-"PAU": "Pau",
-"OP": "Oaklawn Park",
-"PEN": "Penn National",
-"PIM": "Pimlico",
-"PIMLICO": "Pimlico",
-"PRX": "Parx Racing",
-"PARX RACING": "Parx Racing",
-"POCONO DOWNS": "Pocono Downs",
-"SAR": "Saratoga",
-"SARATOGA": "Saratoga",
-"SAM HOUSTON": "Sam Houston",
-"SAM HOUSTON RACE PARK": "Sam Houston",
-"HOU": "Sam Houston",
-"SANDOWN": "Sandown Park",
-"SANDOWN PARK": "Sandown Park",
-"SA": "Santa Anita",
-"SANTA ANITA": "Santa Anita",
-"SARATOGA": "Saratoga",
-"SARATOGA HARNESS": "Saratoga Harness",
-"SCIOTO DOWNS": "Scioto Downs",
-"SHEFFIELD": "Sheffield",
-"STRATFORD": "Stratford-on-Avon",
-"SUN": "Sunland Park",
-"SUNLAND PARK": "Sunland Park",
-"TAM": "Tampa Bay Downs",
-"TAMPA BAY DOWNS": "Tampa Bay Downs",
-"THURLES": "Thurles",
-"TP": "Turfway Park",
-"TUP": "Turf Paradise",
-"TURF PARADISE": "Turf Paradise",
-"TURFFONTEIN": "Turffontein",
-"UTTOXETER": "Uttoxeter",
-"VINCENNES": "Vincennes",
-"WARWICK": "Warwick",
-"WETHERBY": "Wetherby",
-"WESTERN FAIR": "Western Fair",
-"WESTERN FAIR RACEWAY": "Western Fair",
-"WOLVERHAMPTON": "Wolverhampton",
-"WO": "Woodbine",
-"WOODBINE": "Woodbine",
-"WOODBINE MOHAWK": "Mohawk",
-"WOODBINE MOHAWK PARK": "Mohawk",
-"YARMOUTH": "Great Yarmouth",
-"YONKERS": "Yonkers",
-"YONKERS RACEWAY": "Yonkers",
-"HARLOW": "Harlow",
-"HOVE": "Hove",
-"KILKENNY": "Kilkenny",
-"MONMORE": "Monmore",
-"MONMORE GREEN": "Monmore",
-"ROMFORD": "Romford",
-"TOWCESTER": "Towcester",
-"NOTTINGHAM": "Nottingham",
-"VALLEY": "Valley",
-"CRAYFORD": "Crayford",
-"SUNDERLAND": "Sunderland",
-"PERRY BARR": "Perry Barr",
-"CAGNES SUR MER": "Cagnes Sur Mer",
-"CAGNES-SUR-MER": "Cagnes Sur Mer",
-"CAGNES SUR MER MIDI": "Cagnes Sur Mer",
-"CAGNES SUR MER QUEYRAS": "Cagnes Sur Mer",
-"CAGNES SUR MER MENTHE POIVREE": "Cagnes Sur Mer",
-"CAGNES SUR MER ANTOINE CAPOZZI": "Cagnes Sur Mer",
-"LYON": "Lyon",
-"LYON LA SOIE": "Lyon",
-"PORNICHET": "Pornichet",
-"LAVAL": "Laval",
-"SCOTTSVILLE": "Scottsville",
-"MAHONING VALLEY": "Mahoning Valley",
-"TURFWAY": "Turfway Park",
-"TURFWAY PARK": "Turfway Park",
-"TURF PARADISE": "Turf Paradise",
-"SUNLAND": "Sunland Park",
-"KEMPTON": "Kempton Park",
-"GREAT YARMOUTH": "Great Yarmouth",
-"YARMOUTH": "Great Yarmouth",
-}
-
-
-def normalize_venue_name(name: Optional[str]) -> str:
-    """
-    Normalizes a racecourse name to a standard format.
-    Aggressively strips race names, sponsorships, and country noise.
-    """
-    if not name:
-        return "Unknown"
-
-    # 1. Initial Cleaning
-    name = str(name).replace("-", " ").replace("_", " ")
-    name = re.sub(r"[\(\[\uff08].*?[\)\]\uff09]", " ", name)
-
-    cleaned = clean_text(name)
-    if not cleaned:
-        return "Unknown"
-
-    # 2. Aggressive Race/Meeting Name Stripping
-    upper_name = cleaned.upper()
-    earliest_idx = len(cleaned)
-    for kw in RACING_KEYWORDS:
-        idx = upper_name.find(" " + kw)
-        if idx != -1:
-            earliest_idx = min(earliest_idx, idx)
-
-    # Strip from first digit preceded by space (e.g. "Ludlow 13:30")
-    digit_match = re.search(r"\s\d", cleaned)
-    if digit_match:
-        earliest_idx = min(earliest_idx, digit_match.start())
-
-    track_part = cleaned[:earliest_idx].strip()
-    if not track_part:
-        track_part = cleaned
-
-    # Handle repetition (e.g., "Bahrain Bahrain" -> "Bahrain")
-    words = track_part.split()
-    if len(words) > 1 and words[0].lower() == words[1].lower():
-        track_part = words[0]
-
-    upper_track = track_part.upper()
-
-    # 3. High-Confidence Mapping — direct match
-    if upper_track in VENUE_MAP:
-        return VENUE_MAP[upper_track]
-
-    # 4. Word-boundary prefix match (longest known venue first)
-    # "Ludlow Suzuki King Quad" → try "Ludlow Suzuki King Quad", then
-    # "Ludlow Suzuki King", then "Ludlow Suzuki", then "Ludlow" — first
-    # match in VENUE_MAP wins.
-    track_words = upper_track.split()
-    for end in range(len(track_words), 0, -1):
-        candidate = " ".join(track_words[:end])
-        if candidate in VENUE_MAP:
-            return VENUE_MAP[candidate]
-
-    # 5. Same approach on the full (unstripped) cleaned name
-    # Catches cases where RACING_KEYWORDS didn't strip properly
-    full_words = upper_name.split()
-    for end in range(min(len(full_words), 4), 0, -1):  # max 4-word venue names
-        candidate = " ".join(full_words[:end])
-        if candidate in VENUE_MAP:
-            return VENUE_MAP[candidate]
-
-    # 6. Legacy prefix match (substring-based, for backward compat)
-    for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
-        if upper_name.startswith(known_track + " ") or upper_name == known_track:
-            return VENUE_MAP[known_track]
-
-    return track_part.title()
-
-
-def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
-    """
-    Parses various odds formats (fractional, decimal) into a float decimal.
-    Uses advanced heuristics to extract odds from noisy strings.
-    """
-    if odds_str is None: return None
-    s = str(odds_str).strip().upper()
-
-    # Remove common non-odds noise and currency symbols
-    s = re.sub(r"[$\s\xa0]", "", s)
-    s = re.sub(r"(ML|MTP|AM|PM|LINE|ODDS|PRICE)[:=]*", "", s)
-
-    if s in ("EVN", "EVEN", "EVS", "EVENS"): return 2.0
-    if any(kw in s for kw in ("SCR", "SCRATCHED", "N/A", "NR", "VOID")): return None
-
-    try:
-        # 1. Fractional Format: "7/4", "7-4", "7 TO 4"
-        groups = re.search(r"(\d+)\s*(?:[/\-]|TO)\s*(\d+)", s)
-        if groups:
-            num, den = int(groups.group(1)), int(groups.group(2))
-            if den > 0: return round((num / den) + 1.0, 2)
-
-        # 2. Decimal Format: "5.00", "10.5"
-        decimal_match = re.search(r"(\d+\.\d+)", s)
-        if decimal_match:
-            value = float(decimal_match.group(1))
-            if MIN_VALID_ODDS <= value < MAX_VALID_ODDS: return round(value, 2)
-
-        # 3. Simple Integer as fractional odds (e.g., "5" often means "5/1")
-        # Only apply if it's a likely odds value (not saddle cloth 1-20)
-        int_match = re.match(r"^(\d+)$", s)
-        if int_match:
-            val = int(int_match.group(1))
-            # Heuristic: only treat as fractional odds if it's in a likely range (1-50)
-            # to avoid misinterpreting horse numbers or race numbers.
-            if 1 <= val <= 50:
-                return float(val + 1)
-
-    except Exception: pass
-    return None
-
-
-def is_placeholder_odds(value: Optional[Union[float, Decimal]]) -> bool:
-    """Detects if odds value is a known placeholder or default."""
-    if value is None:
-        return True
-    try:
-        val_float = round(float(value), 2)
-        return val_float in COMMON_PLACEHOLDERS
-    except (ValueError, TypeError):
-        return True
-
-
-def is_valid_odds(odds: Any) -> bool:
-    if odds is None: return False
-    try:
-        odds_float = float(odds)
-        if not (MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS):
-            return False
-        return not is_placeholder_odds(odds_float)
-    except Exception: return False
-
-
-def create_odds_data(source_name: str, win_odds: Any, place_odds: Any = None) -> Optional[OddsData]:
-    if not is_valid_odds(win_odds):
-        if win_odds is not None and is_placeholder_odds(win_odds):
-            structlog.get_logger().warning("placeholder_odds_detected", source=source_name, odds=win_odds)
-        return None
-    return OddsData(win=float(win_odds), place=float(place_odds) if is_valid_odds(place_odds) else None, source=source_name)
-
-
-def scrape_available_bets(html_content: str) -> List[str]:
-    if not html_content: return []
-    available_bets: List[str] = []
-    html_lower = html_content.lower()
-    for kw, bet_name in BET_TYPE_KEYWORDS.items():
-        if re.search(rf"\b{re.escape(kw)}\b", html_lower) and bet_name not in available_bets:
-            available_bets.append(bet_name)
-    return available_bets
-
-
-def detect_discipline(html_content: str) -> str:
-    if not html_content: return "Thoroughbred"
-    html_lower = html_content.lower()
-    for disc, keywords in DISCIPLINE_KEYWORDS.items():
-        if any(kw in html_lower for kw in keywords): return disc
-    return "Thoroughbred"
-
-
-class SmartOddsExtractor:
-    """
-    Advanced heuristics for extracting odds from noisy HTML or text.
-    Scans for various patterns and returns the first plausible odds found.
-    """
-    @staticmethod
-    def extract_from_text(text: str) -> Optional[float]:
-        if not text: return None
-        # Try to find common odds patterns in the text
-        # 0. Check for specific keywords followed by odds (Jules Fix)
-        # Patterns like: "Odds: 5/2", "Line 4.0", "M/L 10-1"
-        keyword_match = re.search(r"(?:odds|line|m/l|ml)[:\s]+(\d+[/-]\d+|\d+\.\d+)", text, re.I)
-        if keyword_match:
-            if val := parse_odds_to_decimal(keyword_match.group(1)):
-                return val
-
-        # 1. Decimal odds (e.g. 5.00, 10.5)
-        decimals = re.findall(r"(\d+\.\d+)", text)
-        for d in decimals:
-            val = float(d)
-            if MIN_VALID_ODDS <= val < MAX_VALID_ODDS: return round(val, 2)
-
-        # 2. Fractional odds (e.g. 7/4, 10-1)
-        fractions = re.findall(r"(\d+)\s*[/\-]\s*(\d+)", text)
-        for num, den in fractions:
-            n, d = int(num), int(den)
-            if d > 0 and (n/d) > 0.1: return round((n / d) + 1.0, 2)
-
-        return None
-
-    @staticmethod
-    def extract_from_node(node: Any) -> Optional[float]:
-        """Scans a selectolax node for odds using multiple strategies."""
-        # Strategy 1: Look at text content of the entire node
-        if hasattr(node, 'text'):
-            if val := SmartOddsExtractor.extract_from_text(node_text(node)):
-                return val
-
-        # Strategy 2: Look at attributes
-        if hasattr(node, 'attributes'):
-            for attr in ["data-odds", "data-price", "data-bestprice", "title"]:
-                if val_str := node.attributes.get(attr):
-                    if val := parse_odds_to_decimal(val_str):
-                        return val
-
-        return None
 
 
 def generate_race_id(
@@ -1144,7 +689,7 @@ class DataValidationPipeline:
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _httpx_client: Optional[httpx.AsyncClient] = None
-    _locks: ClassVar[dict[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+    _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
     _global_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -1595,7 +1140,19 @@ class JSONParsingMixin:
 
 class BrowserHeadersMixin:
     def _get_browser_headers(self, host: Optional[str] = None, referer: Optional[str] = None, **extra: str) -> Dict[str, str]:
-        h = {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT, "sec-ch-ua": CHROME_SEC_CH_UA, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"'}
+        is_mobile = getattr(self, "config", {}).get("mobile", False)
+        ua = MOBILE_USER_AGENT if is_mobile else CHROME_USER_AGENT
+        sec_ua = MOBILE_SEC_CH_UA if is_mobile else CHROME_SEC_CH_UA
+        mob = "?1" if is_mobile else "?0"
+        plat = '"iOS"' if is_mobile else '"Windows"'
+
+        h = {
+            **DEFAULT_BROWSER_HEADERS,
+            "User-Agent": ua,
+            "sec-ch-ua": sec_ua,
+            "sec-ch-ua-mobile": mob,
+            "sec-ch-ua-platform": plat
+        }
         if host: h["Host"] = host
         if referer: h["Referer"] = referer
         h.update(extra)
@@ -1885,16 +1442,18 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
             odds_node = row.css_first(".odds-win")
             win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
+            odds_source = "extracted" if win_odds is not None else None
 
             # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
+                odds_source = "smart_extractor" if win_odds is not None else None
 
             odds_data = {}
             if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                 odds_data[self.SOURCE_NAME] = ov
 
-            runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds))
+            runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds, odds_source=odds_source))
 
         if not runners: return None
 
@@ -2066,17 +1625,18 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
                 win_odds = None
                 odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
-                if odds_node:
-                    win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node)))
+                win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
+                odds_source = "extracted" if win_odds is not None else None
 
                 if win_odds is None:
                     win_odds = SmartOddsExtractor.extract_from_node(row)
+                    odds_source = "smart_extractor" if win_odds is not None else None
 
                 od = {}
                 if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                     od[self.SOURCE_NAME] = ov
 
-                runners.append(Runner(name=name, number=number, scratched=scratched, odds=od, win_odds=win_odds))
+                runners.append(Runner(name=name, number=number, odds=od, win_odds=win_odds, odds_source=odds_source))
             except Exception: continue
 
         if not runners: return None
@@ -2791,14 +2351,16 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if not name: continue
             num = rd.get("saddle_cloth_number") or rd.get("cloth_number") or 0
             wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
+            odds_source = "extracted" if wo is not None else None
 
             # Advanced heuristic fallback (Jules Fix)
             if wo is None:
                 wo = SmartOddsExtractor.extract_from_text(str(rd))
+                odds_source = "smart_extractor" if wo is not None else None
 
             odds_data = {}
             if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
-            runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
+            runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo, odds_source=odds_source))
         if not runners: return None
 
         # S5 — extract race type (independent review item)
@@ -2838,14 +2400,16 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                 number = int("".join(filter(str.isdigit, clean_text(node_text(num_node))))) if num_node else 0
                 on = row.css_first('span[class*="Odds__Price"]')
                 wo = parse_odds_to_decimal(clean_text(node_text(on)) if on else "")
+                odds_source = "extracted" if wo is not None else None
 
                 # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(row)
+                    odds_source = "smart_extractor" if wo is not None else None
 
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
-                runners.append(Runner(number=number, name=name, odds=od, win_odds=wo))
+                runners.append(Runner(number=number, name=name, odds=od, win_odds=wo, odds_source=odds_source))
             except Exception: continue
         if not runners: return None
 
@@ -3022,16 +2586,18 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                     or node.css_first("[class*='price']")
                 )
                 wo = parse_odds_to_decimal(clean_text(node_text(onode)) if onode else "")
+                odds_source = "extracted" if wo is not None else None
 
                 # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(node)
+                    odds_source = "smart_extractor" if wo is not None else None
 
                 ntxt = clean_text(node_text(node)) or ""
                 scratched = "NR" in ntxt or "Non-runner" in ntxt
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
-                runners.append(Runner(number=number, name=name, scratched=scratched, odds=od, win_odds=wo))
+                runners.append(Runner(number=number, name=name, scratched=scratched, odds=od, win_odds=wo, odds_source=odds_source))
             if not runners: continue
             ab = scrape_available_bets(html_content)
             if not ab and (disc == "Harness" or "(us)" in tnr.lower()) and len([r for r in runners if not r.scratched]) >= 6: ab.append("Superfecta")
@@ -3499,6 +3065,12 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             race_id_num = r["raceId"]
             if race_id_num not in details: continue
             detail = details[race_id_num]
+
+            # Filter for Thoroughbreds (Success Playbook Item)
+            breed = detail.get("breedType") or r.get("breedCode")
+            if breed and breed != "TB":
+                continue
+
             venue = normalize_venue_name(r["raceMeetingName"])
             race_num = r["raceNumber"]
             start_time_str = r["postTime"]
@@ -3525,7 +3097,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 id=generate_race_id("nyrab", venue, start_time, race_num),
                 venue=venue, race_number=race_num, start_time=start_time,
                 runners=runners, distance=r.get("distance"), surface=r.get("surface"),
-                race_type=r.get("raceType"), source=self.source_name
+                race_type=r.get("raceType"), source=self.source_name,
+                discipline="Thoroughbred"
             ))
         return parsed_races
 
@@ -4040,6 +3613,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             except Exception: continue
         if not name: return None
         odds, wo = {}, None
+        odds_source = None
         if not sc:
             for s in ['[class*="odds"]', '[class*="ml"]', '[class*="morning-line"]', '[data-odds]']:
                 try:
@@ -4048,15 +3622,19 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                         ot = node_text(oe)
                         if ot and ot.upper() not in ['SCR', 'SCRATCHED', '--', 'N/A']:
                             wo = parse_odds_to_decimal(ot)
-                            if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
+                            if wo is not None:
+                                odds_source = "extracted"
+                                if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
                 except Exception: continue
 
             # Advanced heuristic fallback
             if wo is None:
                 wo = SmartOddsExtractor.extract_from_node(e)
-                if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
+                if wo is not None:
+                    odds_source = "smart_extractor"
+                    if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
 
-        return Runner(number=num or dn, name=name, scratched=sc, odds=odds, win_odds=wo)
+        return Runner(number=num or dn, name=name, scratched=sc, odds=odds, win_odds=wo, odds_source=odds_source)
 
     async def cleanup(self):
         await self.close()
@@ -4361,7 +3939,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 if all_odds and len(active_runners) >= 2:
                     fav_float = float(all_odds[0])
                     n = len(active_runners)
-                    np_ = _places_paid(n)
+                    np_ = get_places_paid(n)
                     win_p = 1.0 / fav_float
                     # Additional place probability beyond winning, proportional to paid slots remaining
                     place_prob = round(min(win_p + (1.0 - win_p) * (np_ / n), 0.97), 3)
@@ -7738,6 +7316,15 @@ async def run_discovery(
                     # Merge with basic region config
                     specific_config.update({"region": region})
                     adapters.append(cls(config=specific_config))
+
+                    # Double-up SOLID adapters with a mobile version (Jules Fix)
+                    if name in SOLID_DISCOVERY_ADAPTERS:
+                        mobile_config = specific_config.copy()
+                        mobile_config["mobile"] = True
+                        mobile_adapter = cls(config=mobile_config)
+                        mobile_adapter.source_name = f"{name}Mobile"
+                        adapters.append(mobile_adapter)
+
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 

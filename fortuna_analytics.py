@@ -23,11 +23,17 @@ import structlog
 from pydantic import Field, model_validator
 from selectolax.parser import HTMLParser, Node
 
+from fortuna_utils import (
+    EASTERN, MAX_VALID_ODDS, MIN_VALID_ODDS, DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
+    VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
+    clean_text, node_text, get_canonical_venue, normalize_venue_name,
+    parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
+    is_valid_odds, now_eastern, to_eastern, ensure_eastern, _places_paid
+)
 import fortuna
 
 # -- CONSTANTS ----------------------------------------------------------------
 
-EASTERN = ZoneInfo("America/New_York")
 DEFAULT_DB_PATH: Final[str] = os.environ.get("FORTUNA_DB_PATH", "fortuna.db")
 STANDARD_BET: Final[float] = 2.00
 DEFAULT_REGION: Final[str] = "GLOBAL"
@@ -38,11 +44,6 @@ _REPORT_SEP: Final[str] = "=" * _REPORT_WIDTH
 _REPORT_DOT: Final[str] = "." * _REPORT_WIDTH
 _SECTION_SEP: Final[str] = "-" * 40
 
-PLACE_POSITIONS_BY_FIELD_SIZE: Final[list[tuple[int, int]]] = [
-    (4, 1),      # ≤4 runners: win only
-    (7, 2),      # 5–7 runners: top 2
-]
-_DEFAULT_PLACES_PAID: Final[int] = 3  # 8+ runners
 
 _BET_ALIASES: Final[Dict[str, list[str]]] = {
     "superfecta": ["superfecta", "first 4", "first four"],
@@ -98,14 +99,8 @@ _VERDICT_DISPLAY: Final[Dict[Verdict, str]] = {
 
 # -- HELPER FUNCTIONS ---------------------------------------------------------
 
-def now_eastern() -> datetime:
-    return datetime.now(EASTERN)
 
 
-def to_eastern(dt: datetime) -> datetime:
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=EASTERN)
-    return dt.astimezone(EASTERN)
 
 
 def parse_position(pos_str: Optional[str]) -> Optional[int]:
@@ -119,12 +114,6 @@ def parse_position(pos_str: Optional[str]) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def get_places_paid(field_size: int) -> int:
-    """Return number of paid places for a given field size."""
-    for max_size, places in PLACE_POSITIONS_BY_FIELD_SIZE:
-        if field_size <= max_size:
-            return places
-    return _DEFAULT_PLACES_PAID
 
 
 def parse_currency_value(value_str: str) -> float:
@@ -1166,11 +1155,8 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=self.TIMEOUT,
-            network_idle=True,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            timeout=45
         )
 
     def _get_headers(self) -> dict:
@@ -1758,6 +1744,15 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         "flamboro-downs",
         "western-fair",
         "rideau-carleton",
+        "colonial-downs",
+        "churchill-downs-synthetic",
+        "del-mar-thoroughbred-club",
+        "harrahs-louisiana-downs",
+        "harrahs-philadelphia",
+        "mountaineer-casino",
+        "plainridge-park",
+        "running-aces",
+        "zia-park",
     })
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
@@ -1777,9 +1772,15 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
 
     @classmethod
     def _is_usa_link(cls, href: str) -> bool:
-        """Return True if the RP result URL contains a known NA track slug."""
+        """Return True if the RP result URL contains a known NA track slug or numeric ID."""
         href_lower = href.lower()
-        return any(slug in href_lower for slug in cls._USA_TRACK_SLUGS)
+        # 1. Named-slug match (traditional RP format)
+        if any(slug in href_lower for slug in cls._USA_TRACK_SLUGS):
+            return True
+        # 2. Numeric-venue-ID match (New RP format: /results/{id}/{slug}/{date})
+        # We allow all numeric IDs through; the venue name is filtered post-parse in _parse_race_page
+        m = re.search(r'/results/(\d+)/', href_lower)
+        return bool(m)
 
 
 # -- AT THE RACES RESULTS ADAPTER ---------------------------------------------
@@ -3348,10 +3349,20 @@ async def managed_adapters(
 
     adapters: list[fortuna.BaseAdapterV3] = []
     for cls in classes:
+        name = getattr(cls, "SOURCE_NAME", cls.__name__)
         adapter = cls()
         if target_venues:
             adapter.target_venues = target_venues  # type: ignore[attr-defined]
         adapters.append(adapter)
+
+        # Double-up SOLID adapters with a mobile version (Jules Fix)
+        if name in fortuna.SOLID_RESULTS_ADAPTERS:
+            mobile_adapter = cls()
+            mobile_adapter.config["mobile"] = True
+            mobile_adapter.source_name = f"{name}Mobile"
+            if target_venues:
+                mobile_adapter.target_venues = target_venues  # type: ignore[attr-defined]
+            adapters.append(mobile_adapter)
 
     try:
         yield adapters
