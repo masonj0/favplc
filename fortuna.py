@@ -2167,6 +2167,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         site_tz = ZoneInfo("Europe/London")
         now_site = datetime.now(site_tz)
 
+        # After building track_map, assign sequential race numbers per track (Fix 2)
         for track, race_infos in track_map.items():
             # Sort by time to assign correct sequential race numbers
             race_infos_sorted = sorted(
