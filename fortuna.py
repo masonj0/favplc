@@ -604,6 +604,11 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
 
 
 
+def _places_paid(n: int) -> int:
+    """Heuristic for number of places paid based on field size."""
+    return 1 if n <= 4 else 2 if n <= 7 else 3
+
+
 
 
 
