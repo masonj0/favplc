@@ -42,6 +42,7 @@ import json
 import logging
 import os
 import random
+import weakref
 import re
 import time
 from abc import ABC, abstractmethod
@@ -354,14 +355,21 @@ T = TypeVar("T")
 RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
-EASTERN = ZoneInfo("America/New_York")
+from fortuna_utils import (
+    EASTERN, MAX_VALID_ODDS, MIN_VALID_ODDS, DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
+    VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
+    clean_text, node_text, get_canonical_venue, normalize_venue_name,
+    parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
+    is_valid_odds, scrape_available_bets, detect_discipline,
+    now_eastern, to_eastern, ensure_eastern, get_places_paid
+)
 DEFAULT_REGION: Final[str] = "GLOBAL"
 
 # Region-based adapter lists (Refined by Council of Superbrains Directive)
 # Single-continent adapters remain in USA/INT jobs.
 # Multi-continental adapters move to the GLOBAL parallel fetch job.
 # AtTheRaces is duplicated into USA as per explicit request.
-USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces"}
+USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets"}
 INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
@@ -374,6 +382,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
+    "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
@@ -392,10 +401,6 @@ SOLID_RESULTS_ADAPTERS: Final[set] = {
     "SkySportsResults",
 }
 
-MAX_VALID_ODDS: Final[float] = 1000.0
-MIN_VALID_ODDS: Final[float] = 1.01
-DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = set()
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
 DEFAULT_REQUEST_TIMEOUT: Final[int] = 30
 
@@ -421,33 +426,16 @@ CHROME_SEC_CH_UA: Final[str] = (
     '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"'
 )
 
-# Bet type keywords mapping (lowercase key -> display name)
-BET_TYPE_KEYWORDS: Final[Dict[str, str]] = {
-    "superfecta": "Superfecta",
-    "spr": "Superfecta",
-    "trifecta": "Trifecta",
-    "tri": "Trifecta",
-    "exacta": "Exacta",
-    "ex": "Exacta",
-    "quinella": "Quinella",
-    "qn": "Quinella",
-    "daily double": "Daily Double",
-    "dbl": "Daily Double",
-    "pick 3": "Pick 3",
-    "pick 4": "Pick 4",
-    "pick 5": "Pick 5",
-    "pick 6": "Pick 6",
-    "first 4": "Superfecta",
-    "forecast": "Exacta",
-    "tricast": "Trifecta",
-}
+MOBILE_USER_AGENT: Final[str] = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+)
 
-# Discipline detection keywords
-DISCIPLINE_KEYWORDS: Final[Dict[str, List[str]]] = {
-    "Harness": ["harness", "trotter", "pacer", "standardbred", "trot", "pace"],
-    "Greyhound": ["greyhound", "dog", "dogs"],
-    "Quarter Horse": ["quarter horse", "quarterhorse"],
-}
+MOBILE_SEC_CH_UA: Final[str] = (
+    '"Safari";v="17", "Mobile";v="1.0", "Not.A/Brand";v="24"'
+)
+
+# Bet type keywords mapping (lowercase key -> display name)
 
 
 # --- EXCEPTIONS ---
@@ -532,6 +520,16 @@ class OddsData(FortunaBaseModel):
         return ensure_eastern(v)
 
 
+def create_odds_data(source: str, win_odds: Optional[float]) -> Optional[OddsData]:
+    """Helper to create an OddsData object for a given source and win odds."""
+    if win_odds is None:
+        return None
+    try:
+        return OddsData(source=source, win=Decimal(str(win_odds)))
+    except Exception:
+        return None
+
+
 class Runner(FortunaBaseModel):
     id: Optional[str] = None
     name: str
@@ -539,6 +537,7 @@ class Runner(FortunaBaseModel):
     scratched: bool = False
     odds: Dict[str, OddsData] = Field(default_factory=dict)
     win_odds: Optional[float] = Field(None, alias="winOdds")
+    odds_source: Optional[str] = Field(None, description="How win_odds was obtained: 'extracted', 'smart_extractor', 'default', or the source adapter name")
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("name", mode="before")
@@ -567,6 +566,7 @@ class Race(FortunaBaseModel):
     race_number: int = Field(..., alias="raceNumber", ge=1, le=100)
     start_time: datetime = Field(..., alias="startTime")
     runners: List[Runner] = Field(default_factory=list)
+    race_type: Optional[str] = None
 
     @field_validator("venue", mode="after")
     @classmethod
@@ -584,6 +584,7 @@ class Race(FortunaBaseModel):
         return ensure_eastern(v)
     source: str
     discipline: Optional[str] = None
+    race_type: Optional[str] = None
     distance: Optional[str] = None
     field_size: Optional[int] = None
     available_bets: List[str] = Field(default_factory=list, alias="availableBets")
@@ -601,450 +602,12 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     return getattr(obj, field_name, default)
 
 
-def clean_text(text: Any) -> str:
-    """Strips leading/trailing whitespace and collapses internal whitespace."""
-    if not text:
-        return ""
-    return " ".join(str(text).strip().split())
-
-
-def node_text(n: Any) -> str:
-    """Consistently extracts text from Scrapling Selectors and Selectolax Nodes."""
-    if n is None:
-        return ""
-    # Selectolax nodes have a .text() method, Scrapling Selectors have a .text property
-    txt = getattr(n, "text", None)
-    if txt is None:
-        return ""
-    return txt().strip() if callable(txt) else str(txt).strip()
-
-
-@lru_cache(maxsize=1024)
-def get_canonical_venue(name: Optional[str]) -> str:
-    """Returns a sanitized canonical form for deduplication keys."""
-    if not name:
-        return "unknown"
-    # Call normalization first to strip race titles and ads
-    norm = normalize_venue_name(name)
-    # Remove everything in parentheses (extra safety)
-    norm = re.sub(r"[\(\[（].*?[\)\]）]", "", norm)
-    # Remove special characters, lowercase, strip
-    res = re.sub(r"[^a-z0-9]", "", norm.lower())
-    return res or "unknown"
-
-
-def now_eastern() -> datetime:
-    """Returns the current time in US Eastern Time."""
-    return datetime.now(EASTERN)
 
 
 
 
-def to_eastern(dt: datetime) -> datetime:
-    """Converts a datetime object to US Eastern Time."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=EASTERN)
-    return dt.astimezone(EASTERN)
 
 
-def ensure_eastern(dt: datetime) -> datetime:
-    """Ensures datetime is timezone-aware and in Eastern time. More strict than to_eastern."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=EASTERN)
-    if dt.tzinfo is not EASTERN:
-        try:
-            return dt.astimezone(EASTERN)
-        except Exception:
-            # Fallback for rare cases where conversion fails (e.g. invalid times during DST transitions)
-            return dt.replace(tzinfo=EASTERN)
-    return dt
-
-
-RACING_KEYWORDS = [
-"PRIX", "CHASE", "HURDLE", "HANDICAP", "STAKES", "CUP", "LISTED", "GBB",
-"RACE", "MEETING", "NOVICE", "TRIAL", "PLATE", "TROPHY", "CHAMPIONSHIP",
-"JOCKEY", "TRAINER", "BEST ODDS", "GUARANTEED", "PRO/AM", "AUCTION",
-"HUNT", "MARES", "FILLIES", "COLTS", "GELDINGS", "JUVENILE", "SELLING",
-"CLAIMING", "OPTIONAL", "ALLOWANCE", "MAIDEN", "OPEN", "INVITATIONAL",
-"CLASS ", "GRADE ", "GROUP ", "DERBY", "OAKS", "GUINEAS", "ELIE DE",
-"FREDERIK", "CONNOLLY'S", "QUINNBET", "RED MILLS", "IRISH EBF", "SKY BET",
-"CORAL", "BETFRED", "WILLIAM HILL", "UNIBET", "PADDY POWER", "BETFAIR",
-"GET THE BEST", "CHELTENHAM TRIALS", "PORSCHE", "IMPORTED", "IMPORTE", "THE JOC",
-"PREMIO", "GRANDE", "CLASSIC", "SPRINT", "DASH", "MILE", "STAYERS",
-"BOWL", "MEMORIAL", "PURSE", "CONDITION", "NIGHT", "EVENING", "DAY",
-"4RACING", "WILGERBOSDRIFT", "YOUCANBETONUS", "FOR HOSPITALITY", "SA ", "TAB ",
-"DE ", "DU ", "DES ", "LA ", "LE ", "AU ", "WELCOME", "BET ", "WITH ", "AND ",
-"NEXT", "WWW", "GAMBLE", "BETMGM", "TV", "ONLINE", "LUCKY", "RACEWAY",
-"SPEEDWAY", "DOWNS", "PARK", "HARNESS", " STANDARDBRED", "FORM GUIDE", "FULL FIELDS",
-"SUZUKI", "MATCHBOOK", "STALLION", "GRADUATION", "QUALIFIER", "NOVICES", "HANDICAP"
-]
-
-
-VENUE_MAP = {
-"ABU DHABI": "Abu Dhabi",
-"LUDLOW": "Ludlow",
-"SOUTHWELL": "Southwell",
-"PUNCHESTOWN": "Punchestown",
-"MARKET RASEN": "Market Rasen",
-"NEWBURY": "Newbury",
-"TAUNTON": "Taunton",
-"HEREFORD": "Hereford",
-"WOLVERHAMPTON": "Wolverhampton",
-"AQU": "Aqueduct",
-"AQUEDUCT": "Aqueduct",
-"ARGENTAN": "Argentan",
-"ASCOT": "Ascot",
-"AYR": "Ayr",
-"BAHRAIN": "Bahrain",
-"BANGOR ON DEE": "Bangor-on-Dee",
-"CATTERICK": "Catterick",
-"CATTERICK BRIDGE": "Catterick",
-"CT": "Charles Town",
-"CENTRAL PARK": "Central Park",
-"CHELMSFORD": "Chelmsford",
-"CHELMSFORD CITY": "Chelmsford",
-"CURRAGH": "Curragh",
-"DEAUVILLE": "Deauville",
-"DED": "Delta Downs",
-"DELTA DOWNS": "Delta Downs",
-"Dover Downs": "Dover Downs",
-"DONCASTER": "Doncaster",
-"DOVER DOWNS": "Dover Downs",
-"DOWN ROYAL": "Down Royal",
-"DUNDALK": "Dundalk",
-"DUNSTALL PARK": "Wolverhampton",
-"EPSOM": "Epsom",
-"EPSOM DOWNS": "Epsom",
-"FG": "Fair Grounds",
-"FAIR GROUNDS": "Fair Grounds",
-"FLAMBORO": "Flamboro",
-"FLAMBORO DOWNS": "Flamboro",
-"WESTERN FAIR DISTRICT": "Western Fair",
-"WESTERN FAIR RACEWAY": "Western Fair",
-"LONDON": "Western Fair",
-"WESTERN FAIR": "Western Fair",
-"WOODBINE MOHAWK PARK": "Mohawk",
-"WOODBINE MOHAWK": "Mohawk",
-"RIDEAU CARLETON": "Rideau",
-"RIDEAU CARLETON RACEWAY": "Rideau",
-"RIDEAU": "Rideau",
-"WOODBINE RACETRACK": "Woodbine",
-"DRESDEN RACEWAY": "Dresden",
-"CLINTON RACEWAY": "Clinton",
-"HANOVER RACEWAY": "Hanover",
-"GRAND RIVER RACEWAY": "Grand River",
-"GEORGETOWN": "Grand River",
-"KAWARTHA DOWNS": "Kawartha",
-"LEAMINGTON RACEWAY": "Leamington",
-"FONTWELL": "Fontwell Park",
-"FONTWELL PARK": "Fontwell Park",
-"GREAT YARMOUTH": "Great Yarmouth",
-"GP": "Gulfstream Park",
-"GULFSTREAM": "Gulfstream Park",
-"GULFSTREAM PARK": "Gulfstream Park",
-"HAYDOCK": "Haydock Park",
-"HAYDOCK PARK": "Haydock Park",
-"HOOSIER PARK": "Hoosier Park",
-"HOVE": "Hove",
-"KEMPTON": "Kempton Park",
-"KEMPTON PARK": "Kempton Park",
-"LRL": "Laurel Park",
-"LAUREL PARK": "Laurel Park",
-"LINGFIELD": "Lingfield Park",
-"LINGFIELD PARK": "Lingfield Park",
-"LOS ALAMITOS": "Los Alamitos",
-"MARONAS": "Maronas",
-"MEADOWLANDS": "Meadowlands",
-"MEYDAN": "Meydan",
-"MIAMI VALLEY": "Miami Valley",
-"MIAMI VALLEY RACEWAY": "Miami Valley",
-"MVR": "Mahoning Valley",
-"MOHAWK": "Mohawk",
-"MOHAWK PARK": "Mohawk",
-"MUSSELBURGH": "Musselburgh",
-"NORTHFIELD PARK": "Northfield Park",
-"NAAS": "Naas",
-"NEWCASTLE": "Newcastle",
-"NEWMARKET": "Newmarket",
-"NORTHFIELD PARK": "Northfield Park",
-"OXFORD": "Oxford",
-"PAU": "Pau",
-"OP": "Oaklawn Park",
-"PEN": "Penn National",
-"POCONO DOWNS": "Pocono Downs",
-"SAM HOUSTON": "Sam Houston",
-"SAM HOUSTON RACE PARK": "Sam Houston",
-"SANDOWN": "Sandown Park",
-"SANDOWN PARK": "Sandown Park",
-"SA": "Santa Anita",
-"SANTA ANITA": "Santa Anita",
-"SARATOGA": "Saratoga",
-"SARATOGA HARNESS": "Saratoga Harness",
-"SCIOTO DOWNS": "Scioto Downs",
-"SHEFFIELD": "Sheffield",
-"STRATFORD": "Stratford-on-Avon",
-"SUN": "Sunland Park",
-"SUNLAND PARK": "Sunland Park",
-"TAM": "Tampa Bay Downs",
-"TAMPA BAY DOWNS": "Tampa Bay Downs",
-"THURLES": "Thurles",
-"TP": "Turfway Park",
-"TUP": "Turf Paradise",
-"TURF PARADISE": "Turf Paradise",
-"TURFFONTEIN": "Turffontein",
-"UTTOXETER": "Uttoxeter",
-"VINCENNES": "Vincennes",
-"WARWICK": "Warwick",
-"WETHERBY": "Wetherby",
-"WESTERN FAIR": "Western Fair",
-"WESTERN FAIR RACEWAY": "Western Fair",
-"WOLVERHAMPTON": "Wolverhampton",
-"WO": "Woodbine",
-"WOODBINE": "Woodbine",
-"WOODBINE MOHAWK": "Mohawk",
-"WOODBINE MOHAWK PARK": "Mohawk",
-"YARMOUTH": "Great Yarmouth",
-"YONKERS": "Yonkers",
-"YONKERS RACEWAY": "Yonkers",
-"HARLOW": "Harlow",
-"HOVE": "Hove",
-"KILKENNY": "Kilkenny",
-"MONMORE": "Monmore",
-"MONMORE GREEN": "Monmore",
-"ROMFORD": "Romford",
-"TOWCESTER": "Towcester",
-"NOTTINGHAM": "Nottingham",
-"VALLEY": "Valley",
-"CRAYFORD": "Crayford",
-"SUNDERLAND": "Sunderland",
-"PERRY BARR": "Perry Barr",
-"CAGNES SUR MER": "Cagnes Sur Mer",
-"CAGNES-SUR-MER": "Cagnes Sur Mer",
-"CAGNES SUR MER MIDI": "Cagnes Sur Mer",
-"CAGNES SUR MER QUEYRAS": "Cagnes Sur Mer",
-"CAGNES SUR MER MENTHE POIVREE": "Cagnes Sur Mer",
-"CAGNES SUR MER ANTOINE CAPOZZI": "Cagnes Sur Mer",
-"LYON": "Lyon",
-"LYON LA SOIE": "Lyon",
-"PORNICHET": "Pornichet",
-"LAVAL": "Laval",
-"SCOTTSVILLE": "Scottsville",
-"MAHONING VALLEY": "Mahoning Valley",
-"TURFWAY": "Turfway Park",
-"TURFWAY PARK": "Turfway Park",
-"TURF PARADISE": "Turf Paradise",
-"SUNLAND": "Sunland Park",
-"KEMPTON": "Kempton Park",
-"GREAT YARMOUTH": "Great Yarmouth",
-"YARMOUTH": "Great Yarmouth",
-}
-
-
-def normalize_venue_name(name: Optional[str]) -> str:
-    """
-    Normalizes a racecourse name to a standard format.
-    Aggressively strips race names, sponsorships, and country noise.
-    """
-    if not name:
-        return "Unknown"
-
-    # 1. Initial Cleaning
-    name = str(name).replace("-", " ").replace("_", " ")
-    name = re.sub(r"[\(\[\uff08].*?[\)\]\uff09]", " ", name)
-
-    cleaned = clean_text(name)
-    if not cleaned:
-        return "Unknown"
-
-    # 2. Aggressive Race/Meeting Name Stripping
-    upper_name = cleaned.upper()
-    earliest_idx = len(cleaned)
-    for kw in RACING_KEYWORDS:
-        idx = upper_name.find(" " + kw)
-        if idx != -1:
-            earliest_idx = min(earliest_idx, idx)
-
-    # Strip from first digit preceded by space (e.g. "Ludlow 13:30")
-    digit_match = re.search(r"\s\d", cleaned)
-    if digit_match:
-        earliest_idx = min(earliest_idx, digit_match.start())
-
-    track_part = cleaned[:earliest_idx].strip()
-    if not track_part:
-        track_part = cleaned
-
-    # Handle repetition (e.g., "Bahrain Bahrain" -> "Bahrain")
-    words = track_part.split()
-    if len(words) > 1 and words[0].lower() == words[1].lower():
-        track_part = words[0]
-
-    upper_track = track_part.upper()
-
-    # 3. High-Confidence Mapping — direct match
-    if upper_track in VENUE_MAP:
-        return VENUE_MAP[upper_track]
-
-    # 4. Word-boundary prefix match (longest known venue first)
-    # "Ludlow Suzuki King Quad" → try "Ludlow Suzuki King Quad", then
-    # "Ludlow Suzuki King", then "Ludlow Suzuki", then "Ludlow" — first
-    # match in VENUE_MAP wins.
-    track_words = upper_track.split()
-    for end in range(len(track_words), 0, -1):
-        candidate = " ".join(track_words[:end])
-        if candidate in VENUE_MAP:
-            return VENUE_MAP[candidate]
-
-    # 5. Same approach on the full (unstripped) cleaned name
-    # Catches cases where RACING_KEYWORDS didn't strip properly
-    full_words = upper_name.split()
-    for end in range(min(len(full_words), 4), 0, -1):  # max 4-word venue names
-        candidate = " ".join(full_words[:end])
-        if candidate in VENUE_MAP:
-            return VENUE_MAP[candidate]
-
-    # 6. Legacy prefix match (substring-based, for backward compat)
-    for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
-        if upper_name.startswith(known_track + " ") or upper_name == known_track:
-            return VENUE_MAP[known_track]
-
-    return track_part.title()
-
-
-def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
-    """
-    Parses various odds formats (fractional, decimal) into a float decimal.
-    Uses advanced heuristics to extract odds from noisy strings.
-    """
-    if odds_str is None: return None
-    s = str(odds_str).strip().upper()
-
-    # Remove common non-odds noise and currency symbols
-    s = re.sub(r"[$\s\xa0]", "", s)
-    s = re.sub(r"(ML|MTP|AM|PM|LINE|ODDS|PRICE)[:=]*", "", s)
-
-    if s in ("EVN", "EVEN", "EVS", "EVENS"): return 2.0
-    if any(kw in s for kw in ("SCR", "SCRATCHED", "N/A", "NR", "VOID")): return None
-
-    try:
-        # 1. Fractional Format: "7/4", "7-4", "7 TO 4"
-        groups = re.search(r"(\d+)\s*(?:[/\-]|TO)\s*(\d+)", s)
-        if groups:
-            num, den = int(groups.group(1)), int(groups.group(2))
-            if den > 0: return round((num / den) + 1.0, 2)
-
-        # 2. Decimal Format: "5.00", "10.5"
-        decimal_match = re.search(r"(\d+\.\d+)", s)
-        if decimal_match:
-            value = float(decimal_match.group(1))
-            if MIN_VALID_ODDS <= value < MAX_VALID_ODDS: return round(value, 2)
-
-        # 3. Simple Integer as fractional odds (e.g., "5" often means "5/1")
-        # Only apply if it's a likely odds value (not saddle cloth 1-20)
-        int_match = re.match(r"^(\d+)$", s)
-        if int_match:
-            val = int(int_match.group(1))
-            # Heuristic: only treat as fractional odds if it's in a likely range (1-50)
-            # to avoid misinterpreting horse numbers or race numbers.
-            if 1 <= val <= 50:
-                return float(val + 1)
-
-    except Exception: pass
-    return None
-
-
-def is_placeholder_odds(value: Optional[Union[float, Decimal]]) -> bool:
-    """Detects if odds value is a known placeholder or default."""
-    if value is None:
-        return True
-    try:
-        val_float = round(float(value), 2)
-        return val_float in COMMON_PLACEHOLDERS
-    except (ValueError, TypeError):
-        return True
-
-
-def is_valid_odds(odds: Any) -> bool:
-    if odds is None: return False
-    try:
-        odds_float = float(odds)
-        if not (MIN_VALID_ODDS <= odds_float < MAX_VALID_ODDS):
-            return False
-        return not is_placeholder_odds(odds_float)
-    except Exception: return False
-
-
-def create_odds_data(source_name: str, win_odds: Any, place_odds: Any = None) -> Optional[OddsData]:
-    if not is_valid_odds(win_odds):
-        if win_odds is not None and is_placeholder_odds(win_odds):
-            structlog.get_logger().warning("placeholder_odds_detected", source=source_name, odds=win_odds)
-        return None
-    return OddsData(win=float(win_odds), place=float(place_odds) if is_valid_odds(place_odds) else None, source=source_name)
-
-
-def scrape_available_bets(html_content: str) -> List[str]:
-    if not html_content: return []
-    available_bets: List[str] = []
-    html_lower = html_content.lower()
-    for kw, bet_name in BET_TYPE_KEYWORDS.items():
-        if re.search(rf"\b{re.escape(kw)}\b", html_lower) and bet_name not in available_bets:
-            available_bets.append(bet_name)
-    return available_bets
-
-
-def detect_discipline(html_content: str) -> str:
-    if not html_content: return "Thoroughbred"
-    html_lower = html_content.lower()
-    for disc, keywords in DISCIPLINE_KEYWORDS.items():
-        if any(kw in html_lower for kw in keywords): return disc
-    return "Thoroughbred"
-
-
-class SmartOddsExtractor:
-    """
-    Advanced heuristics for extracting odds from noisy HTML or text.
-    Scans for various patterns and returns the first plausible odds found.
-    """
-    @staticmethod
-    def extract_from_text(text: str) -> Optional[float]:
-        if not text: return None
-        # Try to find common odds patterns in the text
-        # 0. Check for specific keywords followed by odds (Jules Fix)
-        # Patterns like: "Odds: 5/2", "Line 4.0", "M/L 10-1"
-        keyword_match = re.search(r"(?:odds|line|m/l|ml)[:\s]+(\d+[/-]\d+|\d+\.\d+)", text, re.I)
-        if keyword_match:
-            if val := parse_odds_to_decimal(keyword_match.group(1)):
-                return val
-
-        # 1. Decimal odds (e.g. 5.00, 10.5)
-        decimals = re.findall(r"(\d+\.\d+)", text)
-        for d in decimals:
-            val = float(d)
-            if MIN_VALID_ODDS <= val < MAX_VALID_ODDS: return round(val, 2)
-
-        # 2. Fractional odds (e.g. 7/4, 10-1)
-        fractions = re.findall(r"(\d+)\s*[/\-]\s*(\d+)", text)
-        for num, den in fractions:
-            n, d = int(num), int(den)
-            if d > 0 and (n/d) > 0.1: return round((n / d) + 1.0, 2)
-
-        return None
-
-    @staticmethod
-    def extract_from_node(node: Any) -> Optional[float]:
-        """Scans a selectolax node for odds using multiple strategies."""
-        # Strategy 1: Look at text content of the entire node
-        if hasattr(node, 'text'):
-            if val := SmartOddsExtractor.extract_from_text(node_text(node)):
-                return val
-
-        # Strategy 2: Look at attributes
-        if hasattr(node, 'attributes'):
-            for attr in ["data-odds", "data-price", "data-bestprice", "title"]:
-                if val_str := node.attributes.get(attr):
-                    if val := parse_odds_to_decimal(val_str):
-                        return val
-
-        return None
 
 
 def generate_race_id(
@@ -1121,7 +684,7 @@ class DataValidationPipeline:
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _httpx_client: Optional[httpx.AsyncClient] = None
-    _locks: ClassVar[dict[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+    _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
     _global_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -1572,7 +1135,19 @@ class JSONParsingMixin:
 
 class BrowserHeadersMixin:
     def _get_browser_headers(self, host: Optional[str] = None, referer: Optional[str] = None, **extra: str) -> Dict[str, str]:
-        h = {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT, "sec-ch-ua": CHROME_SEC_CH_UA, "sec-ch-ua-mobile": "?0", "sec-ch-ua-platform": '"Windows"'}
+        is_mobile = getattr(self, "config", {}).get("mobile", False)
+        ua = MOBILE_USER_AGENT if is_mobile else CHROME_USER_AGENT
+        sec_ua = MOBILE_SEC_CH_UA if is_mobile else CHROME_SEC_CH_UA
+        mob = "?1" if is_mobile else "?0"
+        plat = '"iOS"' if is_mobile else '"Windows"'
+
+        h = {
+            **DEFAULT_BROWSER_HEADERS,
+            "User-Agent": ua,
+            "sec-ch-ua": sec_ua,
+            "sec-ch-ua-mobile": mob,
+            "sec-ch-ua-platform": plat
+        }
         if host: h["Host"] = host
         if referer: h["Referer"] = referer
         h.update(extra)
@@ -1862,16 +1437,18 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
             odds_node = row.css_first(".odds-win")
             win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
+            odds_source = "extracted" if win_odds is not None else None
 
             # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
+                odds_source = "smart_extractor" if win_odds is not None else None
 
             odds_data = {}
             if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                 odds_data[self.SOURCE_NAME] = ov
 
-            runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds))
+            runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds, odds_source=odds_source))
 
         if not runners: return None
 
@@ -2043,22 +1620,31 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
                 win_odds = None
                 odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
-                if odds_node:
-                    win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node)))
+                win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
+                odds_source = "extracted" if win_odds is not None else None
 
                 if win_odds is None:
                     win_odds = SmartOddsExtractor.extract_from_node(row)
+                    odds_source = "smart_extractor" if win_odds is not None else None
 
                 od = {}
                 if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                     od[self.SOURCE_NAME] = ov
 
-                runners.append(Runner(name=name, number=number, scratched=scratched, odds=od, win_odds=win_odds))
+                runners.append(Runner(name=name, number=number, odds=od, win_odds=win_odds, odds_source=odds_source))
             except Exception: continue
 
         if not runners: return None
 
         disc = detect_discipline(html_content)
+
+        # S5 — extract race type (independent review item)
+        race_type = None
+        header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
+        if header_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(header_node), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         return Race(
             id=generate_race_id("srw", venue, start_time, race_num, disc),
             venue=venue,
@@ -2066,6 +1652,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             start_time=start_time,
             runners=runners,
             discipline=disc,
+            race_type=race_type,
             source=self.SOURCE_NAME,
             available_bets=scrape_available_bets(html_content)
         )
@@ -2308,9 +1895,15 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         distance = None
         dist_match = re.search(r"\|\s*(\d+[mfy].*)", header_text, re.I)
         if dist_match: distance = dist_match.group(1).strip()
+
+        # S5 — extract race type (independent review item)
+        race_type = None
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        if rt_match: race_type = rt_match.group(1)
+
         runners = self._parse_runners(parser)
         if not runners: return None
-        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
     def _parse_runners(self, parser: HTMLParser) -> List[Runner]:
         odds_map: Dict[str, float] = {}
@@ -2348,20 +1941,27 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             if number == 0 or number > 40:
                 number = fallback_number
             win_odds = None
+            odds_source = None
             if horse_link := row.css_first('a[href*="/form/horse/"]'):
                 if m := re.search(r"/(\d+)(\?|$)", horse_link.attributes.get("href", "")):
                     win_odds = odds_map.get(m.group(1))
+                    if win_odds is not None:
+                        odds_source = "extracted"
             if win_odds is None:
                 if odds_node := row.css_first(".horse-in-racecard__odds"):
                     win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node)))
+                    if win_odds is not None:
+                        odds_source = "extracted"
 
             # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
+                if win_odds is not None:
+                    odds_source = "smart_extractor"
 
             odds: Dict[str, OddsData] = {}
             if od := create_odds_data(self.source_name, win_odds): odds[self.source_name] = od
-            return Runner(number=number, name=name, odds=odds, win_odds=win_odds)
+            return Runner(number=number, name=name, odds=odds, win_odds=win_odds, odds_source=odds_source)
         except Exception: return None
 
 # ----------------------------------------
@@ -2518,15 +2118,18 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
                     g_id_match = re.search(r"/greyhound/(\d+)", t.get("href", ""))
                     g_id = g_id_match.group(1) if g_id_match else None
                     win_odds = odds_map.get(str(g_id)) if g_id else None
+                    odds_source = "extracted" if win_odds is not None else None
 
                     # Advanced heuristic fallback
                     if win_odds is None:
                         win_odds = SmartOddsExtractor.extract_from_text(str(t))
+                        if win_odds is not None:
+                            odds_source = "smart_extractor"
 
 
                     odds_data = {}
                     if ov := create_odds_data(self.source_name, win_odds): odds_data[self.source_name] = ov
-                    runners.append(Runner(number=trap_num or 0, name=name, odds=odds_data, win_odds=win_odds))
+                    runners.append(Runner(number=trap_num or 0, name=name, odds=odds_data, win_odds=win_odds, odds_source=odds_source))
 
         url_parts = url_path.split("/")
         if not venue:
@@ -2753,16 +2356,25 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if not name: continue
             num = rd.get("saddle_cloth_number") or rd.get("cloth_number") or 0
             wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
+            odds_source = "extracted" if wo is not None else None
 
             # Advanced heuristic fallback (Jules Fix)
             if wo is None:
                 wo = SmartOddsExtractor.extract_from_text(str(rd))
+                odds_source = "smart_extractor" if wo is not None else None
 
             odds_data = {}
             if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
-            runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo))
+            runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("ride_status") == "NON_RUNNER", odds=odds_data, win_odds=wo, odds_source=odds_source))
         if not runners: return None
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+
+        # S5 — extract race type (independent review item)
+        race_type = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', race_type, re.I)
+        if rt_match: race_type = rt_match.group(1)
+        else: race_type = None
+
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -2793,18 +2405,28 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                 number = int("".join(filter(str.isdigit, clean_text(node_text(num_node))))) if num_node else 0
                 on = row.css_first('span[class*="Odds__Price"]')
                 wo = parse_odds_to_decimal(clean_text(node_text(on)) if on else "")
+                odds_source = "extracted" if wo is not None else None
 
                 # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(row)
+                    odds_source = "smart_extractor" if wo is not None else None
 
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
-                runners.append(Runner(number=number, name=name, odds=od, win_odds=wo))
+                runners.append(Runner(number=number, name=name, odds=od, win_odds=wo, odds_source=odds_source))
             except Exception: continue
         if not runners: return None
+
+        # S5 — extract race type (independent review item)
+        race_type = None
+        ht_node = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
+        if ht_node:
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(ht_node), re.I)
+            if rt_match: race_type = rt_match.group(1)
+
         dn = parser.css_first('span[class*="RacecardHeader__Distance"]') or parser.css_first(".race-distance")
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(node_text(dn)) if dn else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(node_text(dn)) if dn else None, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
 # ----------------------------------------
 # SkySportsAdapter
@@ -2969,20 +2591,29 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                     or node.css_first("[class*='price']")
                 )
                 wo = parse_odds_to_decimal(clean_text(node_text(onode)) if onode else "")
+                odds_source = "extracted" if wo is not None else None
 
                 # Advanced heuristic fallback
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_node(node)
+                    odds_source = "smart_extractor" if wo is not None else None
 
                 ntxt = clean_text(node_text(node)) or ""
                 scratched = "NR" in ntxt or "Non-runner" in ntxt
                 od = {}
                 if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
-                runners.append(Runner(number=number, name=name, scratched=scratched, odds=od, win_odds=wo))
+                runners.append(Runner(number=number, name=name, scratched=scratched, odds=od, win_odds=wo, odds_source=odds_source))
             if not runners: continue
             ab = scrape_available_bets(html_content)
             if not ab and (disc == "Harness" or "(us)" in tnr.lower()) and len([r for r in runners if not r.scratched]) >= 6: ab.append("Superfecta")
-            races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, source=self.source_name, available_bets=ab))
+
+            # S5 — extract race type (independent review item)
+            race_type = None
+            if h:
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(h), re.I)
+                if rt_match: race_type = rt_match.group(1)
+
+            races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, race_type=race_type, source=self.source_name, available_bets=ab))
         return races
 
 # ----------------------------------------
@@ -3171,21 +2802,29 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
                 # Try smarter odds extraction from the line
                 # Harness entries often have ML odds like 5/2 or 5-2 near the end or after 'ML', 'M/L', or 'Morning Line'
                 wo = None
+                odds_source = None
                 ml_match = re.search(r"(?:ML|M/L|Morning Line)\s*(\d+[/-]\d+|[0-9.]+)", line, re.I)
                 if ml_match:
                     wo = parse_odds_to_decimal(ml_match.group(1))
+                    if wo is not None:
+                        odds_source = "morning_line"
 
                 if wo is None:
                     wo = SmartOddsExtractor.extract_from_text(line)
+                    if wo is not None:
+                        odds_source = "smart_extractor"
 
                 if wo is None:
                     # Look for anything that looks like odds at the end of the line
                     om = re.search(r"(\d+-\d+|\d+/\d+|[0-9.]+)\s*$", line)
-                    if om: wo = parse_odds_to_decimal(om.group(1))
+                    if om:
+                        wo = parse_odds_to_decimal(om.group(1))
+                        if wo is not None:
+                            odds_source = "extracted"
 
                 odds_data = {}
                 if ov := create_odds_data(self.source_name, wo): odds_data[self.source_name] = ov
-                runners.append(Runner(number=num, name=name, scratched=sc, odds=odds_data, win_odds=wo))
+                runners.append(Runner(number=num, name=name, scratched=sc, odds=odds_data, win_odds=wo, odds_source=odds_source))
         if not runners: return None
         return Race(discipline="Harness", id=generate_race_id("sc", track_name, st, race_num, "Harness"), venue=track_name, race_number=race_num, start_time=st, runners=runners, distance=dist, source=self.source_name, available_bets=ab)
 
@@ -3270,9 +2909,12 @@ class TabAdapter(BaseAdapterV3):
 
                     # Try to get win odds
                     win_odds = None
+                    odds_source = None
                     fixed_odds = runner_data.get("fixedOdds", {})
                     if fixed_odds:
                         win_odds = fixed_odds.get("returnWin") or fixed_odds.get("win")
+                        if win_odds is not None:
+                            odds_source = "extracted"
 
                     odds_dict = {}
                     if win_odds:
@@ -3284,6 +2926,7 @@ class TabAdapter(BaseAdapterV3):
                         number=num,
                         win_odds=win_odds,
                         odds=odds_dict,
+                        odds_source=odds_source,
                         scratched=runner_data.get("scratched", False)
                     ))
 
@@ -3352,8 +2995,144 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
         except Exception: return []
 
 # ----------------------------------------
-# EquibaseAdapter
+# NYRABetsAdapter
 # ----------------------------------------
+class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for NYRABets.com - an aggregate ADW source.
+    Uses the internal JSON API for fast discovery and detailed runner info.
+    """
+    SOURCE_NAME: ClassVar[str] = "NYRABets"
+    BASE_URL: ClassVar[str] = "https://www.nyrabets.com"
+    API_URL: ClassVar[str] = "https://brk0201-iapi-webservice.nyrabets.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CURL_CFFI,
+            timeout=45
+        )
+
+    def _get_headers(self) -> Dict[str, str]:
+        # Using the base domain as host to avoid internal API 403s (Fix 3)
+        h = self._get_browser_headers(host="brk0201-iapi-webservice.nyrabets.com")
+        h["Origin"] = "https://www.nyrabets.com"
+        h["Referer"] = "https://www.nyrabets.com/"
+        h["X-Requested-With"] = "XMLHttpRequest"
+        return h
+
+    async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
+        # 1. Get Cards (Meetings)
+        nyra_date = f"{date_str}T00:00:00.000"
+        header = {
+            "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
+        }
+        cards_payload = {
+            "header": header, "cohort": "A--", "wageringCohort": "NBI",
+            "cardDate": nyra_date, "wantFeaturedContent": True
+        }
+        try:
+            resp = await self.smart_fetcher.fetch(
+                f"{self.API_URL}/ListCards.ashx",
+                method="POST",
+                data={"request": json.dumps(cards_payload)},
+                headers=self._get_headers()
+            )
+            if not resp or not resp.text: return None
+            cards_data = json.loads(resp.text)
+            card_ids = [c["cardId"] for c in cards_data.get("cards", [])]
+            if not card_ids: return None
+
+            # 2. List Races
+            races_payload = {
+                "header": header, "cohort": "A--", "wageringCohort": "NBI", "cardIds": card_ids
+            }
+            resp = await self.smart_fetcher.fetch(
+                f"{self.API_URL}/ListRaces.ashx",
+                method="POST",
+                data={"request": json.dumps(races_payload)},
+                headers=self._get_headers()
+            )
+            if not resp or not resp.text: return None
+            list_races_data = json.loads(resp.text)
+            all_races = list_races_data.get("races", [])
+            # Filter US races for discovery efficiency as per memo focus
+            us_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") == "US"]
+            if not us_race_ids: return {"races": [], "details": {}}
+
+            # 3. Get Details (Runners) - chunked
+            details = {}
+            for i in range(0, len(us_race_ids), 50):
+                chunk = us_race_ids[i:i+50]
+                get_races_payload = {
+                    "header": header, "cohort": "A--", "wageringCohort": "NBI", "raceIds": chunk, "wantContents": True
+                }
+                resp = await self.smart_fetcher.fetch(
+                    f"{self.API_URL}/GetRaces.ashx",
+                    method="POST",
+                    data={"request": json.dumps(get_races_payload)},
+                    headers=self._get_headers()
+                )
+                if resp and resp.text:
+                    chunk_data = json.loads(resp.text)
+                    for race_detail in chunk_data.get("races", []):
+                        details[race_detail["raceId"]] = race_detail
+            return {"races": all_races, "details": details}
+        except Exception as e:
+            self.logger.error("NYRABets fetch failed", error=str(e))
+            return None
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data: return []
+        races_list = raw_data.get("races", [])
+        details = raw_data.get("details", {})
+        parsed_races = []
+        for r in races_list:
+            race_id_num = r["raceId"]
+            if race_id_num not in details: continue
+            detail = details[race_id_num]
+
+            # Filter for Thoroughbreds (Success Playbook Item)
+            breed = detail.get("breedType") or r.get("breedCode")
+            if breed and breed != "TB":
+                continue
+
+            venue = normalize_venue_name(r["raceMeetingName"])
+            race_num = r["raceNumber"]
+            start_time_str = r["postTime"]
+            try:
+                start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%M:%SZ")
+            except Exception: continue
+            runners = []
+            for runner in detail.get("runners", []):
+                number_str = "".join(filter(str.isdigit, str(runner.get("programNumber", "0"))))
+                number = int(number_str) if number_str else 0
+                name = runner.get("runnerName", "Unknown")
+                win_odds = runner.get("currentWinPrice")
+                odds_source = "extracted" if win_odds and win_odds > 1.0 else None
+                if not win_odds or win_odds <= 1.0:
+                    win_odds = runner.get("morningLineOdds")
+                    if win_odds and win_odds > 1.0:
+                        odds_source = "morning_line"
+                wo = float(win_odds) if win_odds else None
+                od = {}
+                if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
+                runners.append(Runner(
+                    number=number, name=name, odds=od, win_odds=wo, odds_source=odds_source,
+                    trainer=runner.get("trainer"), jockey=runner.get("jockey")
+                ))
+            if not runners: continue
+            parsed_races.append(Race(
+                id=generate_race_id("nyrab", venue, start_time, race_num),
+                venue=venue, race_number=race_num, start_time=start_time,
+                runners=runners, distance=r.get("distance"), surface=r.get("surface"),
+                race_type=r.get("raceType"), source=self.source_name,
+                discipline="Thoroughbred"
+            ))
+        return parsed_races
+
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
     PROVIDES_ODDS: ClassVar[bool] = False
@@ -3528,9 +3307,16 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 if not venue or not rnum_txt.isdigit(): continue
                 st = self._parse_post_time(ds, node_text(pt).strip())
                 ab = scrape_available_bets(html_content)
+
+                # S5 — extract race type (independent review item)
+                race_type = None
+                header_text = node_text(p.css_first("div.race-information")) or html_content[:2000]
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+                if rt_match: race_type = rt_match.group(1)
+
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
                 if not runners: continue
-                races.append(Race(id=f"eqb_{venue.lower().replace(' ', '')}_{ds}_{rnum_txt}", venue=venue, race_number=int(rnum_txt), start_time=st, runners=runners, source=self.source_name, discipline="Thoroughbred", available_bets=ab))
+                races.append(Race(id=f"eqb_{venue.lower().replace(' ', '')}_{ds}_{rnum_txt}", venue=venue, race_number=int(rnum_txt), start_time=st, runners=runners, race_type=race_type, source=self.source_name, discipline="Thoroughbred", available_bets=ab))
             except Exception: continue
         return races
 
@@ -3559,6 +3345,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             sc = "scratched" in node.attributes.get("class", "").lower() or "SCR" in (clean_text(node_text(node)) or "")
 
             odds, wo = {}, None
+            odds_source = None
             if not sc:
                 # Odds column can be 9 or 10 (blind indexing fallback)
                 for idx in [9, 8, 10]:
@@ -3566,12 +3353,18 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                         o_text = clean_text(node_text(cols[idx]))
                         if o_text:
                             wo = parse_odds_to_decimal(o_text)
-                            if wo: break
+                            if wo:
+                                odds_source = "extracted"
+                                break
 
-                if wo is None: wo = SmartOddsExtractor.extract_from_node(node)
+                if wo is None:
+                    wo = SmartOddsExtractor.extract_from_node(node)
+                    if wo is not None:
+                        odds_source = "smart_extractor"
+
                 if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
 
-            return Runner(number=number, name=name, odds=odds, win_odds=wo, scratched=sc)
+            return Runner(number=number, name=name, odds=odds, win_odds=wo, odds_source=odds_source, scratched=sc)
         except Exception as e:
             self.logger.debug("equibase_runner_parse_failed", error=str(e))
             return None
@@ -3858,6 +3651,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             except Exception: continue
         if not name: return None
         odds, wo = {}, None
+        odds_source = None
         if not sc:
             for s in ['[class*="odds"]', '[class*="ml"]', '[class*="morning-line"]', '[data-odds]']:
                 try:
@@ -3866,15 +3660,19 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                         ot = node_text(oe)
                         if ot and ot.upper() not in ['SCR', 'SCRATCHED', '--', 'N/A']:
                             wo = parse_odds_to_decimal(ot)
-                            if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
+                            if wo is not None:
+                                odds_source = "extracted"
+                                if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od; break
                 except Exception: continue
 
             # Advanced heuristic fallback
             if wo is None:
                 wo = SmartOddsExtractor.extract_from_node(e)
-                if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
+                if wo is not None:
+                    odds_source = "smart_extractor"
+                    if od := create_odds_data(self.source_name, wo): odds[self.source_name] = od
 
-        return Runner(number=num or dn, name=name, scratched=sc, odds=odds, win_odds=wo)
+        return Runner(number=num or dn, name=name, scratched=sc, odds=odds, win_odds=wo, odds_source=odds_source)
 
     async def cleanup(self):
         await self.close()
@@ -4120,6 +3918,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Goldmine Detection: 2nd favorite >= 4.5 decimal
             is_goldmine = False
             is_best_bet = False
+            gap12 = 0.0
             active_runners = [r for r in race.runners if not r.scratched]
             total_active = len(active_runners)
 
@@ -4172,15 +3971,70 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # 3. Apply Best Bet Logic
             if len(all_odds) >= 2:
                 fav, sec = all_odds[0], all_odds[1]
-                gap12 = round(float(sec - fav), 2)
 
-                # Enforce gap requirement (Tightened to 0.75 per user request)
-                if gap12 < 0.75:
-                    log.debug("Insufficient gap detected (1Gap2 < 0.75), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # S1 — implied place probability for the favourite
+                place_prob = 0.0
+                if all_odds and len(active_runners) >= 2:
+                    fav_float = float(all_odds[0])
+                    n = len(active_runners)
+                    np_ = get_places_paid(n)
+                    win_p = 1.0 / fav_float
+                    # Additional place probability beyond winning, proportional to paid slots remaining
+                    place_prob = round(min(win_p + (1.0 - win_p) * (np_ / n), 0.97), 3)
+                race.metadata['place_prob'] = place_prob
+
+                # predicted_ev: expected value of a $2 place bet at discovery time
+                BET_UNIT = 2.0
+                if place_prob > 0 and all_odds:
+                    fav_float = float(all_odds[0])
+                    est_place_payout = BET_UNIT * max(1.1, 1.0 + (fav_float - 1.0) / 5.0)
+                    predicted_ev = round(place_prob * est_place_payout - (1.0 - place_prob) * BET_UNIT, 3)
                 else:
-                    # Preferred Predictions (Tightened per user request)
-                    # 2ndFav Odds >= 4.5, 1gap2 >= 0.75, field_size <= 9
-                    if len(active_runners) <= 9 and sec >= Decimal("4.5"):
+                    predicted_ev = None
+                race.metadata['predicted_ev'] = predicted_ev
+
+                # S3 — percentage gap instead of absolute
+                gap12 = round(float((sec - fav) / fav), 3)
+
+                # S4 — market depth (whole-field view, not just top-2)
+                market_depth = 0.0
+                if len(all_odds) >= 4:
+                    median_idx = len(all_odds) // 2
+                    median_odds = float(all_odds[median_idx])
+                    fav_float = float(fav)
+                    market_depth = round(min((median_odds / fav_float - 1.0) * 4.0, 10.0), 2)
+                race.metadata['market_depth'] = market_depth
+
+                # S5 — race-type condition modifier
+                rt = (race.race_type or "").lower()
+                condition_modifier = 0.0
+                if "maiden" in rt:
+                    condition_modifier -= 0.15   # penalise unpredictable first-timers
+                if "stakes" in rt or "graded" in rt:
+                    condition_modifier -= 0.10   # compressed markets, upsets more common
+                if "claiming" in rt and "maiden" not in rt:
+                    condition_modifier += 0.08   # claimers run reliably to their odds
+                race.metadata['condition_modifier'] = round(condition_modifier, 2)
+
+                # S6 — Composite score for grading
+                _gap_score    = min(gap12 * 40.0, 20.0)
+                _depth_score  = min(market_depth, 10.0)
+                _prob_score   = place_prob * 40.0
+                _cond_score   = condition_modifier * 20.0
+                _composite    = _gap_score + _depth_score + _prob_score + _cond_score
+
+                _GRADE_THRESHOLDS = [(70,'A+'), (60,'A'), (50,'B+'), (42,'B'), (32,'C')]
+                qualification_grade = next((g for t,g in _GRADE_THRESHOLDS if _composite >= t), 'D')
+                race.metadata['qualification_grade'] = qualification_grade
+                race.metadata['composite_score']     = round(_composite, 1)
+
+                # Enforce gap requirement (Updated to 0.35 ratio per independent review)
+                if gap12 < 0.35:
+                    log.debug("Insufficient gap detected (ratio < 0.35), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                else:
+                    # Preferred Predictions (S7: Exclude maiden)
+                    is_maiden = "maiden" in (race.race_type or "").lower()
+                    if len(active_runners) <= 9 and sec >= Decimal("4.5") and not is_maiden:
                         is_goldmine = True
                         is_best_bet = True
 
@@ -4188,6 +4042,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             else:
                 # Fallback if insufficient odds data
                 race.metadata['predicted_2nd_fav_odds'] = None
+                race.metadata['place_prob'] = 0.0
+                race.metadata['predicted_ev'] = None
+                race.metadata['market_depth'] = 0.0
+                race.metadata['condition_modifier'] = 0.0
+                race.metadata['qualification_grade'] = 'D'
+                race.metadata['composite_score'] = 0.0
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -5356,7 +5216,15 @@ class FortunaDB:
                         top2_place_payout REAL,
                         predicted_2nd_fav_odds REAL,
                         audit_timestamp TEXT,
-                        field_size INTEGER
+                        field_size INTEGER,
+                        market_depth REAL,
+                        place_prob REAL,
+                        predicted_ev REAL,
+                        race_type TEXT,
+                        condition_modifier REAL,
+                        qualification_grade TEXT,
+                        composite_score REAL,
+                        match_confidence TEXT
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5405,6 +5273,22 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN selection_name TEXT")
                 if "field_size" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN field_size INTEGER")
+                if "market_depth" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN market_depth REAL")
+                if "place_prob" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN place_prob REAL")
+                if "predicted_ev" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN predicted_ev REAL")
+                if "race_type" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN race_type TEXT")
+                if "condition_modifier" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN condition_modifier REAL")
+                if "qualification_grade" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN qualification_grade TEXT")
+                if "composite_score" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
+                if "match_confidence" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
 
         await self._run_in_executor(_init)
 
@@ -5453,14 +5337,13 @@ class FortunaDB:
             self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
 
         if current_version < 5:
-            # Migration to version 5: Add field_size support (Jules Fix)
+            # Migration to version 5: Scoring signal columns (independent review items)
             def _migrate_v5():
                 with self._get_conn() as conn:
-                    # Column already added in initialization PRAGMA check if missing,
-                    # but we ensure the version is bumped here.
+                    # Columns already added in initialization PRAGMA check if missing.
                     conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, ?)", (datetime.now(EASTERN).isoformat(),))
             await self._run_in_executor(_migrate_v5)
-            self.logger.info("Schema migrated to version 5")
+            self.logger.info("Schema migrated to version 5 — scoring signal columns added")
 
         self._initialized = True
         self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 5))
@@ -5596,7 +5479,14 @@ class FortunaDB:
                         str(tip.get("1Gap2", 0.0)),
                         tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
                         float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
-                        tip.get("field_size")
+                        tip.get("field_size"),
+                        tip.get("market_depth"),
+                        tip.get("place_prob"),
+                        tip.get("predicted_ev"),
+                        tip.get("race_type"),
+                        tip.get("condition_modifier"),
+                        tip.get("qualification_grade"),
+                        tip.get("composite_score")
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5606,8 +5496,9 @@ class FortunaDB:
                         INSERT OR IGNORE INTO tips (
                             race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
-                            field_size
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            field_size, market_depth, place_prob, predicted_ev, race_type,
+                            condition_modifier, qualification_grade, composite_score
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5902,7 +5793,14 @@ class HotTipsTracker:
                 "selection_number": r.metadata.get('selection_number'),
                 "selection_name": r.metadata.get('selection_name'),
                 "predicted_2nd_fav_odds": r.metadata.get('predicted_2nd_fav_odds'),
-                "field_size": total_active
+                "field_size": total_active,
+                "market_depth": r.metadata.get('market_depth'),
+                "place_prob": r.metadata.get('place_prob'),
+                "predicted_ev": r.metadata.get('predicted_ev'),
+                "race_type": getattr(r, 'race_type', None),
+                "condition_modifier": r.metadata.get('condition_modifier'),
+                "qualification_grade": r.metadata.get('qualification_grade'),
+                "composite_score": r.metadata.get('composite_score')
             }
             new_tips.append(tip_data)
 
@@ -6898,24 +6796,31 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                         if val <= 40: number = val
 
             win_odds = None
+            odds_source = None
             if forecast_map:
                 win_odds = parse_odds_to_decimal(forecast_map.get(name.lower()))
+                if win_odds is not None:
+                    odds_source = "morning_line"
 
             # Try to find live odds button if available (old selector)
             if not win_odds:
                 odds_tag = row.css_first("button.rp-bet-placer-btn__odds")
                 if odds_tag:
                     win_odds = parse_odds_to_decimal(clean_text(node_text(odds_tag)))
+                    if win_odds is not None:
+                        odds_source = "extracted"
 
             # Advanced heuristic fallback
             if win_odds is None:
                 win_odds = SmartOddsExtractor.extract_from_node(row)
+                if win_odds is not None:
+                    odds_source = "smart_extractor"
 
             odds_data = {}
             if odds_val := create_odds_data(self.source_name, win_odds):
                 odds_data[self.source_name] = odds_val
 
-            return Runner(number=number, name=name, odds=odds_data)
+            return Runner(number=number, name=name, win_odds=win_odds, odds=odds_data, odds_source=odds_source)
         except (AttributeError, ValueError, TypeError):
             return None
 
@@ -6936,14 +6841,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # RacingPost has strong anti-bot measures. Playwright with stealth is usually the best bet.
+        # Optimized for speed: CURL_CFFI is much faster than Playwright for large batches of racecards.
         return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
+            primary_engine=BrowserEngine.CURL_CFFI,
+            enable_js=False,
             stealth_mode="camouflage",
-            timeout=90,
-            block_resources=False,
-            network_idle=True
+            timeout=60,
+            block_resources=True
         )
 
     def _get_headers(self) -> dict:
@@ -7066,6 +6970,10 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
             return None
 
+        # Deduplicate URLs to avoid redundant fetching (Memory Directive Fix)
+        race_card_urls = list(dict.fromkeys(race_card_urls))
+        self.logger.info("Deduplicated RacingPost links", original=len(race_card_urls), unique=len(race_card_urls))
+
         async def fetch_single_html(url: str):
             response = await self.make_request("GET", url, headers=self._get_headers())
             return response.text if response else ""
@@ -7100,6 +7008,12 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     continue
                 race_time_str = node_text(race_time_node)
 
+                # S5 — extract race type (independent review item)
+                race_type = None
+                header_text = node_text(parser.css_first('.rp-raceCourse__panel__race__info') or parser.css_first('.RC-course__info'))
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+                if rt_match: race_type = rt_match.group(1)
+
                 race_datetime_str = f"{date} {race_time_str}"
                 start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
 
@@ -7113,6 +7027,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         race_number=race_number,
                         start_time=start_time,
                         runners=runners,
+                        race_type=race_type,
                         source=self.source_name,
                     )
                     all_races.append(race)
@@ -7148,7 +7063,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             if not all([number_node, name_node, odds_node]):
                 return None
 
-            number_str = clean_text(number_node_text(node))
+            number_str = clean_text(node_text(number_node))
             number = 0
             if number_str:
                 num_txt = "".join(filter(str.isdigit, number_str))
@@ -7160,17 +7075,23 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             scratched = "NR" in odds_str.upper() or not odds_str
 
             odds = {}
+            win_odds = None
+            odds_source = None
             if not scratched:
                 win_odds = parse_odds_to_decimal(odds_str)
+                if win_odds is not None:
+                    odds_source = "extracted"
 
                 # Advanced heuristic fallback
                 if win_odds is None:
                     win_odds = SmartOddsExtractor.extract_from_node(node)
+                    if win_odds is not None:
+                        odds_source = "smart_extractor"
 
                 if odds_data := create_odds_data(self.source_name, win_odds):
                     odds[self.source_name] = odds_data
 
-            return Runner(number=number, name=name, odds=odds, scratched=scratched)
+            return Runner(number=number, name=name, odds=odds, win_odds=win_odds, odds_source=odds_source, scratched=scratched)
         except (ValueError, AttributeError):
             self.logger.warning("Could not parse RacingPost runner, skipping.", exc_info=True)
             return None
@@ -7312,7 +7233,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             if not name_node: continue
             name = clean_text(node_text(name_node))
             pos_node = row.css_first('span.rp-resultRunner__position')
-            pos = clean_text(pos_node_text(node)) if pos_node else "?"
+            pos = clean_text(node_text(pos_node)) if pos_node else "?"
 
             # Try to find saddle number
             number = 0
@@ -7323,9 +7244,12 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
             # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
             win_odds = None
+            odds_source = None
             sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
             if sp_node:
                 win_odds = parse_odds_to_decimal(clean_text(node_text(sp_node)))
+                if win_odds is not None:
+                    odds_source = "starting_price"
 
             odds_data = {}
             if ov := create_odds_data(self.source_name, win_odds):
@@ -7336,6 +7260,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 number=number,
                 win_odds=win_odds,
                 odds=odds_data,
+                odds_source=odds_source,
                 metadata={"position": pos}
             ))
 
@@ -7449,6 +7374,15 @@ async def run_discovery(
                     # Merge with basic region config
                     specific_config.update({"region": region})
                     adapters.append(cls(config=specific_config))
+
+                    # Double-up SOLID adapters with a mobile version (Jules Fix)
+                    if name in SOLID_DISCOVERY_ADAPTERS:
+                        mobile_config = specific_config.copy()
+                        mobile_config["mobile"] = True
+                        mobile_adapter = cls(config=mobile_config)
+                        mobile_adapter.source_name = f"{name}Mobile"
+                        adapters.append(mobile_adapter)
+
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
 
