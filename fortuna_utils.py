@@ -178,6 +178,33 @@ VENUE_MAP = {
 "TURFWAY": "Turfway Park",
 "TURFWAY PARK": "Turfway Park",
 "SUNLAND": "Sunland Park",
+"RP": "Remington Park",
+"REMINGTON": "Remington Park",
+"REMINGTON PARK": "Remington Park",
+}
+
+DRF_VENUE_MAP: Final[Dict[str, str]] = {
+    "AQU": "Aqueduct",
+    "BEL": "Belmont Park",
+    "SAR": "Saratoga",
+    "GP": "Gulfstream Park",
+    "LRL": "Laurel Park",
+    "PIM": "Pimlico",
+    "TAM": "Tampa Bay Downs",
+    "TP": "Turfway Park",
+    "OP": "Oaklawn Park",
+    "CD": "Churchill Downs",
+    "SA": "Santa Anita",
+    "DMR": "Del Mar",
+    "GG": "Golden Gate Fields",
+    "MTH": "Monmouth Park",
+    "PRX": "Parx Racing",
+    "KEE": "Keeneland",
+    "CT": "Charles Town",
+    "DED": "Delta Downs",
+    "FG": "Fair Grounds",
+    "RP": "Remington Park",
+    "HOU": "Sam Houston",
 }
 
 RACING_KEYWORDS = [
@@ -454,15 +481,23 @@ def ensure_eastern(dt: datetime) -> datetime:
             return dt.replace(tzinfo=EASTERN)
     return dt
 
-PLACE_POSITIONS_BY_FIELD_SIZE: Final[list[tuple[int, int]]] = [
-    (4, 1),      # ≤4 runners: win only
-    (7, 2),      # 5–7 runners: top 2
-]
-_DEFAULT_PLACES_PAID: Final[int] = 3  # 8+ runners
-
-def get_places_paid(field_size: int) -> int:
-    """Return number of paid places for a given field size."""
-    for max_size, places in PLACE_POSITIONS_BY_FIELD_SIZE:
-        if field_size <= max_size:
-            return places
-    return _DEFAULT_PLACES_PAID
+def get_places_paid(field_size: int, is_handicap: Optional[bool] = None) -> int:
+    """
+    Return number of paid places for a given field size.
+    UK Industry Standard Rules:
+    - 1-4 runners: 1 place (win only)
+    - 5-7 runners: 2 places
+    - 8-15 runners: 3 places
+    - 16+ runners (Non-Handicap): 3 places
+    - 16+ runners (Handicap): 4 places
+    """
+    if field_size <= 4:
+        return 1
+    if field_size <= 7:
+        return 2
+    if field_size <= 15:
+        return 3
+    # 16+ runners
+    if is_handicap is True:
+        return 4
+    return 3
