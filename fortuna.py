@@ -607,6 +607,16 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     return getattr(obj, field_name, default)
 
 
+def _safe_int(text: str, default: int = 0) -> int:
+    """Extract leading digits from text, return *default* on failure."""
+    if not text: return default
+    cleaned = re.sub(r"\D", "", str(text))
+    try:
+        return int(cleaned) if cleaned else default
+    except ValueError:
+        return default
+
+
 
 
 
@@ -7314,11 +7324,19 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         return races
 
     def _parse_result_page(self, parser: HTMLParser, date_str: str, url: str) -> Optional[Race]:
-        venue_node = parser.css_first('a[data-test-selector="RC-course__name"]')
+        venue_node = (
+            parser.css_first('*[data-test-selector="RC-courseHeader__name"]')
+            or parser.css_first('a[data-test-selector="RC-courseHeader__name"]')
+            or parser.css_first('a[data-test-selector="RC-course__name"]')
+        )
         if not venue_node: return None
         venue = normalize_venue_name(node_text(venue_node))
 
-        time_node = parser.css_first('span[data-test-selector="RC-course__time"]')
+        time_node = (
+            parser.css_first('*[data-test-selector="RC-courseHeader__time"]')
+            or parser.css_first('span[data-test-selector="RC-courseHeader__time"]')
+            or parser.css_first('span[data-test-selector="RC-course__time"]')
+        )
         if not time_node: return None
         time_str = node_text(time_node)
 
@@ -7351,24 +7369,52 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         # Extract runners (finishers)
         runners = []
-        for row in parser.css('div[data-test-selector="RC-resultRunner"]'):
-            name_node = row.css_first('a[data-test-selector="RC-resultRunnerName"]')
+        # Try different row selectors for results
+        runner_rows = (
+            parser.css('div[data-test-selector="RC-resultRunner"]')
+            or parser.css('.RC-runnerRow')
+            or parser.css('.rp-horseTable__mainRow')
+        )
+
+        for row in runner_rows:
+            name_node = (
+                row.css_first('a[data-test-selector="RC-resultRunnerName"]')
+                or row.css_first('*[data-test-selector="RC-cardPage-runnerName"]')
+                or row.css_first('.RC-runnerName')
+                or row.css_first('.rp-horseTable__horse__name')
+            )
             if not name_node: continue
             name = clean_text(node_text(name_node))
-            pos_node = row.css_first('span.rp-resultRunner__position')
+
+            pos_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerPosition"]')
+                or row.css_first('span.rp-resultRunner__position')
+                or row.css_first('.rp-horseTable__pos__number')
+            )
             pos = clean_text(node_text(pos_node)) if pos_node else "?"
 
             # Try to find saddle number
             number = 0
-            num_node = row.css_first(".rp-resultRunner__saddleClothNo")
+            num_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerNumber-no"]')
+                or row.css_first('.RC-runnerNumber__no')
+                or row.css_first(".rp-resultRunner__saddleClothNo")
+                or row.css_first(".rp-horseTable__saddleClothNo")
+            )
             if num_node:
-                try: number = int(clean_text(node_text(num_node)))
+                try: number = _safe_int(node_text(num_node))
                 except Exception: pass
 
             # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
             win_odds = None
             odds_source = None
-            sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
+            sp_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerPrice"]')
+                or row.css_first('.RC-runnerPrice')
+                or row.css_first('span[data-test-selector="RC-resultRunnerSP"]')
+                or row.css_first('.rp-resultRunner__sp')
+                or row.css_first(".rp-horseTable__horse__sp")
+            )
             if sp_node:
                 win_odds = parse_odds_to_decimal(clean_text(node_text(sp_node)))
                 if win_odds is not None:
