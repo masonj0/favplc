@@ -5246,6 +5246,7 @@ class FortunaDB:
                         start_time TEXT NOT NULL,
                         report_date TEXT NOT NULL,
                         is_goldmine INTEGER NOT NULL,
+                        source TEXT,
                         gap12 TEXT,
                         top_five TEXT,
                         selection_number INTEGER,
@@ -5508,7 +5509,7 @@ class FortunaDB:
         return await self._run_in_executor(_get)
 
     async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 12):
-        """Logs new tips to the database with batch deduplication."""
+        """Logs new tips to the database with batch deduplication and scoring updates."""
         if not self._initialized: await self.initialize()
 
         def _log():
@@ -5529,41 +5530,66 @@ class FortunaDB:
             already_logged = {row["race_id"] for row in cursor.fetchall()}
 
             to_insert = []
+            to_update = []
             for tip in tips:
                 rid = tip.get("race_id")
-                if rid and rid not in already_logged:
-                    report_date = tip.get("report_date") or now.isoformat()
-                    to_insert.append((
-                        rid, tip.get("venue"), tip.get("race_number"),
-                        tip.get("discipline"), tip.get("start_time"), report_date,
-                        1 if tip.get("is_goldmine") else 0,
-                        str(tip.get("1Gap2", 0.0)),
-                        tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
-                        float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
-                        tip.get("field_size"),
-                        tip.get("market_depth"),
-                        tip.get("place_prob"),
-                        tip.get("predicted_ev"),
-                        tip.get("race_type"),
-                        tip.get("condition_modifier"),
-                        tip.get("qualification_grade"),
-                        tip.get("composite_score"),
-                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
-                        1 if tip.get("is_best_bet") else 0
-                    ))
-                    already_logged.add(rid) # Avoid duplicates within the same batch
+                if not rid: continue
 
-            if to_insert:
+                report_date = tip.get("report_date") or now.isoformat()
+                # Prepare 23 elements for INSERT or UPDATE
+                data = (
+                    rid, tip.get("venue"), tip.get("race_number"),
+                    tip.get("discipline"), tip.get("start_time"), report_date,
+                    1 if tip.get("is_goldmine") else 0,
+                    tip.get("source"),
+                    str(tip.get("1Gap2", 0.0)),
+                    tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
+                    float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
+                    tip.get("field_size"),
+                    tip.get("market_depth"),
+                    tip.get("place_prob"),
+                    tip.get("predicted_ev"),
+                    tip.get("race_type"),
+                    tip.get("condition_modifier"),
+                    tip.get("qualification_grade"),
+                    tip.get("composite_score"),
+                    1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
+                    1 if tip.get("is_best_bet") else 0
+                )
+
+                if rid not in already_logged:
+                    to_insert.append(data)
+                    already_logged.add(rid) # Avoid duplicates within the same batch
+                else:
+                    # Update existing record if not audited to refresh scoring/metadata
+                    # We shift rid to the end for the WHERE clause
+                    update_tuple = data[1:] + (rid,)
+                    to_update.append(update_tuple)
+
+            if to_insert or to_update:
                 with conn:
-                    conn.executemany("""
-                        INSERT OR IGNORE INTO tips (
-                            race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
-                            field_size, market_depth, place_prob, predicted_ev, race_type,
-                            condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, to_insert)
-                self.logger.info("Hot tips batch logged", count=len(to_insert))
+                    if to_insert:
+                        conn.executemany("""
+                            INSERT INTO tips (
+                                race_id, venue, race_number, discipline, start_time, report_date,
+                                is_goldmine, source, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
+                                field_size, market_depth, place_prob, predicted_ev, race_type,
+                                condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, to_insert)
+
+                    if to_update:
+                        conn.executemany("""
+                            UPDATE tips SET
+                                venue=?, race_number=?, discipline=?, start_time=?, report_date=?,
+                                is_goldmine=?, source=?, gap12=?, top_five=?, selection_number=?, selection_name=?,
+                                predicted_2nd_fav_odds=?, field_size=?, market_depth=?, place_prob=?,
+                                predicted_ev=?, race_type=?, condition_modifier=?, qualification_grade=?,
+                                composite_score=?, is_handicap=?, is_best_bet=?
+                            WHERE race_id=? AND audit_completed=0
+                        """, to_update)
+
+                self.logger.info("Hot tips processed", inserted=len(to_insert), updated=len(to_update))
 
         await self._run_in_executor(_log)
 
@@ -5850,6 +5876,7 @@ class HotTipsTracker:
                 "race_number": r.race_number,
                 "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
+                "source": r.source,
                 "1Gap2": gap12,
                 "discipline": r.discipline,
                 "top_five": r.top_five_numbers,
