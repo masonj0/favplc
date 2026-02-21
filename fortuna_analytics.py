@@ -24,11 +24,10 @@ from pydantic import Field, model_validator
 from selectolax.parser import HTMLParser, Node
 
 from fortuna_utils import (
-    EASTERN, MAX_VALID_ODDS, MIN_VALID_ODDS, DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
-    VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
+    EASTERN, VENUE_MAP, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
     clean_text, node_text, get_canonical_venue, normalize_venue_name,
     parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
-    is_valid_odds, now_eastern, to_eastern, ensure_eastern, get_places_paid
+    is_valid_odds, now_eastern, to_eastern, get_places_paid
 )
 import fortuna
 

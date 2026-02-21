@@ -5273,7 +5273,8 @@ class FortunaDB:
                         qualification_grade TEXT,
                         composite_score REAL,
                         match_confidence TEXT,
-                        is_handicap INTEGER
+                        is_handicap INTEGER,
+                        is_best_bet INTEGER
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5340,6 +5341,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
                 if "is_handicap" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN is_handicap INTEGER")
+                if "is_best_bet" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN is_best_bet INTEGER")
 
         await self._run_in_executor(_init)
 
@@ -5545,7 +5548,8 @@ class FortunaDB:
                         tip.get("condition_modifier"),
                         tip.get("qualification_grade"),
                         tip.get("composite_score"),
-                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None)
+                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
+                        1 if tip.get("is_best_bet") else 0
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5556,8 +5560,8 @@ class FortunaDB:
                             race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                             field_size, market_depth, place_prob, predicted_ev, race_type,
-                            condition_modifier, qualification_grade, composite_score, is_handicap
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5860,7 +5864,8 @@ class HotTipsTracker:
                 "is_handicap": getattr(r, 'is_handicap', None),
                 "condition_modifier": r.metadata.get('condition_modifier'),
                 "qualification_grade": r.metadata.get('qualification_grade'),
-                "composite_score": r.metadata.get('composite_score')
+                "composite_score": r.metadata.get('composite_score'),
+                "is_best_bet": r.metadata.get('is_best_bet', False)
             }
             new_tips.append(tip_data)
 
