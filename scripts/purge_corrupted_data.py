@@ -500,6 +500,7 @@ def run(
     atrg_bad = detect_atrg_bad_odds(conn)
     unknown_venue = detect_unknown_venues(conn)
     stale = detect_stale_tips(conn) if aggressive else []
+    stuck_t = [t for t in stale if t.get("discipline") == "Thoroughbred"]
     pre_insight = detect_pre_insight_records(conn)
     bad_logs = detect_bad_harvest_logs(conn)
     pre_insight_logs = detect_pre_insight_logs(conn)
@@ -583,8 +584,18 @@ def run(
     if aggressive and stale:
         stale_not_already = [t for t in stale if t["id"] not in all_delete_ids]
         if stale_not_already:
-            emit(f"### 🟠 Stale Unaudited Tips: {len(stale_not_already)} tips\n")
-            emit(f"Older than {STALE_DAYS} days, unaudited. Results no longer available.\n")
+            stuck_t_ids = {t["id"] for t in stuck_t}
+            t_only = [t for t in stale_not_already if t["id"] in stuck_t_ids]
+            other_stale = [t for t in stale_not_already if t["id"] not in stuck_t_ids]
+
+            if t_only:
+                emit(f"### 🟠 Stuck Thoroughbred Tips: {len(t_only)} tips\n")
+                emit(f"Thoroughbred races older than {STALE_DAYS} days with no result. Likely missing RP/Equibase coverage.\n")
+
+            if other_stale:
+                emit(f"### 🟠 Other Stale Unaudited Tips: {len(other_stale)} tips\n")
+                emit(f"Older than {STALE_DAYS} days, unaudited. Results no longer available.\n")
+
             all_delete_ids.update(t["id"] for t in stale_not_already)
     elif aggressive:
         emit("### ✅ Stale Tips: None\n")

@@ -966,7 +966,9 @@ class PageFetchingResultsAdapter(
             source=self.SOURCE_NAME,
             count=len(absolute),
         )
-        metadata = [{"url": u, "race_number": 0} for u in absolute]
+        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        clean_absolute = [u.strip() for u in absolute if u and u.strip()]
+        metadata = [{"url": u, "race_number": 0} for u in clean_absolute]
         pages = await self._fetch_race_pages_concurrent(
             metadata, self._get_headers(),
         )
@@ -1043,7 +1045,8 @@ class PageFetchingResultsAdapter(
 
 class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
     """
-    Adapter for NYRABets.com race results using internal JSON API.
+    DEPRECATED: Internal JSON API (brk0201) returns 403.
+    Scheduled for replacement with Next.js __NEXT_DATA__ parser.
     """
     SOURCE_NAME = "NYRABetsResults"
     BASE_URL = "https://www.nyrabets.com"
@@ -1155,7 +1158,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
             results.append(ResultRace(
                 id=fortuna.generate_race_id("nyrab", venue, start_time, race_num),
                 venue=venue, race_number=race_num, start_time=start_time,
-                runners=runners, discipline="Thoroughbred", is_handicap=is_handicap
+                runners=runners, discipline="Thoroughbred", is_handicap=is_handicap,
+                source=self.SOURCE_NAME
             ))
         return results
 
@@ -1238,7 +1242,9 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return resolved
 
         self.logger.info("Resolving track indices", count=len(index_links))
-        metadata = [{"url": ln, "race_number": 0} for ln in index_links]
+        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        clean_index_links = [ln.strip() for ln in index_links if ln and ln.strip()]
+        metadata = [{"url": ln, "race_number": 0} for ln in clean_index_links]
         index_pages = await self._fetch_race_pages_concurrent(
             metadata, self._get_headers(),
         )
@@ -1727,45 +1733,64 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         # ── US thoroughbred ───────────────────────────────────────────────
         "aqueduct",
         "belmont-park",
+        "belmont",
         "saratoga",
         "gulfstream-park",
+        "gulfstream",
         "gulfstream-park-west",
         "santa-anita-park",
+        "santa-anita",
         "del-mar",
         "churchill-downs",
         "keeneland",
         "oaklawn-park",
+        "oaklawn",
         "laurel-park",
+        "laurel",
         "pimlico",
         "tampa-bay-downs",
+        "tampa-bay",
+        "tampa",
         "turfway-park",
+        "turfway",
         "turf-paradise",
         "fair-grounds",
         "fair-grounds-race-course",
         "monmouth-park",
+        "monmouth",
         "remington-park",
+        "remington",
         "sam-houston-race-park",
+        "sam-houston",
         "los-alamitos",
         "golden-gate-fields",
+        "golden-gate",
         "penn-national",
         "charles-town",
         "presque-isle-downs",
+        "presque-isle",
         "mahoning-valley",
         "finger-lakes",
         "hawthorne",
         "indiana-grand",
         "parx-racing",
+        "parx",
         "suffolk-downs",
         "will-rogers-downs",
+        "will-rogers",
         "emerald-downs",
         "sunland-park",
+        "sunland",
         "lone-star-park",
+        "lone-star",
         "delta-downs",
         "evangeline-downs",
+        "evangeline",
         "ellis-park",
         "kentucky-downs",
         "thistledown",
         "belterra-park",
+        "belterra",
         # ── US harness (in case RP covers them) ───────────────────────────
         "meadowlands",
         "yonkers-raceway",

@@ -382,7 +382,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
-    "NYRABetsResults",
+    # "NYRABetsResults",  # Temporarily removed due to API 403 block (2026-02-21)
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
@@ -687,10 +687,10 @@ class DataValidationPipeline:
 # --- CORE INFRASTRUCTURE ---
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
-    _httpx_client: Optional[httpx.AsyncClient] = None
+    _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
+    _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
     _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
-    _global_semaphore: Optional[asyncio.Semaphore] = None
 
     @classmethod
     async def _get_lock(cls) -> asyncio.Lock:
@@ -704,52 +704,64 @@ class GlobalResourceManager:
     @classmethod
     async def get_httpx_client(cls, timeout: Optional[int] = None) -> httpx.AsyncClient:
         """
-        Returns a shared httpx client.
+        Returns a shared httpx client for the current event loop.
         If timeout is provided and differs from current client, the client is recreated.
         """
+        loop = asyncio.get_running_loop()
         lock = await cls._get_lock()
         async with lock:
-            if cls._httpx_client is not None:
+            client = cls._clients.get(loop)
+            if client is not None:
                 # Guard against None in timeout comparison (GPT5 Fix)
-                current_timeout = getattr(cls._httpx_client.timeout, "read", None)
+                current_timeout = getattr(client.timeout, "read", None)
                 if timeout is not None and current_timeout is not None and abs(current_timeout - timeout) > 0.001:
                     try:
-                        await cls._httpx_client.aclose()
+                        await client.aclose()
                     except Exception:
                         pass
-                    cls._httpx_client = None
+                    client = None
 
-            if cls._httpx_client is None:
+            if client is None:
                 use_timeout = timeout or DEFAULT_REQUEST_TIMEOUT
-                cls._httpx_client = httpx.AsyncClient(
+                client = httpx.AsyncClient(
                     follow_redirects=True,
                     timeout=httpx.Timeout(use_timeout),
                     headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
                     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
                 )
-        return cls._httpx_client
+                cls._clients[loop] = client
+        return client
 
     @classmethod
     def get_global_semaphore(cls) -> asyncio.Semaphore:
-        if cls._global_semaphore is None:
-            try:
-                # Attempt to get running loop to ensure we are in async context
-                asyncio.get_running_loop()
-                cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
-            except RuntimeError:
-                # Fallback if called outside a loop
-                cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
-                return cls._global_semaphore
-        return cls._global_semaphore
+        """Returns a shared semaphore for the current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # If called outside a loop, we create a temporary semaphore
+            return asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+
+        if loop not in cls._semaphores:
+            with cls._lock_initialized:
+                if loop not in cls._semaphores:
+                    cls._semaphores[loop] = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+        return cls._semaphores[loop]
 
     @classmethod
     async def cleanup(cls):
-        if cls._httpx_client:
+        """Closes all clients for all event loops."""
+        clients_to_close = []
+        with cls._lock_initialized:
+            clients_to_close = list(cls._clients.values())
+            cls._clients.clear()
+            cls._semaphores.clear()
+            cls._locks.clear()
+
+        for client in clients_to_close:
             try:
-                await cls._httpx_client.aclose()
+                await client.aclose()
             except (AttributeError, RuntimeError):
                 pass
-            cls._httpx_client = None
 
 
 class BrowserEngine(Enum):
@@ -1024,27 +1036,26 @@ class RateLimiter:
     requests_per_second: float = 10.0
     _tokens: float = field(default=10.0, init=False)
     _last_update: float = field(default_factory=time.time, init=False)
-    _lock: Optional[asyncio.Lock] = field(default=None, init=False)
+    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
     _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
 
+    def __post_init__(self):
+        self._tokens = self.requests_per_second
+
     def _get_lock(self) -> asyncio.Lock:
-        if self._lock is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Lock()
+
+        if loop not in self._locks:
             with self._lock_sentinel:
-                if self._lock is None:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        self._lock = asyncio.Lock()
-                    except RuntimeError:
-                        # Will be handled in acquire()
-                        pass
-        return self._lock
+                if loop not in self._locks:
+                    self._locks[loop] = asyncio.Lock()
+        return self._locks[loop]
 
     async def acquire(self) -> None:
         lock = self._get_lock()
-        if lock is None:
-            # Fallback if loop wasn't running during _get_lock (Claude Fix)
-            self._lock = asyncio.Lock()
-            lock = self._lock
 
         for _ in range(1000): # Iteration limit to prevent potential hangs
             wait_time = 0
@@ -2653,7 +2664,6 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-        self._semaphore = asyncio.Semaphore(3)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Use CURL_CFFI for robust HTTPS and connection handling
@@ -3222,7 +3232,9 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             return None
 
         # Fetch initial set of pages
-        pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(links)], self._get_headers(), semaphore_limit=5)
+        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        clean_links = [l.strip() for l in set(links) if l and l.strip()]
+        pages = await self._fetch_race_pages_concurrent([{"url": l} for l in clean_links], self._get_headers(), semaphore_limit=5)
 
         all_htmls = []
         extra_links = []
@@ -3274,7 +3286,9 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         if extra_links:
             self.logger.info("Fetching extra race pages from track index", count=len(extra_links))
-            extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(extra_links)], self._get_headers(), semaphore_limit=5)
+            # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+            clean_extra = [l.strip() for l in set(extra_links) if l and l.strip()]
+            extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in clean_extra], self._get_headers(), semaphore_limit=5)
             all_htmls.extend([p.get("html") for p in extra_pages if p and p.get("html")])
 
         return {"pages": all_htmls, "date": date}
@@ -6394,7 +6408,6 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-        self._semaphore = asyncio.Semaphore(3) # GPT5 Fix
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Oddschecker is heavily protected by Cloudflare; Playwright with high timeout and network idle
@@ -6417,6 +6430,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         Fetches the raw HTML for all race pages for a given date. This involves a multi-level fetch.
         """
+        sem = asyncio.Semaphore(3)
         index_url = f"/horse-racing/{date}"
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
@@ -6477,7 +6491,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             return None
 
         async def fetch_single_html(url_path: str):
-            async with self._semaphore:
+            async with sem:
                 # Small delay to avoid ban (GPT5 Fix)
                 await asyncio.sleep(0.5 + random.random() * 0.5)
                 response = await self.make_request("GET", url_path, headers=self._get_headers())
@@ -6610,7 +6624,6 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-        self._semaphore = asyncio.Semaphore(5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Timeform often blocks basic requests; Playwright is robust
@@ -6634,6 +6647,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         """
         Fetches the raw HTML for all race pages for a given date.
         """
+        sem = asyncio.Semaphore(5)
         index_url = f"/horse-racing/racecards/{date}"
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
@@ -6696,7 +6710,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             return None
 
         async def fetch_single_html(url_path: str):
-            async with self._semaphore:
+            async with sem:
                 await asyncio.sleep(0.5)
                 response = await self.make_request("GET", url_path, headers=self._get_headers())
                 return (url_path, response.text) if response else (url_path, "")
