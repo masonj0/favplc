@@ -67,6 +67,8 @@ validation_warnings.json
 summary_grid.txt
 goldmine_report.txt
 analytics_report.txt
+discovery_harvest.json
+results_harvest.json
 
 # Database
 fortuna.db

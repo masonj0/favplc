@@ -648,7 +648,9 @@ class AuditorEngine:
         # Heuristic estimate: ~1/5 of (win odds - 1) for place return
         odds = sel.final_win_odds or DEFAULT_ODDS_FALLBACK
         if not sel.final_win_odds:
-            self.logger.debug("odds_defaulted", runner=sel.name, fallback=DEFAULT_ODDS_FALLBACK)
+            structlog.get_logger("AuditorEngine").debug(
+                "odds_defaulted", runner=sel.name, fallback=DEFAULT_ODDS_FALLBACK
+            )
         estimated_place_return = STANDARD_BET * max(1.1, 1.0 + (odds - 1.0) / 5.0)
         return Verdict.CASHED_ESTIMATED, round(estimated_place_return - STANDARD_BET, 2)
 
@@ -1721,7 +1723,8 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         parser = HTMLParser(html)
 
         venue_node = (
-            parser.css_first(".rp-raceTimeCourseName__course")
+            parser.css_first('*[data-test-selector="RC-courseHeader__name"]')
+            or parser.css_first(".rp-raceTimeCourseName__course")
             or parser.css_first(".rp-course__name")
             or parser.css_first("h1")
         )
@@ -1839,29 +1842,41 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             parser.css(".rp-horseTable__table__row")
             or parser.css(".rp-horseTable__mainRow")
             or parser.css("tr.rp-horseTable__mainRow")
+            or parser.css('.RC-runnerRow')
         )
 
         for row in rows:
             name_node = (
-                row.css_first(".rp-horseTable__horse__name")
+                row.css_first('*[data-test-selector="RC-cardPage-runnerName"]')
+                or row.css_first(".rp-horseTable__horse__name")
                 or row.css_first("a.rp-horseTable__horse__name")
+                or row.css_first(".RC-runnerName")
             )
             if not name_node:
                 continue
             name = fortuna.clean_text(fortuna.node_text(name_node))
 
             pos_node = (
-                row.css_first(".rp-horseTable__pos__number")
+                row.css_first('*[data-test-selector="RC-cardPage-runnerPosition"]')
+                or row.css_first(".rp-horseTable__pos__number")
                 or row.css_first(".rp-horseTable__pos")
             )
             pos = fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None
 
-            num_node = row.css_first(".rp-horseTable__saddleClothNo")
+            num_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerNumber-no"]')
+                or row.css_first(".rp-horseTable__saddleClothNo")
+                or row.css_first(".RC-runnerNumber__no")
+            )
             number = _safe_int(fortuna.node_text(num_node)) if num_node else 0
 
             place_payout = self._find_place_payout(name, dividends)
 
-            sp_node = row.css_first(".rp-horseTable__horse__sp")
+            sp_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerPrice"]')
+                or row.css_first(".rp-horseTable__horse__sp")
+                or row.css_first(".RC-runnerPrice")
+            )
             final_odds = (
                 parse_fractional_odds(fortuna.clean_text(fortuna.node_text(sp_node)))
                 if sp_node else 0.0
