@@ -10,6 +10,8 @@ EASTERN = ZoneInfo("America/New_York")
 
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
+# 2.75 is chosen as a conservative implied place-odds estimate (approx 7/4)
+# for runners where real odds are missing during discovery.
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
 COMMON_PLACEHOLDERS: Final[set] = set()
 
@@ -205,6 +207,10 @@ DRF_VENUE_MAP: Final[Dict[str, str]] = {
     "FG": "Fair Grounds",
     "RP": "Remington Park",
     "HOU": "Sam Houston",
+    "FON": "Fonner Park",
+    "MVR": "Mahoning Valley",
+    "LA": "Los Alamitos",
+    "LAD": "Louisiana Downs",
 }
 
 RACING_KEYWORDS = [
@@ -483,6 +489,7 @@ def ensure_eastern(dt: datetime) -> datetime:
     """Ensures datetime is timezone-aware and in Eastern time."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
+    # Note: identity check assumes ZoneInfo('America/New_York') is globally cached/singleton.
     if dt.tzinfo is not EASTERN:
         try:
             return dt.astimezone(EASTERN)

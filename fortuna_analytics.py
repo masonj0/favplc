@@ -648,7 +648,9 @@ class AuditorEngine:
         # Heuristic estimate: ~1/5 of (win odds - 1) for place return
         odds = sel.final_win_odds or DEFAULT_ODDS_FALLBACK
         if not sel.final_win_odds:
-            self.logger.debug("odds_defaulted", runner=sel.name, fallback=DEFAULT_ODDS_FALLBACK)
+            structlog.get_logger("AuditorEngine").debug(
+                "odds_defaulted", runner=sel.name, fallback=DEFAULT_ODDS_FALLBACK
+            )
         estimated_place_return = STANDARD_BET * max(1.1, 1.0 + (odds - 1.0) / 5.0)
         return Verdict.CASHED_ESTIMATED, round(estimated_place_return - STANDARD_BET, 2)
 
