@@ -445,12 +445,21 @@ def is_valid_odds(odds: Any) -> bool:
     except Exception: return False
 
 def scrape_available_bets(html_content: str) -> List[str]:
+    """Extract exotic bet types mentioned in HTML content."""
     if not html_content: return []
+
     available_bets: List[str] = []
     html_lower = html_content.lower()
+
     for kw, bet_name in BET_TYPE_KEYWORDS.items():
-        if re.search(rf"\b{re.escape(kw)}\b", html_lower) and bet_name not in available_bets:
+        # Handle multi-word keywords properly (e.g., "pick 3", "daily double")
+        # Split on spaces, escape each word, join with \s+ for flexible whitespace matching
+        words = kw.split()
+        pattern = r"\b" + r"\s+".join(re.escape(w) for w in words) + r"\b"
+
+        if re.search(pattern, html_lower) and bet_name not in available_bets:
             available_bets.append(bet_name)
+
     return available_bets
 
 def detect_discipline(html_content: str) -> str:
