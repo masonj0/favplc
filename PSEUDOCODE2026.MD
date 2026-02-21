@@ -2,7 +2,7 @@
 
 **Status:** Unified Monolith Architecture
 **Version:** 3.0.0
-**Last Updated:** January 13, 2026
+**Last Updated:** February 20, 2026
 
 ---
 
@@ -10,9 +10,9 @@
 
 1.  System Overview
 2.  Architecture: The Unified Monolith
-3.  Backend Engine (Python/FastAPI)
-4.  Frontend Interface (TypeScript/Next.js)
-5.  Data Models & API Specification
+3.  Backend Engine (Fortuna Core)
+4.  Frontend Interface (Integrated Dashboard)
+5.  Data Models & Persistence
 6.  Deployment & Automation (CI/CD)
 7.  End-to-End Workflow
 
@@ -30,323 +30,178 @@ MISSION:
   • Acquire race data from 20+ global sources (APIs + web scraping).
   • Normalize and deduplicate data into a canonical Race format.
   • Apply analytical filters to surface high-value betting opportunities.
-  • Serve a static frontend and a REST API from a single, self-contained executable.
-  • Provide cross-platform access via launcher scripts for a Podman container.
+  • Serve a static dashboard and a REST API from a single, self-contained executable.
+  • Provide cross-platform access via launcher scripts or a standalone .exe.
 
 CORE TENETS:
-  • Single Origin: The backend serves the frontend, eliminating all CORS and cross-origin security issues.
-  • Zero Dependencies: The primary Windows artifact is a single .exe file that requires no external installation or setup.
-  • Containerization: For non-Windows users, a Podman container provides a consistent, isolated environment.
-  • Automated & Repeatable Builds: The entire application is built, tested, and packaged via a deterministic CI/CD pipeline (`build-monolith.yml`).
+  • Single Source: `fortuna.py` contains the entire engine, server, and analyzer.
+  • Zero Dependencies: The primary Windows artifact is a single .exe built with PyInstaller.
+  • Robust Scoring: Grade-based (A+ to C) qualification system using composite scores.
+  • Automated & Repeatable Builds: The entire application is built and tested via `build_monolith.py`.
 ```
 
 ---
 
 ## 2. ARCHITECTURE: THE UNIFIED MONOLITH
 
-The application is a **Unified Monolith**. A single Python executable, built with PyInstaller, contains the complete application. It runs a FastAPI web server that both serves the static Next.js frontend and provides the backend REST API.
+The application is a **Unified Monolith**. A single Python script, `fortuna.py`, contains the complete application logic. When built with PyInstaller, it runs a FastAPI web server that serves both the dashboard and the REST API, often launching in a native window via `pywebview`.
 
 ```
 +------------------------------------------------------+
-| fortuna-monolith.exe (Single Executable)             |
+| FortunaFaucetPortableApp.exe (Single Executable)     |
 |                                                      |
 |  +-------------------------------------------------+ |
-|  | Python Environment                              | |
+|  | Python Environment (fortuna.py)                 | |
 |  |                                                 | |
 |  |  +-------------------------------------------+  | |
-|  |  | FastAPI / Uvicorn Server (localhost:8000) |  | |
+|  |  | FastAPI / Uvicorn Server (localhost:8013) |  | |
 |  |  |                                           |  | |
 |  |  |  +------------------+  +----------------+ |  | |
-|  |  |  | API Router       |  | Static Files   | |  | |
-|  |  |  | (/api/*)         |  | (/, /_next/*)  | |  | |
+|  |  |  | API Router       |  | HTML Dashboard | |  | |
+|  |  |  | (/api/*)         |  | (Root /)       | |  | |
 |  |  |  +------------------+  +----------------+ |  | |
 |  |  |           |                     |         |  | |
 |  |  +-----------|---------------------|---------+  | |
 |  |             |                     |            | |
 |  |  +----------v-----------+  +-------v--------+   | |
-|  |  | OddsEngine (engine.py)|  | Bundled Next.js|   | |
-|  |  +----------------------+  | 'out' directory|   | |
-|  |                            +----------------+   | |
-|  +-------------------------------------------------+ |
+|  |  | DiscoveryEngine      |  | Desktop Window |   | |
+|  |  | (Adapters)           |  | (pywebview)    |   | |
+|  +-------------------------+-----------------------+ |
 |                                                      |
 +------------------------------------------------------+
 ```
 
 ---
 
-## 3. BACKEND ENGINE (PYTHON/FASTAPI)
+## 3. BACKEND ENGINE (FORTUNA CORE)
 
-### 3.1 Entry Point & Server Startup (`web_service/backend/main.py`)
+### 3.1 Entry Point & Multi-Mode Execution (`fortuna.py`)
 
-The entry point directly runs the Uvicorn server, loading the FastAPI app instance from `api.py`.
+The engine supports various modes: CLI, Monitor, and GUI.
 
 ```pseudocode
-// main.py
-PROCEDURE Main_Python_Entry_Point
-  // Path modifications for PyInstaller compatibility
-  IF running in a frozen (PyInstaller) environment:
-    base_path <- sys._MEIPASS
-  ELSE:
-    base_path <- path to project root
-  ADD base_path to sys.path
+PROCEDURE Main_Entry_Point
+  PARSE command line arguments
 
-  // Programmatically launch the FastAPI application
-  CALL uvicorn.run(
-    app="web_service.backend.api:app",
-    host="0.0.0.0",
-    port=8000
-  )
+  IF --monitor:
+    RUN FavoriteToPlaceMonitor in continuous loop
+  ELSE IF --gui:
+    START FastAPI server in background thread
+    LAUNCH pywebview window pointing to localhost:8013
+  ELSE:
+    RUN Discovery once and generate reports
 END PROCEDURE
 ```
 
-### 3.2 Application & Frontend Serving (`web_service/backend/api.py`)
+### 3.2 Integrated FastAPI Server (`start_desktop_app`)
 
-The `api.py` file is the core of the backend. It defines the FastAPI app, manages the application lifecycle, and includes the critical logic for serving the static frontend.
+The backend defines a FastAPI app to serve the dashboard and provide API access to the underlying SQLite database.
 
 ```pseudocode
-// api.py
+FUNCTION start_desktop_app()
+  app <- CREATE FastAPI()
 
-// --- Lifespan Management ---
-ASYNC FUNCTION lifespan_manager(app: FastAPI):
-  // ON STARTUP:
-  CONFIGURE logging
-  CREATE OddsEngine instance
-  STORE engine in app.state
-  YIELD
-  // ON SHUTDOWN:
-  AWAIT app.state.engine.close() // Gracefully close connections
+  @app.get("/")
+  FUNCTION get_dashboard():
+    tips <- FETCH latest tips from FortunaDB
+    GENERATE HTML with dynamic tips table
+    RETURN HTML Response
 
-// --- FastAPI App Initialization ---
-app <- CREATE FastAPI(lifespan=lifespan_manager)
-ADD CORS middleware
-ADD Rate Limiting middleware
-INCLUDE API router (for /api/* routes)
-
-// --- CRITICAL: Unified Frontend Serving ---
-FUNCTION get_ui_directory():
-  IF running in a frozen (PyInstaller) environment:
-    RETURN path to bundled 'ui' directory (sys._MEIPASS/ui)
-  ELSE:
-    RETURN path to `web_platform/frontend/out`
+  RUN uvicorn server on port 8013
 END FUNCTION
-
-UI_DIR <- get_ui_directory()
-VERIFY UI_DIR and index.html exist, otherwise RAISE RuntimeError
-
-// --- SPA Middleware ---
-// All requests that are not for '/api/*' or a known static file type
-// will be served the `index.html` file. This allows the Next.js
-// client-side router to handle all frontend navigation.
-app.add_middleware(SPAMiddleware)
-
-// --- Static File Mount ---
-// This serves the actual .js, .css, and image files from the
-// bundled 'ui' directory.
-app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")
 ```
 
-### 3.3 Resilient Fetching Strategy (`web_service/backend/engine.py`)
+### 3.3 Advanced Analytical Scoring (`SimplySuccessAnalyzer`)
 
-The `OddsEngine` is designed for resilience, using a multi-tiered fallback strategy to ensure data is returned even when some sources fail.
+The analyzer uses a multi-factor composite score to grade betting opportunities.
 
 ```pseudocode
-// engine.py
+CLASS SimplySuccessAnalyzer:
+  FUNCTION qualify_races(races):
+    FOR race IN races:
+      // 1. Calculate Primary Metrics
+      gap12 <- (2nd_Fav_Odds - Fav_Odds) / Fav_Odds
+      place_prob <- calculate_implied_place_probability(Fav_Odds, Field_Size)
+      market_depth <- calculate_market_depth(Whole_Field_Odds)
+      modifier <- get_condition_modifier(Race_Type)
 
-CLASS OddsEngine:
-  INIT():
-    self.adapters: Dict[str, Adapter]
-    self.health_monitor: AdapterHealthMonitor
-    self.stale_data_cache: StaleDataCache
-    // ... other initializations
+      // 2. Generate Composite Score
+      score <- (gap12 * 40) + (market_depth) + (place_prob * 40) + (modifier * 20)
 
-  ASYNC FUNCTION fetch_all_odds(date):
-    // Tier 1: Attempt to fetch from healthy adapters
-    healthy_adapters <- self.health_monitor.get_healthy_adapters()
-    live_results <- FETCH_IN_PARALLEL(healthy_adapters)
+      // 3. Assign Grade
+      grade <- MATCH_THRESHOLD(score) // A+ (>=70), A (>=60), etc.
 
-    IF count(live_results) >= MINIMUM_REQUIRED_SOURCES:
-      MERGE and RETURN live_results
-
-    // Tier 2: Augment with degraded adapters if necessary
-    degraded_adapters <- self.health_monitor.get_degraded_adapters()
-    degraded_results <- FETCH_IN_PARALLEL(degraded_adapters)
-    live_results.extend(degraded_results)
-
-    IF count(live_results) > 0:
-      MERGE, CACHE, and RETURN live_results
-
-    // Tier 3: Fall back to stale data from the last successful run
-    stale_data <- self.stale_data_cache.get(date)
-    IF stale_data IS NOT NULL:
-      LOG "Using stale data as a last resort."
-      RETURN stale_data with a 'stale' freshness flag
-
-    // Final fallback: Return an error response
-    RETURN error_response("All live adapters failed and no stale cache was available.")
-
-```
----
-
-## 4. FRONTEND INTERFACE (TYPESCRIPT/NEXT.JS)
-
-### 4.1 Configuration (`next.config.mjs`)
-
-The frontend is a standard Next.js application configured for static export. This means it is pre-built into a set of HTML, CSS, and JS files that can be served by any static web server.
-
-```javascript
-// next.config.mjs
-const nextConfig = {
-  output: 'export',   // CRITICAL: Generates a static site in the 'out' directory
-  distDir: 'out',
-  images: { unoptimized: true }, // Required for static export
-  trailingSlash: true,
-};
-```
-
-### 4.2 Main Dashboard Component (`src/components/LiveRaceDashboard.tsx`)
-
-With the unified architecture, the frontend no longer needs a complex IPC mechanism. It behaves like a standard web application, making HTTP requests to the same origin that served it.
-
-```pseudocode
-// LiveRaceDashboard.tsx (Simplified)
-COMPONENT LiveRaceDashboard:
-  STATE:
-    races: Race[] <- []
-    status: 'loading' | 'success' | 'error' <- 'loading'
-    errorMessage: string <- ""
-
-  EFFECT on mount:
-    fetchQualifiedRaces() // Fetch data immediately on component load
-
-  ASYNC FUNCTION fetchQualifiedRaces():
-    TRY:
-      // Make a standard, same-origin API call. No full URL needed.
-      response <- AWAIT fetch("/api/races/qualified/trifecta")
-      IF NOT response.ok:
-        RAISE new Error(`API Error: ${response.statusText}`)
-
-      data <- AWAIT response.json()
-      setRaces(data.races)
-      setStatus('success')
-    CATCH e:
-      setStatus('error')
-      setErrorMessage(e.message)
-END COMPONENT
+      // 4. Determine "Best Bet" and "Goldmine" status
+      IF gap12 >= 0.35:
+        IF grade in ('A+', 'A'): is_best_bet <- True
+        IF Field_Size <= 9 AND 2nd_Fav_Odds >= 4.5 AND NOT Maiden:
+          is_goldmine <- True
 ```
 
 ---
 
-## 5. DATA MODELS & API SPECIFICATION
+## 4. FRONTEND INTERFACE (INTEGRATED DASHBOARD)
 
-The data models and API endpoints remain largely the same, with the key difference being that they are all served from the `localhost:8000` origin.
+The frontend is served directly as HTML by the FastAPI server, providing a zero-latency, same-origin experience without external JS dependencies.
+
+```pseudocode
+// Simplified Dashboard Logic
+TEMPLATE Dashboard:
+  DISPLAY "Fortuna Intelligence Dashboard"
+  DISPLAY current stats (Tips Found, Cashed, Net Profit)
+
+  TABLE of Opportunities:
+    FOR tip IN tips:
+      RENDER Venue, Race Number, Selection, Predicted Odds, and Grade
+
+  SCRIPT:
+    AUTO-REFRESH page every 30 seconds
+```
+
+---
+
+## 5. DATA MODELS & PERSISTENCE
+
+All data is persisted in a thread-safe SQLite database (`fortuna.db`) using a Version 6 schema.
 
 ```
-ENDPOINT GET /api/health
-  Response (200 OK): {"status":"ok"}
-
-ENDPOINT GET /api/races/qualified/trifecta
-  Response (200 OK):
-    {
-      "qualified_races": List[Race],
-      "analysis_metadata": { ... }
-    }
+TABLE tips:
+  - race_id (Unique Key)
+  - venue, race_number, start_time
+  - qualification_grade (A+, A, B, etc.)
+  - composite_score, place_prob, predicted_ev
+  - gap12, market_depth, is_handicap
+  - audit_completed, verdict, net_profit
 ```
 
 ---
 
 ## 6. DEPLOYMENT & AUTOMATION (CI/CD)
 
-The primary build workflow is `.github/workflows/build-monolith.yml`. It creates the single Windows executable. The `.github/workflows/build-podman.yml` workflow provides a container-based alternative for cross-platform use.
-
-### 6.1 Monolith Build (`build-monolith.yml`)
+The build process is managed by `build_monolith.py`, which packages `fortuna.py` and its dependencies.
 
 ```pseudocode
-// build-monolith.yml
-WORKFLOW Build_Fortuna_Monolith_EXE:
-  // Phase 1: Build Frontend
-  SETUP Node.js
-  RUN "npm ci" and "npm run build" in /web_platform/frontend
-  COPY the 'out' directory to a staging area (`frontend_dist`)
-
-  // Phase 2: Build Backend Executable
-  SETUP Python
-  INSTALL Python dependencies from requirements.txt
-  INSTALL PyInstaller
-  CREATE required data/log directories
-
-  // Phase 3: Package with PyInstaller
-  // The spec file (`fortuna-monolith.spec`) is configured to:
-  // 1. Identify `web_service/backend/main.py` as the entry point.
-  // 2. Bundle the `frontend_dist` directory into the .exe at the root 'ui'.
-  // 3. Add application icon and version info.
-  EXECUTE PyInstaller using `fortuna-monolith.spec`
-
-  // Phase 4: Smoke Test
-  START the generated `fortuna-monolith.exe` in the background
-  POLL `http://127.0.0.1:8000/api/health` until it responds with 200 OK or times out
-  IF timeout THEN FAIL build
-  KILL the process
-
-  // Phase 5: Upload Artifact
-  UPLOAD the `fortuna-monolith.exe` as a build artifact
+PROCEDURE Build_Monolith:
+  1. Create build metadata (timestamp, git commit)
+  2. Collect all dependencies (browserforge, playwright, curl_cffi, etc.)
+  3. Execute PyInstaller with --onefile and --noupx
+  4. Verify the generated EXE launches successfully
+END PROCEDURE
 ```
 
-### 6.2 Race Report Generation (`unified-race-report.yml`)
-
-This workflow runs on a schedule or manually to generate the daily race reports.
-
-```pseudocode
-// unified-race-report.yml
-WORKFLOW Generate_Race_Report:
-  // Phase 1: Setup Environment
-  SETUP Python
-  INSTALL dependencies from requirements.txt
-
-  // Phase 2: Run Reporter Script
-  // The script directly invokes the OddsEngine and AnalyzerEngine
-  // without needing a live web server.
-  EXECUTE `scripts/fortuna_reporter.py`
-
-  // Phase 3: Publish Artifacts
-  // The script generates a comprehensive set of artifacts for observability.
-  UPLOAD the following files:
-    - race-report.html (The primary user-facing report)
-    - qualified_races.json (Data for the HTML report)
-    - raw_race_data.json (Unfiltered data for debugging)
-    - reporter_output.log (Full log of the reporter script)
-    - github_summary.md (For display in the GitHub Actions UI)
-```
 ---
 
 ## 7. END-TO-END WORKFLOW
 
-### 7.1 Windows User Workflow
-
-The user downloads and runs a single `.exe` file.
+### 7.1 Portable App Workflow
 
 ```
-WORKFLOW user_launches_monolith_exe:
-  STEP 1: User executes `fortuna-monolith.exe`.
-  STEP 2: The embedded Python environment starts.
-  STEP 3: The Uvicorn server starts inside the process.
-  STEP 4: The FastAPI application initializes, mounts the bundled 'ui' directory, and opens the API endpoints.
-  STEP 5: The user's default web browser is automatically opened to `http://127.0.0.1:8000`.
-  STEP 6: The browser loads `index.html` from the FastAPI server.
-  STEP 7: The Next.js application hydrates and makes same-origin API calls to `/api/*` to fetch data.
-```
-
-### 7.2 Cross-Platform (Podman) User Workflow
-
-The user runs a launcher script that manages a Podman container.
-
-```
-WORKFLOW user_launches_podman_script:
-  STEP 1: User executes `launcher.bat` or `./launcher.sh`.
-  STEP 2: The script pulls the latest `ghcr.io/masonj0/fortuna-faucet` image.
-  STEP 3: The script starts a Podman container, mapping port 8000 and volume mounting local `data` and `logs` directories.
-  STEP 4: The container runs the same Python application, which starts the Uvicorn/FastAPI server.
-  STEP 5: The user's default web browser is automatically opened to `http://127.0.0.1:8000`.
-  STEP 6: The workflow proceeds identically to the Windows user workflow from Step 6 onward.
+WORKFLOW user_runs_portable_app:
+  STEP 1: User runs `FortunaFaucetPortableApp.exe`.
+  STEP 2: The process extracts its embedded environment to a temp directory.
+  STEP 3: The FastAPI server starts and the Desktop Window (pywebview) opens.
+  STEP 4: The app automatically runs discovery in the background to find new races.
+  STEP 5: The dashboard updates in real-time as new Goldmines are identified.
 ```
 
 ---
