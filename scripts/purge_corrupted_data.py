@@ -40,6 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 DB_PATH = PROJECT_ROOT / "fortuna.db"
 STALE_DAYS = 4  # tips older than this with no audit are likely unmatchable
+INSIGHT_UPGRADE_DATE = "2026-02-20"  # delete all records before this date
 
 # ── output helpers ───────────────────────────────────────────────────
 _buf: list[str] = []
@@ -175,6 +176,18 @@ def detect_unknown_venues(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     return [dict(r) for r in rows if canonical(r["venue"]) == "unknown"]
 
 
+def detect_pre_insight_records(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    """Records before 2026-02-20 (Insight Upgrade Date)."""
+    return [
+        dict(r)
+        for r in conn.execute("""
+            SELECT id, race_id, venue, start_time, report_date
+            FROM tips
+            WHERE report_date < ? OR start_time < ?
+        """, (INSIGHT_UPGRADE_DATE, INSIGHT_UPGRADE_DATE)).fetchall()
+    ]
+
+
 def detect_stale_tips(
     conn: sqlite3.Connection,
     max_age_days: int = STALE_DAYS,
@@ -200,6 +213,15 @@ def detect_bad_harvest_logs(conn: sqlite3.Connection) -> int:
         WHERE adapter_name = 'AtTheRacesGreyhoundResults'
           AND max_odds > 100
     """).fetchone()
+    return row[0] if row else 0
+
+
+def detect_pre_insight_logs(conn: sqlite3.Connection) -> int:
+    """Harvest logs before the insight upgrade date."""
+    row = conn.execute("""
+        SELECT COUNT(*) FROM harvest_logs
+        WHERE timestamp < ?
+    """, (INSIGHT_UPGRADE_DATE,)).fetchone()
     return row[0] if row else 0
 
 
@@ -245,6 +267,7 @@ def reset_audit(conn: sqlite3.Connection, tip_ids: List[int], reason: str) -> in
 
 def purge_harvest_logs(conn: sqlite3.Connection) -> int:
     """Delete harvest log entries with corrupted metrics."""
+    # 1. Corrupted ATRG odds
     result = conn.execute("""
         DELETE FROM harvest_logs
         WHERE adapter_name = 'AtTheRacesGreyhoundResults'
@@ -254,7 +277,16 @@ def purge_harvest_logs(conn: sqlite3.Connection) -> int:
     if count:
         emit(f"  🗑️  Deleted {count} harvest_logs with corrupted maxOdds")
 
-    # Also delete logs where race_count = 0 (no useful info)
+    # 2. Pre-insight records
+    result3 = conn.execute("""
+        DELETE FROM harvest_logs
+        WHERE timestamp < ?
+    """, (INSIGHT_UPGRADE_DATE,))
+    if result3.rowcount:
+        emit(f"  🗑️  Deleted {result3.rowcount} harvest_logs before {INSIGHT_UPGRADE_DATE}")
+        count += result3.rowcount
+
+    # 3. Also delete logs where race_count = 0 (no useful info)
     result2 = conn.execute("""
         DELETE FROM harvest_logs
         WHERE race_count = 0
@@ -306,6 +338,12 @@ def clean_artifact_files(execute: bool) -> int:
         "results_harvest_*.json",
         "discovery_harvest_*.json",
         "analytics_report.txt",
+        "prediction_history.jsonl",
+        "fortuna_report.html",
+        "summary_grid.txt",
+        "field_matrix.txt",
+        "goldmine_report.txt",
+        "race_data.json",
     ]
     # Files to reset (not delete — just empty them)
     reset_files = [
@@ -462,11 +500,21 @@ def run(
     atrg_bad = detect_atrg_bad_odds(conn)
     unknown_venue = detect_unknown_venues(conn)
     stale = detect_stale_tips(conn) if aggressive else []
+    pre_insight = detect_pre_insight_records(conn)
     bad_logs = detect_bad_harvest_logs(conn)
+    pre_insight_logs = detect_pre_insight_logs(conn)
 
     # Deduplicate: tips may appear in multiple categories
     all_delete_ids: Set[int] = set()
     all_reset_ids: Set[int] = set()
+
+    # Category 0: Pre-Insight Records → DELETE
+    if pre_insight:
+        emit(f"### 🔴 Pre-Insight Records: {len(pre_insight)} tips\n")
+        emit(f"Records captured before the {INSIGHT_UPGRADE_DATE} upgrades. No confidence in accuracy.\n")
+        all_delete_ids.update(t["id"] for t in pre_insight)
+    else:
+        emit(f"### ✅ Pre-Insight Records: None before {INSIGHT_UPGRADE_DATE}\n")
 
     # Category 1: ATR venue corruption → DELETE
     if atr_corrupted:
@@ -542,9 +590,12 @@ def run(
         emit("### ✅ Stale Tips: None\n")
 
     # Category 6: Bad harvest logs
-    if bad_logs:
-        emit(f"### 🟡 Corrupted Harvest Logs: {bad_logs} entries\n")
-        emit("ATRG entries with maxOdds > 100 (from parse_currency_value bug).\n")
+    if bad_logs or pre_insight_logs:
+        emit(f"### 🟡 Corrupted/Stale Harvest Logs: {bad_logs + pre_insight_logs} entries\n")
+        if bad_logs:
+            emit(f"- {bad_logs} ATRG entries with maxOdds > 100\n")
+        if pre_insight_logs:
+            emit(f"- {pre_insight_logs} entries before {INSIGHT_UPGRADE_DATE}\n")
 
     # Category 7: Also reset ALL other audited tips
     # because the ATR R1 collision may have caused wrong-race matching
@@ -593,7 +644,7 @@ def run(
         total_deleted += delete_tips(
             conn,
             list(all_delete_ids),
-            "corrupted venues / unknown venues / stale",
+            "corrupted venues / unknown venues / stale / pre-insight",
         )
 
     # Reset ATRG audited tips

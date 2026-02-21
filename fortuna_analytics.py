@@ -636,7 +636,7 @@ class AuditorEngine:
             # Missing position often means parsing gap, not a loss (Claude Fix)
             return Verdict.VOID, 0.0
 
-        places_paid = get_places_paid(len(result.active_runners))
+        places_paid = get_places_paid(len(result.active_runners), is_handicap=result.is_handicap)
 
         if sel.position_numeric > places_paid:
             return Verdict.BURNED, -STANDARD_BET
@@ -1148,10 +1148,14 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
                     odds_source="extracted" if final_odds else None
                 ))
             if not runners: continue
+            is_handicap = None
+            if r.get("raceMeetingName") and "HANDICAP" in r["raceMeetingName"].upper():
+                is_handicap = True
+
             results.append(ResultRace(
                 id=fortuna.generate_race_id("nyrab", venue, start_time, race_num),
                 venue=venue, race_number=race_num, start_time=start_time,
-                runners=runners, discipline="Thoroughbred"
+                runners=runners, discipline="Thoroughbred", is_handicap=is_handicap
             ))
         return results
 
@@ -1381,6 +1385,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
+        is_handicap = None
+        if "HANDICAP" in header_text.upper():
+            is_handicap = True
+
         return ResultRace(
             id=self._make_race_id("eqb_res", venue, date_str, race_num),
             venue=venue,
@@ -1389,6 +1397,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             runners=runners,
             discipline="Thoroughbred",
             race_type=race_type,
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
             **_apply_exotics_to_race(exotics),
@@ -1551,10 +1560,14 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
 
         # S5 — extract race type (independent review item)
         race_type = None
+        is_handicap = None
         header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
         if header_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', fortuna.node_text(header_node), re.I)
+            header_text = fortuna.node_text(header_node)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
+            if "HANDICAP" in header_text.upper():
+                is_handicap = True
 
         return ResultRace(
             id=self._make_race_id("rp_res", venue, date_str, race_num),
@@ -1564,6 +1577,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             runners=runners,
             discipline="Thoroughbred",
             race_type=race_type,
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
@@ -2376,6 +2390,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
+        is_handicap = summary.get("has_handicap")
         return ResultRace(
             id=self._make_race_id("sl_res", venue, date_val, race_num),
             venue=venue,
@@ -2384,6 +2399,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             runners=runners,
             discipline="Thoroughbred",
             race_type=race_type,
+            is_handicap=is_handicap,
             trifecta_payout=trifecta_pay,
             superfecta_payout=superfecta_pay,
             source=self.SOURCE_NAME,
@@ -2733,6 +2749,10 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        is_handicap = None
+        if "HANDICAP" in html.upper():
+            is_handicap = True
+
         return ResultRace(
             id=self._make_race_id("sc_res", venue, date_str, race_num),
             venue=venue,
@@ -2740,6 +2760,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str),
             runners=runners,
             discipline="Harness",
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
