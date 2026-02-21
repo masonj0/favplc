@@ -373,7 +373,7 @@ USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B",
 INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
-    "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
+    "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports"
 }
 
@@ -382,7 +382,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
-    "NYRABetsResults",
+    # "NYRABetsResults",  # Temporarily removed due to API 403 block (2026-02-21)
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
@@ -569,6 +569,7 @@ class Race(FortunaBaseModel):
     start_time: datetime = Field(..., alias="startTime")
     runners: List[Runner] = Field(default_factory=list)
     race_type: Optional[str] = None
+    is_handicap: Optional[bool] = None
 
     @field_validator("venue", mode="after")
     @classmethod
@@ -587,7 +588,6 @@ class Race(FortunaBaseModel):
 
     source: str
     discipline: str = "Thoroughbred"
-    race_type: Optional[str] = None
     surface: Optional[str] = None
     distance: Optional[str] = None
     field_size: Optional[int] = None
@@ -687,10 +687,10 @@ class DataValidationPipeline:
 # --- CORE INFRASTRUCTURE ---
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
-    _httpx_client: Optional[httpx.AsyncClient] = None
+    _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
+    _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
     _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
-    _global_semaphore: Optional[asyncio.Semaphore] = None
 
     @classmethod
     async def _get_lock(cls) -> asyncio.Lock:
@@ -704,52 +704,64 @@ class GlobalResourceManager:
     @classmethod
     async def get_httpx_client(cls, timeout: Optional[int] = None) -> httpx.AsyncClient:
         """
-        Returns a shared httpx client.
+        Returns a shared httpx client for the current event loop.
         If timeout is provided and differs from current client, the client is recreated.
         """
+        loop = asyncio.get_running_loop()
         lock = await cls._get_lock()
         async with lock:
-            if cls._httpx_client is not None:
+            client = cls._clients.get(loop)
+            if client is not None:
                 # Guard against None in timeout comparison (GPT5 Fix)
-                current_timeout = getattr(cls._httpx_client.timeout, "read", None)
+                current_timeout = getattr(client.timeout, "read", None)
                 if timeout is not None and current_timeout is not None and abs(current_timeout - timeout) > 0.001:
                     try:
-                        await cls._httpx_client.aclose()
+                        await client.aclose()
                     except Exception:
                         pass
-                    cls._httpx_client = None
+                    client = None
 
-            if cls._httpx_client is None:
+            if client is None:
                 use_timeout = timeout or DEFAULT_REQUEST_TIMEOUT
-                cls._httpx_client = httpx.AsyncClient(
+                client = httpx.AsyncClient(
                     follow_redirects=True,
                     timeout=httpx.Timeout(use_timeout),
                     headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
                     limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
                 )
-        return cls._httpx_client
+                cls._clients[loop] = client
+        return client
 
     @classmethod
     def get_global_semaphore(cls) -> asyncio.Semaphore:
-        if cls._global_semaphore is None:
-            try:
-                # Attempt to get running loop to ensure we are in async context
-                asyncio.get_running_loop()
-                cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
-            except RuntimeError:
-                # Fallback if called outside a loop
-                cls._global_semaphore = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
-                return cls._global_semaphore
-        return cls._global_semaphore
+        """Returns a shared semaphore for the current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # If called outside a loop, we create a temporary semaphore
+            return asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+
+        if loop not in cls._semaphores:
+            with cls._lock_initialized:
+                if loop not in cls._semaphores:
+                    cls._semaphores[loop] = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
+        return cls._semaphores[loop]
 
     @classmethod
     async def cleanup(cls):
-        if cls._httpx_client:
+        """Closes all clients for all event loops."""
+        clients_to_close = []
+        with cls._lock_initialized:
+            clients_to_close = list(cls._clients.values())
+            cls._clients.clear()
+            cls._semaphores.clear()
+            cls._locks.clear()
+
+        for client in clients_to_close:
             try:
-                await cls._httpx_client.aclose()
+                await client.aclose()
             except (AttributeError, RuntimeError):
                 pass
-            cls._httpx_client = None
 
 
 class BrowserEngine(Enum):
@@ -1024,27 +1036,26 @@ class RateLimiter:
     requests_per_second: float = 10.0
     _tokens: float = field(default=10.0, init=False)
     _last_update: float = field(default_factory=time.time, init=False)
-    _lock: Optional[asyncio.Lock] = field(default=None, init=False)
+    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
     _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
 
+    def __post_init__(self):
+        self._tokens = self.requests_per_second
+
     def _get_lock(self) -> asyncio.Lock:
-        if self._lock is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Lock()
+
+        if loop not in self._locks:
             with self._lock_sentinel:
-                if self._lock is None:
-                    try:
-                        loop = asyncio.get_running_loop()
-                        self._lock = asyncio.Lock()
-                    except RuntimeError:
-                        # Will be handled in acquire()
-                        pass
-        return self._lock
+                if loop not in self._locks:
+                    self._locks[loop] = asyncio.Lock()
+        return self._locks[loop]
 
     async def acquire(self) -> None:
         lock = self._get_lock()
-        if lock is None:
-            # Fallback if loop wasn't running during _get_lock (Claude Fix)
-            self._lock = asyncio.Lock()
-            lock = self._lock
 
         for _ in range(1000): # Iteration limit to prevent potential hangs
             wait_time = 0
@@ -1662,10 +1673,14 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         # S5 — extract race type (independent review item)
         race_type = None
+        is_handicap = None
         header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
         if header_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(header_node), re.I)
+            header_text = node_text(header_node)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
+            if "HANDICAP" in header_text.upper():
+                is_handicap = True
 
         return Race(
             id=generate_race_id("srw", venue, start_time, race_num, disc),
@@ -1675,6 +1690,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             runners=runners,
             discipline=disc,
             race_type=race_type,
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             available_bets=scrape_available_bets(html_content)
         )
@@ -1922,12 +1938,15 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
         # S5 — extract race type (independent review item)
         race_type = None
+        is_handicap = None
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
+        if "HANDICAP" in header_text.upper():
+            is_handicap = True
 
         runners = self._parse_runners(parser)
         if not runners: return None
-        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, race_type=race_type, is_handicap=is_handicap, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
     def _parse_runners(self, parser: HTMLParser) -> List[Runner]:
         odds_map: Dict[str, float] = {}
@@ -2171,74 +2190,6 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         except Exception: return None
         return Race(discipline="Greyhound", id=generate_race_id("atrg", venue, start_time, race_number or 0, "Greyhound"), venue=venue, race_number=race_number or 0, start_time=start_time, runners=runners, distance=str(distance) if distance else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
-# ----------------------------------------
-# BoyleSportsAdapter
-# ----------------------------------------
-class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
-    SOURCE_NAME: ClassVar[str] = "BoyleSports"
-    PROVIDES_ODDS: ClassVar[bool] = False
-    BASE_URL: ClassVar[str] = "https://www.boylesports.com"
-
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Use CURL_CFFI with chrome120 for better reliability against bot detection
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45)
-
-    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
-        return await super().make_request(method, url, **kwargs)
-
-    def _get_headers(self) -> Dict[str, str]:
-        return self._get_browser_headers(host="www.boylesports.com", referer="https://www.google.com/")
-
-    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        url = "/sports/horse-racing"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
-            return None
-        self._save_debug_snapshot(resp.text, f"boylesports_index_{date}")
-        return {"pages": [{"url": url, "html": resp.text}], "date": date}
-
-    def _parse_races(self, raw_data: Any) -> List[Race]:
-        if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except Exception: race_date = datetime.now(EASTERN).date()
-        item = raw_data["pages"][0]
-        parser = HTMLParser(item.get("html", ""))
-        races: List[Race] = []
-        meeting_groups = parser.css('.meeting-group') or parser.css('.race-meeting') or parser.css('div[class*="meeting"]')
-        for meeting in meeting_groups:
-            tnn = meeting.css_first('.meeting-name') or meeting.css_first('h2') or meeting.css_first('.title')
-            if not tnn: continue
-            trw = clean_text(tnode_text(nn))
-            track_name = normalize_venue_name(trw)
-            if not track_name: continue
-            m_harness = any(kw in trw.lower() for kw in ['harness', 'trot', 'pace', 'standardbred'])
-            is_grey = any(kw in trw.lower() for kw in ['greyhound', 'dog'])
-            race_nodes = meeting.css('.race-time-row') or meeting.css('.race-details') or meeting.css('a[href*="/race/"]')
-            for i, rn in enumerate(race_nodes):
-                txt = clean_text(node_text(rn))
-                r_harness = m_harness or any(kw in txt.lower() for kw in ['trot', 'pace', 'attele', 'mounted'])
-                tm = re.search(r'(\d{1,2}:\d{2})', txt)
-                if not tm: continue
-                fm = re.search(r'\((\d+)\s+runners\)', txt, re.I)
-                fs = int(fm.group(1)) if fm else 0
-                dm = re.search(r'(\d+(?:\.\d+)?\s*[kmf]|1\s*mile)', txt, re.I)
-                dist = dm.group(1) if dm else None
-                try: st = datetime.combine(race_date, datetime.strptime(tm.group(1), "%H:%M").time())
-                except Exception: continue
-                runners = [Runner(number=j+1, name=f"Runner {j+1}", scratched=False, odds={}) for j in range(fs)]
-                disc = "Harness" if r_harness else "Greyhound" if is_grey else "Thoroughbred"
-                ab = []
-                if 'superfecta' in txt.lower(): ab.append('Superfecta')
-                elif r_harness or ' (us)' in trw.lower():
-                    if fs >= 6: ab.append('Superfecta')
-                races.append(Race(id=f"boyle_{track_name.lower().replace(' ', '')}_{st:%Y%m%d_%H%M}", venue=track_name, race_number=i + 1, start_time=st, runners=runners, distance=dist, source=self.source_name, discipline=disc, available_bets=ab))
-        # Filter out races with only placeholder/generic runners (no real names or odds) (GPT5 Fix)
-        return [r for r in races if not all(re.match(r'^Runner \d+$', run.name) for run in r.runners)]
 
 
 # ----------------------------------------
@@ -2350,6 +2301,12 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if not race_info: return None
         summary = race_info.get("race_summary") or {}
 
+        # Skip completed races (Insight 4)
+        stage = (summary.get("race_stage") or "").upper()
+        if stage in ["WEIGHEDIN", "RESULT", "OFF", "FINISHED", "ABANDONED"]:
+            self.logger.debug("Skipping completed race", stage=stage, venue=summary.get("course_name"))
+            return None
+
         # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
         # /racing/racecards/2026-02-18/punchestown/1340/
         track_name = None
@@ -2400,7 +2357,8 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if rt_match: race_type = rt_match.group(1)
         else: race_type = None
 
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+        is_handicap = summary.get("has_handicap")
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, is_handicap=is_handicap, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -2706,7 +2664,6 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-        self._semaphore = asyncio.Semaphore(3)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Use CURL_CFFI for robust HTTPS and connection handling
@@ -3159,11 +3116,16 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                     trainer=runner.get("trainer"), jockey=runner.get("jockey")
                 ))
             if not runners: continue
+            race_type = r.get("raceType")
+            is_handicap = None
+            if race_type and "HANDICAP" in race_type.upper():
+                is_handicap = True
+
             parsed_races.append(Race(
                 id=generate_race_id("nyrab", venue, start_time, race_num),
                 venue=venue, race_number=race_num, start_time=start_time,
                 runners=runners, distance=r.get("distance"), surface=r.get("surface"),
-                race_type=r.get("raceType"), source=self.source_name,
+                race_type=race_type, is_handicap=is_handicap, source=self.source_name,
                 discipline="Thoroughbred"
             ))
         return parsed_races
@@ -3270,7 +3232,9 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             return None
 
         # Fetch initial set of pages
-        pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(links)], self._get_headers(), semaphore_limit=5)
+        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        clean_links = [l.strip() for l in set(links) if l and l.strip()]
+        pages = await self._fetch_race_pages_concurrent([{"url": l} for l in clean_links], self._get_headers(), semaphore_limit=5)
 
         all_htmls = []
         extra_links = []
@@ -3322,7 +3286,9 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         if extra_links:
             self.logger.info("Fetching extra race pages from track index", count=len(extra_links))
-            extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in set(extra_links)], self._get_headers(), semaphore_limit=5)
+            # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+            clean_extra = [l.strip() for l in set(extra_links) if l and l.strip()]
+            extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in clean_extra], self._get_headers(), semaphore_limit=5)
             all_htmls.extend([p.get("html") for p in extra_pages if p and p.get("html")])
 
         return {"pages": all_htmls, "date": date}
@@ -3817,6 +3783,12 @@ class TrifectaAnalyzer(BaseAnalyzer):
             active_runners = [r for r in race.runners if not r.scratched]
             total_active = len(active_runners)
 
+            # Handicap Inference (Insight 1)
+            if race.is_handicap is None:
+                rt = (race.race_type or "").upper()
+                if any(kw in rt for kw in ["HANDICAP", "H'CAP", "HCAP", "(H)"]):
+                    race.is_handicap = True
+
             # Trustworthiness Airlock (Success Playbook Item)
             # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
             skip_trust_check = race.metadata.get("provides_odds") is False
@@ -4010,15 +3982,18 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if len(all_odds) >= 2:
                 fav, sec = all_odds[0], all_odds[1]
 
-                # S1 — implied place probability for the favourite
+                # S1 — implied place probability for the favourite (Insight 3)
                 place_prob = 0.0
                 if all_odds and len(active_runners) >= 2:
                     fav_float = float(all_odds[0])
                     n = len(active_runners)
-                    np_ = get_places_paid(n)
+                    np_ = get_places_paid(n, is_handicap=race.is_handicap)
                     win_p = 1.0 / fav_float
-                    # Additional place probability beyond winning, proportional to paid slots remaining
-                    place_prob = round(min(win_p + (1.0 - win_p) * (np_ / n), 0.97), 3)
+                    # Corrected formula: p_win + (1 - p_win) * (places - 1) / (n - 1)
+                    if n > 1:
+                        place_prob = round(min(win_p + (1.0 - win_p) * (np_ - 1) / (n - 1), 0.97), 3)
+                    else:
+                        place_prob = win_p if n == 1 else 0.0
                 race.metadata['place_prob'] = place_prob
 
                 # predicted_ev: expected value of a $2 place bet at discovery time
@@ -5282,7 +5257,8 @@ class FortunaDB:
                         condition_modifier REAL,
                         qualification_grade TEXT,
                         composite_score REAL,
-                        match_confidence TEXT
+                        match_confidence TEXT,
+                        is_handicap INTEGER
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5347,6 +5323,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
                 if "match_confidence" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
+                if "is_handicap" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN is_handicap INTEGER")
 
         await self._run_in_executor(_init)
 
@@ -5403,8 +5381,15 @@ class FortunaDB:
             await self._run_in_executor(_migrate_v5)
             self.logger.info("Schema migrated to version 5 — scoring signal columns added")
 
+        if current_version < 6:
+            def _migrate_v6():
+                with self._get_conn() as conn:
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (6, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_migrate_v6)
+            self.logger.info("Schema migrated to version 6 — handicap status added")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 5))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 6))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -5544,7 +5529,8 @@ class FortunaDB:
                         tip.get("race_type"),
                         tip.get("condition_modifier"),
                         tip.get("qualification_grade"),
-                        tip.get("composite_score")
+                        tip.get("composite_score"),
+                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None)
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5555,8 +5541,8 @@ class FortunaDB:
                             race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                             field_size, market_depth, place_prob, predicted_ev, race_type,
-                            condition_modifier, qualification_grade, composite_score
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            condition_modifier, qualification_grade, composite_score, is_handicap
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5856,6 +5842,7 @@ class HotTipsTracker:
                 "place_prob": r.metadata.get('place_prob'),
                 "predicted_ev": r.metadata.get('predicted_ev'),
                 "race_type": getattr(r, 'race_type', None),
+                "is_handicap": getattr(r, 'is_handicap', None),
                 "condition_modifier": r.metadata.get('condition_modifier'),
                 "qualification_grade": r.metadata.get('qualification_grade'),
                 "composite_score": r.metadata.get('composite_score')
@@ -6421,7 +6408,6 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-        self._semaphore = asyncio.Semaphore(3) # GPT5 Fix
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Oddschecker is heavily protected by Cloudflare; Playwright with high timeout and network idle
@@ -6444,6 +6430,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         Fetches the raw HTML for all race pages for a given date. This involves a multi-level fetch.
         """
+        sem = asyncio.Semaphore(3)
         index_url = f"/horse-racing/{date}"
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
@@ -6504,7 +6491,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             return None
 
         async def fetch_single_html(url_path: str):
-            async with self._semaphore:
+            async with sem:
                 # Small delay to avoid ban (GPT5 Fix)
                 await asyncio.sleep(0.5 + random.random() * 0.5)
                 response = await self.make_request("GET", url_path, headers=self._get_headers())
@@ -6637,7 +6624,6 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-        self._semaphore = asyncio.Semaphore(5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Timeform often blocks basic requests; Playwright is robust
@@ -6661,6 +6647,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         """
         Fetches the raw HTML for all race pages for a given date.
         """
+        sem = asyncio.Semaphore(5)
         index_url = f"/horse-racing/racecards/{date}"
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
@@ -6723,7 +6710,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             return None
 
         async def fetch_single_html(url_path: str):
-            async with self._semaphore:
+            async with sem:
                 await asyncio.sleep(0.5)
                 response = await self.make_request("GET", url_path, headers=self._get_headers())
                 return (url_path, response.text) if response else (url_path, "")
@@ -6754,6 +6741,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 # Extract via JSON-LD if possible
                 venue = ""
                 start_time = None
+                is_handicap = None
                 scripts = self._parse_all_jsons_from_scripts(parser, 'script[type="application/ld+json"]', context="Betfair Index")
                 for data in scripts:
                     if data.get("@type") == "Event":
@@ -6763,12 +6751,17 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                             start_time = datetime.fromisoformat(sd.split('+')[0])
                         break
 
+                title_node = parser.css_first("title")
+                if title_node:
+                    title_text = node_text(title_node)
+                    if "HANDICAP" in title_text.upper():
+                        is_handicap = True
+
                 if not venue:
                     # Fallback to title
-                    title = parser.css_first("title")
-                    if title:
+                    if title_node:
                         # 14:32 DUNDALK | Races 28 January 2026 ...
-                        match = re.search(r'(\d{1,2}:\d{2})\s+([^|]+)', node_text(title))
+                        match = re.search(r'(\d{1,2}:\d{2})\s+([^|]+)', title_text)
                         if match:
                             time_str = match.group(1)
                             venue = normalize_venue_name(match.group(2).strip())
@@ -6821,6 +6814,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                     race_number=race_number,
                     start_time=start_time,
                     runners=runners,
+                    is_handicap=is_handicap,
                     source=self.source_name,
                 )
                 all_races.append(race)
@@ -7075,6 +7069,10 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
+                is_handicap = None
+                if "HANDICAP" in header_text.upper():
+                    is_handicap = True
+
                 race_datetime_str = f"{date} {race_time_str}"
                 start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
 
@@ -7089,6 +7087,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         start_time=start_time,
                         runners=runners,
                         race_type=race_type,
+                        is_handicap=is_handicap,
                         source=self.source_name,
                     )
                     all_races.append(race)
