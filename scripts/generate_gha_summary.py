@@ -80,7 +80,7 @@ POSITION_EMOJI = {1: "🥇", 2: "🥈", 3: "🥉", 4: "4️⃣", 5: "5️⃣"}
 # Region mapping for sorting (Global > Intl > USA)
 GLOBAL_ADAPTERS = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
-    "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
+    "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports"
 }
 INT_ADAPTERS = {
