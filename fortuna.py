@@ -4052,6 +4052,10 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                         is_goldmine = True
                         is_best_bet = True
 
+                    # S8 — Grade-based Best Bets (Expand to all A+ and A)
+                    if qualification_grade in ('A+', 'A'):
+                        is_best_bet = True
+
                 race.metadata['predicted_2nd_fav_odds'] = float(sec)
             else:
                 # Fallback if insufficient odds data
