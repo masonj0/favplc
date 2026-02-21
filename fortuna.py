@@ -569,6 +569,7 @@ class Race(FortunaBaseModel):
     start_time: datetime = Field(..., alias="startTime")
     runners: List[Runner] = Field(default_factory=list)
     race_type: Optional[str] = None
+    is_handicap: Optional[bool] = None
 
     @field_validator("venue", mode="after")
     @classmethod
@@ -587,7 +588,6 @@ class Race(FortunaBaseModel):
 
     source: str
     discipline: str = "Thoroughbred"
-    race_type: Optional[str] = None
     surface: Optional[str] = None
     distance: Optional[str] = None
     field_size: Optional[int] = None
@@ -1662,10 +1662,14 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         # S5 — extract race type (independent review item)
         race_type = None
+        is_handicap = None
         header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
         if header_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(header_node), re.I)
+            header_text = node_text(header_node)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
+            if "HANDICAP" in header_text.upper():
+                is_handicap = True
 
         return Race(
             id=generate_race_id("srw", venue, start_time, race_num, disc),
@@ -1675,6 +1679,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             runners=runners,
             discipline=disc,
             race_type=race_type,
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             available_bets=scrape_available_bets(html_content)
         )
@@ -1922,12 +1927,15 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
         # S5 — extract race type (independent review item)
         race_type = None
+        is_handicap = None
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
+        if "HANDICAP" in header_text.upper():
+            is_handicap = True
 
         runners = self._parse_runners(parser)
         if not runners: return None
-        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
+        return Race(discipline="Thoroughbred", id=generate_race_id("atr", track_name, start_time, race_number), venue=track_name, race_number=race_number, start_time=start_time, runners=runners, distance=distance, race_type=race_type, is_handicap=is_handicap, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
     def _parse_runners(self, parser: HTMLParser) -> List[Runner]:
         odds_map: Dict[str, float] = {}
@@ -2350,6 +2358,12 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if not race_info: return None
         summary = race_info.get("race_summary") or {}
 
+        # Skip completed races (Insight 4)
+        stage = (summary.get("race_stage") or "").upper()
+        if stage in ["WEIGHEDIN", "RESULT", "OFF", "FINISHED", "ABANDONED"]:
+            self.logger.debug("Skipping completed race", stage=stage, venue=summary.get("course_name"))
+            return None
+
         # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
         # /racing/racecards/2026-02-18/punchestown/1340/
         track_name = None
@@ -2400,7 +2414,8 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if rt_match: race_type = rt_match.group(1)
         else: race_type = None
 
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+        is_handicap = summary.get("has_handicap")
+        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, is_handicap=is_handicap, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -3159,11 +3174,16 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                     trainer=runner.get("trainer"), jockey=runner.get("jockey")
                 ))
             if not runners: continue
+            race_type = r.get("raceType")
+            is_handicap = None
+            if race_type and "HANDICAP" in race_type.upper():
+                is_handicap = True
+
             parsed_races.append(Race(
                 id=generate_race_id("nyrab", venue, start_time, race_num),
                 venue=venue, race_number=race_num, start_time=start_time,
                 runners=runners, distance=r.get("distance"), surface=r.get("surface"),
-                race_type=r.get("raceType"), source=self.source_name,
+                race_type=race_type, is_handicap=is_handicap, source=self.source_name,
                 discipline="Thoroughbred"
             ))
         return parsed_races
@@ -3817,6 +3837,12 @@ class TrifectaAnalyzer(BaseAnalyzer):
             active_runners = [r for r in race.runners if not r.scratched]
             total_active = len(active_runners)
 
+            # Handicap Inference (Insight 1)
+            if race.is_handicap is None:
+                rt = (race.race_type or "").upper()
+                if any(kw in rt for kw in ["HANDICAP", "H'CAP", "HCAP", "(H)"]):
+                    race.is_handicap = True
+
             # Trustworthiness Airlock (Success Playbook Item)
             # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
             skip_trust_check = race.metadata.get("provides_odds") is False
@@ -4010,15 +4036,18 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if len(all_odds) >= 2:
                 fav, sec = all_odds[0], all_odds[1]
 
-                # S1 — implied place probability for the favourite
+                # S1 — implied place probability for the favourite (Insight 3)
                 place_prob = 0.0
                 if all_odds and len(active_runners) >= 2:
                     fav_float = float(all_odds[0])
                     n = len(active_runners)
-                    np_ = get_places_paid(n)
+                    np_ = get_places_paid(n, is_handicap=race.is_handicap)
                     win_p = 1.0 / fav_float
-                    # Additional place probability beyond winning, proportional to paid slots remaining
-                    place_prob = round(min(win_p + (1.0 - win_p) * (np_ / n), 0.97), 3)
+                    # Corrected formula: p_win + (1 - p_win) * (places - 1) / (n - 1)
+                    if n > 1:
+                        place_prob = round(min(win_p + (1.0 - win_p) * (np_ - 1) / (n - 1), 0.97), 3)
+                    else:
+                        place_prob = win_p if n == 1 else 0.0
                 race.metadata['place_prob'] = place_prob
 
                 # predicted_ev: expected value of a $2 place bet at discovery time
@@ -6754,6 +6783,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                 # Extract via JSON-LD if possible
                 venue = ""
                 start_time = None
+                is_handicap = None
                 scripts = self._parse_all_jsons_from_scripts(parser, 'script[type="application/ld+json"]', context="Betfair Index")
                 for data in scripts:
                     if data.get("@type") == "Event":
@@ -6763,12 +6793,17 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                             start_time = datetime.fromisoformat(sd.split('+')[0])
                         break
 
+                title_node = parser.css_first("title")
+                if title_node:
+                    title_text = node_text(title_node)
+                    if "HANDICAP" in title_text.upper():
+                        is_handicap = True
+
                 if not venue:
                     # Fallback to title
-                    title = parser.css_first("title")
-                    if title:
+                    if title_node:
                         # 14:32 DUNDALK | Races 28 January 2026 ...
-                        match = re.search(r'(\d{1,2}:\d{2})\s+([^|]+)', node_text(title))
+                        match = re.search(r'(\d{1,2}:\d{2})\s+([^|]+)', title_text)
                         if match:
                             time_str = match.group(1)
                             venue = normalize_venue_name(match.group(2).strip())
@@ -6821,6 +6856,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                     race_number=race_number,
                     start_time=start_time,
                     runners=runners,
+                    is_handicap=is_handicap,
                     source=self.source_name,
                 )
                 all_races.append(race)
@@ -7075,6 +7111,10 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
+                is_handicap = None
+                if "HANDICAP" in header_text.upper():
+                    is_handicap = True
+
                 race_datetime_str = f"{date} {race_time_str}"
                 start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
 
@@ -7089,6 +7129,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         start_time=start_time,
                         runners=runners,
                         race_type=race_type,
+                        is_handicap=is_handicap,
                         source=self.source_name,
                     )
                     all_races.append(race)
