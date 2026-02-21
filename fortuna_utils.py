@@ -10,6 +10,8 @@ EASTERN = ZoneInfo("America/New_York")
 
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
+# 2.75 is chosen as a conservative implied place-odds estimate (approx 7/4)
+# for runners where real odds are missing during discovery.
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
 COMMON_PLACEHOLDERS: Final[set] = set()
 
@@ -205,6 +207,10 @@ DRF_VENUE_MAP: Final[Dict[str, str]] = {
     "FG": "Fair Grounds",
     "RP": "Remington Park",
     "HOU": "Sam Houston",
+    "FON": "Fonner Park",
+    "MVR": "Mahoning Valley",
+    "LA": "Los Alamitos",
+    "LAD": "Louisiana Downs",
 }
 
 RACING_KEYWORDS = [
@@ -445,12 +451,21 @@ def is_valid_odds(odds: Any) -> bool:
     except Exception: return False
 
 def scrape_available_bets(html_content: str) -> List[str]:
+    """Extract exotic bet types mentioned in HTML content."""
     if not html_content: return []
+
     available_bets: List[str] = []
     html_lower = html_content.lower()
+
     for kw, bet_name in BET_TYPE_KEYWORDS.items():
-        if re.search(rf"\b{re.escape(kw)}\b", html_lower) and bet_name not in available_bets:
+        # Handle multi-word keywords properly (e.g., "pick 3", "daily double")
+        # Split on spaces, escape each word, join with \s+ for flexible whitespace matching
+        words = kw.split()
+        pattern = r"\b" + r"\s+".join(re.escape(w) for w in words) + r"\b"
+
+        if re.search(pattern, html_lower) and bet_name not in available_bets:
             available_bets.append(bet_name)
+
     return available_bets
 
 def detect_discipline(html_content: str) -> str:
@@ -474,6 +489,7 @@ def ensure_eastern(dt: datetime) -> datetime:
     """Ensures datetime is timezone-aware and in Eastern time."""
     if dt.tzinfo is None:
         return dt.replace(tzinfo=EASTERN)
+    # Note: identity check assumes ZoneInfo('America/New_York') is globally cached/singleton.
     if dt.tzinfo is not EASTERN:
         try:
             return dt.astimezone(EASTERN)

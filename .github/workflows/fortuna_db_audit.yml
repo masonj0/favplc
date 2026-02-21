@@ -74,6 +74,7 @@ jobs:
           LOOKBACK       = int(os.environ.get("LOOKBACK_HOURS", "72"))
           FORCE_DIAG     = os.environ.get("FORCE_DIAG", "false").lower() == "true"
           STANDARD_BET   = 2.00
+          stale_hours    = None
 
           def emit(line=""):
               buf.append(line)
@@ -405,13 +406,20 @@ jobs:
                       f"SELECT 1 FROM pragma_table_info('tips') "
                       f"WHERE name='{exotic}'"
                   ).fetchone())
+                  combo_exists = bool(conn.execute(
+                      f"SELECT 1 FROM pragma_table_info('tips') "
+                      f"WHERE name='{exotic.replace('_payout','_combination')}'"
+                  ).fetchone())
+
                   if not col_exists:
                       continue
+
+                  combo_col = exotic.replace('_payout','_combination') if combo_exists else "NULL"
 
                   erows = conn.execute(f"""
                       SELECT venue, race_number, start_time,
                              {exotic} as payout,
-                             {exotic.replace('_payout','_combination')} as combo,
+                             {combo_col} as combo,
                              verdict
                       FROM tips
                       WHERE {exotic} IS NOT NULL AND {exotic} > 0
@@ -899,7 +907,7 @@ jobs:
               decided = ow + ol
               if decided >= 10:
                   hr = ow / decided * 100
-                  avg_pay = overall['avg_payout'] or STANDARD_BET
+                  avg_pay = overall['avg_pay'] or STANDARD_BET
                   be = STANDARD_BET / avg_pay * 100
                   margin = hr - be
                   if margin < -5:

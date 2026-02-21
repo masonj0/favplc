@@ -607,6 +607,16 @@ def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     return getattr(obj, field_name, default)
 
 
+def _safe_int(text: str, default: int = 0) -> int:
+    """Extract leading digits from text, return *default* on failure."""
+    if not text: return default
+    cleaned = re.sub(r"\D", "", str(text))
+    try:
+        return int(cleaned) if cleaned else default
+    except ValueError:
+        return default
+
+
 
 
 
@@ -5263,7 +5273,8 @@ class FortunaDB:
                         qualification_grade TEXT,
                         composite_score REAL,
                         match_confidence TEXT,
-                        is_handicap INTEGER
+                        is_handicap INTEGER,
+                        is_best_bet INTEGER
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5330,6 +5341,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
                 if "is_handicap" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN is_handicap INTEGER")
+                if "is_best_bet" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN is_best_bet INTEGER")
 
         await self._run_in_executor(_init)
 
@@ -5535,7 +5548,8 @@ class FortunaDB:
                         tip.get("condition_modifier"),
                         tip.get("qualification_grade"),
                         tip.get("composite_score"),
-                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None)
+                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
+                        1 if tip.get("is_best_bet") else 0
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5546,8 +5560,8 @@ class FortunaDB:
                             race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                             field_size, market_depth, place_prob, predicted_ev, race_type,
-                            condition_modifier, qualification_grade, composite_score, is_handicap
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5850,7 +5864,8 @@ class HotTipsTracker:
                 "is_handicap": getattr(r, 'is_handicap', None),
                 "condition_modifier": r.metadata.get('condition_modifier'),
                 "qualification_grade": r.metadata.get('qualification_grade'),
-                "composite_score": r.metadata.get('composite_score')
+                "composite_score": r.metadata.get('composite_score'),
+                "is_best_bet": r.metadata.get('is_best_bet', False)
             }
             new_tips.append(tip_data)
 
@@ -7057,20 +7072,32 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             try:
                 parser = HTMLParser(html)
 
-                venue_node = parser.css_first('a[data-test-selector="RC-course__name"]')
+                venue_node = (
+                    parser.css_first('*[data-test-selector="RC-courseHeader__name"]')
+                    or parser.css_first('a[data-test-selector="RC-courseHeader__name"]')
+                    or parser.css_first('a[data-test-selector="RC-course__name"]')
+                )
                 if not venue_node:
                     continue
                 venue_raw = node_text(venue_node)
                 venue = normalize_venue_name(venue_raw)
 
-                race_time_node = parser.css_first('span[data-test-selector="RC-course__time"]')
+                race_time_node = (
+                    parser.css_first('*[data-test-selector="RC-courseHeader__time"]')
+                    or parser.css_first('span[data-test-selector="RC-courseHeader__time"]')
+                    or parser.css_first('span[data-test-selector="RC-course__time"]')
+                )
                 if not race_time_node:
                     continue
                 race_time_str = node_text(race_time_node)
 
                 # S5 — extract race type (independent review item)
                 race_type = None
-                header_text = node_text(parser.css_first('.rp-raceCourse__panel__race__info') or parser.css_first('.RC-course__info'))
+                header_text = node_text(
+                    parser.css_first('.rp-raceCourse__panel__race__info')
+                    or parser.css_first('.RC-course__info')
+                    or parser.css_first('.RC-courseHeader')
+                )
                 rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
@@ -7079,7 +7106,15 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     is_handicap = True
 
                 race_datetime_str = f"{date} {race_time_str}"
-                start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
+                try:
+                    start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
+                except ValueError:
+                    # Handle cases where time might have extra text or different format
+                    time_match = re.search(r"(\d{1,2}:\d{2})", race_time_str)
+                    if time_match:
+                        start_time = datetime.strptime(f"{date} {time_match.group(1)}", "%Y-%m-%d %H:%M")
+                    else:
+                        continue
 
                 runners = self._parse_runners(parser)
 
@@ -7113,31 +7148,64 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _parse_runners(self, parser: HTMLParser) -> list[Runner]:
         """Parses all runners from a single race card page."""
         runners = []
-        runner_nodes = parser.css('div[data-test-selector="RC-runnerCard"]')
+        runner_nodes = (
+            parser.css('div[data-test-selector="RC-runnerCard"]')
+            or parser.css('.RC-runnerRow')
+        )
+
+        # Betting Forecast Fallback (Jules Fix)
+        forecast_map = {}
+        for group in parser.css('*[data-test-selector="RC-bettingForecast_group"]'):
+            group_text = node_text(group)
+            # Format: "2/1 Horse Name" or similar
+            link = group.css_first('*[data-test-selector="RC-bettingForecast_link"]')
+            if link:
+                horse_name = clean_text(node_text(link))
+                # Remove horse name from group_text to get odds
+                odds_part = group_text.replace(horse_name, "").strip().rstrip(",")
+                if val := parse_odds_to_decimal(odds_part):
+                    forecast_map[horse_name.lower()] = val
+
         for node in runner_nodes:
-            if runner := self._parse_runner(node):
+            if runner := self._parse_runner(node, forecast_map):
                 runners.append(runner)
         return runners
 
-    def _parse_runner(self, node: Node) -> Optional[Runner]:
+    def _parse_runner(self, node: Node, forecast_map: Optional[Dict[str, float]] = None) -> Optional[Runner]:
         try:
-            number_node = node.css_first('span[data-test-selector="RC-runnerNumber"]')
-            name_node = node.css_first('a[data-test-selector="RC-runnerName"]')
-            odds_node = node.css_first('span[data-test-selector="RC-runnerPrice"]')
+            number_node = (
+                node.css_first('span[data-test-selector="RC-cardPage-runnerNumber-no"]')
+                or node.css_first('span[data-test-selector="RC-runnerNumber"]')
+                or node.css_first('.RC-runnerNumber__no')
+            )
+            name_node = (
+                node.css_first('a[data-test-selector="RC-cardPage-runnerName"]')
+                or node.css_first('a[data-test-selector="RC-runnerName"]')
+                or node.css_first('.RC-runnerName')
+            )
+            odds_node = (
+                node.css_first('span[data-test-selector="RC-cardPage-runnerPrice"]')
+                or node.css_first('a[data-test-selector="RC-cardPage-runnerPrice"]')
+                or node.css_first('span[data-test-selector="RC-runnerPrice"]')
+                or node.css_first('.RC-runnerPrice')
+            )
 
-            if not all([number_node, name_node, odds_node]):
+            if not name_node:
                 return None
 
-            number_str = clean_text(node_text(number_node))
-            number = 0
-            if number_str:
-                num_txt = "".join(filter(str.isdigit, number_str))
-                if num_txt:
-                    val = int(num_txt)
-                    if val <= 40: number = val
             name = clean_text(node_text(name_node))
-            odds_str = clean_text(node_text(odds_node))
-            scratched = "NR" in odds_str.upper() or not odds_str
+
+            number = 0
+            if number_node:
+                number_str = clean_text(node_text(number_node))
+                if number_str:
+                    num_txt = "".join(filter(str.isdigit, number_str))
+                    if num_txt:
+                        val = int(num_txt)
+                        if val <= 100: number = val
+
+            odds_str = clean_text(node_text(odds_node)) if odds_node else ""
+            scratched = "NR" in odds_str.upper() or "NON-RUNNER" in node_text(node).upper()
 
             odds = {}
             win_odds = None
@@ -7146,6 +7214,11 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 win_odds = parse_odds_to_decimal(odds_str)
                 if win_odds is not None:
                     odds_source = "extracted"
+
+                # Betting Forecast Fallback
+                if win_odds is None and forecast_map and name.lower() in forecast_map:
+                    win_odds = forecast_map[name.lower()]
+                    odds_source = "betting_forecast"
 
                 # Advanced heuristic fallback
                 if win_odds is None:
@@ -7157,7 +7230,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     odds[self.source_name] = odds_data
 
             return Runner(number=number, name=name, odds=odds, win_odds=win_odds, odds_source=odds_source, scratched=scratched)
-        except (ValueError, AttributeError):
+        except Exception:
             self.logger.warning("Could not parse RacingPost runner, skipping.", exc_info=True)
             return None
 
@@ -7256,11 +7329,19 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         return races
 
     def _parse_result_page(self, parser: HTMLParser, date_str: str, url: str) -> Optional[Race]:
-        venue_node = parser.css_first('a[data-test-selector="RC-course__name"]')
+        venue_node = (
+            parser.css_first('*[data-test-selector="RC-courseHeader__name"]')
+            or parser.css_first('a[data-test-selector="RC-courseHeader__name"]')
+            or parser.css_first('a[data-test-selector="RC-course__name"]')
+        )
         if not venue_node: return None
         venue = normalize_venue_name(node_text(venue_node))
 
-        time_node = parser.css_first('span[data-test-selector="RC-course__time"]')
+        time_node = (
+            parser.css_first('*[data-test-selector="RC-courseHeader__time"]')
+            or parser.css_first('span[data-test-selector="RC-courseHeader__time"]')
+            or parser.css_first('span[data-test-selector="RC-course__time"]')
+        )
         if not time_node: return None
         time_str = node_text(time_node)
 
@@ -7293,24 +7374,52 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         # Extract runners (finishers)
         runners = []
-        for row in parser.css('div[data-test-selector="RC-resultRunner"]'):
-            name_node = row.css_first('a[data-test-selector="RC-resultRunnerName"]')
+        # Try different row selectors for results
+        runner_rows = (
+            parser.css('div[data-test-selector="RC-resultRunner"]')
+            or parser.css('.RC-runnerRow')
+            or parser.css('.rp-horseTable__mainRow')
+        )
+
+        for row in runner_rows:
+            name_node = (
+                row.css_first('a[data-test-selector="RC-resultRunnerName"]')
+                or row.css_first('*[data-test-selector="RC-cardPage-runnerName"]')
+                or row.css_first('.RC-runnerName')
+                or row.css_first('.rp-horseTable__horse__name')
+            )
             if not name_node: continue
             name = clean_text(node_text(name_node))
-            pos_node = row.css_first('span.rp-resultRunner__position')
+
+            pos_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerPosition"]')
+                or row.css_first('span.rp-resultRunner__position')
+                or row.css_first('.rp-horseTable__pos__number')
+            )
             pos = clean_text(node_text(pos_node)) if pos_node else "?"
 
             # Try to find saddle number
             number = 0
-            num_node = row.css_first(".rp-resultRunner__saddleClothNo")
+            num_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerNumber-no"]')
+                or row.css_first('.RC-runnerNumber__no')
+                or row.css_first(".rp-resultRunner__saddleClothNo")
+                or row.css_first(".rp-horseTable__saddleClothNo")
+            )
             if num_node:
-                try: number = int(clean_text(node_text(num_node)))
+                try: number = _safe_int(node_text(num_node))
                 except Exception: pass
 
             # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
             win_odds = None
             odds_source = None
-            sp_node = row.css_first('span[data-test-selector="RC-resultRunnerSP"]') or row.css_first('.rp-resultRunner__sp')
+            sp_node = (
+                row.css_first('*[data-test-selector="RC-cardPage-runnerPrice"]')
+                or row.css_first('.RC-runnerPrice')
+                or row.css_first('span[data-test-selector="RC-resultRunnerSP"]')
+                or row.css_first('.rp-resultRunner__sp')
+                or row.css_first(".rp-horseTable__horse__sp")
+            )
             if sp_node:
                 win_odds = parse_odds_to_decimal(clean_text(node_text(sp_node)))
                 if win_odds is not None:
