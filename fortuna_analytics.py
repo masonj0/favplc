@@ -636,7 +636,7 @@ class AuditorEngine:
             # Missing position often means parsing gap, not a loss (Claude Fix)
             return Verdict.VOID, 0.0
 
-        places_paid = get_places_paid(len(result.active_runners))
+        places_paid = get_places_paid(len(result.active_runners), is_handicap=result.is_handicap)
 
         if sel.position_numeric > places_paid:
             return Verdict.BURNED, -STANDARD_BET
@@ -966,7 +966,9 @@ class PageFetchingResultsAdapter(
             source=self.SOURCE_NAME,
             count=len(absolute),
         )
-        metadata = [{"url": u, "race_number": 0} for u in absolute]
+        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        clean_absolute = [u.strip() for u in absolute if u and u.strip()]
+        metadata = [{"url": u, "race_number": 0} for u in clean_absolute]
         pages = await self._fetch_race_pages_concurrent(
             metadata, self._get_headers(),
         )
@@ -1331,6 +1333,10 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
                     odds_source="extracted" if final_odds else None
                 ))
             if not runners: continue
+            is_handicap = None
+            if r.get("raceMeetingName") and "HANDICAP" in r["raceMeetingName"].upper():
+                is_handicap = True
+
             results.append(ResultRace(
                 id=fortuna.generate_race_id("nyrab", venue, start_time, race_num),
                 venue=venue, race_number=race_num, start_time=start_time,
@@ -1418,7 +1424,9 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return resolved
 
         self.logger.info("Resolving track indices", count=len(index_links))
-        metadata = [{"url": ln, "race_number": 0} for ln in index_links]
+        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        clean_index_links = [ln.strip() for ln in index_links if ln and ln.strip()]
+        metadata = [{"url": ln, "race_number": 0} for ln in clean_index_links]
         index_pages = await self._fetch_race_pages_concurrent(
             metadata, self._get_headers(),
         )
@@ -1565,6 +1573,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
+        is_handicap = None
+        if "HANDICAP" in header_text.upper():
+            is_handicap = True
+
         return ResultRace(
             id=self._make_race_id("eqb_res", venue, date_str, race_num),
             venue=venue,
@@ -1573,6 +1585,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             runners=runners,
             discipline="Thoroughbred",
             race_type=race_type,
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             is_fully_parsed=True,
             **_apply_exotics_to_race(exotics),
@@ -1735,10 +1748,14 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
 
         # S5 — extract race type (independent review item)
         race_type = None
+        is_handicap = None
         header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
         if header_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', fortuna.node_text(header_node), re.I)
+            header_text = fortuna.node_text(header_node)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
+            if "HANDICAP" in header_text.upper():
+                is_handicap = True
 
         return ResultRace(
             id=self._make_race_id("rp_res", venue, date_str, race_num),
@@ -1748,6 +1765,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             runners=runners,
             discipline="Thoroughbred",
             race_type=race_type,
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             trifecta_payout=trifecta_pay,
             trifecta_combination=trifecta_combo,
@@ -1897,45 +1915,64 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         # ── US thoroughbred ───────────────────────────────────────────────
         "aqueduct",
         "belmont-park",
+        "belmont",
         "saratoga",
         "gulfstream-park",
+        "gulfstream",
         "gulfstream-park-west",
         "santa-anita-park",
+        "santa-anita",
         "del-mar",
         "churchill-downs",
         "keeneland",
         "oaklawn-park",
+        "oaklawn",
         "laurel-park",
+        "laurel",
         "pimlico",
         "tampa-bay-downs",
+        "tampa-bay",
+        "tampa",
         "turfway-park",
+        "turfway",
         "turf-paradise",
         "fair-grounds",
         "fair-grounds-race-course",
         "monmouth-park",
+        "monmouth",
         "remington-park",
+        "remington",
         "sam-houston-race-park",
+        "sam-houston",
         "los-alamitos",
         "golden-gate-fields",
+        "golden-gate",
         "penn-national",
         "charles-town",
         "presque-isle-downs",
+        "presque-isle",
         "mahoning-valley",
         "finger-lakes",
         "hawthorne",
         "indiana-grand",
         "parx-racing",
+        "parx",
         "suffolk-downs",
         "will-rogers-downs",
+        "will-rogers",
         "emerald-downs",
         "sunland-park",
+        "sunland",
         "lone-star-park",
+        "lone-star",
         "delta-downs",
         "evangeline-downs",
+        "evangeline",
         "ellis-park",
         "kentucky-downs",
         "thistledown",
         "belterra-park",
+        "belterra",
         # ── US harness (in case RP covers them) ───────────────────────────
         "meadowlands",
         "yonkers-raceway",
@@ -2560,6 +2597,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
+        is_handicap = summary.get("has_handicap")
         return ResultRace(
             id=self._make_race_id("sl_res", venue, date_val, race_num),
             venue=venue,
@@ -2568,6 +2606,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
             runners=runners,
             discipline="Thoroughbred",
             race_type=race_type,
+            is_handicap=is_handicap,
             trifecta_payout=trifecta_pay,
             superfecta_payout=superfecta_pay,
             source=self.SOURCE_NAME,
@@ -2917,6 +2956,10 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         if not runners:
             return None
 
+        is_handicap = None
+        if "HANDICAP" in html.upper():
+            is_handicap = True
+
         return ResultRace(
             id=self._make_race_id("sc_res", venue, date_str, race_num),
             venue=venue,
@@ -2924,6 +2967,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
             start_time=build_start_time(date_str),
             runners=runners,
             discipline="Harness",
+            is_handicap=is_handicap,
             source=self.SOURCE_NAME,
             **_apply_exotics_to_race(exotics),
         )
