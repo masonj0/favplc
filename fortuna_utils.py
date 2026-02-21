@@ -178,6 +178,33 @@ VENUE_MAP = {
 "TURFWAY": "Turfway Park",
 "TURFWAY PARK": "Turfway Park",
 "SUNLAND": "Sunland Park",
+"RP": "Remington Park",
+"REMINGTON": "Remington Park",
+"REMINGTON PARK": "Remington Park",
+}
+
+DRF_VENUE_MAP: Final[Dict[str, str]] = {
+    "AQU": "Aqueduct",
+    "BEL": "Belmont Park",
+    "SAR": "Saratoga",
+    "GP": "Gulfstream Park",
+    "LRL": "Laurel Park",
+    "PIM": "Pimlico",
+    "TAM": "Tampa Bay Downs",
+    "TP": "Turfway Park",
+    "OP": "Oaklawn Park",
+    "CD": "Churchill Downs",
+    "SA": "Santa Anita",
+    "DMR": "Del Mar",
+    "GG": "Golden Gate Fields",
+    "MTH": "Monmouth Park",
+    "PRX": "Parx Racing",
+    "KEE": "Keeneland",
+    "CT": "Charles Town",
+    "DED": "Delta Downs",
+    "FG": "Fair Grounds",
+    "RP": "Remington Park",
+    "HOU": "Sam Houston",
 }
 
 RACING_KEYWORDS = [

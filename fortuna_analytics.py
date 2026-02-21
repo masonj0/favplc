@@ -1041,7 +1041,189 @@ class PageFetchingResultsAdapter(
         return f"{prefix}_{canon}_{date_str.replace('-', '')}_R{race_num}"
 
 
-# -- EQUIBASE RESULTS ADAPTER ------------------------------------------------
+# -- DRF RESULTS ADAPTER -----------------------------------------------------
+
+class DRFResultsAdapter(PageFetchingResultsAdapter):
+    """
+    Adapter for DRF.com text charts (structured pipe-delimited data).
+    Covers all USA Thoroughbred tracks with official pari-mutuel results.
+    """
+    SOURCE_NAME = "DRFResults"
+    BASE_URL = "https://www1.drf.com"
+    HOST = "www1.drf.com"
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.HTTPX,
+            enable_js=False,
+            timeout=45
+        )
+
+    def _get_headers(self) -> Dict[str, str]:
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/plain, application/octet-stream, */*",
+            "Referer": "https://www1.drf.com/drfTextChart.do"
+        }
+
+    async def _fetch_data(self, date_str: str) -> Optional[Any]:
+        # YYYY-MM-DD -> YYYYMMDD
+        drf_date = date_str.replace("-", "")
+        url = f"/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
+        try:
+            resp = await self.smart_fetcher.fetch(
+                url,
+                method="GET",
+                headers=self._get_headers()
+            )
+            if not resp or not resp.text: return None
+            # Check for redirect to login or auth page
+            if "Please login" in resp.text or "DrfAuthService" in resp.text:
+                self.logger.warning("DRF fetch redirected to login page", url=url)
+                return None
+            return {"content": resp.text, "date": date_str}
+        except Exception as e:
+            self.logger.error("DRFResults fetch failed", error=str(e))
+            return None
+
+    def _parse_races(self, raw_data: Any) -> List[ResultRace]:
+        if not raw_data: return []
+        content = raw_data.get("content", "")
+        date_str = raw_data.get("date")
+
+        races: List[ResultRace] = []
+        current_venue = "Unknown"
+        # Use a dict to group runners by race_num for the current venue
+        venue_races = defaultdict(lambda: {"runners": [], "info": {}})
+
+        import csv
+        import io
+
+        # Detect delimiter
+        delim = "|" if "|" in content[:2000] else ","
+
+        reader = csv.reader(io.StringIO(content), delimiter=delim, quotechar='"')
+
+        for fields in reader:
+            if not fields: continue
+            rtype = fields[0]
+
+            if rtype == "H":
+                # New track card starts. Emit previous track races if any.
+                if venue_races:
+                    races.extend(self._finalize_venue_races(venue_races, current_venue, date_str))
+                    venue_races = defaultdict(lambda: {"runners": [], "info": {}})
+
+                track_code = fields[2] if len(fields) > 2 else ""
+                raw_venue_name = fields[6] if len(fields) > 6 else track_code
+
+                # Use DRF_VENUE_MAP for high-confidence mapping
+                from fortuna_utils import DRF_VENUE_MAP
+                if track_code in DRF_VENUE_MAP:
+                    current_venue = DRF_VENUE_MAP[track_code]
+                else:
+                    current_venue = fortuna.normalize_venue_name(raw_venue_name)
+
+            elif rtype == "R":
+                if len(fields) < 3: continue
+                # Breed filter: TB only
+                if fields[2] != "TB": continue
+
+                try:
+                    race_num = int(fields[1])
+                    venue_races[race_num]["info"] = {
+                        "distance": fields[29] if len(fields) > 29 else "",
+                        "unit": fields[30] if len(fields) > 30 else "",
+                        "surface": fields[31] if len(fields) > 31 else "",
+                        "post_time": fields[37] if len(fields) > 37 else "",
+                        "is_handicap": "HANDICAP" in " ".join(fields).upper()
+                    }
+                except (ValueError, IndexError):
+                    continue
+
+            elif rtype == "S":
+                if len(fields) < 4: continue
+                try:
+                    race_num = int(fields[1])
+                    if race_num not in venue_races: continue
+
+                    # Scratch check (field 82 / index 81)
+                    scratch_reason = fields[81].strip() if len(fields) > 81 else ""
+                    if scratch_reason: continue
+
+                    name = fields[3]
+                    # Odds to $1 are in field 37 (index 36)
+                    raw_odds = fields[36] if len(fields) > 36 else "0"
+                    try:
+                        # DRF odds are usually multiplied by 100 in text charts
+                        decimal_odds = (float(raw_odds) / 100.0) + 1.0
+                    except ValueError:
+                        decimal_odds = None
+
+                    # Payouts (fields 68, 69, 70 -> indices 67, 68, 69)
+                    win_pay = parse_currency_value(fields[67]) if len(fields) > 67 else 0.0
+                    place_pay = parse_currency_value(fields[68]) if len(fields) > 68 else 0.0
+                    show_pay = parse_currency_value(fields[69]) if len(fields) > 69 else 0.0
+
+                    finish_pos = fields[50] if len(fields) > 50 else ""
+                    # Program number (field 81 / index 80)
+                    prog_num_str = fields[80] if len(fields) > 80 else "0"
+                    try:
+                        prog_num = int("".join(filter(str.isdigit, prog_num_str)))
+                    except ValueError:
+                        prog_num = 0
+
+                    venue_races[race_num]["runners"].append(ResultRunner(
+                        name=name,
+                        number=prog_num,
+                        position=finish_pos,
+                        final_win_odds=decimal_odds,
+                        win_payout=win_pay,
+                        place_payout=place_pay,
+                        show_payout=show_pay,
+                        odds_source="extracted"
+                    ))
+                except (ValueError, IndexError):
+                    continue
+
+        # Finalize last venue
+        if venue_races:
+            races.extend(self._finalize_venue_races(venue_races, current_venue, date_str))
+
+        return races
+
+    def _finalize_venue_races(self, venue_races: Dict[int, Any], venue: str, date_str: str) -> List[ResultRace]:
+        finalized = []
+        for race_num, data in venue_races.items():
+            if not data["runners"]: continue
+
+            info = data["info"]
+            post_time = info.get("post_time", "12:00")
+            # DRF times like "0100" (1:00 PM).
+            if len(post_time) == 4 and post_time.isdigit():
+                hr = int(post_time[:2])
+                if hr < 11: hr += 12
+                formatted_time = f"{hr}:{post_time[2:]}"
+            else:
+                formatted_time = "12:00"
+
+            start_time = build_start_time(date_str, formatted_time)
+
+            finalized.append(ResultRace(
+                id=fortuna.generate_race_id("drf", venue, start_time, race_num),
+                venue=venue,
+                race_number=race_num,
+                start_time=start_time,
+                runners=data["runners"],
+                discipline="Thoroughbred",
+                is_handicap=info.get("is_handicap"),
+                source=self.SOURCE_NAME,
+                is_fully_parsed=True
+            ))
+        return finalized
+
+
+# -- NYRABETS RESULTS ADAPTER ------------------------------------------------
 
 class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
     """

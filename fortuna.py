@@ -382,6 +382,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
+    "DRFResults",
     # "NYRABetsResults",  # Temporarily removed due to API 403 block (2026-02-21)
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
