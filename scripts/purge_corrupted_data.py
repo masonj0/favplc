@@ -306,6 +306,12 @@ def clean_artifact_files(execute: bool) -> int:
         "results_harvest_*.json",
         "discovery_harvest_*.json",
         "analytics_report.txt",
+        "prediction_history.jsonl",
+        "fortuna_report.html",
+        "summary_grid.txt",
+        "field_matrix.txt",
+        "goldmine_report.txt",
+        "race_data.json",
     ]
     # Files to reset (not delete — just empty them)
     reset_files = [

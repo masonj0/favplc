@@ -373,7 +373,7 @@ USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B",
 INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
-    "Oddschecker", "Timeform", "BoyleSports", "SportingLife", "SkySports",
+    "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports"
 }
 
@@ -2179,74 +2179,6 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         except Exception: return None
         return Race(discipline="Greyhound", id=generate_race_id("atrg", venue, start_time, race_number or 0, "Greyhound"), venue=venue, race_number=race_number or 0, start_time=start_time, runners=runners, distance=str(distance) if distance else None, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
-# ----------------------------------------
-# BoyleSportsAdapter
-# ----------------------------------------
-class BoyleSportsAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
-    SOURCE_NAME: ClassVar[str] = "BoyleSports"
-    PROVIDES_ODDS: ClassVar[bool] = False
-    BASE_URL: ClassVar[str] = "https://www.boylesports.com"
-
-    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
-
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Use CURL_CFFI with chrome120 for better reliability against bot detection
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45)
-
-    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
-        return await super().make_request(method, url, **kwargs)
-
-    def _get_headers(self) -> Dict[str, str]:
-        return self._get_browser_headers(host="www.boylesports.com", referer="https://www.google.com/")
-
-    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        url = "/sports/horse-racing"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=url)
-            return None
-        self._save_debug_snapshot(resp.text, f"boylesports_index_{date}")
-        return {"pages": [{"url": url, "html": resp.text}], "date": date}
-
-    def _parse_races(self, raw_data: Any) -> List[Race]:
-        if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
-        except Exception: race_date = datetime.now(EASTERN).date()
-        item = raw_data["pages"][0]
-        parser = HTMLParser(item.get("html", ""))
-        races: List[Race] = []
-        meeting_groups = parser.css('.meeting-group') or parser.css('.race-meeting') or parser.css('div[class*="meeting"]')
-        for meeting in meeting_groups:
-            tnn = meeting.css_first('.meeting-name') or meeting.css_first('h2') or meeting.css_first('.title')
-            if not tnn: continue
-            trw = clean_text(tnode_text(nn))
-            track_name = normalize_venue_name(trw)
-            if not track_name: continue
-            m_harness = any(kw in trw.lower() for kw in ['harness', 'trot', 'pace', 'standardbred'])
-            is_grey = any(kw in trw.lower() for kw in ['greyhound', 'dog'])
-            race_nodes = meeting.css('.race-time-row') or meeting.css('.race-details') or meeting.css('a[href*="/race/"]')
-            for i, rn in enumerate(race_nodes):
-                txt = clean_text(node_text(rn))
-                r_harness = m_harness or any(kw in txt.lower() for kw in ['trot', 'pace', 'attele', 'mounted'])
-                tm = re.search(r'(\d{1,2}:\d{2})', txt)
-                if not tm: continue
-                fm = re.search(r'\((\d+)\s+runners\)', txt, re.I)
-                fs = int(fm.group(1)) if fm else 0
-                dm = re.search(r'(\d+(?:\.\d+)?\s*[kmf]|1\s*mile)', txt, re.I)
-                dist = dm.group(1) if dm else None
-                try: st = datetime.combine(race_date, datetime.strptime(tm.group(1), "%H:%M").time())
-                except Exception: continue
-                runners = [Runner(number=j+1, name=f"Runner {j+1}", scratched=False, odds={}) for j in range(fs)]
-                disc = "Harness" if r_harness else "Greyhound" if is_grey else "Thoroughbred"
-                ab = []
-                if 'superfecta' in txt.lower(): ab.append('Superfecta')
-                elif r_harness or ' (us)' in trw.lower():
-                    if fs >= 6: ab.append('Superfecta')
-                races.append(Race(id=f"boyle_{track_name.lower().replace(' ', '')}_{st:%Y%m%d_%H%M}", venue=track_name, race_number=i + 1, start_time=st, runners=runners, distance=dist, source=self.source_name, discipline=disc, available_bets=ab))
-        # Filter out races with only placeholder/generic runners (no real names or odds) (GPT5 Fix)
-        return [r for r in races if not all(re.match(r'^Runner \d+$', run.name) for run in r.runners)]
 
 
 # ----------------------------------------
@@ -5311,7 +5243,8 @@ class FortunaDB:
                         condition_modifier REAL,
                         qualification_grade TEXT,
                         composite_score REAL,
-                        match_confidence TEXT
+                        match_confidence TEXT,
+                        is_handicap INTEGER
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5376,6 +5309,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
                 if "match_confidence" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
+                if "is_handicap" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN is_handicap INTEGER")
 
         await self._run_in_executor(_init)
 
@@ -5432,8 +5367,15 @@ class FortunaDB:
             await self._run_in_executor(_migrate_v5)
             self.logger.info("Schema migrated to version 5 — scoring signal columns added")
 
+        if current_version < 6:
+            def _migrate_v6():
+                with self._get_conn() as conn:
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (6, ?)", (datetime.now(EASTERN).isoformat(),))
+            await self._run_in_executor(_migrate_v6)
+            self.logger.info("Schema migrated to version 6 — handicap status added")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 5))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 6))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -5573,7 +5515,8 @@ class FortunaDB:
                         tip.get("race_type"),
                         tip.get("condition_modifier"),
                         tip.get("qualification_grade"),
-                        tip.get("composite_score")
+                        tip.get("composite_score"),
+                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None)
                     ))
                     already_logged.add(rid) # Avoid duplicates within the same batch
 
@@ -5584,8 +5527,8 @@ class FortunaDB:
                             race_id, venue, race_number, discipline, start_time, report_date,
                             is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                             field_size, market_depth, place_prob, predicted_ev, race_type,
-                            condition_modifier, qualification_grade, composite_score
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            condition_modifier, qualification_grade, composite_score, is_handicap
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, to_insert)
                 self.logger.info("Hot tips batch logged", count=len(to_insert))
 
@@ -5885,6 +5828,7 @@ class HotTipsTracker:
                 "place_prob": r.metadata.get('place_prob'),
                 "predicted_ev": r.metadata.get('predicted_ev'),
                 "race_type": getattr(r, 'race_type', None),
+                "is_handicap": getattr(r, 'is_handicap', None),
                 "condition_modifier": r.metadata.get('condition_modifier'),
                 "qualification_grade": r.metadata.get('qualification_grade'),
                 "composite_score": r.metadata.get('composite_score')
