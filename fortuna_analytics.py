@@ -1398,7 +1398,8 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     async def _fetch_first_valid_index(self, urls: list[str]) -> Any:
         """Try each URL with multiple impersonations until valid content."""
         for url in urls:
-            for imp in self._IMPERSONATION_FALLBACKS:
+            # Try only primary impersonation first to save time
+            for imp in self._IMPERSONATION_FALLBACKS[:1]:
                 try:
                     resp = await self.make_request(
                         "GET", url, headers=self._get_headers(), impersonate=imp,
@@ -1410,6 +1411,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
                         and "<table" in resp.text.lower()
                     ):
                         return resp
+
+                    if resp and resp.text and "Pardon Our Interruption" in resp.text:
+                         self.logger.warning("Equibase definitive block", url=url)
+                         break # Try next URL instead of more impersonations
                 except Exception:
                     continue
         return None
@@ -2056,11 +2061,10 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=False,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
-            network_idle=True,
         )
 
     _ATR_LINK_SELECTORS: Final[tuple[str, ...]] = (
@@ -3647,14 +3651,8 @@ async def managed_adapters(
             adapter.target_venues = target_venues  # type: ignore[attr-defined]
         adapters.append(adapter)
 
-        # Double-up SOLID adapters with a mobile version (Jules Fix)
-        if name in fortuna.SOLID_RESULTS_ADAPTERS:
-            mobile_adapter = cls()
-            mobile_adapter.config["mobile"] = True
-            mobile_adapter.source_name = f"{name}Mobile"
-            if target_venues:
-                mobile_adapter.target_venues = target_venues  # type: ignore[attr-defined]
-            adapters.append(mobile_adapter)
+        # Optimization: Do NOT double-up mobile versions for results auditing
+        # This prevents resource exhaustion and timeouts during heavy audits (Jules Fix)
 
     try:
         yield adapters
