@@ -448,10 +448,11 @@ jobs:
                   emit("|------------|-----:|-----:|--------:|---------|")
 
                   # Detect if gap12 is ratio or absolute based on max value
-                  max_gap = conn.execute(
-                      "SELECT MAX(gap12) FROM tips "
+                  max_gap_raw = conn.execute(
+                      "SELECT MAX(CAST(gap12 AS REAL)) FROM tips "
                       "WHERE gap12 IS NOT NULL"
-                  ).fetchone()[0] or 0
+                  ).fetchone()[0]
+                  max_gap = float(max_gap_raw) if max_gap_raw is not None else 0.0
 
                   if max_gap <= 5.0:
                       # Likely ratio format (scoring memo item 1)
