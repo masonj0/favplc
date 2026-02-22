@@ -383,7 +383,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
     "DRFResults",
-    # "NYRABetsResults",  # Temporarily removed due to API 403 block (2026-02-21)
+    "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
@@ -400,6 +400,7 @@ SOLID_RESULTS_ADAPTERS: Final[set] = {
     "AtTheRacesGreyhoundResults",
     "TimeformResults",
     "SkySportsResults",
+    "NYRABetsResults",
 }
 
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
@@ -3930,7 +3931,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
+        # Valid Region Filter (Item 6)
+        INVALID_REGION_PREFIXES = ('fr', 'au', 'aus', 'za', 'sa', 'jp', 'hk', 'uae')
+
         for race in races:
+            # Region filtering (Item 6)
+            canonical_venue = get_canonical_venue(race.venue)
+            if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES):
+                self.logger.info("Skipping race in untested region", venue=race.venue, canonical=canonical_venue)
+                continue
+
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
             st = race.start_time
             if st.tzinfo is None:
@@ -3993,6 +4003,18 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if len(all_odds) >= 2:
                 fav, sec = all_odds[0], all_odds[1]
 
+                # S0 — Extract race type from conditions if missing (Item 2 / Step 5)
+                if not race.race_type:
+                    # Search metadata or raw text if available (heuristics)
+                    # We'll use a broad text search across common metadata fields
+                    search_text = " ".join([str(v) for v in race.metadata.values() if isinstance(v, str)])
+                    rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap)', search_text, re.I)
+                    if rt_match:
+                        race.race_type = rt_match.group(1).title()
+
+                    if "HANDICAP" in search_text.upper():
+                        race.is_handicap = True
+
                 # S1 — implied place probability for the favourite (Insight 3)
                 place_prob = 0.0
                 if all_odds and len(active_runners) >= 2:
@@ -4052,9 +4074,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['qualification_grade'] = qualification_grade
                 race.metadata['composite_score']     = round(_composite, 1)
 
-                # Enforce gap requirement (Updated to 0.35 ratio per independent review)
-                if gap12 < 0.35:
-                    log.debug("Insufficient gap detected (ratio < 0.35), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # Enforce gap requirement (Item 5: approach A — raise threshold to account for drift)
+                # Recalibrated ratio: 0.55 (~2.5 absolute drift buffer)
+                GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
+
+                if gap12 < GAP_RATIO_THRESHOLD:
+                    log.debug("Insufficient gap detected (ratio below threshold), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12, required=GAP_RATIO_THRESHOLD)
                 else:
                     # Preferred Predictions (S7: Exclude maiden)
                     is_maiden = "maiden" in (race.race_type or "").lower()
@@ -7578,13 +7603,7 @@ async def run_discovery(
                     specific_config.update({"region": region})
                     adapters.append(cls(config=specific_config))
 
-                    # Double-up SOLID adapters with a mobile version (Jules Fix)
-                    if name in SOLID_DISCOVERY_ADAPTERS:
-                        mobile_config = specific_config.copy()
-                        mobile_config["mobile"] = True
-                        mobile_adapter = cls(config=mobile_config)
-                        mobile_adapter.source_name = f"{name}Mobile"
-                        adapters.append(mobile_adapter)
+                    # Optimization: Removed dynamic doubling of mobile adapters to reduce noise/timeouts (Item 7)
 
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))

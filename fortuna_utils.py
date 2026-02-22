@@ -300,6 +300,15 @@ def normalize_venue_name(name: Optional[str]) -> str:
     name = str(name).replace("-", " ").replace("_", " ")
     name = re.sub(r"[\(\[\uff08].*?[\)\]\uff09]", " ", name)
 
+    # Item 11: Standardize/Strip country prefixes (NYRA etc.)
+    # Australian venues often prefixed with 'Au ' or 'Aus '
+    # French venues often prefixed with 'fr'
+    # NZ venues often prefixed with 'Nz '
+    # SA venues often prefixed with 'Sa '
+    name = re.sub(r"^(?:Au|Aus|fr|Nz|Sa|Aus|Zp|Jpn?|Hk|Uae)\s+", "", name, flags=re.I)
+    # Special case for NYRA 'frfontainebleau'
+    name = re.sub(r"^fr([a-z])", r"\1", name, flags=re.I)
+
     cleaned = clean_text(name)
     if not cleaned:
         return "Unknown"
