@@ -2653,6 +2653,63 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                     self.logger.debug(
                         "Failed to parse ATR Grey JSON", exc_info=True,
                     )
+
+        # Fallback to standard HTML parsing if JSON modules are missing or failed
+        return self._parse_grey_from_html(parser, date_str, url)
+
+    def _parse_grey_from_html(self, parser: HTMLParser, date_str: str, url: str) -> List[ResultRace]:
+        """Fallback HTML parser for ATR Greyhound results."""
+        # This is a basic implementation to catch cases where JSON payload is missing
+        venue_node = parser.css_first(".race-header__details--primary h2") or parser.css_first("h1")
+        venue = fortuna.normalize_venue_name(fortuna.node_text(venue_node)) if venue_node else ""
+
+        # Try to get venue from URL if HTML fails
+        if not venue:
+            parts = url.rstrip("/").split("/")
+            raw_slug = parts[4] if url.startswith("http") and len(parts) >= 5 else (parts[2] if len(parts) >= 3 else None)
+            if raw_slug:
+                venue = fortuna.normalize_venue_name(raw_slug.replace('-', ' '))
+
+        time_node = parser.css_first(".race-header__details--primary .time")
+        race_time = fortuna.node_text(time_node) if time_node else ""
+
+        runners: List[ResultRunner] = []
+        for row in parser.css(".result-racecard__row, .card-entry, .p-results__item"):
+            name_node = row.css_first(".card-cell--horse, .horse-name, a")
+            if not name_node: continue
+            name = fortuna.clean_text(fortuna.node_text(name_node))
+
+            num_node = row.css_first(".card-cell--number, .trap-number, .saddle-cloth")
+            num = _safe_int(fortuna.node_text(num_node)) if num_node else 0
+
+            pos_node = row.css_first(".card-cell--position, .position")
+            pos = fortuna.clean_text(fortuna.node_text(pos_node)) if pos_node else None
+
+            sp_node = row.css_first(".card-cell--odds, .odds, .sp")
+            final_odds = parse_fractional_odds(fortuna.node_text(sp_node)) if sp_node else 0.0
+
+            runners.append(ResultRunner(
+                name=name, number=num, position=pos,
+                final_win_odds=final_odds if final_odds > 0 else None,
+                odds_source="starting_price" if final_odds > 0 else None
+            ))
+
+        if runners and venue:
+            # Try to extract race number from URL last segment
+            race_num = 1
+            last_segment = url.rstrip("/").split("/")[-1]
+            if last_segment.isdigit():
+                race_num = int(last_segment)
+
+            return [ResultRace(
+                id=self._make_race_id("atrg_res", venue, date_str, race_num),
+                venue=venue,
+                race_number=race_num,
+                start_time=build_start_time(date_str, race_time),
+                runners=runners,
+                discipline="Greyhound",
+                source=self.SOURCE_NAME,
+            )]
         return []
 
     def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
@@ -2739,12 +2796,18 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                 rn = m_data.get("raceNumber")
                 if rn and isinstance(rn, (int, str)) and str(rn).isdigit():
                     race_num = int(rn)
-            elif m_type in ("RaceResult", "RacecardResultForm"):
+            elif m_type in ("RaceResult", "RacecardResultForm", "ResultTable", "RaceResultTable", "Result"):
                 runners: List[ResultRunner] = []
                 # Handle both module structures
                 items = m_data.get("items")
                 if items is None and "form" in m_data:
                     items = m_data["form"].get("data", [])
+
+                # Check for alternative nesting
+                if items is None and "results" in m_data:
+                    items = m_data["results"]
+                if items is None and "runners" in m_data:
+                    items = m_data["runners"]
 
                 for item in items or []:
                     name = item.get("name", "")
@@ -2775,6 +2838,12 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
                         discipline="Greyhound",
                         source=self.SOURCE_NAME,
                     ))
+
+        if not races and modules:
+            m_types = [m.get("type") for m in modules]
+            self.logger.warning("ATR Grey: modules found but no races parsed. Site format likely changed.", url=url, m_types=m_types)
+            self._save_debug_snapshot(html, f"atr_grey_parse_fail_{race_num}")
+
         return races
 
 
