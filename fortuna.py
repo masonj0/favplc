@@ -3955,8 +3955,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
         # Valid Region Filter (Item 6)
-        # South Africa ('za', 'sa') removed by user request (JB override)
-        INVALID_REGION_PREFIXES = ('fr', 'au', 'aus', 'jp', 'hk', 'uae')
+        # South Africa ('za', 'sa') and Australia ('au', 'aus') removed by user request (JB override)
+        # This allows 24/7 coverage during overnight US hours.
+        INVALID_REGION_PREFIXES = ('fr', 'jp', 'hk', 'uae')
 
         # Blocklist for bare venue names in invalid regions (FIX_04)
         BLOCKED_VENUES = {
@@ -3970,8 +3971,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             'shatin', 'happyvalley',
             # UAE
             'meydan', 'abudhabi', 'jebelali',
-            # Australia
-            'flemington', 'randwick', 'caulfield', 'mooneevalley', 'rosehill',
             # Italy
             'milan', 'sanrossore', 'capannelle',
         }
@@ -4032,7 +4031,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
             # Stability Check: Ensure we have at least 2 active runners to compare
             if len(active_runners) < 2:
-                log.debug("Excluding race with < 2 runners", venue=race.venue)
+                self.logger.debug("Excluding race with < 2 runners", venue=race.venue)
                 continue
 
             # 2. Derive Selection (2nd favorite) and Top 5
@@ -4060,9 +4059,26 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 fingerprints[content_fp] = 1
 
             # 3. Apply Best Bet Logic
+            # Initialize all scoring metadata with defaults to prevent NULLs in DB (VFIX_01)
+            race.metadata.update({
+                'place_prob': 0.0,
+                'predicted_ev': 0.0,
+                'market_depth': 0.0,
+                'condition_modifier': 0.0,
+                'qualification_grade': 'D',
+                'composite_score': 0.0,
+                'predicted_2nd_fav_odds': None,
+                '1Gap2': 0.0,
+                'is_goldmine': False,
+                'is_best_bet': False,
+                'is_superfecta_key': False
+            })
+
             try:
                 if len(all_odds) >= 2:
                     fav, sec = all_odds[0], all_odds[1]
+                else:
+                    fav, sec = None, None
 
                 # S0 — Extract race type from conditions if missing (Item 2 / Step 5)
                 if not race.race_type:
@@ -4101,11 +4117,14 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['predicted_ev'] = predicted_ev
 
                 # S3 — percentage gap instead of absolute
-                gap12 = round(float((sec - fav) / fav), 3)
+                if fav and sec:
+                    gap12 = round(float((sec - fav) / fav), 3)
+                else:
+                    gap12 = 0.0
 
                 # S4 — market depth (whole-field view, not just top-2)
                 market_depth = 0.0
-                if len(all_odds) >= 4:
+                if fav and len(all_odds) >= 4:
                     median_idx = len(all_odds) // 2
                     median_odds = float(all_odds[median_idx])
                     fav_float = float(fav)
@@ -4140,7 +4159,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
 
                 if gap12 < GAP_RATIO_THRESHOLD:
-                    log.debug("Insufficient gap detected (ratio below threshold), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12, required=GAP_RATIO_THRESHOLD)
+                    self.logger.debug("Insufficient gap detected (ratio below threshold), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12, required=GAP_RATIO_THRESHOLD)
                 else:
                     # Preferred Predictions (S7: Exclude maiden)
                     is_maiden = "maiden" in (race.race_type or "").lower()
@@ -4181,16 +4200,15 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     race.metadata['composite_score'] = 0.0
             except Exception as e:
                 self.logger.error("Scoring pipeline failed for race", venue=race.venue, error=str(e), exc_info=True)
-                # Ensure defaults are set on error (FIX_02)
-                race.metadata['qualification_grade'] = 'D'
-                race.metadata['composite_score'] = 0.0
+                # Ensure defaults are maintained on error (FIX_02 / VFIX_01)
                 is_goldmine = False
                 is_best_bet = False
+                is_superfecta_key = False
 
             # FIX_01: Hard guard to ensure flags are NOT set if gap12 is below threshold
             GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
             if (is_goldmine or is_best_bet) and gap12 < GAP_RATIO_THRESHOLD:
-                log.warning("Goldmine/BestBet flag reset due to insufficient gap12", venue=race.venue, gap12=gap12)
+                self.logger.warning("Goldmine/BestBet flag reset due to insufficient gap12", venue=race.venue, gap12=gap12)
                 is_goldmine = False
                 is_best_bet = False
 
@@ -4205,7 +4223,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             qualified.append(race)
 
         if not qualified:
-            log.warning("🔭 SimplySuccess analyzer pass returned 0 qualified races", input_count=len(races))
+            self.logger.warning("🔭 SimplySuccess analyzer pass returned 0 qualified races", input_count=len(races))
 
         return {
             "criteria": {

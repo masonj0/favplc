@@ -707,29 +707,36 @@ def q12_data_quality():
         'predicted_ev', 'race_type', 'condition_modifier',
         'qualification_grade', 'composite_score',
         'is_goldmine', 'is_best_bet',
+        'is_superfecta_key',
     ]
 
-    emit("| Column | Population | Status |")
-    emit("|--------|-----------:|:------:|")
+    emit("| Column | Population | Signal | Status |")
+    emit("|--------|-----------:|-------:|:------:|")
 
     quality_issues = []
     for col in scoring_cols:
         stats = conn.execute(f"""
             SELECT COUNT(*) as total,
-                   SUM(CASE WHEN {col} IS NOT NULL THEN 1 ELSE 0 END) as filled
+                   SUM(CASE WHEN {col} IS NOT NULL THEN 1 ELSE 0 END) as filled,
+                   SUM(CASE WHEN {col} IS NOT NULL AND {col} != 0 AND {col} != '0.0' AND {col} != 'D' THEN 1 ELSE 0 END) as signal
             FROM tips
-            WHERE start_time >= DATE('now', '-3 days')
+            WHERE start_time >= DATE('now', '-7 days')
         """).fetchone()
 
         total = stats['total']
         filled = stats['filled']
         pct = (filled / total * 100) if total else 0
 
+        sig_pct = (stats['signal'] / total * 100) if total else 0
+
         icon = "✅" if pct > 90 else ("🟡" if pct > 50 else "🔴")
-        emit(f"| `{col}` | {filled}/{total} ({pct:.1f}%) | {icon} |")
+        emit(f"| `{col}` | {filled}/{total} ({pct:.1f}%) | {stats['signal']} ({sig_pct:.1f}%) | {icon} |")
 
         if pct < 20 and total > 5:
             quality_issues.append(f"Scoring signal `{col}` is mostly NULL ({pct:.1f}%)")
+
+        if sig_pct < 0.1 and total > 10 and col in ('gap12', 'market_depth', 'place_prob'):
+            quality_issues.append(f"Scoring signal `{col}` has NO active variance (all defaults)")
 
     emit("")
     _evidence['quality_issues'] = quality_issues
