@@ -115,6 +115,56 @@ def parse_position(pos_str: Optional[str]) -> Optional[int]:
 
 
 
+CURRENCY_STRIP_RE = re.compile(r'[£€$]')
+CURRENCY_CODE_RE = re.compile(r'\b(ZAR|AUD|HKD|EUR|GBP|USD|NZD|SGD|JPY|AED)\b', re.IGNORECASE)
+PAYOUT_WITH_COMBO_RE = re.compile(r'([\d,]+\.\d+)\s*\(([^)]+)\)')
+
+def parse_payout_value(raw: str) -> tuple[float | None, str | None]:
+    """Returns (payout_amount, combination_string) or (None, None) on failure."""
+    if not raw or not isinstance(raw, str):
+        return None, None
+    # Strip currency symbols and codes
+    cleaned = CURRENCY_STRIP_RE.sub('', raw)
+    cleaned = CURRENCY_CODE_RE.sub('', cleaned).strip()
+    # Try payout with combination: '408.90 (2, 5, 4)'
+    match = PAYOUT_WITH_COMBO_RE.search(cleaned)
+    if match:
+        amount_str = match.group(1).replace(',', '')
+        combo = match.group(2).strip()
+        try:
+            return float(amount_str), combo
+        except ValueError:
+            return None, None
+    # Try bare numeric
+    # Case 1: European style 12,34 (comma as decimal separator)
+    if ',' in cleaned and '.' not in cleaned and re.search(r',\d{2}$', cleaned):
+        try:
+            val = float(cleaned.replace(',', '.'))
+            return val, None
+        except ValueError: pass
+
+    # Case 2: Standard numeric (ignore commas as thousands separators)
+    bare = cleaned.replace(',', '').strip()
+    try:
+        return float(bare), None
+    except ValueError:
+        return None, None
+
+def parse_place_payouts(raw: str) -> dict[int, float]:
+    """Parse per-runner place payouts: '£3.00 (2), £2.20 (5)' → {2: 3.0, 5: 2.2}"""
+    results = {}
+    if not raw: return results
+    cleaned = CURRENCY_STRIP_RE.sub('', raw)
+    cleaned = CURRENCY_CODE_RE.sub('', cleaned)
+    for match in PAYOUT_WITH_COMBO_RE.finditer(cleaned):
+        try:
+            amount = float(match.group(1).replace(',', ''))
+            runner_num = int(match.group(2).strip())
+            results[runner_num] = amount
+        except (ValueError, TypeError):
+            continue
+    return results
+
 def parse_currency_value(value_str: str) -> float:
     """'$1,234.56' → 1234.56.  Returns 0.0 on unparseable input."""
     if not value_str:
@@ -699,7 +749,11 @@ class AuditorEngine:
 
 def parse_fractional_odds(text: str) -> float:
     """'5/2' → 3.5, '2.5' → 2.5, anything else → 0.0."""
-    val = fortuna.parse_odds_to_decimal(text)
+    if not text: return 0.0
+    # Strip currency noise first (Fix ATRG SP corruption)
+    cleaned = CURRENCY_STRIP_RE.sub('', text)
+    cleaned = CURRENCY_CODE_RE.sub('', cleaned).strip()
+    val = fortuna.parse_odds_to_decimal(cleaned)
     return float(val) if val is not None else 0.0
 
 
@@ -787,11 +841,13 @@ def extract_exotic_payouts(
                 combo: Optional[str] = None
                 payout = 0.0
                 if len(cols) >= 3:
-                    combo = fortuna.clean_text(fortuna.node_text(cols[1]))
-                    payout = parse_currency_value(fortuna.node_text(cols[2]))
+                    p_val, p_combo = parse_payout_value(fortuna.node_text(cols[2]))
+                    payout = p_val or 0.0
+                    combo = p_combo or fortuna.clean_text(fortuna.node_text(cols[1]))
                 elif len(cols) >= 2:
-                    combo = fortuna.clean_text(fortuna.node_text(cols[0]))
-                    payout = parse_currency_value(fortuna.node_text(cols[1]))
+                    p_val, p_combo = parse_payout_value(fortuna.node_text(cols[1]))
+                    payout = p_val or 0.0
+                    combo = p_combo or fortuna.clean_text(fortuna.node_text(cols[0]))
                 if payout > 0:
                     results[bet_type] = (payout, combo)
                     break
@@ -2089,7 +2145,14 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         if len(parts) < 2:
             return False
 
-        segments = parts[1].split('/')
+        segments = [s for s in parts[1].split('/') if s]
+        if not segments:
+            return False
+
+        # Skip the first segment if it looks like a date (YYYY-MM-DD)
+        if segments and re.match(r'\d{4}-\d{2}-\d{2}', segments[0]):
+             segments = segments[1:]
+
         if not segments:
             return False
 
@@ -2157,8 +2220,8 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         # BUG-1 Fix: Use PLAYWRIGHT to handle React-based structure and reduce crash risk
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            enable_js=False,
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
         )
@@ -2300,13 +2363,15 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         race_time = None
 
         if url:
-            parts = url.split("/")
+            parts = url.rstrip("/").split("/")
             # Look for slug in typical ATR result URL positions
             raw_slug = None
-            if "/international/" in url and len(parts) >= 5:
-                raw_slug = parts[4]
-            elif len(parts) >= 3:
-                raw_slug = parts[2]
+            if "/international/" in url:
+                # Absolute: parts[5], Relative: parts[3]
+                raw_slug = parts[5] if url.startswith("http") and len(parts) >= 6 else (parts[3] if len(parts) >= 4 else None)
+            else:
+                # Absolute: parts[4], Relative: parts[2]
+                raw_slug = parts[4] if url.startswith("http") and len(parts) >= 5 else (parts[2] if len(parts) >= 3 else None)
 
             if raw_slug:
                 slug_words = raw_slug.replace('-', ' ').upper().split()
@@ -2592,6 +2657,21 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
         races: List[ResultRace] = []
         venue, race_time_str, race_num = "", "", 1
 
+        # Fix 2: Use word-boundary matching from URL slug to prevent race title contamination
+        track_name_from_url = None
+        if url:
+            parts = url.rstrip("/").split("/")
+            # Greyhound URLs: /result/Sunderland/22-February-2026/1814
+            # Absolute: index 4, Relative: index 2
+            raw_slug = parts[4] if url.startswith("http") and len(parts) >= 5 else (parts[2] if len(parts) >= 3 else None)
+            if raw_slug:
+                slug_words = raw_slug.replace('-', ' ').upper().split()
+                for end in range(len(slug_words), 0, -1):
+                    candidate = " ".join(slug_words[:end])
+                    if candidate in fortuna.VENUE_MAP:
+                        track_name_from_url = fortuna.VENUE_MAP[candidate]
+                        break
+
         # Initial Heuristic: Extract venue and time from HTML title if modules are sparse
         if html:
             title_match = re.search(
@@ -2599,7 +2679,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
             )
             if title_match:
                 race_time_str = title_match.group(1)
-                venue = fortuna.normalize_venue_name(title_match.group(2))
+                venue = track_name_from_url or fortuna.normalize_venue_name(title_match.group(2))
 
         # URL fallback if race_num wasn't found in title (only check last segment)
         if race_num == 1:
@@ -2612,7 +2692,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
         for module in modules:
             m_type, m_data = module.get("type"), module.get("data", {})
             if m_type == "RacecardHero":
-                venue = fortuna.normalize_venue_name(m_data.get("track", ""))
+                venue = track_name_from_url or fortuna.normalize_venue_name(m_data.get("track", ""))
                 race_time_str = m_data.get("time", "")
                 # Prefer race number from module data
                 rn = m_data.get("raceNumber")

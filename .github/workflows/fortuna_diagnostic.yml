@@ -21,7 +21,7 @@ permissions:
 jobs:
   usa-tb-diagnostic:
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
 
