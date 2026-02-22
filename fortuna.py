@@ -4464,6 +4464,8 @@ def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) 
         track_categories[track] = get_track_category(tr_races)
 
     def is_superfecta_effective(r):
+        if get_field(r, 'metadata', {}).get('is_superfecta_key'):
+            return True
         available_bets = get_field(r, 'available_bets', [])
         metadata_bets = get_field(r, 'metadata', {}).get('available_bets', [])
         if 'Superfecta' in available_bets or 'Superfecta' in metadata_bets:
@@ -6160,6 +6162,10 @@ class RaceSummary:
     gap12: float = 0.0
     is_goldmine: bool = False
     is_best_bet: bool = False
+    is_superfecta_key: bool = False
+    superfecta_key_number: Optional[int] = None
+    superfecta_key_name: Optional[str] = None
+    superfecta_box_numbers: List[int] = Field(default_factory=list)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -6181,6 +6187,10 @@ class RaceSummary:
             "gap12": self.gap12,
             "is_goldmine": self.is_goldmine,
             "is_best_bet": self.is_best_bet,
+            "is_superfecta_key": self.is_superfecta_key,
+            "superfecta_key_number": self.superfecta_key_number,
+            "superfecta_key_name":   self.superfecta_key_name,
+            "superfecta_box_numbers": self.superfecta_box_numbers
         }
 
 
@@ -6365,7 +6375,11 @@ class FavoriteToPlaceMonitor:
             top_five_numbers=self._get_top_n_runners(race, 5),
             gap12=gap12,
             is_goldmine=race.metadata.get('is_goldmine', False),
-            is_best_bet=race.metadata.get('is_best_bet', False)
+            is_best_bet=race.metadata.get('is_best_bet', False),
+            is_superfecta_key=race.metadata.get('is_superfecta_key', False),
+            superfecta_key_number=race.metadata.get('superfecta_key_number'),
+            superfecta_key_name=race.metadata.get('superfecta_key_name'),
+            superfecta_box_numbers=race.metadata.get('superfecta_box_numbers', [])
         )
 
     async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):

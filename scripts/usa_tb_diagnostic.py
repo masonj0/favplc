@@ -696,8 +696,46 @@ def q11_harvest():
             _evidence['harvest_success_rates'][row['adapter_name']] = rate
         emit("```\n")
 
-def q12_diagnosis():
-    emit("## Q12: 🎯 Automated Root-Cause Diagnosis\n")
+def q12_data_quality():
+    emit("## Q12: Scoring Signal Data Quality\n")
+    if not _evidence.get('db_has_tips'):
+        emit("ℹ️ No tips table — skipping.\n")
+        return
+
+    scoring_cols = [
+        'gap12', 'market_depth', 'place_prob',
+        'predicted_ev', 'race_type', 'condition_modifier',
+        'qualification_grade', 'composite_score',
+        'is_goldmine', 'is_best_bet',
+    ]
+
+    emit("| Column | Population | Status |")
+    emit("|--------|-----------:|:------:|")
+
+    quality_issues = []
+    for col in scoring_cols:
+        stats = conn.execute(f"""
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN {col} IS NOT NULL THEN 1 ELSE 0 END) as filled
+            FROM tips
+            WHERE start_time >= DATE('now', '-3 days')
+        """).fetchone()
+
+        total = stats['total']
+        filled = stats['filled']
+        pct = (filled / total * 100) if total else 0
+
+        icon = "✅" if pct > 90 else ("🟡" if pct > 50 else "🔴")
+        emit(f"| `{col}` | {filled}/{total} ({pct:.1f}%) | {icon} |")
+
+        if pct < 20 and total > 5:
+            quality_issues.append(f"Scoring signal `{col}` is mostly NULL ({pct:.1f}%)")
+
+    emit("")
+    _evidence['quality_issues'] = quality_issues
+
+def q13_diagnosis():
+    emit("## Q13: 🎯 Automated Root-Cause Diagnosis\n")
     diagnosis = []
     severity = "INFO"
 
@@ -723,6 +761,13 @@ def q12_diagnosis():
         if severity == "INFO": severity = "MEDIUM"
         diagnosis.append(f"🟡 **{len(gaps)} RP slug(s)** on page but NOT in `_USA_TRACK_SLUGS`.")
 
+    # Quality issues
+    quality = _evidence.get('quality_issues', [])
+    if quality:
+        if severity in ("INFO", "MEDIUM"): severity = "HIGH"
+        for q in quality:
+            diagnosis.append(f"🔴 **DATA QUALITY: {q}**")
+
     emit(f"### Severity: **{severity}**\n")
     for line in diagnosis: emit(line)
     emit("\n---")
@@ -736,7 +781,7 @@ flush()
 
 for section in [q1_db_reality, q2_adapters, q3_network, q4_equibase, q5_racing_post,
                 q6_stuck_tips, q7_global_results, q8_usa_results, q9_discovery,
-                q10_playwright, q11_harvest, q12_diagnosis]:
+                q10_playwright, q11_harvest, q12_data_quality, q13_diagnosis]:
     if deadline_exceeded():
         emit(f"\n⚠️ Deadline exceeded before `{section.__name__}`.")
         break
