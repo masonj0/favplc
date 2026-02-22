@@ -1289,9 +1289,16 @@ class BaseAdapterV3(ABC):
         try:
             # Check for browser requirement in monolith mode
             strategy = self.smart_fetcher.strategy
-            if is_frozen() and strategy.primary_engine in [BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX]:
-                self.logger.info("Skipping browser-dependent adapter in monolith mode")
-                return []
+            if strategy.primary_engine in [BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX]:
+                if is_frozen():
+                    self.logger.info("Skipping browser-dependent adapter in monolith mode")
+                    return []
+                # FIX_06: Gracefully skip if Playwright is required but missing (GHA check)
+                try:
+                    import playwright
+                except ImportError:
+                    self.logger.warning("Playwright not installed, skipping browser-based adapter", source=self.source_name)
+                    return []
 
             if not await self.circuit_breaker.allow_request(): return []
             await self.rate_limiter.acquire()
@@ -1360,7 +1367,22 @@ class BaseAdapterV3(ABC):
             self.trust_ratio = round(trustworthy_runners / total_runners, 2)
             self.logger.info("adapter_odds_quality", ratio=self.trust_ratio, source=self.source_name)
 
-        valid, warnings = DataValidationPipeline.validate_parsed_races(races, adapter_name=self.source_name)
+        # FIX_03: Duplicate race data detection (content fingerprinting)
+        deduped_races = []
+        fingerprints = {}
+        for r in races:
+            active = [(run.name, str(run.win_odds)) for run in r.runners if not run.scratched]
+            fp = (r.venue, frozenset(active))
+            if fp in fingerprints:
+                fingerprints[fp] += 1
+                if fingerprints[fp] >= 3:
+                    self.logger.warning("Duplicate race content detected at venue, skipping", venue=r.venue, race=r.race_number)
+                    continue
+            else:
+                fingerprints[fp] = 1
+            deduped_races.append(r)
+
+        valid, warnings = DataValidationPipeline.validate_parsed_races(deduped_races, adapter_name=self.source_name)
         return valid
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
@@ -3932,12 +3954,34 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
         # Valid Region Filter (Item 6)
-        INVALID_REGION_PREFIXES = ('fr', 'au', 'aus', 'za', 'sa', 'jp', 'hk', 'uae')
+        # South Africa ('za', 'sa') removed by user request (JB override)
+        INVALID_REGION_PREFIXES = ('fr', 'au', 'aus', 'jp', 'hk', 'uae')
+
+        # Blocklist for bare venue names in invalid regions (FIX_04)
+        BLOCKED_VENUES = {
+            # France
+            'fontainebleau', 'cagnessurmer', 'longchamp', 'chantilly', 'deauville',
+            'parislongchamp', 'saintcloud', 'compiegne', 'vichy', 'clairefontaine',
+            'marseilleborely', 'toulouse', 'lyon', 'strasbourg', 'amiens',
+            # Japan
+            'tokyo', 'nakayama', 'hanshin', 'kyoto', 'kokura', 'niigata', 'sapporo', 'fukushima', 'chukyo',
+            # Hong Kong
+            'shatin', 'happyvalley',
+            # UAE
+            'meydan', 'abudhabi', 'jebelali',
+            # Australia
+            'flemington', 'randwick', 'caulfield', 'mooneevalley', 'rosehill',
+            # Italy
+            'milan', 'sanrossore', 'capannelle',
+        }
+
+        # For duplicate content detection (FIX_03)
+        fingerprints = {}
 
         for race in races:
-            # Region filtering (Item 6)
+            # Region filtering (Item 6 + FIX_04)
             canonical_venue = get_canonical_venue(race.venue)
-            if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES):
+            if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES) or canonical_venue in BLOCKED_VENUES:
                 self.logger.info("Skipping race in untested region", venue=race.venue, canonical=canonical_venue)
                 continue
 
@@ -4003,9 +4047,21 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['selection_number'] = sec_fav.number
                 race.metadata['selection_name'] = sec_fav.name
 
+            # Duplicate Content Detection (FIX_03)
+            active_content = [(r.name, str(r.win_odds)) for r in race.runners if not r.scratched]
+            content_fp = (race.venue, frozenset(active_content))
+            if content_fp in fingerprints:
+                fingerprints[content_fp] += 1
+                if fingerprints[content_fp] >= 3:
+                    self.logger.warning("Duplicate race content detected, skipping", venue=race.venue, race=race.race_number)
+                    continue
+            else:
+                fingerprints[content_fp] = 1
+
             # 3. Apply Best Bet Logic
-            if len(all_odds) >= 2:
-                fav, sec = all_odds[0], all_odds[1]
+            try:
+                if len(all_odds) >= 2:
+                    fav, sec = all_odds[0], all_odds[1]
 
                 # S0 — Extract race type from conditions if missing (Item 2 / Step 5)
                 if not race.race_type:
@@ -4112,16 +4168,30 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
                 # ────────────────────────────────────────────────────────────────────────
 
-                race.metadata['predicted_2nd_fav_odds'] = float(sec)
-            else:
-                # Fallback if insufficient odds data
-                race.metadata['predicted_2nd_fav_odds'] = None
-                race.metadata['place_prob'] = 0.0
-                race.metadata['predicted_ev'] = None
-                race.metadata['market_depth'] = 0.0
-                race.metadata['condition_modifier'] = 0.0
+                    race.metadata['predicted_2nd_fav_odds'] = float(sec)
+                else:
+                    # Fallback if insufficient odds data
+                    race.metadata['predicted_2nd_fav_odds'] = None
+                    race.metadata['place_prob'] = 0.0
+                    race.metadata['predicted_ev'] = None
+                    race.metadata['market_depth'] = 0.0
+                    race.metadata['condition_modifier'] = 0.0
+                    race.metadata['qualification_grade'] = 'D'
+                    race.metadata['composite_score'] = 0.0
+            except Exception as e:
+                self.logger.error("Scoring pipeline failed for race", venue=race.venue, error=str(e), exc_info=True)
+                # Ensure defaults are set on error (FIX_02)
                 race.metadata['qualification_grade'] = 'D'
                 race.metadata['composite_score'] = 0.0
+                is_goldmine = False
+                is_best_bet = False
+
+            # FIX_01: Hard guard to ensure flags are NOT set if gap12 is below threshold
+            GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
+            if (is_goldmine or is_best_bet) and gap12 < GAP_RATIO_THRESHOLD:
+                log.warning("Goldmine/BestBet flag reset due to insufficient gap12", venue=race.venue, gap12=gap12)
+                is_goldmine = False
+                is_best_bet = False
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
@@ -5974,7 +6044,8 @@ class HotTipsTracker:
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
             # These are marked in metadata by the analyzer.
-            if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine'):
+            # FIX_09: Also include pure superfecta keybox plays
+            if not r.metadata.get('is_best_bet') and not r.metadata.get('is_goldmine') and not r.metadata.get('is_superfecta_key'):
                 continue
 
             # Trustworthiness Airlock Safeguard (Council of Superbrains Directive)
@@ -7094,7 +7165,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         )
 
     def _get_headers(self) -> dict:
-        return self._get_browser_headers(host="www.racingpost.com")
+        headers = self._get_browser_headers(host="www.racingpost.com")
+        headers.update({
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+        })
+        return headers
 
     async def _fetch_data(self, date: str) -> Any:
         """
@@ -7787,6 +7864,11 @@ async def run_discovery(
         # Apply time window filter if requested to avoid overloading
         # Initial time window filtering removed to ensure all unique races are tracked for reporting
 
+        # Resilience check (FIX_10)
+        adapter_success_counts = {name: data['count'] for name, data in harvest_summary.items() if isinstance(data, dict) and data.get('count', 0) > 0}
+        active_adapters = list(adapter_success_counts.keys())
+        total_fetched = sum(adapter_success_counts.values())
+
         if not all_races_raw:
             logger.error("No races fetched from any adapter. Discovery aborted.")
             if save_path:
@@ -7798,7 +7880,11 @@ async def run_discovery(
                 except Exception as e:
                     logger.error("Failed to save empty race list", error=str(e))
             return
-        
+
+        if len(active_adapters) == 1 and total_fetched < 20:
+            logger.critical("DISCOVERY DEGRADED: only one adapter returned data. Results may be unreliable.",
+                           adapter=active_adapters[0], count=total_fetched)
+
         # Deduplicate
         race_map = {}
         for race in all_races_raw:

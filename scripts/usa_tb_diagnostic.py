@@ -177,8 +177,8 @@ def q1_db_reality():
                COUNT(*) as total,
                SUM(CASE WHEN audit_completed=1 THEN 1 ELSE 0 END) as ok,
                SUM(CASE WHEN audit_completed=0 THEN 1 ELSE 0 END) as stuck,
-               ROUND(AVG(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED')
-                              THEN 1.0 ELSE 0.0 END)*100,1) as hit
+               ROUND(CAST(SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') THEN 1 ELSE 0 END), 0) * 100, 1) as hit
         FROM tips GROUP BY discipline ORDER BY total DESC
     """):
         d = {'H':'Harness','T':'Thoroughbred','G':'Greyhound'}.get(
