@@ -1806,9 +1806,10 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
                 if not re.search(r"/\d{1,2}$", url):
                     continue
 
-            parts = url.split("/")
+            parts = url.rstrip("/").split("/")
             if len(parts) >= 3:
-                raw_slug = parts[2]
+                # Handle absolute (parts[4]) or relative (parts[2]) URLs
+                raw_slug = parts[4] if url.startswith("http") and len(parts) >= 5 else parts[2]
 
                 # Normalize venue from URL slug using word-boundary matching
                 slug_words = raw_slug.replace('-', ' ').upper().split()
