@@ -84,6 +84,7 @@ results = {}
 for fname, min_size in [
     ('summary_grid.txt', 10),
     ('goldmine_report.txt', 10),
+    ('fortuna_report.html', 100),
     ('race_data.json', 2),
     ('fortuna.db', 1000),
 ]:
@@ -258,12 +259,14 @@ try:
             SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END) as burned,
             SUM(CASE WHEN verdict = 'VOID' THEN 1 ELSE 0 END) as voided,
             SUM(CASE WHEN audit_completed = 0 THEN 1 ELSE 0 END) as pending,
-            COALESCE(SUM(net_profit), 0.0) as profit
+            COALESCE(SUM(net_profit), 0.0) as profit,
+            SUM(CASE WHEN qualification_grade IN ('A+', 'A') THEN 1 ELSE 0 END) as high_grade
         FROM tips
     ''')
     row = cur.fetchone()
-    total, audited, cashed, burned, voided, pending, profit = row
+    total, audited, cashed, burned, voided, pending, profit, high_grade = row
     print(f'Total tips:  {total}')
+    print(f'High Grade:  {high_grade} (A/A+)')
     print(f'Audited:     {audited}')
     print(f'  Cashed:    {cashed}')
     print(f'  Burned:    {burned}')

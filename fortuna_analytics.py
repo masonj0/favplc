@@ -296,11 +296,11 @@ class AuditorEngine:
         results: List[ResultRace],
         unverified: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        results_map = self._build_results_map(results)
+        results_map, secondary_index = self._build_results_map(results)
         self.logger.debug(
             "Results map built",
             canonical_keys=len(results_map),
-            sample_keys=list(results_map.keys())[:10],
+            secondary_keys=len(secondary_index),
         )
 
         if unverified is None:
@@ -328,7 +328,10 @@ class AuditorEngine:
                 continue
 
             try:
-                result, confidence = self._match_tip_to_result(tip_key, results_map, race_id)
+                # Item 8: Algorithm optimization
+                result, confidence = self._match_tip_to_result(
+                    tip_key, results_map, race_id, secondary_index=secondary_index
+                )
                 if not result:
                     continue
 
@@ -362,11 +365,19 @@ class AuditorEngine:
     @staticmethod
     def _build_results_map(
         results: List[ResultRace],
-    ) -> Dict[str, ResultRace]:
+    ) -> Tuple[Dict[str, ResultRace], Dict[str, List[ResultRace]]]:
         mapping: Dict[str, ResultRace] = {}
+        secondary: Dict[str, List[ResultRace]] = defaultdict(list)
         log = structlog.get_logger("AuditorEngine")
         for r in results:
             mapping[r.canonical_key] = r
+
+            # Item 8: Build secondary index by venue+date for faster fallback matching
+            # relaxed_key is {venue}|{race}|{date}|{disc}
+            parts = r.relaxed_key.split('|')
+            if len(parts) >= 3:
+                venue_date_key = f"{parts[0]}|{parts[2]}"
+                secondary[venue_date_key].append(r)
 
             rk = r.relaxed_key
             if rk == r.canonical_key:
@@ -382,13 +393,14 @@ class AuditorEngine:
                     )
                     continue
             mapping[rk] = r
-        return mapping
+        return mapping, secondary
 
     def _match_tip_to_result(
         self,
         tip_key: str,
         results_map: Dict[str, ResultRace],
         race_id: str,
+        secondary_index: Optional[Dict[str, List[ResultRace]]] = None,
     ) -> Tuple[Optional[ResultRace], str]:
         """Matches a tip to a result, returning the result and match confidence."""
         # Exact canonical match
@@ -400,36 +412,38 @@ class AuditorEngine:
         if len(parts) < 5:
             return None, "none"
 
+        venue, race_str, date_str, time_str, disc = parts
+
         # Fallback 1: closest time match within 90 minutes (same discipline)
-        prefix_with_disc = f"{parts[0]}|{parts[1]}|{parts[2]}"
-        try:
-            tip_minutes = int(parts[3][:2]) * 60 + int(parts[3][2:])
+        # Item 8: Use secondary index to avoid O(N) iteration
+        if secondary_index:
+            venue_date_key = f"{venue}|{date_str}"
             candidates = []
-            for key, obj in results_map.items():
-                # We only check canonical keys (those with 5 parts) to avoid double-matching relaxed keys
-                kp = key.split("|")
-                if len(kp) == 5 and kp[0] == parts[0] and kp[1] == parts[1] and kp[2] == parts[2] and kp[4] == parts[4]:
-                    try:
-                        res_minutes = int(kp[3][:2]) * 60 + int(kp[3][2:])
+            try:
+                tip_minutes = int(time_str[:2]) * 60 + int(time_str[2:])
+                for obj in secondary_index.get(venue_date_key, []):
+                    # Match race number and discipline
+                    if str(obj.race_number) == race_str and (obj.discipline or "T")[:1].upper() == disc:
+                        res_time = obj.start_time.strftime("%H%M")
+                        res_minutes = int(res_time[:2]) * 60 + int(res_time[2:])
                         delta = abs(tip_minutes - res_minutes)
                         if delta <= 90:
                             candidates.append((delta, obj))
-                    except (ValueError, IndexError):
-                        pass
-            if candidates:
-                candidates.sort(key=lambda x: x[0])
-                res = candidates[0][1]
-                self.logger.info(
-                    "Time-window fallback match",
-                    race_id=race_id,
-                    match_key=res.canonical_key,
-                )
-                return res, "relaxed"
-        except (ValueError, IndexError):
-            pass
+
+                if candidates:
+                    candidates.sort(key=lambda x: x[0])
+                    res = candidates[0][1]
+                    self.logger.info(
+                        "Time-window fallback match (optimized)",
+                        race_id=race_id,
+                        match_key=res.canonical_key,
+                    )
+                    return res, "relaxed"
+            except (ValueError, IndexError):
+                pass
 
         # Fallback 1.1: drop time entirely, keep discipline (any time)
-        relaxed = f"{parts[0]}|{parts[1]}|{parts[2]}|{parts[4]}"
+        relaxed = f"{venue}|{race_str}|{date_str}|{disc}"
         result = results_map.get(relaxed)
         if result:
             self.logger.info(
@@ -440,11 +454,13 @@ class AuditorEngine:
             return result, "relaxed"
 
         # Fallback 2: drop discipline, keep venue|race|date
-        prefix = f"{parts[0]}|{parts[1]}|{parts[2]}"
-        matches = [
-            obj for key, obj in results_map.items()
-            if key.startswith(prefix) and key != tip_key
-        ]
+        matches = []
+        if secondary_index:
+            venue_date_key = f"{venue}|{date_str}"
+            for obj in secondary_index.get(venue_date_key, []):
+                if str(obj.race_number) == race_str:
+                    matches.append(obj)
+
         if len(matches) == 1:
             self.logger.info(
                 "Discipline-relaxed fallback match",
@@ -632,6 +648,13 @@ class AuditorEngine:
         if sel is None:
             return Verdict.VOID, 0.0
         if sel.position_numeric is None:
+            # Fallback (Item 4): If position is missing but we have payouts, they placed!
+            if (sel.place_payout and sel.place_payout > 0.01) or (sel.win_payout and sel.win_payout > 0.01):
+                if sel.place_payout and sel.place_payout > 0.01:
+                    return Verdict.CASHED, sel.place_payout - STANDARD_BET
+                # We know they placed because they won or have a win payout
+                return Verdict.CASHED_ESTIMATED, round((STANDARD_BET * max(1.1, 1.0 + ((sel.final_win_odds or fortuna.DEFAULT_ODDS_FALLBACK) - 1.0) / 5.0)) - STANDARD_BET, 2)
+
             # Missing position often means parsing gap, not a loss (Claude Fix)
             return Verdict.VOID, 0.0
 
@@ -1398,7 +1421,8 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     async def _fetch_first_valid_index(self, urls: list[str]) -> Any:
         """Try each URL with multiple impersonations until valid content."""
         for url in urls:
-            for imp in self._IMPERSONATION_FALLBACKS:
+            # Try only primary impersonation first to save time
+            for imp in self._IMPERSONATION_FALLBACKS[:1]:
                 try:
                     resp = await self.make_request(
                         "GET", url, headers=self._get_headers(), impersonate=imp,
@@ -1410,6 +1434,10 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
                         and "<table" in resp.text.lower()
                     ):
                         return resp
+
+                    if resp and resp.text and "Pardon Our Interruption" in resp.text:
+                         self.logger.warning("Equibase definitive block", url=url)
+                         break # Try next URL instead of more impersonations
                 except Exception:
                     continue
         return None
@@ -1931,12 +1959,14 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         "belmont-park",
         "belmont",
         "saratoga",
+        "sar",
         "gulfstream-park",
         "gulfstream",
         "gulfstream-park-west",
         "santa-anita-park",
         "santa-anita",
         "del-mar",
+        "dmr",
         "churchill-downs",
         "keeneland",
         "oaklawn-park",
@@ -2015,6 +2045,24 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         "zia-park",
     })
 
+    # Racing Post numeric track IDs corresponding to North American venues.
+    # Added to handle new URL format /results/{id}/{slug}/{date}.
+    _USA_TRACK_IDS: Final[frozenset[int]] = frozenset({
+        393, # Gulfstream Park
+        315, # Santa Anita
+        37,  # Churchill Downs
+        462, # Tampa Bay Downs
+        1083,# Turfway Park
+        28,  # Belmont Park
+        12,  # Aqueduct
+        311, # Saratoga
+        380, # Oaklawn Park
+        469, # Del Mar
+        491, # Keeneland
+        490, # Laurel Park
+        182, # Pimlico
+    })
+
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         """Fetch RP's full results index and keep only North American links."""
         all_links = await super()._discover_result_links(date_str)
@@ -2034,13 +2082,35 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
     def _is_usa_link(cls, href: str) -> bool:
         """Return True if the RP result URL contains a known NA track slug or numeric ID."""
         href_lower = href.lower()
-        # 1. Named-slug match (traditional RP format)
-        if any(slug in href_lower for slug in cls._USA_TRACK_SLUGS):
-            return True
-        # 2. Numeric-venue-ID match (New RP format: /results/{id}/{slug}/{date})
-        # We allow all numeric IDs through; the venue name is filtered post-parse in _parse_race_page
-        m = re.search(r'/results/(\d+)/', href_lower)
-        return bool(m)
+
+        # Extract the slug segment(s) from the URL path after /results/
+        # Format can be /results/slug/date/... OR /results/id/slug/date/...
+        parts = href_lower.split('/results/')
+        if len(parts) < 2:
+            return False
+
+        segments = parts[1].split('/')
+        if not segments:
+            return False
+
+        slug = segments[0]
+
+        # Case 1: Numeric ID segment
+        if slug.isdigit():
+            track_id = int(slug)
+            # If it's a known US ID, we're done
+            if track_id in cls._USA_TRACK_IDS:
+                return True
+
+            # If not a known ID, check the next segment for a named slug
+            if len(segments) > 1:
+                slug = segments[1]
+                # Fall through to named slug check
+            else:
+                return False
+
+        # Case 2: Named slug match (exact segment match to prevent false positives)
+        return slug in cls._USA_TRACK_SLUGS
 
 
 # -- AT THE RACES RESULTS ADAPTER ---------------------------------------------
@@ -2056,11 +2126,10 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=False,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
-            network_idle=True,
         )
 
     _ATR_LINK_SELECTORS: Final[tuple[str, ...]] = (
@@ -3647,14 +3716,8 @@ async def managed_adapters(
             adapter.target_venues = target_venues  # type: ignore[attr-defined]
         adapters.append(adapter)
 
-        # Double-up SOLID adapters with a mobile version (Jules Fix)
-        if name in fortuna.SOLID_RESULTS_ADAPTERS:
-            mobile_adapter = cls()
-            mobile_adapter.config["mobile"] = True
-            mobile_adapter.source_name = f"{name}Mobile"
-            if target_venues:
-                mobile_adapter.target_venues = target_venues  # type: ignore[attr-defined]
-            adapters.append(mobile_adapter)
+        # Optimization: Do NOT double-up mobile versions for results auditing
+        # This prevents resource exhaustion and timeouts during heavy audits (Jules Fix)
 
     try:
         yield adapters
