@@ -2157,11 +2157,10 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         # BUG-1 Fix: Use PLAYWRIGHT to handle React-based structure and reduce crash risk
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            enable_js=False,
             stealth_mode="camouflage",
             timeout=self.TIMEOUT,
-            network_idle=True,
         )
 
     _ATR_LINK_SELECTORS: Final[tuple[str, ...]] = (
