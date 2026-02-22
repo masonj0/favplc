@@ -3950,6 +3950,10 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             is_goldmine = False
             is_best_bet = False
             gap12 = 0.0
+            is_superfecta_key = False
+            superfecta_key_number = None
+            superfecta_key_name = None
+            superfecta_box_numbers = []
             active_runners = [r for r in race.runners if not r.scratched]
             total_active = len(active_runners)
 
@@ -4091,6 +4095,23 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     if qualification_grade in ('A+', 'A'):
                         is_best_bet = True
 
+                # ── SUPERFECTA KEYBOX STRATEGY ──────────────────────────────────────────
+                # Trigger: top favourite is strongly dominant (gap12 > 0.75).
+                # Key the favourite in 1st; box the next 3 runners in 2-3-4.
+                KEYBOX_GAP_THRESHOLD = 0.75
+
+                if gap12 > KEYBOX_GAP_THRESHOLD and len(valid_r_with_odds) >= 4:
+                    key_runner = valid_r_with_odds[0][0]          # top favourite
+                    is_superfecta_key = True
+                    superfecta_key_number = key_runner.number
+                    superfecta_key_name   = key_runner.name
+                    # Next 3 runners (by odds) form the box legs
+                    superfecta_box_numbers = [
+                        r[0].number for r in valid_r_with_odds[1:4] if r[0].number is not None
+                    ]
+
+                # ────────────────────────────────────────────────────────────────────────
+
                 race.metadata['predicted_2nd_fav_odds'] = float(sec)
             else:
                 # Fallback if insufficient odds data
@@ -4105,6 +4126,10 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = gap12
+            race.metadata['is_superfecta_key'] = is_superfecta_key
+            race.metadata['superfecta_key_number'] = superfecta_key_number
+            race.metadata['superfecta_key_name'] = superfecta_key_name
+            race.metadata['superfecta_box_numbers'] = superfecta_box_numbers
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -4381,24 +4406,31 @@ def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) 
             return True
         return False
 
-    goldmines = [r for r in races if get_field(r, 'metadata', {}).get('is_goldmine') and is_superfecta_effective(r)]
+    qualified_races = [
+        r for r in races
+        if (get_field(r, 'metadata', {}).get('is_goldmine') or get_field(r, 'metadata', {}).get('is_superfecta_key'))
+        and is_superfecta_effective(r)
+    ]
 
-    if not goldmines:
+    if not qualified_races:
         lines.append("No qualifying races.")
         return "\n".join(lines)
 
-    track_to_nums = defaultdict(list)
-    for r in goldmines:
+    track_to_formatted = defaultdict(list)
+    for r in qualified_races:
         v = get_field(r, 'venue')
         if v:
             track = normalize_venue_name(v)
-            track_to_nums[track].append(get_field(r, 'race_number'))
+            num = get_field(r, 'race_number')
+            is_key = get_field(r, 'metadata', {}).get('is_superfecta_key', False)
+            label = f"{num}[K]" if is_key else str(num)
+            track_to_formatted[track].append((num, label))
 
     # Sort tracks descending by category (T > H > G)
     cat_map = {'T': 3, 'H': 2, 'G': 1}
 
     formatted_tracks = []
-    for track in track_to_nums.keys():
+    for track in track_to_formatted.keys():
         cat = track_categories.get(track, 'T')
         display_name = f"{cat}~{track}"
         formatted_tracks.append((cat, track, display_name))
@@ -4407,8 +4439,10 @@ def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) 
     formatted_tracks.sort(key=lambda x: (-cat_map.get(x[0], 0), x[1]))
 
     for cat, track, display_name in formatted_tracks:
-        nums = sorted(list(set(track_to_nums[track])))
-        lines.append(f"{display_name}: {', '.join(map(str, nums))}")
+        # Sort by race number then join labels
+        entries = sorted(track_to_formatted[track], key=lambda x: x[0])
+        labels = [e[1] for e in entries]
+        lines.append(f"{display_name}: {', '.join(labels)}")
     return "\n".join(lines)
 
 
@@ -4530,6 +4564,12 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             gap12 = get_field(r, 'metadata', {}).get('1Gap2', 0.0)
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
             report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | 1Gap2: {gap12:.2f}")
+            # Superfecta Keybox annotation
+            if get_field(r, 'metadata', {}).get('is_superfecta_key'):
+                key_num  = get_field(r, 'metadata', {}).get('superfecta_key_number', '?')
+                box_nums = get_field(r, 'metadata', {}).get('superfecta_box_numbers', [])
+                box_str  = ", ".join(str(n) for n in box_nums) if box_nums else "?"
+                report_lines.append(f"🗝️  SUPERFECTA KEYBOX: #{key_num} [KEY] → #{box_str} [BOX 2-3-4]")
             report_lines.append("-" * 40)
 
             # Sort runners by number
@@ -4674,6 +4714,8 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
 
         is_gold = getattr(r, 'metadata', {}).get('is_goldmine', False)
         gold_badge = '<span class="badge gold">GOLD</span>' if is_gold else ''
+        is_superfecta_key = getattr(r, 'metadata', {}).get('is_superfecta_key', False)
+        key_badge = '<span class="badge key">KEY</span>' if is_superfecta_key else ''
 
         d_str = '??/??'
         if isinstance(st, datetime):
@@ -4691,13 +4733,67 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
                 <td>{ (getattr(sel, 'win_odds') or 0.0):.2f}</td>
-                <td>{gold_badge}</td>
+                <td>{gold_badge}{key_badge}</td>
             </tr>
         """)
 
     tips_count = stats.get('tips', 0)
     cashed_count = stats.get('cashed', 0)
     profit = stats.get('profit', 0.0)
+
+    # Build keybox rows
+    keybox_rows = []
+    for r in sorted(races, key=lambda x: getattr(x, 'start_time', '')):
+        if not getattr(r, 'metadata', {}).get('is_superfecta_key'):
+            continue
+        st = getattr(r, 'start_time', '')
+        if isinstance(st, datetime):
+            st_str = to_eastern(st).strftime('%H:%M')
+        elif isinstance(st, str):
+            try:
+                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                st_str = to_eastern(dt).strftime('%H:%M')
+            except Exception:
+                s_st = str(st)
+                st_str = s_st[11:16] if len(s_st) >= 16 else "??"
+        else:
+            s_st = str(st)
+            st_str = s_st[11:16] if len(s_st) >= 16 else "??"
+
+        key_num  = r.metadata.get('superfecta_key_number', '?')
+        key_name = r.metadata.get('superfecta_key_name', 'Unknown')
+        box_nums = r.metadata.get('superfecta_box_numbers', [])
+        box_str  = " / ".join(f"#{n}" for n in box_nums) if box_nums else "?"
+        gap12    = r.metadata.get('1Gap2', 0.0)
+        keybox_rows.append(f"""
+            <tr>
+                <td>{st_str}</td>
+                <td>{getattr(r, 'venue', 'Unknown')}</td>
+                <td>R{getattr(r, 'race_number', '?')}</td>
+                <td>#{key_num} {key_name}</td>
+                <td>{box_str}</td>
+                <td>{gap12:.2f}</td>
+            </tr>
+        """)
+
+    keybox_section = ""
+    if keybox_rows:
+        keybox_section = f"""
+            <h2>🗝️ Superfecta Keybox Plays</h2>
+            <p style="color:#94a3b8;font-size:13px;">
+                Key the favourite in 1st. Box the next 3 runners in 2nd–3rd–4th.
+                Triggered when 1Gap2 &gt; 0.75.
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Time</th><th>Venue</th><th>Race</th>
+                        <th>Key (1st)</th><th>Box (2-3-4)</th><th>1Gap2</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(keybox_rows)}</tbody>
+            </table>
+        """
 
     html = f"""
     <!DOCTYPE html>
@@ -4720,6 +4816,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             tr:hover {{ background-color: #334155; }}
             .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
             .gold {{ background-color: #fbbf24; color: #0f172a; }}
+            .key {{ background-color: #7c3aed; color: #fff; margin-left: 4px; }}
             .footer {{ margin-top: 40px; text-align: center; font-size: 12px; color: #64748b; }}
         </style>
     </head>
@@ -4759,6 +4856,8 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                     {''.join(rows) if rows else '<tr><td colspan="6" style="text-align:center;">No immediate opportunities identified.</td></tr>'}
                 </tbody>
             </table>
+
+            {keybox_section}
 
             {await _generate_audit_history_html()}
 
@@ -4883,7 +4982,8 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
             'field': field_size,
             'top5': top5,
             'gap': gap12,
-            'gold': '[G]' if is_gold else ''
+            'gold': '[G]' if is_gold else '',
+            'key': '[K]' if get_field(race, 'metadata', {}).get('is_superfecta_key') else ''
         })
 
     # Sort by MTP
@@ -4893,14 +4993,14 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         return "No upcoming races in the next 4 hours."
 
     lines = [
-        "| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | |",
-        "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|"
+        "| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | | |",
+        "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|:---:|"
     ]
     for tr in table_races:
         # Better alignment: leading zero for single digits (Memory Directive Fix)
         mtp_val = tr['mtp']
         mtp_str = f"{mtp_val:02d}" if 0 <= mtp_val < 10 else str(mtp_val)
-        lines.append(f"| {mtp_str}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} |")
+        lines.append(f"| {mtp_str}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} | {tr['key']} |")
 
     return "\n".join(lines)
 
@@ -5300,7 +5400,10 @@ class FortunaDB:
                         composite_score REAL,
                         match_confidence TEXT,
                         is_handicap INTEGER,
-                        is_best_bet INTEGER
+                        is_best_bet INTEGER,
+                        is_superfecta_key INTEGER DEFAULT 0,
+                        superfecta_key_number INTEGER,
+                        superfecta_key_name TEXT
                     )
                 """)
                 # Composite index for deduplication - changed to race_id only for better deduplication
@@ -5369,6 +5472,12 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN is_handicap INTEGER")
                 if "is_best_bet" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN is_best_bet INTEGER")
+                if "is_superfecta_key" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN is_superfecta_key INTEGER DEFAULT 0")
+                if "superfecta_key_number" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_number INTEGER")
+                if "superfecta_key_name" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_name TEXT")
 
         await self._run_in_executor(_init)
 
@@ -5579,7 +5688,10 @@ class FortunaDB:
                     tip.get("qualification_grade"),
                     tip.get("composite_score"),
                     1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
-                    1 if tip.get("is_best_bet") else 0
+                    1 if tip.get("is_best_bet") else 0,
+                    1 if tip.get("is_superfecta_key") else 0,
+                    tip.get("superfecta_key_number"),
+                    tip.get("superfecta_key_name")
                 )
 
                 if rid not in already_logged:
@@ -5599,8 +5711,9 @@ class FortunaDB:
                                 race_id, venue, race_number, discipline, start_time, report_date,
                                 is_goldmine, source, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                                 field_size, market_depth, place_prob, predicted_ev, race_type,
-                                condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet,
+                                is_superfecta_key, superfecta_key_number, superfecta_key_name
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, to_insert)
 
                     if to_update:
@@ -5610,7 +5723,8 @@ class FortunaDB:
                                 is_goldmine=?, source=?, gap12=?, top_five=?, selection_number=?, selection_name=?,
                                 predicted_2nd_fav_odds=?, field_size=?, market_depth=?, place_prob=?,
                                 predicted_ev=?, race_type=?, condition_modifier=?, qualification_grade=?,
-                                composite_score=?, is_handicap=?, is_best_bet=?
+                                composite_score=?, is_handicap=?, is_best_bet=?,
+                                is_superfecta_key=?, superfecta_key_number=?, superfecta_key_name=?
                             WHERE race_id=? AND audit_completed=0
                         """, to_update)
 
@@ -5917,7 +6031,10 @@ class HotTipsTracker:
                 "condition_modifier": r.metadata.get('condition_modifier'),
                 "qualification_grade": r.metadata.get('qualification_grade'),
                 "composite_score": r.metadata.get('composite_score'),
-                "is_best_bet": r.metadata.get('is_best_bet', False)
+                "is_best_bet": r.metadata.get('is_best_bet', False),
+                "is_superfecta_key":     r.metadata.get('is_superfecta_key', False),
+                "superfecta_key_number": r.metadata.get('superfecta_key_number'),
+                "superfecta_key_name":   r.metadata.get('superfecta_key_name')
             }
             new_tips.append(tip_data)
 
