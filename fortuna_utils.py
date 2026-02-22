@@ -25,6 +25,7 @@ VENUE_MAP = {
 "TAUNTON": "Taunton",
 "HEREFORD": "Hereford",
 "WOLVERHAMPTON": "Wolverhampton",
+"YOUGHAL": "Youghal",
 "AQU": "Aqueduct",
 "AQUEDUCT": "Aqueduct",
 "BEL": "Belmont Park",
@@ -43,6 +44,7 @@ VENUE_MAP = {
 "CENTRAL PARK": "Central Park",
 "CHELMSFORD": "Chelmsford",
 "CHELMSFORD CITY": "Chelmsford",
+"CHEPSTOW": "Chepstow",
 "CURRAGH": "Curragh",
 "DEAUVILLE": "Deauville",
 "DED": "Delta Downs",
@@ -57,6 +59,7 @@ VENUE_MAP = {
 "DUNSTALL PARK": "Wolverhampton",
 "EPSOM": "Epsom",
 "EPSOM DOWNS": "Epsom",
+"FAIRYHOUSE": "Fairyhouse",
 "FG": "Fair Grounds",
 "FAIR GROUNDS": "Fair Grounds",
 "FLAMBORO": "Flamboro",
@@ -76,6 +79,7 @@ VENUE_MAP = {
 "HANOVER RACEWAY": "Hanover",
 "GRAND RIVER RACEWAY": "Grand River",
 "GEORGETOWN": "Grand River",
+"FONTAINEBLEAU": "Fontainebleau",
 "KAWARTHA DOWNS": "Kawartha",
 "KEE": "Keeneland",
 "KEENELAND": "Keeneland",
@@ -299,6 +303,15 @@ def normalize_venue_name(name: Optional[str]) -> str:
     # 1. Initial Cleaning
     name = str(name).replace("-", " ").replace("_", " ")
     name = re.sub(r"[\(\[\uff08].*?[\)\]\uff09]", " ", name)
+
+    # Item 11: Standardize/Strip country prefixes (NYRA etc.)
+    # Australian venues often prefixed with 'Au ' or 'Aus '
+    # French venues often prefixed with 'fr'
+    # NZ venues often prefixed with 'Nz '
+    # SA venues often prefixed with 'Sa '
+    name = re.sub(r"^(?:Au|Aus|fr|Nz|Sa|Aus|Zp|Jpn?|Hk|Uae)\s+", "", name, flags=re.I)
+    # Special case for NYRA 'frfontainebleau'
+    name = re.sub(r"^fr([a-z])", r"\1", name, flags=re.I)
 
     cleaned = clean_text(name)
     if not cleaned:
