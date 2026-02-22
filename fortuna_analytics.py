@@ -175,6 +175,14 @@ def parse_currency_value(value_str: str) -> float:
         return 0.0
     try:
         negative = raw.startswith("-") or raw.startswith("(")
+
+        # Handle multi-value strings like '577.2 GBP,244.5 GBP' or '£1.20 (3), £1.90 (6)'
+        # Take the first segment
+        if ',' in raw:
+            # Heuristic: if comma is NOT followed by 3 digits (thousands), it's likely a separator
+            if not re.search(r',\d{3}(?:\.|$)', raw):
+                raw = raw.split(',')[0].strip()
+
         if "," in raw and "." in raw:
             if raw.rfind(",") > raw.rfind("."):
                 # European style: 1.234,56
@@ -193,6 +201,9 @@ def parse_currency_value(value_str: str) -> float:
         result = float(cleaned)
         return -result if negative else result
     except (ValueError, TypeError):
+        # If it looks like a complex multi-payout string, don't warn
+        if "(" in str(value_str) and ")" in str(value_str):
+            return 0.0
         _currency_logger.warning("failed_parsing_currency", value=value_str)
         return 0.0
 
@@ -1041,6 +1052,18 @@ class PageFetchingResultsAdapter(
             lnk if lnk.startswith("http") else f"{self.BASE_URL}{lnk}"
             for lnk in links
         ))
+
+        # FIX_12: Add page fetch limit to prevent runaway fetches and SIGTERM
+        MAX_PAGES = 50
+        if len(absolute) > MAX_PAGES:
+            self.logger.warning(
+                "Truncating runaway result fetches",
+                source=self.SOURCE_NAME,
+                original=len(absolute),
+                limit=MAX_PAGES
+            )
+            absolute = absolute[:MAX_PAGES]
+
         self.logger.info(
             "Fetching result pages",
             source=self.SOURCE_NAME,
@@ -1899,6 +1922,9 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         aliases = _BET_ALIASES.get(bet_type, [bet_type])
         for label, val in dividends.items():
             if any(a in label.lower() for a in aliases):
+                p_val, p_combo = parse_payout_value(val)
+                if p_val:
+                    return p_val, p_combo
                 payout = parse_currency_value(val)
                 combo = val.split("£")[-1].strip() if "£" in val else None
                 return payout, combo
@@ -2484,15 +2510,30 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             cols = row.css("td")
             if len(cols) < 2:
                 continue
+
+            p_raw = fortuna.node_text(cols[1])
+            # Case 1: Multi-payout string like "£1.20 (3), £1.90 (6)"
+            multi = parse_place_payouts(p_raw)
+            if multi:
+                for runner in runners:
+                    if runner.number in multi:
+                        runner.place_payout = multi[runner.number]
+
+            # Case 2: Named place payout like "Place HorseName" -> "£2.50"
             p_name = fortuna.clean_text(fortuna.node_text(cols[0]).replace("Place", "").strip())
-            p_val = parse_currency_value(fortuna.node_text(cols[1]))
+            if not p_name:
+                continue
+
+            p_val = parse_currency_value(p_raw)
             p_name_lower = p_name.lower()
             for runner in runners:
                 if (
                     runner.name.lower() in p_name_lower
                     or p_name_lower in runner.name.lower()
                 ):
-                    runner.place_payout = p_val
+                    # Only set if not already set by multi (multi is more specific)
+                    if not runner.place_payout or runner.place_payout < 0.01:
+                        runner.place_payout = p_val
 
 
 # -- SPORTING LIFE RESULTS ADAPTER -------------------------------------------
