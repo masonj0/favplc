@@ -1,4 +1,3 @@
-# .github/workflows/fortuna_purge.yml
 name: "🧹 Purge Corrupted Data"
 
 on:
@@ -10,12 +9,26 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
-      aggressive:
-        description: 'Also delete stale tips'
+      cutoff_date:
+        description: 'Delete ALL tips before this date (YYYY-MM-DD, blank = use brunchtime today)'
         required: false
-        default: 'false'
-        type: choice
-        options: ['false', 'true']
+        default: ''
+        type: string
+      cutoff_time:
+        description: 'Delete tips before this time on cutoff date (HH:MM in ET, default: 11:00)'
+        required: false
+        default: '11:00'
+        type: string
+      exclude_venues:
+        description: 'Keep tips from these venues (comma-separated, e.g., Aqueduct,Turfway Park)'
+        required: false
+        default: ''
+        type: string
+      target_adapters:
+        description: 'Only purge tips from these adapters (comma-separated, blank = all corrupted)'
+        required: false
+        default: 'RacingAndSportsResults,AtTheRacesResults,AtTheRacesGreyhoundResults'
+        type: string
 
 permissions:
   contents: read
@@ -54,20 +67,138 @@ jobs:
             echo "::error::fortuna.db not found after cache restore"
             exit 1
           fi
-          ls -la fortuna.db
+          ls -lh fortuna.db
 
       - name: Run Purge
         env:
           PYTHONPATH: .
+          CUTOFF_DATE: ${{ inputs.cutoff_date }}
+          CUTOFF_TIME: ${{ inputs.cutoff_time }}
+          EXCLUDE_VENUES: ${{ inputs.exclude_venues }}
+          TARGET_ADAPTERS: ${{ inputs.target_adapters }}
         run: |
           FLAGS=""
           if [ "${{ inputs.execute }}" = "true" ]; then
-            FLAGS="$FLAGS --execute"
+            FLAGS="--execute"
           fi
-          if [ "${{ inputs.aggressive }}" = "true" ]; then
-            FLAGS="$FLAGS --aggressive"
-          fi
-          python3 scripts/purge_corrupted_data.py $FLAGS
+
+          python3 << 'PYEOF'
+          import os, sys, sqlite3, re, asyncio
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          # Ensure current directory is in path for importing fortuna
+          sys.path.insert(0, os.getcwd())
+          import fortuna
+
+          EASTERN = ZoneInfo("America/New_York")
+
+          async def main_async():
+              # 1. SETUP
+              execute = "--execute" in sys.argv
+              cutoff_date = os.environ.get("CUTOFF_DATE", "").strip()
+              cutoff_time = os.environ.get("CUTOFF_TIME", "11:00").strip()
+              exclude_venues_raw = os.environ.get("EXCLUDE_VENUES", "").strip()
+              target_adapters_raw = os.environ.get("TARGET_ADAPTERS", "").strip()
+
+              exclude_venues = {v.strip() for v in exclude_venues_raw.split(",") if v.strip()}
+              target_adapters = {a.strip() for a in target_adapters_raw.split(",") if a.strip()}
+
+              now_et = datetime.now(EASTERN)
+              if cutoff_date:
+                  try:
+                      cutoff_dt = datetime.strptime(f"{cutoff_date} {cutoff_time}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
+                  except ValueError:
+                      print(f"❌ Invalid cutoff_date format: {cutoff_date}")
+                      sys.exit(1)
+              else:
+                  cutoff_dt = now_et.replace(hour=int(cutoff_time.split(":")[0]),
+                                             minute=int(cutoff_time.split(":")[1]),
+                                             second=0, microsecond=0)
+              cutoff_iso = cutoff_dt.isoformat()
+
+              # 2. INITIALIZE & MIGRATE DB
+              db_manager = fortuna.FortunaDB("fortuna.db")
+              await db_manager.initialize()
+
+              # 3. CONNECT
+              conn = sqlite3.connect("fortuna.db")
+              conn.row_factory = sqlite3.Row
+
+              def get_size_kb():
+                  return os.path.getsize("fortuna.db") / 1024
+
+              size_before = get_size_kb()
+
+              # 4. PRE-PURGE STATS
+              total = conn.execute("SELECT COUNT(*) FROM tips").fetchone()[0]
+              audited = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed=1").fetchone()[0]
+              harvest_count = conn.execute("SELECT COUNT(*) FROM harvest_logs").fetchone()[0] if \
+                  conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='harvest_logs'").fetchone() else 0
+
+              print(f"# 🧹 Fortuna Data Purge — {'🔴 EXECUTE' if execute else '🟡 DRY RUN'}\n")
+              print(f"**Database:** `fortuna.db` ({size_before:.1f} KB)")
+              print(f"**Time:** {now_et.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+              print(f"**Cutoff:** {cutoff_dt.strftime('%Y-%m-%d %H:%M %Z')}\n")
+
+              print(f"## 📊 Pre-Purge State\n")
+              print(f"- **Total tips:** {total}")
+              print(f"- **Audited:** {audited}")
+              print(f"- **Unaudited:** {total - audited}")
+              print(f"- **Harvest logs:** {harvest_count}\n")
+
+              # 5. BUILD QUERY
+              conditions = ["start_time < ?"]
+              params = [cutoff_iso]
+              if target_adapters:
+                  placeholders = ",".join("?" * len(target_adapters))
+                  conditions.append(f"source IN ({placeholders})")
+                  params.extend(target_adapters)
+              if exclude_venues:
+                  venue_placeholders = ",".join("?" * len(exclude_venues))
+                  conditions.append(f"venue NOT IN ({venue_placeholders})")
+                  params.extend(exclude_venues)
+
+              where_clause = " AND ".join(conditions)
+
+              # 6. PREVIEW
+              preview = conn.execute(f"SELECT venue, COUNT(*) as cnt, source, MIN(start_time) as first, MAX(start_time) as last FROM tips WHERE {where_clause} GROUP BY venue, source ORDER BY cnt DESC", params).fetchall()
+              to_delete = sum(row['cnt'] for row in preview)
+
+              if to_delete == 0:
+                  print(f"✅ **No tips match the purge criteria.**\n")
+                  conn.close()
+                  return
+
+              print(f"### 📋 Tips to Delete: **{to_delete}/{total}** ({to_delete/total*100:.1f}%)\n")
+              print(f"```\n  {'VENUE':<30s} {'ADAPTER':<35s} CNT  FIRST→LAST\n  {'─'*30} {'─'*35} {'─'*4} {'─'*20}")
+              for row in preview:
+                  print(f"  {row['venue']:<30s} {row['source']:<35s} {row['cnt']:>3}  {(row['first'] or '')[:10]}→{(row['last'] or '')[:10]}")
+              print(f"```\n")
+
+              # 7. EXECUTE
+              if execute:
+                  print(f"## 🔧 Executing Purge\n")
+                  conn.execute(f"DELETE FROM tips WHERE {where_clause}", params)
+                  if harvest_count > 0:
+                      conn.execute("DELETE FROM harvest_logs WHERE race_count = 0 OR race_count IS NULL")
+                  conn.execute("VACUUM")
+                  conn.commit()
+                  size_after = get_size_kb()
+                  print(f"  📦 Database size: {size_before:.1f} KB → {size_after:.1f} KB ({size_before - size_after:+.1f} KB)\n")
+
+                  # VERIFY
+                  total_after = conn.execute("SELECT COUNT(*) FROM tips").fetchone()[0]
+                  print(f"## ✅ Post-Purge Verification\n- **Tips remaining:** {total_after} (was {total})")
+                  if total_after == total - to_delete: print("✅ Deletion count matches expectation\n")
+              else:
+                  print(f"## 🟡 Dry Run Complete\n**No changes made.** Re-run with `execute: true` to purge.\n")
+
+              conn.close()
+
+          if __name__ == "__main__":
+              asyncio.run(main_async())
+          PYEOF $FLAGS
 
       - name: Save Cleaned Database
         if: inputs.execute == 'true'
@@ -82,26 +213,20 @@ jobs:
           echo "## 🗄️ Clearing stale GHA caches" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          # List and delete all regional caches (they contain corrupted data)
-          for pattern in "fortuna-db-v3-entry" "fortuna-db-v3-results"; do
-            echo "Clearing caches matching: $pattern"
-            gh cache list --json key -q ".[].key" | \
-              grep "$pattern" | \
-              while read -r key; do
-                echo "  Deleting: $key"
-                gh cache delete "$key" 2>/dev/null || true
-              done
-          done
-
-          # Delete old master caches (keep none — we just saved a fresh one)
+          # Delete ALL old master caches (keep only the one we just saved)
+          deleted=0
           gh cache list --json key -q ".[].key" | \
             grep "fortuna-db-v3-master-" | \
-            grep -v "${{ github.run_number }}" | \
+            grep -v "fortuna-db-v3-master-${{ github.run_number }}" | \
             while read -r key; do
-              echo "  Deleting old master: $key"
+              echo "  🗑️  Deleting cache: \`$key\`" >> "$GITHUB_STEP_SUMMARY"
               gh cache delete "$key" 2>/dev/null || true
+              deleted=$((deleted + 1))
             done
 
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deleted **${deleted}** old cache(s)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "✅ Cache cleanup complete" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Cleaned DB
