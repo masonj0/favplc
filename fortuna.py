@@ -3955,8 +3955,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
         # Valid Region Filter (Item 6)
-        # South Africa ('za', 'sa') removed by user request (JB override)
-        INVALID_REGION_PREFIXES = ('fr', 'au', 'aus', 'jp', 'hk', 'uae')
+        # South Africa ('za', 'sa') and Australia ('au', 'aus') removed by user request (JB override)
+        # This allows 24/7 coverage during overnight US hours.
+        INVALID_REGION_PREFIXES = ('fr', 'jp', 'hk', 'uae')
 
         # Blocklist for bare venue names in invalid regions (FIX_04)
         BLOCKED_VENUES = {
@@ -3970,8 +3971,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             'shatin', 'happyvalley',
             # UAE
             'meydan', 'abudhabi', 'jebelali',
-            # Australia
-            'flemington', 'randwick', 'caulfield', 'mooneevalley', 'rosehill',
             # Italy
             'milan', 'sanrossore', 'capannelle',
         }
