@@ -196,16 +196,20 @@ jobs:
               newest = freshness['newest_tip'] or 'never'
               newest_audit = freshness['newest_audit'] or 'never'
 
-              # Compute staleness
+              # Compute staleness based on report_date (tip insertion time) instead of future start_time (Item 10)
               stale_hours = None
-              if freshness['newest_tip']:
-                  try:
-                      last_tip = datetime.fromisoformat(
-                          str(freshness['newest_tip']).replace('Z', '+00:00'))
-                      stale_hours = (now_et - last_tip.astimezone(EASTERN)
-                                     ).total_seconds() / 3600
-                  except Exception:
-                      pass
+              try:
+                  last_report = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
+                  if last_report:
+                      # report_date is ISO format Eastern time
+                      last_tip_time = datetime.fromisoformat(last_report.replace('Z', '+00:00'))
+                      # Ensure both are offset-aware for comparison
+                      if last_tip_time.tzinfo is None:
+                          last_tip_time = last_tip_time.replace(tzinfo=EASTERN)
+
+                      stale_hours = (now_et - last_tip_time).total_seconds() / 3600
+              except Exception as e:
+                  emit(f"<!-- Staleness calc error: {e} -->")
 
               stale_flag = ""
               if stale_hours is not None:

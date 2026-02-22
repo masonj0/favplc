@@ -383,7 +383,7 @@ USA_RESULTS_ADAPTERS: Final[set] = {
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
     "DRFResults",
-    # "NYRABetsResults",  # Temporarily removed due to API 403 block (2026-02-21)
+    "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
     "RacingPostResults", "RacingPostTote", "AtTheRacesResults",
@@ -400,6 +400,7 @@ SOLID_RESULTS_ADAPTERS: Final[set] = {
     "AtTheRacesGreyhoundResults",
     "TimeformResults",
     "SkySportsResults",
+    "NYRABetsResults",
 }
 
 DEFAULT_CONCURRENT_REQUESTS: Final[int] = 5
@@ -3930,7 +3931,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
 
+        # Valid Region Filter (Item 6)
+        INVALID_REGION_PREFIXES = ('fr', 'au', 'aus', 'za', 'sa', 'jp', 'hk', 'uae')
+
         for race in races:
+            # Region filtering (Item 6)
+            canonical_venue = get_canonical_venue(race.venue)
+            if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES):
+                self.logger.info("Skipping race in untested region", venue=race.venue, canonical=canonical_venue)
+                continue
+
             # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
             st = race.start_time
             if st.tzinfo is None:
@@ -3993,6 +4003,18 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if len(all_odds) >= 2:
                 fav, sec = all_odds[0], all_odds[1]
 
+                # S0 — Extract race type from conditions if missing (Item 2 / Step 5)
+                if not race.race_type:
+                    # Search metadata or raw text if available (heuristics)
+                    # We'll use a broad text search across common metadata fields
+                    search_text = " ".join([str(v) for v in race.metadata.values() if isinstance(v, str)])
+                    rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap)', search_text, re.I)
+                    if rt_match:
+                        race.race_type = rt_match.group(1).title()
+
+                    if "HANDICAP" in search_text.upper():
+                        race.is_handicap = True
+
                 # S1 — implied place probability for the favourite (Insight 3)
                 place_prob = 0.0
                 if all_odds and len(active_runners) >= 2:
@@ -4052,9 +4074,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['qualification_grade'] = qualification_grade
                 race.metadata['composite_score']     = round(_composite, 1)
 
-                # Enforce gap requirement (Updated to 0.35 ratio per independent review)
-                if gap12 < 0.35:
-                    log.debug("Insufficient gap detected (ratio < 0.35), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12)
+                # Enforce gap requirement (Item 5: approach A — raise threshold to account for drift)
+                # Recalibrated ratio: 0.55 (~2.5 absolute drift buffer)
+                GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
+
+                if gap12 < GAP_RATIO_THRESHOLD:
+                    log.debug("Insufficient gap detected (ratio below threshold), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12, required=GAP_RATIO_THRESHOLD)
                 else:
                     # Preferred Predictions (S7: Exclude maiden)
                     is_maiden = "maiden" in (race.race_type or "").lower()
@@ -5246,6 +5271,7 @@ class FortunaDB:
                         start_time TEXT NOT NULL,
                         report_date TEXT NOT NULL,
                         is_goldmine INTEGER NOT NULL,
+                        source TEXT,
                         gap12 TEXT,
                         top_five TEXT,
                         selection_number INTEGER,
@@ -5508,7 +5534,7 @@ class FortunaDB:
         return await self._run_in_executor(_get)
 
     async def log_tips(self, tips: List[Dict[str, Any]], dedup_window_hours: int = 12):
-        """Logs new tips to the database with batch deduplication."""
+        """Logs new tips to the database with batch deduplication and scoring updates."""
         if not self._initialized: await self.initialize()
 
         def _log():
@@ -5529,41 +5555,66 @@ class FortunaDB:
             already_logged = {row["race_id"] for row in cursor.fetchall()}
 
             to_insert = []
+            to_update = []
             for tip in tips:
                 rid = tip.get("race_id")
-                if rid and rid not in already_logged:
-                    report_date = tip.get("report_date") or now.isoformat()
-                    to_insert.append((
-                        rid, tip.get("venue"), tip.get("race_number"),
-                        tip.get("discipline"), tip.get("start_time"), report_date,
-                        1 if tip.get("is_goldmine") else 0,
-                        str(tip.get("1Gap2", 0.0)),
-                        tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
-                        float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
-                        tip.get("field_size"),
-                        tip.get("market_depth"),
-                        tip.get("place_prob"),
-                        tip.get("predicted_ev"),
-                        tip.get("race_type"),
-                        tip.get("condition_modifier"),
-                        tip.get("qualification_grade"),
-                        tip.get("composite_score"),
-                        1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
-                        1 if tip.get("is_best_bet") else 0
-                    ))
-                    already_logged.add(rid) # Avoid duplicates within the same batch
+                if not rid: continue
 
-            if to_insert:
+                report_date = tip.get("report_date") or now.isoformat()
+                # Prepare 23 elements for INSERT or UPDATE
+                data = (
+                    rid, tip.get("venue"), tip.get("race_number"),
+                    tip.get("discipline"), tip.get("start_time"), report_date,
+                    1 if tip.get("is_goldmine") else 0,
+                    tip.get("source"),
+                    str(tip.get("1Gap2", 0.0)),
+                    tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
+                    float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
+                    tip.get("field_size"),
+                    tip.get("market_depth"),
+                    tip.get("place_prob"),
+                    tip.get("predicted_ev"),
+                    tip.get("race_type"),
+                    tip.get("condition_modifier"),
+                    tip.get("qualification_grade"),
+                    tip.get("composite_score"),
+                    1 if tip.get("is_handicap") is True else (0 if tip.get("is_handicap") is False else None),
+                    1 if tip.get("is_best_bet") else 0
+                )
+
+                if rid not in already_logged:
+                    to_insert.append(data)
+                    already_logged.add(rid) # Avoid duplicates within the same batch
+                else:
+                    # Update existing record if not audited to refresh scoring/metadata
+                    # We shift rid to the end for the WHERE clause
+                    update_tuple = data[1:] + (rid,)
+                    to_update.append(update_tuple)
+
+            if to_insert or to_update:
                 with conn:
-                    conn.executemany("""
-                        INSERT OR IGNORE INTO tips (
-                            race_id, venue, race_number, discipline, start_time, report_date,
-                            is_goldmine, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
-                            field_size, market_depth, place_prob, predicted_ev, race_type,
-                            condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, to_insert)
-                self.logger.info("Hot tips batch logged", count=len(to_insert))
+                    if to_insert:
+                        conn.executemany("""
+                            INSERT INTO tips (
+                                race_id, venue, race_number, discipline, start_time, report_date,
+                                is_goldmine, source, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
+                                field_size, market_depth, place_prob, predicted_ev, race_type,
+                                condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, to_insert)
+
+                    if to_update:
+                        conn.executemany("""
+                            UPDATE tips SET
+                                venue=?, race_number=?, discipline=?, start_time=?, report_date=?,
+                                is_goldmine=?, source=?, gap12=?, top_five=?, selection_number=?, selection_name=?,
+                                predicted_2nd_fav_odds=?, field_size=?, market_depth=?, place_prob=?,
+                                predicted_ev=?, race_type=?, condition_modifier=?, qualification_grade=?,
+                                composite_score=?, is_handicap=?, is_best_bet=?
+                            WHERE race_id=? AND audit_completed=0
+                        """, to_update)
+
+                self.logger.info("Hot tips processed", inserted=len(to_insert), updated=len(to_update))
 
         await self._run_in_executor(_log)
 
@@ -5850,6 +5901,7 @@ class HotTipsTracker:
                 "race_number": r.race_number,
                 "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
+                "source": r.source,
                 "1Gap2": gap12,
                 "discipline": r.discipline,
                 "top_five": r.top_five_numbers,
@@ -7551,13 +7603,7 @@ async def run_discovery(
                     specific_config.update({"region": region})
                     adapters.append(cls(config=specific_config))
 
-                    # Double-up SOLID adapters with a mobile version (Jules Fix)
-                    if name in SOLID_DISCOVERY_ADAPTERS:
-                        mobile_config = specific_config.copy()
-                        mobile_config["mobile"] = True
-                        mobile_adapter = cls(config=mobile_config)
-                        mobile_adapter.source_name = f"{name}Mobile"
-                        adapters.append(mobile_adapter)
+                    # Optimization: Removed dynamic doubling of mobile adapters to reduce noise/timeouts (Item 7)
 
                 except Exception as e:
                     logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
