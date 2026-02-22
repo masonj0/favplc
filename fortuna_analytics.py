@@ -2119,12 +2119,43 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     """At The Races results — UK / IRE."""
 
     SOURCE_NAME = "AtTheRacesResults"
+
+    def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
+        """Override to assign sequential race numbers per venue (Fix 3)."""
+        races: List[ResultRace] = super()._parse_races(raw_data)
+        if not races:
+            return races
+
+        # Group by canonical venue + date
+        groups: Dict[tuple, List[ResultRace]] = defaultdict(list)
+        for r in races:
+            key = (
+                fortuna.get_canonical_venue(r.venue),
+                r.start_time.strftime("%Y%m%d"),
+            )
+            groups[key].append(r)
+
+        fixed: List[ResultRace] = []
+        for group in groups.values():
+            group.sort(key=lambda r: r.start_time)
+            for i, race in enumerate(group, start=1):
+                date_str = race.start_time.strftime("%Y-%m-%d")
+                fixed.append(
+                    race.model_copy(update={
+                        "race_number": i,
+                        "id": self._make_race_id(
+                            "atr_res", race.venue, date_str, i,
+                        ),
+                    })
+                )
+        return fixed
     BASE_URL = "https://www.attheraces.com"
     HOST = "www.attheraces.com"
     IMPERSONATE = "chrome120"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # BUG-1 Fix: Use PLAYWRIGHT to handle React-based structure and reduce crash risk
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=False,
@@ -2214,13 +2245,20 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     ) -> Optional[ResultRace]:
         parser = HTMLParser(html)
 
-        venue, race_time_str = self._extract_atr_venue(parser)
+        venue, race_time_str = self._extract_atr_venue(parser, url)
         if not venue:
             return None
 
-        # Robust race number extraction from URL (last numeric part)
-        url_match = re.search(r"/(\d+)$", url.rstrip("/"))
-        race_num = int(url_match.group(1)) if url_match else 1
+        # Improved race number extraction (Fix 3)
+        race_num = _extract_race_number_from_text(parser, url)
+        if not race_num:
+            # Robust race number extraction from URL (last numeric part)
+            url_match = re.search(r"/(\d+)$", url.rstrip("/"))
+            race_num = int(url_match.group(1)) if url_match else 1
+
+        # Sanity check: if race number is suspiciously large (ID instead of index), default to 1
+        if race_num > 25:
+            race_num = 1
 
         runners = self._parse_atr_runners(parser)
 
@@ -2256,27 +2294,53 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         )
 
     @staticmethod
-    def _extract_atr_venue(parser: HTMLParser) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_atr_venue(parser: HTMLParser, url: str = "") -> Tuple[Optional[str], Optional[str]]:
+        # Fix 2: Use word-boundary matching from URL slug to prevent race title contamination
+        track_name = None
+        race_time = None
+
+        if url:
+            parts = url.split("/")
+            # Look for slug in typical ATR result URL positions
+            raw_slug = None
+            if "/international/" in url and len(parts) >= 5:
+                raw_slug = parts[4]
+            elif len(parts) >= 3:
+                raw_slug = parts[2]
+
+            if raw_slug:
+                slug_words = raw_slug.replace('-', ' ').upper().split()
+                for end in range(len(slug_words), 0, -1):
+                    candidate = " ".join(slug_words[:end])
+                    if candidate in VENUE_MAP:
+                        track_name = VENUE_MAP[candidate]
+                        break
+
         header = (
             parser.css_first(".race-header__details--primary")
             or parser.css_first(".racecard-header")
             or parser.css_first(".race-header")
         )
         if not header:
-            return None, None
+            return track_name, None
+
         venue_node = (
             header.css_first("h2")
             or header.css_first("h1")
             or header.css_first(".track-name")
         )
-        if not venue_node:
-            return None, None
-        venue_text = fortuna.node_text(venue_node)
-        # Strip leading time if present (e.g. "14:20 Southwell")
-        time_match = re.match(r"^(\d{1,2}:\d{2})\s*", venue_text)
-        race_time = time_match.group(1) if time_match else None
-        venue_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", venue_text)
-        return fortuna.normalize_venue_name(venue_text), race_time
+
+        venue_text = fortuna.node_text(venue_node) if venue_node else ""
+        if venue_text:
+            # Strip leading time if present (e.g. "14:20 Southwell")
+            time_match = re.match(r"^(\d{1,2}:\d{2})\s*", venue_text)
+            race_time = time_match.group(1) if time_match else None
+            venue_text = re.sub(r"^\d{1,2}:\d{2}\s*", "", venue_text)
+
+            if not track_name:
+                track_name = fortuna.normalize_venue_name(venue_text)
+
+        return track_name, race_time
 
     def _parse_atr_runners(self, parser: HTMLParser) -> List[ResultRunner]:
         # Favor the full-result tab if present (new layout)
@@ -2376,6 +2440,15 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     HOST = "greyhounds.attheraces.com"
     IMPERSONATE = "chrome120"
     TIMEOUT = 45
+
+    def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        return fortuna.FetchStrategy(
+            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=self.TIMEOUT,
+            network_idle=True,
+        )
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
