@@ -10,9 +10,9 @@ on:
         type: choice
         options: ['false', 'true']
       cutoff_date:
-        description: 'Delete ALL tips before this date (YYYY-MM-DD, blank = use brunchtime today)'
+        description: 'Delete ALL tips before this date (YYYY-MM-DD, blank = use 2026-02-22)'
         required: false
-        default: ''
+        default: '2026-02-22'
         type: string
       cutoff_time:
         description: 'Delete tips before this time on cutoff date (HH:MM in ET, default: 11:00)'
@@ -105,16 +105,14 @@ jobs:
               target_adapters = {a.strip() for a in target_adapters_raw.split(",") if a.strip()}
 
               now_et = datetime.now(EASTERN)
-              if cutoff_date:
-                  try:
-                      cutoff_dt = datetime.strptime(f"{cutoff_date} {cutoff_time}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
-                  except ValueError:
-                      print(f"❌ Invalid cutoff_date format: {cutoff_date}")
-                      sys.exit(1)
-              else:
-                  cutoff_dt = now_et.replace(hour=int(cutoff_time.split(":")[0]),
-                                             minute=int(cutoff_time.split(":")[1]),
-                                             second=0, microsecond=0)
+              if not cutoff_date:
+                  cutoff_date = "2026-02-22"
+
+              try:
+                  cutoff_dt = datetime.strptime(f"{cutoff_date} {cutoff_time}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
+              except ValueError:
+                  print(f"❌ Invalid cutoff_date format: {cutoff_date}")
+                  sys.exit(1)
               cutoff_iso = cutoff_dt.isoformat()
 
               # 2. INITIALIZE & MIGRATE DB
