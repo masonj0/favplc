@@ -109,36 +109,11 @@ def create_build_metadata():
         return []
 
 
-def smartscreen_autopilot():
-    """
-    Experimental: Uses PowerShell to automate clicking 'Run Anyway' if
-    the SmartScreen dialog appears during verification.
-    Not recommended for production.
-    """
-    ps_script = """
-    $shell = New-Object -ComObject WScript.Shell
-    for($i=0; $i -lt 10; $i++) {
-        if($shell.AppActivate("Windows protected your PC")) {
-            Sleep 1
-            $shell.SendKeys("{TAB}") # More info
-            $shell.SendKeys(" ")
-            Sleep 1
-            $shell.SendKeys("{TAB}") # Run anyway
-            $shell.SendKeys(" ")
-            break
-        }
-        Sleep 2
-    }
-    """
-    if platform.system() == "Windows":
-        subprocess.Popen(["powershell.exe", "-Command", ps_script])
-
-
 def verify_exe(exe_path):
     """Verify the EXE can launch without errors."""
     print("\nVerifying EXE...")
 
-    # Attempt to remove "Mark of the Web" on Windows to bypass some SmartScreen checks
+    # Remove Mark-of-the-Web so Windows doesn't block the freshly-built artifact
     if platform.system() == "Windows":
         try:
             subprocess.run(
@@ -151,15 +126,14 @@ def verify_exe(exe_path):
             pass
 
     try:
-        # Start the autopilot in the background if on Windows
-        if platform.system() == "Windows":
-            smartscreen_autopilot()
-
         result = subprocess.run(
             [exe_path, "--help"],
             capture_output=True,
             text=True,
-            timeout=60,  # onefile EXEs need time to self-extract before running
+            # Onefile EXEs must fully self-extract before Python starts.
+            # For large bundles (scrapling, playwright, curl_cffi data) this
+            # can take well over 60s on first run.  120s gives safe headroom.
+            timeout=120,
         )
         if result.returncode == 0:
             print("[PASS] EXE verification passed")
@@ -195,12 +169,21 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "--onefile",
         "--name=FortunaFaucetPortableApp",
         "--clean",
-        # Extract to a predictable temp location; avoids permission issues when
-        # the EXE is run from a read-only directory (e.g. Downloads on some
-        # Windows configs).
-        "--runtime-tmpdir=.",
+        # ┌─────────────────────────────────────────────────────────────────────┐
+        # │  DO NOT add --runtime-tmpdir=.                                      │
+        # │                                                                     │
+        # │  Omitting --runtime-tmpdir lets PyInstaller use the system %TEMP%   │
+        # │  directory (C:\Users\<user>\AppData\Local\Temp on Windows), which   │
+        # │  is ALWAYS user-writable and expected by Windows Defender.           │
+        # │                                                                     │
+        # │  Setting it to '.' causes "Cannot create temporary directory!"      │
+        # │  whenever CWD requires elevated permissions (e.g. root-level dirs   │
+        # │  like C:\Temp, network shares, or the Downloads folder on locked-   │
+        # │  down enterprise machines).                                         │
+        # └─────────────────────────────────────────────────────────────────────┘
+        #
         # UPX compression is a major trigger for SmartScreen "Unknown Publisher"
-        # flags and antivirus false positives. (Council/Jules Fix)
+        # flags and antivirus false positives on unsigned EXEs.
         "--noupx",
     ]
 
@@ -217,29 +200,18 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         args.append("--icon=assets/icon.ico")
 
     # ── --collect-all: packages whose data files are required at runtime ───────
-    # Rule of thumb: if the package loads JSON/YAML/browser assets from its own
-    # directory (rather than the OS or a URL), it needs --collect-all.
     collect_all_packages = [
-        # Scraping / browser-impersonation stack
-        "browserforge",     # fingerprint headers/data JSON files
-        "scrapling",        # internal JS assets and adapters
-        "curl_cffi",        # pre-compiled .dll/.so curl binaries
-        "camoufox",         # browser profile data and configs
-        "selectolax",       # compiled Modest/Lexbor parser
-        # Playwright: the _impl/_json/ protocol specs are loaded at import time;
-        # hidden imports alone are NOT enough to make it work frozen.
+        "browserforge",
+        "scrapling",
+        "curl_cffi",
+        "camoufox",
+        "selectolax",
         "playwright",
-        # UI / display
-        "rich",             # color themes and markup definitions
-        # pywebview ships JS bridge assets + platform-specific DLLs
+        "rich",
         "webview",
-        # Pydantic v2 uses pydantic_core (compiled) + JSON schema data files;
-        # --collect-submodules misses the data, --collect-all covers everything.
         "pydantic",
         "pydantic_core",
-        # structlog has lazy-loaded processors discovered via inspect
         "structlog",
-        # tomli / tomllib: pure-Python but some builds ship a compiled C extension
         "tomli",
     ]
     for pkg in collect_all_packages:
@@ -247,17 +219,17 @@ def build_exe(console_mode: bool = True, debug: bool = False):
 
     # ── --collect-submodules: packages that register plugins/backends lazily ───
     collect_submodules = [
-        "uvicorn",      # server implementations, protocols, loops
-        "fastapi",      # routing, dependency injection internals
-        "starlette",    # middleware and exception handler registrations
+        "uvicorn",
+        "fastapi",
+        "starlette",
     ]
     for pkg in collect_submodules:
         args.append(f"--collect-submodules={pkg}")
 
     # ── Hidden imports ─────────────────────────────────────────────────────────
     hidden_imports = [
-        # ── Fortuna modules (imported dynamically via sys.path tricks) ─────────
-        "fortuna_analytics",    # imported at runtime in diagnostic/auditor paths
+        # ── Fortuna modules (imported dynamically) ─────────────────────────────
+        "fortuna_analytics",
 
         # ── Async & DB ─────────────────────────────────────────────────────────
         "aiosqlite",
@@ -265,11 +237,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "asyncio",
         "aiofiles",
 
-        # ── Timezone (CRITICAL on Windows) ────────────────────────────────────
-        # Windows has no built-in IANA timezone database, so zoneinfo falls back
-        # to the `tzdata` package. Without this the EXE crashes with
-        # ZoneInfoNotFoundError("America/New_York") on any Windows machine that
-        # hasn't manually installed tzdata — i.e. all of them.
+        # ── Timezone (CRITICAL on Windows) ─────────────────────────────────────
         "zoneinfo",
         "tzdata",
 
@@ -284,15 +252,13 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "winotify",
         "win10toast_py3",
 
-        # ── pkg_resources / importlib.metadata ────────────────────────────────
+        # ── pkg_resources / importlib.metadata ─────────────────────────────────
         "setuptools",
         "pkg_resources",
         "importlib.metadata",
         "importlib.resources",
 
         # ── HTTP client stack ──────────────────────────────────────────────────
-        # httpcore is the actual transport backend for httpx; omitting it causes
-        # "No module named httpcore" at runtime even though httpx is collected.
         "httpx",
         "httpx._transports",
         "httpx._transports.default",
@@ -305,20 +271,17 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "anyio",
         "anyio._backends",
         "anyio._backends._asyncio",
-        # The trio backend import is attempted and suppressed at anyio startup;
-        # if it's missing entirely from the frozen archive PyInstaller can emit
-        # noisy tracebacks at startup.
         "anyio._backends._trio",
         "sniffio",
 
-        # ── Encodings (belt-and-suspenders for frozen builds) ─────────────────
+        # ── Encodings ─────────────────────────────────────────────────────────
         "encodings",
         "encodings.utf_8",
         "encodings.ascii",
         "encodings.latin_1",
         "encodings.idna",
 
-        # ── Stdlib / multiprocessing ───────────────────────────────────────────
+        # ── Stdlib ─────────────────────────────────────────────────────────────
         "multiprocessing",
         "concurrent.futures",
         "json",
@@ -330,24 +293,18 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     args.extend(get_data_files())
     args.extend(create_build_metadata())
 
-    # ── Exclusions (reduce EXE bloat) ─────────────────────────────────────────
+    # ── Exclusions (reduce EXE bloat) ──────────────────────────────────────────
     excludes = [
-        # Visualisation / ML (never used at runtime)
         "matplotlib", "PIL", "scipy",
         "cv2", "opencv", "torch", "tensorflow",
         "PIL.ImageQt",
-        # GUI toolkits (webview uses its own; tkinter would pull in Tcl/Tk DLLs)
         "tkinter", "PyQt5",
-        # Dev/test tooling
         "pytest", "hypothesis",
         "IPython", "jupyter", "notebook",
         "sphinx", "docutils", "jedi", "parso",
-        # Package management (no reason to ship pip inside the EXE)
         "wheel", "pip",
         "setuptools._distutils",
-        # Test sub-packages of bundled libraries
         "pandas.tests", "numpy.tests",
-        # tornado conflicts with uvicorn's event loop management when frozen
         "tornado",
     ]
     for exc in excludes:

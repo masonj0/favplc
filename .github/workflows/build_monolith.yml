@@ -13,8 +13,9 @@ concurrency:
 jobs:
   build:
     runs-on: windows-2022
-    timeout-minutes: 45   # PyInstaller + playwright install routinely needs 30-35 min;
-                          # 45 gives headroom without being unbounded.
+    timeout-minutes: 60   # Increased from 45: large --collect-all bundles
+                          # (playwright, scrapling, curl_cffi) can push build
+                          # past 40 min on cold cache.
 
     steps:
       - name: Checkout repository
@@ -23,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.12'    # Must match codebase target (was 3.11)
           cache: 'pip'
 
       # ── Browser caches ────────────────────────────────────────────────────────
@@ -40,9 +41,6 @@ jobs:
           key: camoufox-win-${{ hashFiles('requirements.txt') }}
 
       # ── PyInstaller intermediate build cache ──────────────────────────────────
-      # The build/ directory contains PyInstaller's analysis cache and compiled
-      # .pyc stubs. Reusing it across runs cuts rebuild time by ~40-60% on
-      # unchanged code — the most impactful single cache to add here.
       - name: Cache PyInstaller build artifacts
         uses: actions/cache@v4
         with:
@@ -58,35 +56,27 @@ jobs:
           python -m pip install --prefer-binary -r requirements.txt
           python -m pip install --prefer-binary pyinstaller
 
-          # tzdata is a CRITICAL Windows dependency.
-          # Python's zoneinfo module (used throughout Fortuna for EASTERN timezone
-          # handling) falls back to the tzdata package on Windows because Windows
-          # has no built-in IANA timezone database. Without this the frozen EXE
-          # throws ZoneInfoNotFoundError("America/New_York") on every end-user
-          # machine.
+          # tzdata: CRITICAL Windows dependency.
+          # zoneinfo falls back to tzdata on Windows (no built-in IANA DB).
+          # Without this: ZoneInfoNotFoundError("America/New_York")
           python -m pip install --prefer-binary tzdata
 
       - name: Fetch browser assets
         run: |
           python -m browserforge update
           python -m playwright install --with-deps chromium
-          # camoufox ships its own browser binary that must be fetched separately
-          # (similar to playwright). This populates the cache dir above.
           python -m camoufox fetch
 
       # ── Build ─────────────────────────────────────────────────────────────────
       - name: Build EXE
         run: |
           python build_monolith.py
-          # build_monolith.py already calls verify_exe() internally with a 60s
-          # timeout and exits non-zero on failure, so we only need to confirm
-          # the file exists here. No redundant --help call needed.
           if (!(Test-Path "dist/FortunaFaucetPortableApp.exe")) {
             Write-Error "Build failed: EXE not found at dist/FortunaFaucetPortableApp.exe"
             exit 1
           }
 
-      # ── Artifact reporting ─────────────────────────────────────────────────────
+      # ── Artifact reporting ────────────────────────────────────────────────────
       - name: Report build results
         if: success()
         run: |

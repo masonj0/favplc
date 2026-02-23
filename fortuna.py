@@ -150,7 +150,7 @@ def get_base_path() -> Path:
 def load_config() -> Dict[str, Any]:
     """Loads configuration from config.toml with intelligent fallback."""
     config = {
-        "analysis": {"trustworthy_ratio_min": 0.7, "max_field_size": 11},
+        "analysis": {"simply_success_trust_min": 0.25, "max_field_size": 11},
         "region": {"default": "GLOBAL"},
         "ui": {"auto_open_report": True, "show_status_card": True},
         "logging": {"level": "INFO", "save_to_file": True}
@@ -177,6 +177,15 @@ def load_config() -> Dict[str, Any]:
                         config[section].update(values)
                     else:
                         config[section] = values
+
+                # Deprecation bridge for trustworthy_ratio_min (BUG-2)
+                analysis_cfg = config.get("analysis", {})
+                legacy_val = analysis_cfg.get("trustworthy_ratio_min")
+                if legacy_val is not None:
+                    structlog.get_logger().warning("config key analysis.trustworthy_ratio_min is deprecated; use analysis.simply_success_trust_min")
+                    if "simply_success_trust_min" not in toml_data.get("analysis", {}):
+                        analysis_cfg["simply_success_trust_min"] = legacy_val
+
         except Exception as e:
             print(f"Warning: Failed to load config.toml: {e} - using default configuration")
     else:
@@ -235,7 +244,7 @@ def print_status_card(config: Dict[str, Any]):
         print_func(" 📊 Database: INITIALIZING")
 
     # Odds Hygiene
-    trust_min = config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
+    trust_min = config.get("analysis", {}).get("simply_success_trust_min", 0.25)
     print_func(f" 🛡️  Odds Hygiene: >{int(trust_min*100)}% trust ratio required")
 
     # Reports
@@ -873,6 +882,8 @@ class SmartFetcher:
     def __init__(self, strategy: Optional[FetchStrategy] = None):
         self.strategy = strategy or FetchStrategy()
         self.logger = structlog.get_logger(self.__class__.__name__)
+        self._health_lock = asyncio.Lock()
+        self._request_count = 0
         self._engine_health = {
             BrowserEngine.CAMOUFOX: 0.9,
             BrowserEngine.CURL_CFFI: 0.8,
@@ -891,6 +902,13 @@ class SmartFetcher:
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
         kwargs.pop("url", None)
+
+        async with self._health_lock:
+            self._request_count += 1
+            if self._request_count % 100 == 0:
+                for engine in self._engine_health:
+                    self._engine_health[engine] = max(0.1, self._engine_health[engine] * 0.995)
+
         # Check if engines are available before sorting
         available_engines = [e for e in self._engine_health.keys()]
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
@@ -913,12 +931,14 @@ class SmartFetcher:
         for engine in engines:
             try:
                 response = await self._fetch_with_engine(engine, url, method=method, **kwargs)
-                self._engine_health[engine] = min(1.0, self._engine_health[engine] + 0.1)
+                async with self._health_lock:
+                    self._engine_health[engine] = min(1.0, self._engine_health[engine] + 0.1)
                 self.last_engine = engine.value
                 return response
             except Exception as e:
                 self.logger.debug(f"Engine {engine.value} failed", error=str(e))
-                self._engine_health[engine] = max(0.0, self._engine_health[engine] - 0.2)
+                async with self._health_lock:
+                    self._engine_health[engine] = max(0.0, self._engine_health[engine] - 0.2)
                 last_error = e
                 continue
         err_msg = repr(last_error) if last_error else "All fetch engines failed"
@@ -1101,6 +1121,46 @@ class CircuitBreaker:
         return self.state == "half-open"
 
 
+@dataclass
+class RateLimiter:
+    requests_per_second: float = 10.0
+    _tokens: float = field(default=10.0, init=False)
+    _last_update: float = field(default_factory=time.time, init=False)
+    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
+    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
+
+    def __post_init__(self):
+        self._tokens = self.requests_per_second
+
+    def _get_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Lock()
+
+        if loop not in self._locks:
+            with self._lock_sentinel:
+                if loop not in self._locks:
+                    self._locks[loop] = asyncio.Lock()
+        return self._locks[loop]
+
+    async def acquire(self) -> None:
+        lock = self._get_lock()
+
+        for _ in range(1000): # Iteration limit to prevent potential hangs
+            wait_time = 0
+            async with lock:
+                now = time.time()
+                elapsed = now - self._last_update
+                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
+                self._last_update = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return
+                wait_time = (1 - self._tokens) / self.requests_per_second
+
+            if wait_time >= 0:
+                await asyncio.sleep(max(wait_time, 0.001))
 
 
 class AdapterMetrics:
@@ -3835,7 +3895,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
     def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
         """Scores all races and returns a dictionary with criteria and a sorted list."""
         qualified_races = []
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.7)
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
 
         for race in races:
             if not self.is_race_qualified(race, now=now):
@@ -3853,6 +3913,15 @@ class TrifectaAnalyzer(BaseAnalyzer):
             # Trustworthiness Airlock (Success Playbook Item)
             # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
             skip_trust_check = race.metadata.get("provides_odds") is False
+            if skip_trust_check:
+                valid_odds_count = sum(
+                    1 for r in active_runners
+                    if isinstance(r.win_odds, (int, float)) and r.win_odds > 0
+                )
+                if valid_odds_count < 2:
+                    self.logger.debug("Skipping race: provides_odds=False and fewer than 2 runners with valid odds", race_id=race.id)
+                    continue
+
             if total_active > 0 and not skip_trust_check:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
@@ -4030,6 +4099,15 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Trustworthiness Airlock (Success Playbook Item)
             # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
             skip_trust_check = race.metadata.get("provides_odds") is False
+            if skip_trust_check:
+                valid_odds_count = sum(
+                    1 for r in active_runners
+                    if isinstance(r.win_odds, (int, float)) and r.win_odds > 0
+                )
+                if valid_odds_count < 2:
+                    self.logger.debug("Skipping race: provides_odds=False and fewer than 2 runners with valid odds", race_id=race.id)
+                    continue
+
             if total_active > 0 and not skip_trust_check:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
@@ -5940,7 +6018,7 @@ class FortunaDB:
                     outcome.get("superfecta_combination"),
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
-                    datetime.now(EASTERN).isoformat(),
+                    outcome.get("audit_timestamp", datetime.now(EASTERN).isoformat()),
                     outcome.get("field_size"),
                     race_id
                 ))
@@ -5999,12 +6077,12 @@ class FortunaDB:
         def _get():
             if limit:
                 cursor = self._get_conn().execute(
-                    "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC LIMIT ?",
+                    "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY audit_timestamp DESC, start_time DESC LIMIT ?",
                     (limit,),
                 )
             else:
                 cursor = self._get_conn().execute(
-                    "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY start_time DESC"
+                    "SELECT * FROM tips WHERE audit_completed = 1 ORDER BY audit_timestamp DESC, start_time DESC"
                 )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -6142,8 +6220,9 @@ class HotTipsTracker:
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
             # Reject races too far in the future
-            if st > future_limit or st < now - timedelta(minutes=10):
-                self.logger.debug("Rejecting far-future race", venue=r.venue, start_time=st)
+            max_past_minutes = self.config.get('analysis', {}).get('hot_tips_past_window_min', 45)
+            if st > future_limit or st < now - timedelta(minutes=max_past_minutes):
+                self.logger.debug("Rejecting out-of-window race", venue=r.venue, start_time=st)
                 continue
 
             is_goldmine = r.metadata.get('is_goldmine', False)
@@ -6913,8 +6992,9 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         if not runners:
             return None
 
+        track_name = track_name or 'UNKNOWN'
         return Race(
-            id=f"oc_{track_name.lower().replace(' ', '')}_{start_time.strftime('%Y%m%d')}_r{race_number}",
+            id=generate_race_id('oc', track_name, ensure_eastern(start_time), race_number),
             venue=track_name,
             race_number=race_number,
             start_time=start_time,
@@ -7837,7 +7917,12 @@ async def run_discovery(
 
         # Pre-populate harvest_summary based on region/filter for visibility
         target_region = region or DEFAULT_REGION
-        target_set = USA_DISCOVERY_ADAPTERS if target_region == "USA" else INT_DISCOVERY_ADAPTERS
+        if target_region == "USA":
+            target_set = USA_DISCOVERY_ADAPTERS
+        elif target_region == "INT":
+            target_set = INT_DISCOVERY_ADAPTERS
+        else:
+            target_set = GLOBAL_DISCOVERY_ADAPTERS
 
         # Determine which adapters should be visible in the harvest summary
         if adapter_names:
@@ -7869,11 +7954,13 @@ async def run_discovery(
             # Load historical performance scores to prioritize adapters
             adapter_scores = await db.get_adapter_scores(days=30)
 
-            # Prioritize adapters by score (descending)
+            # Prioritize adapters by score (descending), with name as deterministic tiebreaker
             adapter_classes = sorted(
                 adapter_classes,
-                key=lambda c: adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
-                reverse=True
+                key=lambda c: (
+                    -adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
+                    getattr(c, "SOURCE_NAME", c.__name__)
+                )
             )
 
             # Get adapter-specific configs from global config (GPT5 Improvement)
@@ -8001,7 +8088,16 @@ async def run_discovery(
                     # Match by number OR name (if numbers are missing)
                     er = next((r for r in existing.runners if (r.number != 0 and r.number == nr.number) or (r.name.lower() == nr.name.lower())), None)
                     if er:
-                        er.odds.update(nr.odds)
+                        for source, odds_data in nr.odds.items():
+                            if source not in er.odds:
+                                er.odds[source] = odds_data
+                                continue
+                            existing_odds = er.odds[source]
+                            new_ts = getattr(odds_data, 'last_updated', None)
+                            old_ts = getattr(existing_odds, 'last_updated', None)
+                            if new_ts and old_ts and new_ts > old_ts:
+                                er.odds[source] = odds_data
+
                         if not er.win_odds and nr.win_odds:
                             er.win_odds = nr.win_odds
                         if not er.number and nr.number:
@@ -8045,7 +8141,7 @@ async def run_discovery(
 
         golden_zone_races = timing_window_races
         if not golden_zone_races:
-            logger.warning("🔭 No races found in the broadened window (-45m to 18h).")
+            logger.warning("🔭 No races found in the broadened window (-45m to 8h).")
 
         logger.info("Total unique races available for analysis", count=len(unique_races))
 
@@ -8187,6 +8283,8 @@ async def run_discovery(
         try:
             with open(temp_path, "w", encoding='utf-8') as f:
                 json.dump(report_data, f, indent=4)
+                f.flush()
+                os.fsync(f.fileno())
             temp_path.replace(qualified_path)
 
             # Record freshness in GHA output
