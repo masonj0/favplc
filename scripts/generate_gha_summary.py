@@ -220,36 +220,35 @@ def _get_stats() -> TipStats:
     if not Path(DB_PATH).exists(): return stats
 
     try:
-        conn = sqlite3.connect(DB_PATH)
-        now_utc = datetime.now(ZoneInfo("UTC")).isoformat()
+        with sqlite3.connect(DB_PATH) as conn:
+            now_utc = datetime.now(ZoneInfo("UTC")).isoformat()
 
-        # Main counts
-        res = conn.execute("""
-            SELECT
-                COUNT(*),
-                SUM(CASE WHEN verdict LIKE 'CASHED%' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN verdict = 'VOID' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN audit_completed = 0 AND start_time < ? THEN 1 ELSE 0 END),
-                SUM(COALESCE(net_profit, 0.0))
-            FROM tips
-        """, (now_utc,)).fetchone()
+            # Main counts
+            res = conn.execute("""
+                SELECT
+                    COUNT(*),
+                    SUM(CASE WHEN verdict LIKE 'CASHED%' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN verdict = 'VOID' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN audit_completed = 0 AND start_time < ? THEN 1 ELSE 0 END),
+                    SUM(COALESCE(net_profit, 0.0))
+                FROM tips
+            """, (now_utc,)).fetchone()
 
-        if res:
-            stats.total_tips, stats.cashed, stats.burned, stats.voided, stats.pending, stats.total_profit = (
-                res[0] or 0, res[1] or 0, res[2] or 0, res[3] or 0, res[4] or 0, res[5] or 0.0
-            )
+            if res:
+                stats.total_tips, stats.cashed, stats.burned, stats.voided, stats.pending, stats.total_profit = (
+                    res[0] or 0, res[1] or 0, res[2] or 0, res[3] or 0, res[4] or 0, res[5] or 0.0
+                )
 
-        # Recent tips
-        stats.recent_tips = conn.execute("""
-            SELECT venue, race_number, selection_number, predicted_2nd_fav_odds, verdict,
-                   net_profit, selection_position, actual_top_5, actual_2nd_fav_odds,
-                   superfecta_payout, trifecta_payout, top1_place_payout, discipline
-            FROM tips WHERE audit_completed = 1
-            ORDER BY audit_timestamp DESC LIMIT 30
-        """).fetchall()
-
-        conn.close()
+            # Recent tips
+            stats.recent_tips = conn.execute("""
+                SELECT venue, race_number, selection_number, predicted_2nd_fav_odds, verdict,
+                       net_profit, selection_position, actual_top_5, actual_2nd_fav_odds,
+                       superfecta_payout, trifecta_payout, top1_place_payout, discipline,
+                       selection_name
+                FROM tips WHERE audit_completed = 1
+                ORDER BY audit_timestamp DESC LIMIT 30
+            """).fetchall()
     except Exception as e:
         print(f"Stats Error: {e}")
     return stats
@@ -275,6 +274,8 @@ def _build_header(out: SummaryWriter, now: datetime):
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()
+    out.write("---")
+    out.write()
 
 def _build_plays(out: SummaryWriter):
     # 1. Try race_data.json (monitor output)
@@ -286,15 +287,14 @@ def _build_plays(out: SummaryWriter):
     # 2. Fallback to DB if empty
     if not races and Path(DB_PATH).exists():
         try:
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            db_races = conn.execute("""
-                SELECT * FROM tips WHERE audit_completed=0
-                AND start_time > datetime('now', '-10 minutes')
-                ORDER BY start_time ASC LIMIT 15
-            """).fetchall()
-            races = [dict(r) for r in db_races]
-            conn.close()
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.row_factory = sqlite3.Row
+                db_races = conn.execute("""
+                    SELECT * FROM tips WHERE audit_completed=0
+                    AND start_time > datetime('now', '-10 minutes')
+                    ORDER BY start_time ASC LIMIT 15
+                """).fetchall()
+                races = [dict(r) for r in db_races]
         except Exception: pass
 
     if not races:
@@ -341,7 +341,7 @@ def _build_plays(out: SummaryWriter):
         out.write(f"  MTP    VENUE                R#   FLD  PICK                   ODDS    GAP   FLAGS")
         out.write(f"  ─────  ───────────────────  ──   ───  ─────────────────────  ──────  ─────  ─────")
         for r in rows_list:
-            mtp_s = f"{int(r['_mtp_val'])}m" if r['_mtp_val'] < 60 else _mtp_str(r['_mtp_val'])
+            mtp_s = _mtp_str(r['_mtp_val'])
             v = r.get('venue') or r.get('track') or "?"
             flag = _venue_flag(v, r.get('discipline'))
             venue = _trunc(v, 18)
@@ -441,10 +441,17 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
     out.write("## 📊 Recent Results")
     out.write()
 
-    def _render_res_table(rows):
+    # Drift Summary
+    drifts = [(r[8] - r[3]) for r in stats.recent_tips if r[8] and r[3]]
+    avg_drift = sum(drifts)/len(drifts) if drifts else 0.0
+    drift_label = "stable"
+    if avg_drift < -0.5: drift_label = "market tightened"
+    elif avg_drift > 0.5: drift_label = "market softened"
+
+    def _render_res_table(rows, is_first=False):
         out.write("```text")
-        out.write(f"       VENUE                R#   PICK              ODDS  →  ACTUAL   P/L       FIN")
-        out.write(f"  ───  ───────────────────  ──   ────────────────  ─────    ──────  ────────  ─────")
+        out.write(f"       VENUE                R#   PICK                   ODDS  →  ACTUAL   P/L       FIN")
+        out.write(f"  ───  ───────────────────  ──   ─────────────────────  ─────    ──────  ────────  ─────")
         for r in rows:
             v = r[4]
             e = VERDICT_EMOJI.get(v, "⚪")
@@ -453,9 +460,8 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
             venue = _trunc(venue_name, 18)
             rn = r[1]
             sn = r[2] or "?"
-            # Try to find name in top_five or use selection_name if we had it
-            sname = _trunc("", 12) # Original query didn't have selection_name, using blank
-            pick = f"#{sn}"
+            sname = _trunc(r[13] or "", 15)
+            pick = f"#{sn} {sname}"
 
             pred = r[3] or 0.0
             act = r[8] or 0.0
@@ -471,11 +477,15 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
             if r[9]: fin = f"SF${int(r[9])}"
             elif r[10]: fin = f"T${int(r[10])}"
 
-            out.write(f"  {e:<2}  {flag}{venue:<18}  {rn:>2}   {pick:<16}  {pred:>5.2f}  →  {act:>5.2f}  ${pl:>+7.2f}  {fin}")
+            out.write(f"  {e:<2}  {flag}{venue:<18}  {rn:>2}   {pick:<21}  {pred:>5.2f}  →  {act:>5.2f}  ${pl:>+7.2f}  {fin}")
+
+        if is_first:
+            out.write(f"  ────────────────────────────────────────────────────────────────────────────────────────")
+            out.write(f"  DRIFT: avg {avg_drift:>+.2f} ({drift_label})")
         out.write("```")
 
     visible = stats.recent_tips[:5]
-    _render_res_table(visible)
+    _render_res_table(visible, is_first=True)
 
     if len(stats.recent_tips) > 5:
         out.write(f"<details><summary>📋 All {len(stats.recent_tips)} recent results</summary>")
@@ -484,16 +494,6 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
         out.write("</details>")
         out.write()
 
-    # Drift Summary
-    drifts = [(r[8] - r[3]) for r in stats.recent_tips if r[8] and r[3]]
-    avg_drift = sum(drifts)/len(drifts) if drifts else 0.0
-    label = "stable"
-    if avg_drift < -0.5: label = "market tightened"
-    elif avg_drift > 0.5: label = "market softened"
-
-    out.write(f"**DRIFT:** avg {avg_drift:>+.2f} ({label})")
-    out.write()
-
 def _build_harvest(out: SummaryWriter):
     discovery = _merge_harvests(DISCOVERY_HARVEST_FILES)
     results = _merge_harvests(RESULTS_HARVEST_FILES)
@@ -501,10 +501,9 @@ def _build_harvest(out: SummaryWriter):
     if not discovery and not results and Path(DB_PATH).exists():
         # Fallback to DB harvest logs
         try:
-            conn = sqlite3.connect(DB_PATH)
-            db_logs = conn.execute("SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= datetime('now', '-4 hours')").fetchall()
-            results = {l[0]: {'count': l[1], 'max_odds': l[2]} for l in db_logs}
-            conn.close()
+            with sqlite3.connect(DB_PATH) as conn:
+                db_logs = conn.execute("SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= datetime('now', '-4 hours')").fetchall()
+                results = {l[0]: {'count': l[1], 'max_odds': l[2]} for l in db_logs}
         except Exception: pass
 
     if not discovery and not results:
@@ -586,9 +585,8 @@ def _build_harvest(out: SummaryWriter):
 def _build_goldmine_vs_standard(out: SummaryWriter):
     if not Path(DB_PATH).exists(): return
     try:
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("SELECT is_goldmine, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("SELECT is_goldmine, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
 
         if len(rows) < 5: return
 
@@ -614,9 +612,8 @@ def _build_goldmine_vs_standard(out: SummaryWriter):
 def _build_by_discipline(out: SummaryWriter):
     if not Path(DB_PATH).exists(): return
     try:
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("SELECT discipline, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("SELECT discipline, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
 
         discs = set(r[0] for r in rows if r[0])
         if len(discs) < 2: return
@@ -644,15 +641,14 @@ def _build_by_discipline(out: SummaryWriter):
 def _build_exotic_payouts(out: SummaryWriter):
     if not Path(DB_PATH).exists(): return
     try:
-        conn = sqlite3.connect(DB_PATH)
-        rows = conn.execute("""
-            SELECT venue, race_number, DATE(start_time), trifecta_payout, trifecta_combination,
-                   superfecta_payout, superfecta_combination
-            FROM tips WHERE audit_completed=1
-            AND (trifecta_payout > 0 OR superfecta_payout > 0)
-            ORDER BY COALESCE(superfecta_payout,0)+COALESCE(trifecta_payout,0) DESC LIMIT 5
-        """).fetchall()
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute("""
+                SELECT venue, race_number, DATE(start_time), trifecta_payout, trifecta_combination,
+                       superfecta_payout, superfecta_combination
+                FROM tips WHERE audit_completed=1
+                AND (trifecta_payout > 0 OR superfecta_payout > 0)
+                ORDER BY COALESCE(superfecta_payout,0)+COALESCE(trifecta_payout,0) DESC LIMIT 5
+            """).fetchall()
 
         if not rows: return
 
@@ -680,15 +676,15 @@ def _build_data_quality(out: SummaryWriter):
     out.write(f"  COLUMN               POPULATED          SAMPLE")
     out.write(f"  ───────────────────  ────────────────  ──────────")
     try:
-        conn = sqlite3.connect(DB_PATH)
-        for col in cols:
-            res = conn.execute(f"SELECT COUNT(*), SUM(CASE WHEN {col} IS NOT NULL AND CAST({col} AS TEXT) != '' THEN 1 ELSE 0 END) FROM tips").fetchone()
-            sample = conn.execute(f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' LIMIT 1").fetchone()
-            t, n = res[0], res[1] or 0
-            pct = (n / t * 100) if t > 0 else 0
-            s_val = _trunc(sample[0], 10) if sample else "—"
-            out.write(f"  {col:<19}  {n:>3}/{t:>3} ({pct:>3.0f}%)  {s_val}")
-        conn.close()
+        with sqlite3.connect(DB_PATH) as conn:
+            for col in cols:
+                # Security: column names are from a hardcoded whitelist
+                res = conn.execute(f"SELECT COUNT(*), SUM(CASE WHEN {col} IS NOT NULL AND CAST({col} AS TEXT) != '' THEN 1 ELSE 0 END) FROM tips").fetchone()
+                sample = conn.execute(f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' LIMIT 1").fetchone()
+                t, n = res[0], res[1] or 0
+                pct = (n / t * 100) if t > 0 else 0
+                s_val = _trunc(sample[0], 10) if sample else "—"
+                out.write(f"  {col:<19}  {n:>3}/{t:>3} ({pct:>3.0f}%)  {s_val}")
     except Exception: pass
     out.write("```")
     out.write()
@@ -733,25 +729,24 @@ def _build_system_status(out: SummaryWriter, stats: TipStats):
 
     if Path(DB_PATH).exists():
         try:
-            conn = sqlite3.connect(DB_PATH)
-            # Freshness
-            fresh = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
-            if fresh:
-                last_seen = datetime.fromisoformat(fresh.replace('Z', '+00:00'))
-                if datetime.now(ZoneInfo("UTC")) - last_seen > timedelta(hours=24):
+            with sqlite3.connect(DB_PATH) as conn:
+                # Freshness
+                fresh = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
+                if fresh:
+                    last_seen = datetime.fromisoformat(fresh.replace('Z', '+00:00'))
+                    if datetime.now(ZoneInfo("UTC")) - last_seen > timedelta(hours=24):
+                        if status != "CRITICAL": status, emoji = "WARNING", "🟡"
+                        findings.append(f"🟡 No new tips in last 24 hours.")
+
+                # Quality
+                q_res = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL").fetchone()[0]
+                if q_res == 0:
                     if status != "CRITICAL": status, emoji = "WARNING", "🟡"
-                    findings.append(f"🟡 No new tips in last 24 hours.")
+                    findings.append("🟡 All scoring columns still NULL — check VFIX_01.")
+                else:
+                    findings.append("🟢 Scoring signals populating.")
 
-            # Quality
-            q_res = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL").fetchone()[0]
-            if q_res == 0:
-                if status != "CRITICAL": status, emoji = "WARNING", "🟡"
-                findings.append("🟡 All scoring columns still NULL — check VFIX_01.")
-            else:
-                findings.append("🟢 Scoring signals populating.")
-
-            if stats.margin > 0: findings.append(f"🟢 Margin: +{stats.margin:.0f}pp above breakeven.")
-            conn.close()
+                if stats.margin > 0: findings.append(f"🟢 Margin: +{stats.margin:.0f}pp above breakeven.")
         except Exception: pass
 
     out.write("---")
