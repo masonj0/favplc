@@ -369,7 +369,10 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # Single-continent adapters remain in USA/INT jobs.
 # Multi-continental adapters move to the GLOBAL parallel fetch job.
 # AtTheRaces is duplicated into USA as per explicit request.
-USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets"}
+USA_DISCOVERY_ADAPTERS: Final[set] = {
+    # "Equibase", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets"
+}
 INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
@@ -378,11 +381,11 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
 }
 
 USA_RESULTS_ADAPTERS: Final[set] = {
-    "EquibaseResults",
+    # "EquibaseResults", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
-    # "DRFResults",
+    "DRFResults", # Reactivated for testing (Uses HTTPX engine)
     "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
@@ -421,20 +424,20 @@ DEFAULT_BROWSER_HEADERS: Final[Dict[str, str]] = {
 
 CHROME_USER_AGENT: Final[str] = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
 )
 
 CHROME_SEC_CH_UA: Final[str] = (
-    '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"'
+    '"Google Chrome";v="133", "Chromium";v="133", "Not.A/Brand";v="24"'
 )
 
 MOBILE_USER_AGENT: Final[str] = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1"
 )
 
 MOBILE_SEC_CH_UA: Final[str] = (
-    '"Safari";v="17", "Mobile";v="1.0", "Not.A/Brand";v="24"'
+    '"Safari";v="18", "Mobile";v="18.3"'
 )
 
 # Bet type keywords mapping (lowercase key -> display name)
@@ -697,12 +700,67 @@ class DataValidationPipeline:
 
 
 # --- CORE INFRASTRUCTURE ---
+@dataclass
+class RateLimiter:
+    requests_per_second: float = 10.0
+    _tokens: float = field(default=10.0, init=False)
+    _last_update: float = field(default_factory=time.time, init=False)
+    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
+    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
+
+    def __post_init__(self):
+        self._tokens = self.requests_per_second
+
+    def _get_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Lock()
+
+        if loop not in self._locks:
+            with self._lock_sentinel:
+                if loop not in self._locks:
+                    self._locks[loop] = asyncio.Lock()
+        return self._locks[loop]
+
+    async def acquire(self) -> None:
+        lock = self._get_lock()
+
+        for _ in range(1000): # Iteration limit to prevent potential hangs
+            wait_time = 0
+            async with lock:
+                now = time.time()
+                elapsed = now - self._last_update
+                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
+                self._last_update = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return
+                wait_time = (1 - self._tokens) / self.requests_per_second
+
+            if wait_time >= 0:
+                await asyncio.sleep(max(wait_time, 0.01))
+
+
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
     _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
     _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
+    _host_limiters: ClassVar[Dict[str, RateLimiter]] = {}
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    async def get_host_limiter(cls, host: str) -> RateLimiter:
+        """Returns a per-host rate limiter."""
+        if host not in cls._host_limiters:
+            with cls._lock_initialized:
+                if host not in cls._host_limiters:
+                    # Default to 2 requests per second per host to avoid 429s (Fix 13)
+                    limit = 2.0
+                    if "racingpost" in host: limit = 1.5 # Extra conservative for RP
+                    cls._host_limiters[host] = RateLimiter(requests_per_second=limit)
+        return cls._host_limiters[host]
 
     @classmethod
     async def _get_lock(cls) -> asyncio.Lock:
@@ -921,7 +979,7 @@ class SmartFetcher:
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
             # Respect impersonate if provided, otherwise default
-            impersonate = kwargs.get("impersonate", "chrome124")
+            impersonate = kwargs.get("impersonate", "chrome128")
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
@@ -1043,46 +1101,6 @@ class CircuitBreaker:
         return self.state == "half-open"
 
 
-@dataclass
-class RateLimiter:
-    requests_per_second: float = 10.0
-    _tokens: float = field(default=10.0, init=False)
-    _last_update: float = field(default_factory=time.time, init=False)
-    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
-    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
-
-    def __post_init__(self):
-        self._tokens = self.requests_per_second
-
-    def _get_lock(self) -> asyncio.Lock:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.Lock()
-
-        if loop not in self._locks:
-            with self._lock_sentinel:
-                if loop not in self._locks:
-                    self._locks[loop] = asyncio.Lock()
-        return self._locks[loop]
-
-    async def acquire(self) -> None:
-        lock = self._get_lock()
-
-        for _ in range(1000): # Iteration limit to prevent potential hangs
-            wait_time = 0
-            async with lock:
-                now = time.time()
-                elapsed = now - self._last_update
-                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
-                self._last_update = now
-                if self._tokens >= 1:
-                    self._tokens -= 1
-                    return
-                wait_time = (1 - self._tokens) / self.requests_per_second
-
-            if wait_time >= 0:
-                await asyncio.sleep(max(wait_time, 0.01))
 
 
 class AdapterMetrics:
@@ -1387,6 +1405,14 @@ class BaseAdapterV3(ABC):
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+
+        # Apply host-based rate limiting to prevent 429s (Fix 13)
+        from urllib.parse import urlparse
+        host = urlparse(full_url).netloc
+        if host:
+            limiter = await GlobalResourceManager.get_host_limiter(host)
+            await limiter.acquire()
+
         self.logger.debug("Requesting", method=method, url=full_url)
         # Apply global concurrency limit (Memory Directive Fix)
         async with GlobalResourceManager.get_global_semaphore():
@@ -1556,7 +1582,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         return self._get_browser_headers(host="www.skyracingworld.com")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome124")
+        kwargs.setdefault("impersonate", "chrome128")
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -1740,7 +1766,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome124")
+        kwargs.setdefault("impersonate", "chrome128")
         return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
@@ -3184,8 +3210,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome124 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
-        kwargs.setdefault("impersonate", "chrome124")
+        # Force chrome128 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
+        kwargs.setdefault("impersonate", "chrome128")
         # Let SmartFetcher/curl_cffi handle headers mostly, but provide minimal essentials if not already set
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.equibase.com/"
@@ -3448,8 +3474,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome124 for TwinSpires to bypass basic bot checks
-        kwargs.setdefault("impersonate", "chrome124")
+        # Force chrome128 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome128")
         # Provide common browser-like headers for TwinSpires
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.google.com/"
@@ -3952,7 +3978,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
         # Success Playbook Hardening (Council of Superbrains)
         # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
 
         # Valid Region Filter (Item 6)
         # South Africa ('za', 'sa') and Australia ('au', 'aus') removed by user request (JB override)
@@ -5517,14 +5543,31 @@ class FortunaDB:
                     self.logger.error("Failed to cleanup or create unique index", error=str(e))
                     # If index exists but table has duplicates, we might get IntegrityError
                     # Just log it and continue - better than crashing the whole app
-                # Composite index for audit performance
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
-
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
                 columns = [column[1] for column in cursor.fetchall()]
+                if "source" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN source TEXT")
+                if "gap12" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN gap12 TEXT")
+                if "top_five" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top_five TEXT")
+                if "selection_number" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_number INTEGER")
+                if "verdict" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN verdict TEXT")
+                if "net_profit" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN net_profit REAL")
+                if "selection_position" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_position INTEGER")
+                if "actual_top_5" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN actual_top_5 TEXT")
+                if "trifecta_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_payout REAL")
+                if "trifecta_combination" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_combination TEXT")
+                if "audit_timestamp" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN audit_timestamp TEXT")
                 if "superfecta_payout" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_payout REAL")
                 if "superfecta_combination" not in columns:
@@ -5569,6 +5612,11 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_number INTEGER")
                 if "superfecta_key_name" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_name TEXT")
+
+                # Composite index for audit performance
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
         await self._run_in_executor(_init)
 
@@ -6081,7 +6129,7 @@ class HotTipsTracker:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
                 # Relaxed to match SimplySuccessAnalyzer config (GPT5 alignment)
-                min_trust = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+                min_trust = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
                 if trust_ratio < min_trust:
                     self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2), required=min_trust)
                     continue
@@ -6374,7 +6422,7 @@ class FavoriteToPlaceMonitor:
 
         gap12 = 0.0
         if favorite and second_fav and favorite.win_odds and second_fav.win_odds:
-            gap12 = round(second_fav.win_odds - favorite.win_odds, 2)
+            gap12 = round((second_fav.win_odds - favorite.win_odds) / favorite.win_odds, 2)
 
         return RaceSummary(
             discipline=self._get_discipline_code(race),
@@ -6500,7 +6548,7 @@ class FavoriteToPlaceMonitor:
             if r.mtp is not None and -10 < r.mtp <= mtp_limit
             and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
             and r.field_size <= max_field
-            and r.gap12 > min_gap
+            and r.gap12 >= min_gap
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -6523,7 +6571,7 @@ class FavoriteToPlaceMonitor:
             if r.mtp is not None and -10 < r.mtp <= mtp_limit
             and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
             and r.field_size <= max_field
-            and r.gap12 > min_gap
+            and r.gap12 >= min_gap
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
@@ -6631,6 +6679,15 @@ class FavoriteToPlaceMonitor:
         """Append races to persistent history for future result matching."""
         if not races: return
         history_file = get_writable_path("prediction_history.jsonl")
+
+        # Improvement 04: Rotation logic (Memory Directive Fix)
+        try:
+            if history_file.exists() and history_file.stat().st_size > 10 * 1024 * 1024: # 10MB
+                backup = history_file.with_suffix(".jsonl.1")
+                history_file.replace(backup)
+                self.logger.info("Rotated prediction history file")
+        except Exception: pass
+
         timestamp = datetime.now(EASTERN).isoformat()
         try:
             with open(history_file, 'a', encoding='utf-8') as f:

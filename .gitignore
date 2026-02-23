@@ -71,7 +71,9 @@ discovery_harvest.json
 results_harvest.json
 
 # Database
-fortuna.db
+*.db
+*.db-shm
+*.db-wal
 prediction_history.jsonl
 
 # Testing

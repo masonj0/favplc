@@ -316,135 +316,112 @@ jobs:
               else:
                   emit("ℹ️ No decided tips to analyze.\n")
 
-              # ── 2D: Rolling 7-day performance ──────────────────────────
+              # ── 2D: Rolling 7-Day Performance (Sparkline Rewrite) ──────
               emit("### 2D: Rolling 7-Day Performance\n")
               emit("```")
-              emit(f"  {'DATE':<12s} {'BETS':>4} {'W':>3} {'L':>3} "
-                   f"{'HIT%':>5} {'P&L':>8} {'CUMUL':>8}")
-              emit(f"  {'─'*12} {'─'*4} {'─'*3} {'─'*3} "
-                   f"{'─'*5} {'─'*8} {'─'*8}")
+              emit(f"  {'DATE':<12s} {'BETS':>4} {'W':>3} {'L':>3} {'HIT%':>5} {'P&L':>8} {'CUMUL':>8}  FORM")
+              emit(f"  {'─'*12} {'─'*4} {'─'*3} {'─'*3} {'─'*5} {'─'*8} {'─'*8}  {'─'*10}")
 
               cumul = 0.0
               for row in conn.execute("""
-                  SELECT
-                      DATE(start_time) as d,
-                      COUNT(*) as n,
-                      SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED')
-                          THEN 1 ELSE 0 END) as w,
-                      SUM(CASE WHEN verdict='BURNED'
-                          THEN 1 ELSE 0 END) as l,
-                      SUM(net_profit) as pnl
-                  FROM tips
-                  WHERE audit_completed=1
-                    AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
-                    AND start_time >= DATE('now', '-7 days')
+                  SELECT DATE(start_time) as d,
+                         COUNT(*) as n,
+                         SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                         SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l,
+                         SUM(net_profit) as pnl,
+                         GROUP_CONCAT(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 'W' ELSE 'L' END) as sequence
+                  FROM (SELECT start_time, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time ASC)
+                  WHERE start_time >= DATE('now', '-7 days')
                   GROUP BY d ORDER BY d
               """):
                   decided = row['w'] + row['l']
                   hr = f"{row['w']/decided*100:.0f}%" if decided else "—"
                   pnl = row['pnl'] or 0
                   cumul += pnl
-                  bar_w = "█" * row['w']
-                  bar_l = "░" * row['l']
-                  emit(f"  {row['d']:<12s} {row['n']:>4} {row['w']:>3} "
-                       f"{row['l']:>3} {hr:>5} ${pnl:>+7.2f} "
-                       f"${cumul:>+7.2f}  {bar_w}{bar_l}")
-
+                  seq = (row['sequence'] or "").split(',')[-10:] # last 10 of day
+                  spark = "".join("█" if v == 'W' else "░" for v in seq)
+                  emit(f"  {row['d']:<12s} {row['n']:>4} {row['w']:>3} {row['l']:>3} {hr:>5} ${pnl:>+7.2f} ${cumul:>+7.2f}  {spark}")
               emit("```\n")
 
-              # ── 2E: Goldmine vs non-goldmine performance ───────────────
-              emit("### 2E: Goldmine vs Standard Performance\n")
+              # ── 2E: Goldmine vs Best Bet vs Standard ───────────────────
+              emit("### 2E: Tiered Performance (Goldmine/Best/Standard)\n")
+              emit("```")
+              emit(f"  {'CATEGORY':<15s} {'BETS':>4} {'HIT%':>6} {'AVG PAY':>8} {'NET P&L':>9} {'ROI':>7}")
+              emit(f"  {'─'*15} {'─'*4} {'─'*6} {'─'*8} {'─'*9} {'─'*7}")
 
-              gm_col_exists = bool(conn.execute(
-                  "SELECT 1 FROM pragma_table_info('tips') "
-                  "WHERE name='is_goldmine'"
-              ).fetchone())
+              gm_exists = bool(conn.execute("SELECT 1 FROM pragma_table_info('tips') WHERE name='is_goldmine'").fetchone())
+              bb_exists = bool(conn.execute("SELECT 1 FROM pragma_table_info('tips') WHERE name='is_best_bet'").fetchone())
 
-              if gm_col_exists:
-                  emit("| Category | Bets | Hit% | Avg Payout | Net P&L | ROI |")
-                  emit("|----------|-----:|-----:|----------:|--------:|----:|")
+              tiers = [
+                  ("🏆 Goldmine", "is_goldmine=1" if gm_exists else "0=1"),
+                  ("⭐ Best Bet", "is_best_bet=1" if bb_exists else "0=1"),
+                  ("📊 Standard", f"({ 'is_goldmine=0' if gm_exists else '1=1' }) AND ({ 'is_best_bet=0' if bb_exists else '1=1' })")
+              ]
 
-                  for label, where in [
-                      ("🏆 Goldmine", "is_goldmine=1"),
-                      ("📊 Standard", "is_goldmine=0 OR is_goldmine IS NULL"),
-                  ]:
-                      row = conn.execute(f"""
-                          SELECT
-                              COUNT(*) as n,
-                              SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED')
-                                  THEN 1 ELSE 0 END) as w,
-                              SUM(CASE WHEN verdict='BURNED'
-                                  THEN 1 ELSE 0 END) as l,
-                              SUM(net_profit) as pnl,
-                              AVG(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED')
-                                  THEN net_profit + 2.0 END) as avg_pay
-                          FROM tips
-                          WHERE audit_completed=1
-                            AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
-                            AND ({where})
-                      """).fetchone()
-                      decided = (row['w'] or 0) + (row['l'] or 0)
-                      if decided == 0:
-                          emit(f"| {label} | 0 | — | — | — | — |")
-                          continue
-                      hr = (row['w'] or 0) / decided * 100
-                      pnl = row['pnl'] or 0
-                      roi = pnl / (decided * STANDARD_BET) * 100
-                      avg_pay = row['avg_pay'] or STANDARD_BET
-                      emit(f"| {label} | {decided} | {hr:.1f}% | "
-                           f"${avg_pay:.2f} | ${pnl:+.2f} | "
-                           f"{roi:+.1f}% |")
-                  emit("")
-              else:
-                  emit("ℹ️ `is_goldmine` column not found — "
-                       "goldmine analysis skipped.\n")
-
-              # ── 2F: Exotic payout tracking ─────────────────────────────
-              emit("### 2F: Exotic Payout Intelligence\n")
-
-              for exotic, label in [
-                  ("superfecta_payout", "Superfecta"),
-                  ("trifecta_payout", "Trifecta"),
-              ]:
-                  col_exists = bool(conn.execute(
-                      f"SELECT 1 FROM pragma_table_info('tips') "
-                      f"WHERE name='{exotic}'"
-                  ).fetchone())
-                  combo_exists = bool(conn.execute(
-                      f"SELECT 1 FROM pragma_table_info('tips') "
-                      f"WHERE name='{exotic.replace('_payout','_combination')}'"
-                  ).fetchone())
-
-                  if not col_exists:
-                      continue
-
-                  combo_col = exotic.replace('_payout','_combination') if combo_exists else "NULL"
-
-                  erows = conn.execute(f"""
-                      SELECT venue, race_number, start_time,
-                             {exotic} as payout,
-                             {combo_col} as combo,
-                             verdict
+              for label, where in tiers:
+                  row = conn.execute(f"""
+                      SELECT COUNT(*) as n,
+                             SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                             SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l,
+                             SUM(net_profit) as pnl,
+                             AVG(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN net_profit + 2.0 END) as avg_pay
                       FROM tips
-                      WHERE {exotic} IS NOT NULL AND {exotic} > 0
-                      ORDER BY {exotic} DESC LIMIT 10
-                  """).fetchall()
+                      WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND ({where})
+                  """).fetchone()
+                  decided = (row['w'] or 0) + (row['l'] or 0)
+                  if decided == 0:
+                      emit(f"  {label:<15s} {0:>4} {'—':>6} {'—':>8} {'—':>9} {'—':>7}")
+                      continue
+                  hr = (row['w'] or 0) / decided * 100
+                  pnl = row['pnl'] or 0
+                  roi = pnl / (decided * STANDARD_BET) * 100
+                  avg_pay = row['avg_pay'] or STANDARD_BET
+                  emit(f"  {label:<15s} {decided:>4} {hr:>5.1f}% ${avg_pay:>7.2f} ${pnl:>+8.2f} {roi:>+6.1f}%")
+              emit("```\n")
 
-                  if erows:
-                      emit(f"**Top {label} payouts observed:**")
+              # ── 2F: Superfecta Keybox Performance ──────────────────────
+              emit("### 2F: Superfecta Keybox Performance\n")
+              sk_exists = bool(conn.execute("SELECT 1 FROM pragma_table_info('tips') WHERE name='is_superfecta_key'").fetchone())
+              if sk_exists:
+                  row = conn.execute("""
+                      SELECT COUNT(*) as n,
+                             SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                             SUM(CASE WHEN superfecta_payout > 0 THEN 1 ELSE 0 END) as super_hits,
+                             SUM(CASE WHEN trifecta_payout > 0 THEN 1 ELSE 0 END) as tri_hits,
+                             AVG(superfecta_payout) FILTER (WHERE superfecta_payout > 0) as avg_super
+                      FROM tips
+                      WHERE is_superfecta_key = 1 AND audit_completed = 1
+                  """).fetchone()
+
+                  if row and row['n'] > 0:
                       emit("```")
-                      for r in erows:
-                          v = r['verdict'] or '?'
-                          icon = "✅" if v.startswith("CASH") else (
-                              "❌" if v == "BURNED" else "⚪")
-                          emit(f"  {icon} ${r['payout']:>8.2f}  "
-                               f"{r['venue']:20s} R{r['race_number']}  "
-                               f"{(r['start_time'] or '')[:10]}  "
-                               f"{r['combo'] or ''}")
+                      emit(f"  Attempts: {row['n']}")
+                      emit(f"  Place Hit Rate: {(row['w']/row['n']*100):.1f}%")
+                      emit(f"  Superfecta Hits: {row['super_hits']} ({(row['super_hits']/row['n']*100):.1f}%)")
+                      emit(f"  Trifecta Hits:   {row['tri_hits']} ({(row['tri_hits']/row['n']*100):.1f}%)")
+                      if row['avg_super']:
+                          emit(f"  Avg Super Payout: ${row['avg_super']:.2f}")
                       emit("```\n")
+                  else:
+                      emit("ℹ️ No audited Superfecta Keybox attempts found.\n")
+              else:
+                  emit("ℹ️ `is_superfecta_key` column not found.\n")
 
-              # ── 2G: Odds gap analysis ──────────────────────────────────
-              emit("### 2G: Odds Gap vs Outcome Correlation\n")
+              # ── 2G: Exotic Payout Intelligence ─────────────────────────
+              emit("### 2G: Exotic Payout Intelligence (Top 5)\n")
+              emit("```")
+              for exotic, label in [("superfecta_payout", "SUPER"), ("trifecta_payout", "TRI")]:
+                  col_exists = bool(conn.execute(f"SELECT 1 FROM pragma_table_info('tips') WHERE name='{exotic}'").fetchone())
+                  if not col_exists: continue
+
+                  rows = conn.execute(f"SELECT venue, race_number, {exotic} as p, verdict FROM tips WHERE {exotic} > 0 ORDER BY {exotic} DESC LIMIT 5").fetchall()
+                  for r in rows:
+                      icon = "✅" if (r['verdict'] or '').startswith("CASH") else "❌"
+                      emit(f"  {label:5s} ${r['p']:>8.2f} {icon} {(r['venue'] or '?')[:18]:18s} R{r['race_number']}")
+              emit("```\n")
+
+              # ── 2H: Odds Gap Analysis ──────────────────────────────────
+              emit("### 2H: Odds Gap vs Outcome Correlation\n")
 
               gap_col = bool(conn.execute(
                   "SELECT 1 FROM pragma_table_info('tips') "
@@ -456,165 +433,72 @@ jobs:
               ).fetchone())
 
               if gap_col:
-                  emit("| Gap Bucket | Bets | Hit% | Avg P&L | Insight |")
-                  emit("|------------|-----:|-----:|--------:|---------|")
+                  emit("```")
+                  emit(f"  {'GAP BUCKET':<20s} {'BETS':>4} {'HIT%':>6} {'AVG P&L':>8} INSIGHT")
+                  emit(f"  {'─'*20} {'─'*4} {'─'*6} {'─'*8} {'─'*10}")
 
-                  # Detect if gap12 is ratio or absolute based on max value
-                  max_gap_raw = conn.execute(
-                      "SELECT MAX(CAST(gap12 AS REAL)) FROM tips "
-                      "WHERE gap12 IS NOT NULL"
-                  ).fetchone()[0]
+                  max_gap_raw = conn.execute("SELECT MAX(CAST(gap12 AS REAL)) FROM tips WHERE gap12 IS NOT NULL").fetchone()[0]
                   max_gap = float(max_gap_raw) if max_gap_raw is not None else 0.0
 
                   if max_gap <= 5.0:
-                      # Likely ratio format (scoring memo item 1)
-                      buckets = [
-                          ("< 0.20 (tight)", "gap12 < 0.20"),
-                          ("0.20–0.50", "gap12 >= 0.20 AND gap12 < 0.50"),
-                          ("0.50–1.00", "gap12 >= 0.50 AND gap12 < 1.00"),
-                          ("> 1.00 (dominant)", "gap12 >= 1.00"),
-                      ]
+                      buckets = [("< 0.20 (tight)", "gap12 < 0.20"), ("0.20–0.50", "gap12 >= 0.20 AND gap12 < 0.50"), ("0.50–1.00", "gap12 >= 0.50 AND gap12 < 1.00"), ("> 1.00 (dominant)", "gap12 >= 1.00")]
                   else:
-                      # Absolute format (pre-memo)
-                      buckets = [
-                          ("< 0.50 (tight)", "gap12 < 0.50"),
-                          ("0.50–1.50", "gap12 >= 0.50 AND gap12 < 1.50"),
-                          ("1.50–3.00", "gap12 >= 1.50 AND gap12 < 3.00"),
-                          ("> 3.00 (dominant)", "gap12 >= 3.00"),
-                      ]
+                      buckets = [("< 0.50 (tight)", "gap12 < 0.50"), ("0.50–1.50", "gap12 >= 0.50 AND gap12 < 1.50"), ("1.50–3.00", "gap12 >= 1.50 AND gap12 < 3.00"), ("> 3.00 (dominant)", "gap12 >= 3.00")]
 
                   for label, where in buckets:
-                      row = conn.execute(f"""
-                          SELECT COUNT(*) as n,
-                              SUM(CASE WHEN verdict IN
-                                  ('CASHED','CASHED_ESTIMATED')
-                                  THEN 1 ELSE 0 END) as w,
-                              SUM(CASE WHEN verdict='BURNED'
-                                  THEN 1 ELSE 0 END) as l,
-                              AVG(net_profit) as avg_pnl
-                          FROM tips
-                          WHERE audit_completed=1
-                            AND verdict IN
-                                ('CASHED','CASHED_ESTIMATED','BURNED')
-                            AND gap12 IS NOT NULL AND {where}
-                      """).fetchone()
-                      decided = (row['w'] or 0) + (row['l'] or 0)
-                      if decided < 2:
-                          emit(f"| {label} | {decided} | — | — | "
-                               f"insufficient data |")
-                          continue
-                      hr = (row['w'] or 0) / decided * 100
+                      row = conn.execute(f"SELECT COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, AVG(net_profit) as avg_pnl FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND gap12 IS NOT NULL AND {where}").fetchone()
+                      decided = row['n']
+                      if decided < 2: continue
+                      hr = row['w'] / decided * 100
                       avg = row['avg_pnl'] or 0
-                      insight = ("🟢 edge" if hr > 75
-                                 else "🟡 marginal" if hr > 60
-                                 else "🔴 losing")
-                      emit(f"| {label} | {decided} | {hr:.1f}% | "
-                           f"${avg:+.2f} | {insight} |")
-                  emit("")
+                      insight = "🟢 edge" if hr > 75 else "🟡 marginal" if hr > 60 else "🔴 losing"
+                      emit(f"  {label:<20s} {decided:>4} {hr:>5.1f}% ${avg:>7.2f}  {insight}")
+                  emit("```\n")
               else:
                   emit("ℹ️ `gap12` column not found.\n")
 
-              # ── 2H: Predicted vs actual odds comparison ────────────────
-              emit("### 2H: Predicted vs Actual 2nd-Fav Odds\n")
-
+              # ── 2I: Odds Drift Logic ───────────────────────────────────
+              emit("### 2I: Odds Drift Logic (Predicted vs Actual)\n")
               if pred_odds_col:
-                  act_col = bool(conn.execute(
-                      "SELECT 1 FROM pragma_table_info('tips') "
-                      "WHERE name='actual_2nd_fav_odds'"
-                  ).fetchone())
-
+                  act_col = bool(conn.execute("SELECT 1 FROM pragma_table_info('tips') WHERE name='actual_2nd_fav_odds'").fetchone())
                   if act_col:
                       drift_rows = conn.execute("""
-                          SELECT
-                              predicted_2nd_fav_odds as pred,
-                              actual_2nd_fav_odds as actual,
-                              venue, race_number, verdict
-                          FROM tips
-                          WHERE predicted_2nd_fav_odds IS NOT NULL
-                            AND actual_2nd_fav_odds IS NOT NULL
-                            AND audit_completed=1
-                          ORDER BY start_time DESC LIMIT 20
+                          SELECT predicted_2nd_fav_odds as pred, actual_2nd_fav_odds as actual, venue, race_number, verdict
+                          FROM tips WHERE pred IS NOT NULL AND actual IS NOT NULL AND audit_completed=1
+                          ORDER BY start_time DESC LIMIT 15
                       """).fetchall()
-
                       if drift_rows:
                           emit("```")
-                          emit(f"  {'VENUE':22s} R#  {'PRED':>5} → "
-                               f"{'ACTUAL':>6}  {'DRIFT':>6}  RESULT")
-                          emit(f"  {'─'*22} ──  {'─'*5}   "
-                               f"{'─'*6}  {'─'*6}  ──────")
-                          total_drift = 0
+                          emit(f"  {'VENUE':22s} R#  {'PRED':>5} → {'ACTUAL':>6}  {'DRIFT':>6}  RESULT")
+                          emit(f"  {'─'*22} ──  {'─'*5}   {'─'*6}  {'─'*6}  ──────")
                           for r in drift_rows:
                               drift = (r['actual'] or 0) - (r['pred'] or 0)
-                              total_drift += drift
-                              icon = "✅" if (r['verdict'] or '').startswith(
-                                  "CASH") else "❌"
-                              emit(f"  {r['venue']:22s} "
-                                   f"R{r['race_number']:<2}  "
-                                   f"{r['pred']:>5.2f} → "
-                                   f"{r['actual']:>6.2f}  "
-                                   f"{drift:>+6.2f}  {icon}")
-                          avg_drift = total_drift / len(drift_rows)
-                          emit(f"\n  Average drift: {avg_drift:+.2f} "
-                               f"({'market softened' if avg_drift > 0 else 'market tightened'})")
+                              icon = "✅" if (r['verdict'] or '').startswith("CASH") else "❌"
+                              emit(f"  {(r['venue'] or '?')[:22]:22s} R{r['race_number']:<2}  {r['pred']:>5.2f} → {r['actual']:>6.2f}  {drift:>+6.2f}  {icon}")
                           emit("```\n")
-                      else:
-                          emit("ℹ️ No tips with both predicted and "
-                               "actual odds.\n")
-                  else:
-                      emit("ℹ️ `actual_2nd_fav_odds` column "
-                           "not found.\n")
-              else:
-                  emit("ℹ️ `predicted_2nd_fav_odds` column not found.\n")
 
-              # ── 2I: Venue-level P&L leaderboard ────────────────────────
-              emit("### 2I: Venue P&L Leaderboard\n")
+              # ── 2J: Venue Leaderboard (Trend Sparkline Fix) ────────────
+              emit("### 2J: Venue P&L Leaderboard (Min 3 Bets)\n")
               emit("```")
-              emit(f"  {'VENUE':25s} {'BETS':>4} {'W':>3} {'L':>3} "
-                   f"{'HIT%':>5} {'NET P&L':>8} {'ROI':>6}  TREND")
-              emit(f"  {'─'*25} {'─'*4} {'─'*3} {'─'*3} "
-                   f"{'─'*5} {'─'*8} {'─'*6}  {'─'*10}")
+              emit(f"  {'VENUE':25s} {'BETS':>4} {'W':>3} {'L':>3} {'HIT%':>5} {'NET P&L':>8}  TREND")
+              emit(f"  {'─'*25} {'─'*4} {'─'*3} {'─'*3} {'─'*5} {'─'*8}  {'─'*10}")
 
               for row in conn.execute("""
-                  SELECT venue,
-                      COUNT(*) as n,
-                      SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED')
-                          THEN 1 ELSE 0 END) as w,
-                      SUM(CASE WHEN verdict='BURNED'
-                          THEN 1 ELSE 0 END) as l,
-                      SUM(net_profit) as pnl
-                  FROM tips
-                  WHERE audit_completed=1
-                    AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
-                  GROUP BY venue
-                  HAVING COUNT(*) >= 3
-                  ORDER BY SUM(net_profit) DESC
+                  SELECT venue, COUNT(*) as n,
+                         SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                         SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l,
+                         SUM(net_profit) as pnl
+                  FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
+                  GROUP BY venue HAVING n >= 3 ORDER BY pnl DESC
               """):
-                  decided = row['w'] + row['l']
-                  if decided == 0:
-                      continue
-                  hr = row['w'] / decided * 100
-                  pnl = row['pnl'] or 0
-                  roi = pnl / (decided * STANDARD_BET) * 100
-
-                  # Mini sparkline from last 5 bets at this venue
-                  last5 = conn.execute("""
-                      SELECT verdict FROM tips
-                      WHERE venue=? AND audit_completed=1
-                        AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
-                      ORDER BY start_time DESC LIMIT 5
-                  """, (row['venue'],)).fetchall()
-                  spark = "".join(
-                      "W" if r['verdict'].startswith("CASH") else "L"
-                      for r in last5)
-
-                  emit(f"  {row['venue']:25s} {decided:>4} "
-                       f"{row['w']:>3} {row['l']:>3} "
-                       f"{hr:>4.0f}% ${pnl:>+7.2f} "
-                       f"{roi:>+5.1f}%  {spark}")
+                  hr = row['w'] / (row['w']+row['l']) * 100
+                  last5 = conn.execute("SELECT verdict FROM tips WHERE venue=? AND audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time DESC LIMIT 5", (row['venue'],)).fetchall()
+                  spark = "".join("█" if r['verdict'].startswith("CASH") else "░" for r in reversed(last5))
+                  emit(f"  {(row['venue'] or '?')[:25]:25s} {row['n']:>4} {row['w']:>3} {row['l']:>3} {hr:>4.0f}% ${row['pnl']:>+7.2f}  {spark}")
               emit("```\n")
 
-              # ── 2J: Stuck tip age distribution ─────────────────────────
-              emit("### 2J: Stuck Tip Age Distribution\n")
+              # ── 2K: Stuck Tip Age Distribution ─────────────────────────
+              emit("### 2K: Stuck Tip Age Distribution\n")
 
               stuck_rows = conn.execute("""
                   SELECT
@@ -647,8 +531,8 @@ jobs:
               else:
                   emit("✅ No stuck tips.\n")
 
-              # ── 2K: Scoring model columns inventory ────────────────────
-              emit("### 2K: Scoring Signal Columns Inventory\n")
+              # ── 2L: Scoring Signal Columns Inventory ────────────────────
+              emit("### 2L: Scoring Signal Columns Inventory\n")
               emit("Checks which scoring upgrade memo columns exist "
                    "and have data.\n")
 
@@ -693,50 +577,115 @@ jobs:
 
               flush()
 
-              # ── 2L: Qualification grade performance ────────────────────
-              grade_col = bool(conn.execute(
-                  "SELECT 1 FROM pragma_table_info('tips') "
-                  "WHERE name='qualification_grade'"
-              ).fetchone())
+              # ── 2M: Performance by Qualification Grade ─────────────────
+              grade_col = bool(conn.execute("SELECT 1 FROM pragma_table_info('tips') WHERE name='qualification_grade'").fetchone())
 
               if grade_col:
-                  emit("### 2L: Performance by Qualification Grade\n")
-                  emit("| Grade | Bets | Hit% | Avg P&L | "
-                       "Avg Payout | Net P&L |")
-                  emit("|-------|-----:|-----:|--------:|"
-                       "----------:|--------:|")
+                  emit("### 2M: Performance by Qualification Grade\n")
+                  emit("```")
+                  emit(f"  {'GRADE':<6} {'BETS':>4} {'HIT%':>6} {'AVG P&L':>8} {'AVG PAY':>8} {'NET P&L':>9}")
+                  emit(f"  {'─'*6} {'─'*4} {'─'*6} {'─'*8} {'─'*8} {'─'*9}")
 
                   for row in conn.execute("""
-                      SELECT
-                          COALESCE(qualification_grade, '?') as grade,
-                          COUNT(*) as n,
-                          SUM(CASE WHEN verdict IN
-                              ('CASHED','CASHED_ESTIMATED')
-                              THEN 1 ELSE 0 END) as w,
-                          SUM(CASE WHEN verdict='BURNED'
-                              THEN 1 ELSE 0 END) as l,
-                          AVG(net_profit) as avg_pnl,
-                          AVG(CASE WHEN verdict IN
-                              ('CASHED','CASHED_ESTIMATED')
-                              THEN net_profit + 2.0 END) as avg_pay,
-                          SUM(net_profit) as total_pnl
+                      SELECT COALESCE(qualification_grade, '?') as grade,
+                             COUNT(*) as n,
+                             SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                             SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l,
+                             AVG(net_profit) as avg_pnl,
+                             AVG(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN net_profit + 2.0 END) as avg_pay,
+                             SUM(net_profit) as total_pnl
                       FROM tips
-                      WHERE audit_completed=1
-                        AND verdict IN
-                            ('CASHED','CASHED_ESTIMATED','BURNED')
-                        AND qualification_grade IS NOT NULL
-                      GROUP BY qualification_grade
-                      ORDER BY qualification_grade
+                      WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND qualification_grade IS NOT NULL
+                      GROUP BY qualification_grade ORDER BY qualification_grade
                   """):
                       decided = row['w'] + row['l']
-                      if decided == 0:
-                          continue
+                      if decided == 0: continue
                       hr = row['w'] / decided * 100
-                      emit(f"| {row['grade']} | {decided} | "
-                           f"{hr:.1f}% | ${row['avg_pnl'] or 0:+.2f} | "
-                           f"${row['avg_pay'] or 0:.2f} | "
-                           f"${row['total_pnl'] or 0:+.2f} |")
-                  emit("")
+                      emit(f"  {row['grade']:<6} {decided:>4} {hr:>5.1f}% ${row['avg_pnl'] or 0:>7.2f} ${row['avg_pay'] or 0:>7.2f} ${row['total_pnl'] or 0:>8.2f}")
+                  emit("```\n")
+
+              # ── 2N: Loss Streaks (Current & Worst) ─────────────────────
+              emit("### 2N: Loss Streaks (Current & Worst)\n")
+              streak_rows = conn.execute("SELECT verdict FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time DESC LIMIT 100").fetchall()
+              if streak_rows:
+                  current_streak, worst_streak, temp_streak, first = 0, 0, 0, True
+                  for r in streak_rows:
+                      if not (r['verdict'] or '').startswith("CASH"): temp_streak += 1
+                      else:
+                          if first: current_streak = temp_streak
+                          worst_streak = max(worst_streak, temp_streak); temp_streak = 0; first = False
+                  worst_streak = max(worst_streak, temp_streak)
+                  if first: current_streak = temp_streak
+                  emit("```")
+                  emit(f"  Current Loss Streak: {current_streak}")
+                  emit(f"  Worst Loss Streak (Last 100): {worst_streak}")
+                  emit("```\n")
+
+              # ── 2O: Field Size Analysis ────────────────────────────────
+              emit("### 2O: Performance by Field Size\n")
+              emit("```")
+              emit(f"  {'FIELD SIZE':<12} {'BETS':>4} {'HIT%':>6} {'NET P&L':>8}")
+              emit(f"  {'─'*12} {'─'*4} {'─'*6} {'─'*8}")
+              for row in conn.execute("""
+                  SELECT CASE WHEN field_size <= 6 THEN 'Small (2-6)' WHEN field_size <= 9 THEN 'Mid (7-9)' ELSE 'Large (10+)' END as cat,
+                         COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(net_profit) as pnl
+                  FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND field_size IS NOT NULL
+                  GROUP BY cat ORDER BY MIN(field_size)
+              """):
+                  hr = row['w'] / row['n'] * 100
+                  emit(f"  {row['cat']:<12} {row['n']:>4} {hr:>5.1f}% ${row['pnl']:>+7.2f}")
+              emit("```\n")
+
+              # ── 2P: Adapter Coverage ───────────────────────────────────
+              emit("### 2P: Discovery Adapter Coverage (Last 7 Days)\n")
+              emit("```")
+              emit(f"  {'ADAPTER':<30} {'TIPS':>5} {'VENUES':>6}")
+              emit(f"  {'─'*30} {'─'*5} {'─'*6}")
+              for row in conn.execute("""
+                  SELECT source, COUNT(*) as n, COUNT(DISTINCT venue) as vs
+                  FROM tips WHERE start_time >= DATE('now', '-7 days')
+                  GROUP BY source ORDER BY n DESC
+              """):
+                  emit(f"  {(row['source'] or '?')[:30]:<30} {row['n']:>5} {row['vs']:>6}")
+              emit("```\n")
+
+              # ── 2Q: Pipeline Health ────────────────────────────────────
+              emit("### 2Q: Scoring Pipeline Health\n")
+              if has_table("harvest_logs"):
+                  row = conn.execute("SELECT COUNT(*) as attempts, SUM(CASE WHEN race_count > 0 THEN 1 ELSE 0 END) as success FROM harvest_logs WHERE timestamp >= DATE('now', '-24 hours')").fetchone()
+                  rate = (row['success']/row['attempts']*100) if row['attempts'] else 0
+                  emit(f"- Harvest Success (24h): {row['success']}/{row['attempts']} ({rate:.1f}%)")
+              tips_24h = conn.execute("SELECT COUNT(*) FROM tips WHERE report_date >= DATE('now', '-24 hours')").fetchone()[0]
+              emit(f"- Discovery Throughput (24h): {tips_24h} tips")
+              emit("")
+
+              # ── 2S: Time of Day Distribution ───────────────────────────
+              emit("### 2S: Tip Distribution by Time of Day (ET)\n")
+              emit("```")
+              for row in conn.execute("""
+                  SELECT strftime('%H', datetime(start_time, '-5 hours')) as hr, COUNT(*) as n
+                  FROM tips WHERE start_time >= DATE('now', '-7 days')
+                  GROUP BY hr ORDER BY hr
+              """):
+                  bar = "█" * (row['n'] // max(1, (tips_24h // 20)))
+                  emit(f"  {row['hr']}:00  {bar} ({row['n']})")
+              emit("```\n")
+
+              # ── 2T: Data Quality Assertions ────────────────────────────
+              emit("### 2T: Data Quality Assertions\n")
+              assertions = []
+              # Check 1: Null Score
+              null_scores = conn.execute("SELECT COUNT(*) FROM tips WHERE composite_score IS NULL AND start_time >= DATE('now', '-2 days')").fetchone()[0]
+              if null_scores > 5: assertions.append(f"❌ {null_scores} recent tips missing composite_score")
+              else: assertions.append("✅ Scoring variance healthy")
+              # Check 2: Venue Normalization
+              unknowns = conn.execute("SELECT COUNT(*) FROM tips WHERE venue = 'unknown'").fetchone()[0]
+              if unknowns > 0: assertions.append(f"❌ {unknowns} tips with 'unknown' venue")
+              else: assertions.append("✅ Venue normalization stable")
+              # Check 3: Field Size population
+              no_field = conn.execute("SELECT COUNT(*) FROM tips WHERE field_size IS NULL AND audit_completed=1").fetchone()[0]
+              if no_field > 0: assertions.append(f"⚠️ {no_field} audited tips missing field_size")
+              for a in assertions: emit(f"- {a}")
               emit("")
 
           flush()
@@ -846,120 +795,33 @@ jobs:
               flush()
 
           # ═══════════════════════════════════════════════════════════════════
-          # PHASE 4: AUTOMATED ASSESSMENT
+          # PHASE 4: AUTOMATED ASSESSMENT (ENHANCED)
           # ═══════════════════════════════════════════════════════════════════
           emit("## Phase 4: 🎯 Automated Assessment\n")
+          findings, severity = [], "HEALTHY"
 
-          findings = []
-          severity = "HEALTHY"
+          if not audit_success: severity, findings = "WARNING", [f"🟠 **Audit failed:** `{audit_error or 'unknown'}`"]
+          if stale_hours and stale_hours > 48: severity, findings = "CRITICAL", findings + [f"🔴 **Pipeline stale:** {stale_hours:.0f}h"]
+          elif stale_hours and stale_hours > 24: severity = "WARNING"; findings.append(f"🟠 **Stale data:** {stale_hours:.0f}h")
 
-          # Assessment 1: Audit execution
-          if not audit_success:
-              severity = "WARNING"
-              findings.append(
-                  f"🟠 **Audit failed:** `{audit_error or 'unknown'}`")
-
-          # Assessment 2: Data freshness
-          if stale_hours is not None:
-              if stale_hours > 48:
-                  severity = "CRITICAL"
-                  findings.append(
-                      f"🔴 **Pipeline stale:** no new tips in "
-                      f"{stale_hours:.0f}h. Discovery pipeline may "
-                      f"be broken.")
-              elif stale_hours > 24:
-                  if severity != "CRITICAL":
-                      severity = "WARNING"
-                  findings.append(
-                      f"🟠 **Stale data:** {stale_hours:.0f}h since "
-                      f"last tip. Check discovery workflow.")
-
-          # Assessment 3: Stuck tips
           if has_table("tips"):
-              old_stuck = conn.execute("""
-                  SELECT COUNT(*) as n FROM tips
-                  WHERE audit_completed=0
-                    AND julianday('now') - julianday(start_time) > 4
-              """).fetchone()['n']
-              if old_stuck > 10:
-                  if severity == "HEALTHY":
-                      severity = "WARNING"
-                  findings.append(
-                      f"🟠 **{old_stuck} tips stuck >4 days.** "
-                      f"Results adapters may not be covering "
-                      f"these venues/disciplines.")
+              old_stuck = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed=0 AND julianday('now')-julianday(start_time)>4").fetchone()[0]
+              if old_stuck > 10: severity = "WARNING"; findings.append(f"🟠 **{old_stuck} tips stuck >4 days**")
 
-          # Assessment 4: Hit rate
-          if has_table("tips"):
-              overall = conn.execute("""
-                  SELECT
-                      SUM(CASE WHEN verdict IN
-                          ('CASHED','CASHED_ESTIMATED')
-                          THEN 1 ELSE 0 END) as w,
-                      SUM(CASE WHEN verdict='BURNED'
-                          THEN 1 ELSE 0 END) as l,
-                      AVG(CASE WHEN verdict IN
-                          ('CASHED','CASHED_ESTIMATED')
-                          THEN net_profit + 2.0 END) as avg_pay
-                  FROM tips
-                  WHERE audit_completed=1
-                    AND verdict IN
-                        ('CASHED','CASHED_ESTIMATED','BURNED')
-              """).fetchone()
-              ow = overall['w'] or 0
-              ol = overall['l'] or 0
-              decided = ow + ol
-              if decided >= 10:
-                  hr = ow / decided * 100
-                  avg_pay = overall['avg_pay'] or STANDARD_BET
-                  be = STANDARD_BET / avg_pay * 100
-                  margin = hr - be
-                  if margin < -5:
-                      if severity == "HEALTHY":
-                          severity = "WARNING"
-                      findings.append(
-                          f"🟠 **Hit rate ({hr:.1f}%) is {abs(margin):.1f}pp "
-                          f"below breakeven ({be:.1f}%).** "
-                          f"Review qualification thresholds.")
-                  elif margin > 5:
-                      findings.append(
-                          f"🟢 **Hit rate ({hr:.1f}%) is {margin:.1f}pp "
-                          f"above breakeven ({be:.1f}%).** "
-                          f"Edge is real and compounding.")
+              res = conn.execute("SELECT SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, COUNT(*) as n, AVG(net_profit+2.0) as pay FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchone()
+              if res and res['n'] >= 10:
+                  hr, be = res['w']/res['n']*100, (2.0/res['pay']*100 if res['pay'] else 100)
+                  if hr - be < -5: severity = "WARNING"; findings.append(f"🟠 **Hit rate ({hr:.1f}%) < Breakeven ({be:.1f}%)**")
+                  elif hr - be > 5: findings.append(f"🟢 **Edge confirmed: {hr-be:+.1f}pp over breakeven**")
 
-          # Assessment 5: DB existed
-          if not db_existed:
-              severity = "CRITICAL"
-              findings.append(
-                  "🔴 **Database not found in cache.** "
-                  "All historical data may be lost. "
-                  "Check cache key naming.")
+          if not db_existed: severity, findings = "CRITICAL", findings + ["🔴 **Database not found in cache**"]
 
-          # Emit
           emit(f"### Status: **{severity}**\n")
-          if not findings:
-              findings.append("🟢 All systems nominal.")
-          for f in findings:
-              emit(f)
-          emit("")
-
-          # Concise action items
-          emit("### Recommended Actions\n")
-          if severity == "CRITICAL":
-              emit("1. Check the Discovery workflow — is it running "
-                   "and finding races?")
-              emit("2. Run the Diagnostic workflow for detailed "
-                   "pipeline forensics.")
-              emit("3. Verify the DB cache key hasn't been "
-                   "invalidated.")
-          elif severity == "WARNING":
-              emit("1. Check harvest logs for failing adapters.")
-              emit("2. Review stuck tips — do they match any "
-                   "result adapter's coverage?")
-              emit("3. Consider running the Diagnostic workflow.")
-          else:
-              emit("1. No action needed. System is healthy.")
-              emit("2. Monitor the 7-day rolling P&L trend.")
+          for f in findings or ["🟢 All systems nominal."]: emit(f)
+          emit("\n### Recommended Actions")
+          if severity == "CRITICAL": emit("1. Check Discovery workflow\n2. Run Diagnostic workflow\n3. Verify cache keys")
+          elif severity == "WARNING": emit("1. Check harvest logs\n2. Review stuck tips\n3. Monitor 7-day trend")
+          else: emit("1. No action needed\n2. Monitor daily throughput")
           emit("")
 
           # ═══════════════════════════════════════════════════════════════════
