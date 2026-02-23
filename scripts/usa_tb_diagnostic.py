@@ -97,7 +97,7 @@ def http_get(url, ranged=True):
     req = urllib.request.Request(url)
     req.add_header("User-Agent",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36")
+        "AppleWebKit/537.36 Chrome/133.0.0.0 Safari/537.36")
     req.add_header("Accept", "text/html,*/*;q=0.8")
     if "equibase" in url:
         req.add_header("Referer", f"{EQB_BASE}/")
@@ -401,7 +401,7 @@ def q5_racing_post():
         rp_url = f"https://www.racingpost.com/results/{usa_test_date}"
         rp_resp = cffi_req.get(rp_url, impersonate="chrome120",
             timeout=35, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/133",
                 "Accept": "text/html,*/*;q=0.8",
                 "Referer": "https://www.racingpost.com/",
             })
@@ -637,7 +637,7 @@ def q10_playwright():
         ]
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
-            ctx = await browser.new_context(user_agent="Mozilla/5.0 Chrome/125.0.0.0")
+            ctx = await browser.new_context(user_agent="Mozilla/5.0 Chrome/133.0.0.0")
             for url in urls:
                 try:
                     page = await ctx.new_page()

@@ -250,10 +250,12 @@ def _race_quality(race: "ResultRace") -> int:
     score += sum(5 for r in race.runners if r.place_payout and r.place_payout > 0)
     score += sum(3 for r in race.runners if r.position_numeric is not None)
     # Exotic payouts are a good indicator of high-quality data (e.g. Equibase)
+    exotic_bonus = 0
     if race.trifecta_payout:
-        score += 20
+        exotic_bonus += 20
     if race.superfecta_payout:
-        score += 20
+        exotic_bonus += 20
+    score += min(exotic_bonus, 20)
     return score
 
 
@@ -475,20 +477,24 @@ class AuditorEngine:
 
         venue, race_str, date_str, time_str, disc = parts
 
-        # Fallback 1: closest time match within 90 minutes (same discipline)
+        # Fallback 1: closest time match within configurable window (same discipline)
         # Item 8: Use secondary index to avoid O(N) iteration
         if secondary_index:
+            config = fortuna.load_config()
+            max_time_delta = config.get('analysis', {}).get('results_time_tolerance_min', 90)
             venue_date_key = f"{venue}|{date_str}"
             candidates = []
             try:
                 tip_minutes = int(time_str[:2]) * 60 + int(time_str[2:])
-                for obj in secondary_index.get(venue_date_key, []):
-                    # Match race number and discipline
-                    if str(obj.race_number) == race_str and (obj.discipline or "T")[:1].upper() == disc:
+                venue_results = secondary_index.get(venue_date_key, [])
+                for obj in venue_results:
+                    # Match race number and discipline (BUG-7: handle None discipline as wildcard)
+                    result_disc = (obj.discipline or "")[:1].upper()
+                    if str(obj.race_number) == race_str and (result_disc == disc or (result_disc == "" and len(venue_results) <= 5)):
                         res_time = obj.start_time.strftime("%H%M")
                         res_minutes = int(res_time[:2]) * 60 + int(res_time[2:])
                         delta = abs(tip_minutes - res_minutes)
-                        if delta <= 90:
+                        if delta <= max_time_delta:
                             candidates.append((delta, obj))
 
                 if candidates:
@@ -729,10 +735,11 @@ class AuditorEngine:
             return Verdict.CASHED, sel.place_payout - STANDARD_BET
 
         # Heuristic estimate: ~1/5 of (win odds - 1) for place return
-        odds = sel.final_win_odds or DEFAULT_ODDS_FALLBACK
-        if not sel.final_win_odds:
+        odds = sel.final_win_odds if (sel.final_win_odds and sel.final_win_odds > 0) else fortuna.DEFAULT_ODDS_FALLBACK
+        odds = max(1.1, odds)
+        if not (sel.final_win_odds and sel.final_win_odds > 0):
             structlog.get_logger("AuditorEngine").debug(
-                "odds_defaulted", runner=sel.name, fallback=DEFAULT_ODDS_FALLBACK
+                "odds_defaulted", runner=sel.name, fallback=fortuna.DEFAULT_ODDS_FALLBACK
             )
         estimated_place_return = STANDARD_BET * max(1.1, 1.0 + (odds - 1.0) / 5.0)
         return Verdict.CASHED_ESTIMATED, round(estimated_place_return - STANDARD_BET, 2)
@@ -1164,7 +1171,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
 
     def _get_headers(self) -> Dict[str, str]:
         return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Accept": "text/plain, application/octet-stream, */*",
             "Referer": "https://www1.drf.com/drfTextChart.do"
         }
@@ -1172,17 +1179,24 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
         # YYYY-MM-DD -> YYYYMMDD
         drf_date = date_str.replace("-", "")
-        url = f"/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
+        # FIX_10: Use absolute URL for DRF results
+        url = f"{self.BASE_URL}/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
         try:
             resp = await self.smart_fetcher.fetch(
                 url,
                 method="GET",
                 headers=self._get_headers()
             )
-            if not resp or not resp.text: return None
+            if not resp: return None
+            if resp.status_code != 200:
+                self.logger.warning("DRF returned status %d — skipping", resp.status_code)
+                return None
+            if not resp.text or len(resp.text) < 500:
+                self.logger.warning("DRF response suspiciously short (%d chars) — possible stub/redirect", len(resp.text) if resp.text else 0)
+                return None
             # Check for redirect to login or auth page
             if "Please login" in resp.text or "DrfAuthService" in resp.text:
-                self.logger.warning("DRF fetch redirected to login page", url=url)
+                self.logger.warning("DRF login wall detected — skipping")
                 return None
             return {"content": resp.text, "date": date_str}
         except Exception as e:
@@ -1348,7 +1362,7 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
         return {
             "Origin": "https://www.nyrabets.com",
             "Referer": "https://www.nyrabets.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Content-Type": "application/x-www-form-urlencoded",
             "X-Requested-With": "XMLHttpRequest"
         }
@@ -1454,11 +1468,11 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "EquibaseResults"
     BASE_URL = "https://www.equibase.com"
     HOST = "www.equibase.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     _IMPERSONATION_FALLBACKS: Final[tuple[str, ...]] = (
-        "chrome124", "chrome120", "safari17_0",
+        "chrome128", "chrome120", "safari17_0",
     )
     _MIN_CONTENT_LENGTH: Final[int] = 2000
 
@@ -1762,7 +1776,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingPostResults"
     BASE_URL = "https://www.racingpost.com"
     HOST = "www.racingpost.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     _RP_LINK_SELECTORS: Final[tuple[str, ...]] = (
@@ -2240,7 +2254,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         return fixed
     BASE_URL = "https://www.attheraces.com"
     HOST = "www.attheraces.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2544,7 +2558,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "AtTheRacesGreyhoundResults"
     BASE_URL = "https://greyhounds.attheraces.com"
     HOST = "greyhounds.attheraces.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2853,7 +2867,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL = "https://www.sportinglife.com"
     HOST = "www.sportinglife.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     # -- link discovery ----------------------------------------------------
@@ -3057,7 +3071,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "StandardbredCanadaResults"
     BASE_URL = "https://standardbredcanada.ca"
     HOST = "standardbredcanada.ca"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
@@ -3327,7 +3341,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingAndSportsResults"
     BASE_URL = "https://www.racingandsports.com.au"
     HOST = "www.racingandsports.com.au"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
@@ -3449,7 +3463,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "TimeformResults"
     BASE_URL = "https://www.timeform.com"
     HOST = "www.timeform.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -3583,7 +3597,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
         return fixed
     BASE_URL = "https://www.skysports.com"
     HOST = "www.skysports.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
@@ -3776,7 +3790,7 @@ def generate_analytics_report(
 
     audited_sorted = sorted(
         audited_tips,
-        key=lambda t: t.get("start_time", ""),
+        key=lambda t: (t.get("audit_timestamp", ""), t.get("start_time", "")),
         reverse=True,
     )
     if audited_sorted:
