@@ -10,7 +10,7 @@ on:
         type: choice
         options: ['false', 'true']
       cutoff_date:
-        description: 'Delete ALL tips before this date (YYYY-MM-DD, blank = use 2026-02-22)'
+        description: 'Delete ALL tips before this date (YYYY-MM-DD, default is the 2026-02-22 Insight Upgrade)'
         required: false
         default: '2026-02-22'
         type: string

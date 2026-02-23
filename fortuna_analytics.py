@@ -1191,7 +1191,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
 
     def _get_headers(self) -> Dict[str, str]:
         return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Accept": "text/plain, application/octet-stream, */*",
             "Referer": "https://www1.drf.com/drfTextChart.do"
         }
@@ -1199,7 +1199,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
         # YYYY-MM-DD -> YYYYMMDD
         drf_date = date_str.replace("-", "")
-        # Ensure absolute URL for HTTPX engine (Fix 12)
+        # FIX_10: Use absolute URL for DRF results
         url = f"{self.BASE_URL}/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
         try:
             resp = await self.smart_fetcher.fetch(
@@ -1376,7 +1376,7 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
         return {
             "Origin": "https://www.nyrabets.com",
             "Referer": "https://www.nyrabets.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Content-Type": "application/x-www-form-urlencoded",
             "X-Requested-With": "XMLHttpRequest"
         }
@@ -1486,7 +1486,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 60
 
     _IMPERSONATION_FALLBACKS: Final[tuple[str, ...]] = (
-        "chrome124", "chrome120", "safari17_0",
+        "chrome128", "chrome120", "safari17_0",
     )
     _MIN_CONTENT_LENGTH: Final[int] = 2000
 

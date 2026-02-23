@@ -4214,6 +4214,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
                 # ────────────────────────────────────────────────────────────────────────
 
+                if sec is not None:
                     race.metadata['predicted_2nd_fav_odds'] = float(sec)
                 else:
                     # Fallback if insufficient odds data
