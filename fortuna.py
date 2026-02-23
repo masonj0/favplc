@@ -5517,14 +5517,31 @@ class FortunaDB:
                     self.logger.error("Failed to cleanup or create unique index", error=str(e))
                     # If index exists but table has duplicates, we might get IntegrityError
                     # Just log it and continue - better than crashing the whole app
-                # Composite index for audit performance
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
-
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
                 columns = [column[1] for column in cursor.fetchall()]
+                if "source" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN source TEXT")
+                if "gap12" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN gap12 TEXT")
+                if "top_five" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top_five TEXT")
+                if "selection_number" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_number INTEGER")
+                if "verdict" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN verdict TEXT")
+                if "net_profit" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN net_profit REAL")
+                if "selection_position" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_position INTEGER")
+                if "actual_top_5" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN actual_top_5 TEXT")
+                if "trifecta_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_payout REAL")
+                if "trifecta_combination" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_combination TEXT")
+                if "audit_timestamp" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN audit_timestamp TEXT")
                 if "superfecta_payout" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_payout REAL")
                 if "superfecta_combination" not in columns:
@@ -5569,6 +5586,11 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_number INTEGER")
                 if "superfecta_key_name" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_name TEXT")
+
+                # Composite index for audit performance
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
         await self._run_in_executor(_init)
 
