@@ -549,17 +549,6 @@ def _build_harvest(out: SummaryWriter):
         out.write(f"  {d:<14.14}  {b:>4}  {w:>3}  {l:>3}  {h:>4.0f}%  ${ap:>5.2f}  {be:>4.0f}%  {m:>+6.0f}pp  ${pl:>+7.2f}")
     out.write("```")
 
-# ── Section 09: Exotic Payouts ───────────────────────────────────────────────
-def section_exotic_payouts(out: SummaryWriter, conn: sqlite3.Connection):
-    if not conn: return
-    rows = conn.execute("""
-        SELECT venue, race_number, DATE(start_time) as dt, trifecta_payout, trifecta_combination,
-               superfecta_payout, superfecta_combination
-        FROM tips
-        WHERE audit_completed=1 AND (trifecta_payout IS NOT NULL OR superfecta_payout IS NOT NULL)
-        ORDER BY COALESCE(superfecta_payout,0)+COALESCE(trifecta_payout,0) DESC LIMIT 5
-    """).fetchall()
-
     def _render_harvest_table(data, label):
         if not data: return
         out.write(f"**{label} Phase**")
