@@ -1164,7 +1164,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
 
     def _get_headers(self) -> Dict[str, str]:
         return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Accept": "text/plain, application/octet-stream, */*",
             "Referer": "https://www1.drf.com/drfTextChart.do"
         }
@@ -1172,7 +1172,8 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
         # YYYY-MM-DD -> YYYYMMDD
         drf_date = date_str.replace("-", "")
-        url = f"/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
+        # FIX_10: Use absolute URL for DRF results
+        url = f"{self.BASE_URL}/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
         try:
             resp = await self.smart_fetcher.fetch(
                 url,
@@ -1348,7 +1349,7 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
         return {
             "Origin": "https://www.nyrabets.com",
             "Referer": "https://www.nyrabets.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
             "Content-Type": "application/x-www-form-urlencoded",
             "X-Requested-With": "XMLHttpRequest"
         }
@@ -1454,11 +1455,11 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "EquibaseResults"
     BASE_URL = "https://www.equibase.com"
     HOST = "www.equibase.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     _IMPERSONATION_FALLBACKS: Final[tuple[str, ...]] = (
-        "chrome124", "chrome120", "safari17_0",
+        "chrome128", "chrome120", "safari17_0",
     )
     _MIN_CONTENT_LENGTH: Final[int] = 2000
 
@@ -1762,7 +1763,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingPostResults"
     BASE_URL = "https://www.racingpost.com"
     HOST = "www.racingpost.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     _RP_LINK_SELECTORS: Final[tuple[str, ...]] = (
@@ -2240,7 +2241,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         return fixed
     BASE_URL = "https://www.attheraces.com"
     HOST = "www.attheraces.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2544,7 +2545,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "AtTheRacesGreyhoundResults"
     BASE_URL = "https://greyhounds.attheraces.com"
     HOST = "greyhounds.attheraces.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2853,7 +2854,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL = "https://www.sportinglife.com"
     HOST = "www.sportinglife.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     # -- link discovery ----------------------------------------------------
@@ -3057,7 +3058,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "StandardbredCanadaResults"
     BASE_URL = "https://standardbredcanada.ca"
     HOST = "standardbredcanada.ca"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
@@ -3327,7 +3328,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingAndSportsResults"
     BASE_URL = "https://www.racingandsports.com.au"
     HOST = "www.racingandsports.com.au"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
@@ -3449,7 +3450,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "TimeformResults"
     BASE_URL = "https://www.timeform.com"
     HOST = "www.timeform.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -3583,7 +3584,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
         return fixed
     BASE_URL = "https://www.skysports.com"
     HOST = "www.skysports.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     def _parse_races(self, raw_data: Any) -> List["ResultRace"]:

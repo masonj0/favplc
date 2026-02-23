@@ -369,7 +369,10 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # Single-continent adapters remain in USA/INT jobs.
 # Multi-continental adapters move to the GLOBAL parallel fetch job.
 # AtTheRaces is duplicated into USA as per explicit request.
-USA_DISCOVERY_ADAPTERS: Final[set] = {"Equibase", "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets"}
+USA_DISCOVERY_ADAPTERS: Final[set] = {
+    # "Equibase", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets"
+}
 INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
@@ -378,11 +381,11 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
 }
 
 USA_RESULTS_ADAPTERS: Final[set] = {
-    "EquibaseResults",
+    # "EquibaseResults", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
-    # "DRFResults",
+    "DRFResults", # Reactivated for testing (Uses HTTPX engine)
     "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
@@ -421,20 +424,20 @@ DEFAULT_BROWSER_HEADERS: Final[Dict[str, str]] = {
 
 CHROME_USER_AGENT: Final[str] = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
 )
 
 CHROME_SEC_CH_UA: Final[str] = (
-    '"Google Chrome";v="125", "Chromium";v="125", "Not.A/Brand";v="24"'
+    '"Google Chrome";v="133", "Chromium";v="133", "Not.A/Brand";v="24"'
 )
 
 MOBILE_USER_AGENT: Final[str] = (
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 "
-    "(KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1"
 )
 
 MOBILE_SEC_CH_UA: Final[str] = (
-    '"Safari";v="17", "Mobile";v="1.0", "Not.A/Brand";v="24"'
+    '"Safari";v="18", "Mobile";v="18.3"'
 )
 
 # Bet type keywords mapping (lowercase key -> display name)
@@ -921,7 +924,7 @@ class SmartFetcher:
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
             # Respect impersonate if provided, otherwise default
-            impersonate = kwargs.get("impersonate", "chrome124")
+            impersonate = kwargs.get("impersonate", "chrome128")
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
@@ -1556,7 +1559,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         return self._get_browser_headers(host="www.skyracingworld.com")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome124")
+        kwargs.setdefault("impersonate", "chrome128")
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -1740,7 +1743,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome124")
+        kwargs.setdefault("impersonate", "chrome128")
         return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
@@ -3184,8 +3187,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome124 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
-        kwargs.setdefault("impersonate", "chrome124")
+        # Force chrome128 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
+        kwargs.setdefault("impersonate", "chrome128")
         # Let SmartFetcher/curl_cffi handle headers mostly, but provide minimal essentials if not already set
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.equibase.com/"
@@ -3448,8 +3451,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome124 for TwinSpires to bypass basic bot checks
-        kwargs.setdefault("impersonate", "chrome124")
+        # Force chrome128 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome128")
         # Provide common browser-like headers for TwinSpires
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.google.com/"
@@ -3952,7 +3955,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
         # Success Playbook Hardening (Council of Superbrains)
         # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
 
         # Valid Region Filter (Item 6)
         # South Africa ('za', 'sa') and Australia ('au', 'aus') removed by user request (JB override)
@@ -4188,6 +4191,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
                 # ────────────────────────────────────────────────────────────────────────
 
+                if sec is not None:
                     race.metadata['predicted_2nd_fav_odds'] = float(sec)
                 else:
                     # Fallback if insufficient odds data
@@ -6081,7 +6085,7 @@ class HotTipsTracker:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
                 # Relaxed to match SimplySuccessAnalyzer config (GPT5 alignment)
-                min_trust = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+                min_trust = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
                 if trust_ratio < min_trust:
                     self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2), required=min_trust)
                     continue
@@ -6374,7 +6378,7 @@ class FavoriteToPlaceMonitor:
 
         gap12 = 0.0
         if favorite and second_fav and favorite.win_odds and second_fav.win_odds:
-            gap12 = round(second_fav.win_odds - favorite.win_odds, 2)
+            gap12 = round((second_fav.win_odds - favorite.win_odds) / favorite.win_odds, 2)
 
         return RaceSummary(
             discipline=self._get_discipline_code(race),
@@ -6500,7 +6504,7 @@ class FavoriteToPlaceMonitor:
             if r.mtp is not None and -10 < r.mtp <= mtp_limit
             and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
             and r.field_size <= max_field
-            and r.gap12 > min_gap
+            and r.gap12 >= min_gap
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
@@ -6523,7 +6527,7 @@ class FavoriteToPlaceMonitor:
             if r.mtp is not None and -10 < r.mtp <= mtp_limit
             and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
             and r.field_size <= max_field
-            and r.gap12 > min_gap
+            and r.gap12 >= min_gap
             and (r.track, r.race_number) not in bet_now_keys
         ]
         # Sort by MTP asc
@@ -6631,6 +6635,15 @@ class FavoriteToPlaceMonitor:
         """Append races to persistent history for future result matching."""
         if not races: return
         history_file = get_writable_path("prediction_history.jsonl")
+
+        # Improvement 04: Rotation logic (Memory Directive Fix)
+        try:
+            if history_file.exists() and history_file.stat().st_size > 10 * 1024 * 1024: # 10MB
+                backup = history_file.with_suffix(".jsonl.1")
+                history_file.replace(backup)
+                self.logger.info("Rotated prediction history file")
+        except Exception: pass
+
         timestamp = datetime.now(EASTERN).isoformat()
         try:
             with open(history_file, 'a', encoding='utf-8') as f:
