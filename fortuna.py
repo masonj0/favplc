@@ -921,7 +921,7 @@ class SmartFetcher:
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
             # Respect impersonate if provided, otherwise default
-            impersonate = kwargs.get("impersonate", "chrome110")
+            impersonate = kwargs.get("impersonate", "chrome124")
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
@@ -1556,7 +1556,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         return self._get_browser_headers(host="www.skyracingworld.com")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
+        kwargs.setdefault("impersonate", "chrome124")
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -1740,7 +1740,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome120")
+        kwargs.setdefault("impersonate", "chrome124")
         return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
@@ -3184,8 +3184,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome120 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
-        kwargs.setdefault("impersonate", "chrome120")
+        # Force chrome124 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
+        kwargs.setdefault("impersonate", "chrome124")
         # Let SmartFetcher/curl_cffi handle headers mostly, but provide minimal essentials if not already set
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.equibase.com/"
@@ -3448,8 +3448,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome120 for TwinSpires to bypass basic bot checks
-        kwargs.setdefault("impersonate", "chrome120")
+        # Force chrome124 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome124")
         # Provide common browser-like headers for TwinSpires
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.google.com/"

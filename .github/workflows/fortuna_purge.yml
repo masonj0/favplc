@@ -82,7 +82,7 @@ jobs:
             FLAGS="--execute"
           fi
 
-          python3 << 'PYEOF'
+          python3 - $FLAGS << 'PYEOF'
           import os, sys, sqlite3, re, asyncio
           from datetime import datetime, timedelta
           from zoneinfo import ZoneInfo
@@ -198,7 +198,7 @@ jobs:
 
           if __name__ == "__main__":
               asyncio.run(main_async())
-          PYEOF $FLAGS
+          PYEOF
 
       - name: Save Cleaned Database
         if: inputs.execute == 'true'
