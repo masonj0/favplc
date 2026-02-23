@@ -23,7 +23,7 @@ on:
 jobs:
   audit-and-diagnose:
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
