@@ -801,7 +801,7 @@ class FetchStrategy(FortunaBaseModel):
     primary_engine: BrowserEngine = BrowserEngine.PLAYWRIGHT
     enable_js: bool = True
     stealth_mode: str = "fast"
-    block_resources: bool = True
+    block_resources: bool = False
     max_retries: int = Field(3, ge=0, le=10)
     timeout: int = Field(DEFAULT_REQUEST_TIMEOUT, ge=1, le=300)
     page_load_strategy: str = "domcontentloaded"
@@ -920,8 +920,12 @@ class SmartFetcher:
 
             # Default headers if still not present after browserforge attempt
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
-            # Respect impersonate if provided, otherwise default
-            impersonate = kwargs.get("impersonate", "chrome124")
+
+            # BUG-14: Impersonation fallback chain to handle unsupported versions
+            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome128"
+            impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome116", "chrome110"]
+            # Filter out duplicates while preserving order
+            impersonate_chain = list(dict.fromkeys(impersonate_chain))
             
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
@@ -929,16 +933,27 @@ class SmartFetcher:
                 if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
             }
             
-            async with curl_requests.AsyncSession() as s:
-                resp = await s.request(
-                    method, 
-                    url, 
-                    timeout=timeout, 
-                    headers=headers, 
-                    impersonate=impersonate,
-                    **clean_kwargs
-                )
-                return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
+            last_err = None
+            for imp_version in impersonate_chain:
+                try:
+                    async with curl_requests.AsyncSession() as s:
+                        resp = await s.request(
+                            method,
+                            url,
+                            timeout=timeout,
+                            headers=headers,
+                            impersonate=imp_version,
+                            **clean_kwargs
+                        )
+                        return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
+                except Exception as e:
+                    if "impersonate" in str(e).lower() and "not supported" in str(e).lower():
+                        self.logger.debug("curl_cffi impersonate not supported, trying next", version=imp_version)
+                        last_err = e
+                        continue
+                    raise
+
+            raise last_err or FetchError(f"All curl_cffi impersonations failed for {url}")
 
         if not ASYNC_SESSIONS_AVAILABLE:
             raise ImportError("scrapling not available")
@@ -2585,10 +2600,15 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
                 dt = clean_text(node_text(d)) or ""
                 if "Distance:" in dt: dist = dt.replace("Distance:", "").strip(); break
 
+            # BUG-16: Improved discipline detection for SkySports
             disc = detect_discipline(html_content)
-            # Fix: SkySports sometimes misidentifies UK Thoroughbred tracks as Harness
-            if disc == "Harness" and any(k in track_name.upper() for k in ["SOUTHWELL", "KEMPTON", "LUDLOW"]):
-                 disc = "Thoroughbred"
+            harness_venues = {'le croise laroche', 'vincennes', 'enghien', 'laval', 'cabourg', 'caen', 'graignes', 'mohawk', 'meadowlands', 'woodbine mohawk'}
+            if get_canonical_venue(track_name).lower() in harness_venues:
+                disc = "Harness"
+            elif any(k in html_content.lower() for k in ['trot', 'harness', 'pacer']):
+                disc = "Harness"
+            else:
+                disc = "Thoroughbred"
 
             runners = []
             for i, node in enumerate(parser.css(".sdc-site-racing-card__item")):
@@ -3167,6 +3187,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
+    DECOMMISSIONED = True
     PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.equibase.com"
 
@@ -3952,7 +3973,8 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
         # Success Playbook Hardening (Council of Superbrains)
         # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+        # BUG-2 Fix: Align with expected config key
+        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
 
         # Valid Region Filter (Item 6)
         # South Africa ('za', 'sa') and Australia ('au', 'aus') removed by user request (JB override)
@@ -4036,11 +4058,30 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
             # 2. Derive Selection (2nd favorite) and Top 5
             # Collect valid runners with their enriched odds (Using Decimal for consistency - GPT5 Improvement)
-            valid_r_with_odds = sorted(
+            all_valid_with_odds = sorted(
                 [(r, odds) for r in active_runners if (odds := _get_best_win_odds(r)) is not None],
                 key=lambda x: x[1]
             )
-            race.top_five_numbers = ", ".join([str(r[0].number or '?') for r in valid_r_with_odds[:5]])
+
+            # BUG-18: Deduplicate by name to prevent same runner occupying multiple favorite slots
+            seen_runner_names = set()
+            valid_r_with_odds = []
+            for r, odds in all_valid_with_odds:
+                name_key = (r.name or "").lower().strip()
+                if name_key not in seen_runner_names:
+                    seen_runner_names.add(name_key)
+                    valid_r_with_odds.append((r, odds))
+
+            # BUG-19: Deduplicate by number for top_five_numbers
+            seen_nums = set()
+            top_nums = []
+            for r, o in valid_r_with_odds:
+                n = r.number
+                if n and n not in seen_nums:
+                    seen_nums.add(n)
+                    top_nums.append(str(n))
+                if len(top_nums) >= 5: break
+            race.top_five_numbers = ", ".join(top_nums)
 
             if len(valid_r_with_odds) >= 2:
                 sec_fav = valid_r_with_odds[1][0]
@@ -4121,6 +4162,11 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     gap12 = round(float((sec - fav) / fav), 3)
                 else:
                     gap12 = 0.0
+
+                # NULL-ODDS-FIX: Zero gap with no valid odds
+                if gap12 == 0.0 and (not fav or fav <= 0):
+                    self.logger.debug("Skipping race: zero gap with no valid odds", race_id=race.id)
+                    continue
 
                 # S4 — market depth (whole-field view, not just top-2)
                 market_depth = 0.0
@@ -5876,6 +5922,7 @@ class FortunaDB:
                         top1_place_payout = ?,
                         top2_place_payout = ?,
                         audit_timestamp = ?,
+                        match_confidence = ?,
                         field_size = COALESCE(field_size, ?)
                     WHERE id = (
                         SELECT id FROM tips
@@ -5892,6 +5939,7 @@ class FortunaDB:
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
                     datetime.now(EASTERN).isoformat(),
+                    outcome.get("match_confidence", "none"),
                     outcome.get("field_size"),
                     race_id
                 ))
@@ -5921,6 +5969,7 @@ class FortunaDB:
                             top1_place_payout = ?,
                             top2_place_payout = ?,
                             audit_timestamp = ?,
+                            match_confidence = ?,
                             field_size = COALESCE(field_size, ?)
                         WHERE id = (
                             SELECT id FROM tips
@@ -5937,6 +5986,7 @@ class FortunaDB:
                         outcome.get("top1_place_payout"),
                         outcome.get("top2_place_payout"),
                         outcome.get("audit_timestamp"),
+                        outcome.get("match_confidence", "none"),
                         outcome.get("field_size"),
                         race_id
                     ))
@@ -6058,6 +6108,7 @@ class HotTipsTracker:
         now = datetime.now(EASTERN)
         report_date = now.isoformat()
         new_tips = []
+        already_handled_soft_keys = set()
 
         # Future cutoff relaxed to allow advance tips (Jules Fix)
         future_limit = now + timedelta(hours=24)
@@ -6081,7 +6132,8 @@ class HotTipsTracker:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
                 # Relaxed to match SimplySuccessAnalyzer config (GPT5 alignment)
-                min_trust = self.config.get("analysis", {}).get("trustworthy_ratio_min", 0.25)
+                # BUG-2 Fix: Align with expected config key
+                min_trust = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
                 if trust_ratio < min_trust:
                     self.logger.warning("Rejecting race with low trust_ratio for DB logging", venue=r.venue, race=r.race_number, trust_ratio=round(trust_ratio, 2), required=min_trust)
                     continue
@@ -6093,9 +6145,17 @@ class HotTipsTracker:
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
             # Reject races too far in the future
-            if st > future_limit or st < now - timedelta(minutes=10):
-                self.logger.debug("Rejecting far-future race", venue=r.venue, start_time=st)
+            # BUG-4 Fix: Expand timing gate to 60m to prevent dropping late-detected goldmines
+            if st > future_limit or st < now - timedelta(minutes=60):
+                self.logger.debug("Rejecting far-future or ancient race", venue=r.venue, start_time=st)
                 continue
+
+            # BUG-12: Secondary soft-key dedup guard
+            soft_key = f"{get_canonical_venue(r.venue)}|{r.race_number}|{st.strftime('%Y%m%d')}"
+            if soft_key in already_handled_soft_keys:
+                self.logger.debug("Skipping duplicate play (soft key match)", soft_key=soft_key)
+                continue
+            already_handled_soft_keys.add(soft_key)
 
             is_goldmine = r.metadata.get('is_goldmine', False)
             gap12 = r.metadata.get('1Gap2', 0.0)
@@ -6224,6 +6284,7 @@ def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
         c for c in get_all_subclasses(BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
         and getattr(c, "ADAPTER_TYPE", "discovery") == "discovery"
+        and not getattr(c, "DECOMMISSIONED", False)
     ]
 
 
@@ -6855,8 +6916,10 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         if not runners:
             return None
 
+        # BUG-6 Fix: Use canonical venue for race ID
+        venue_key = get_canonical_venue(track_name).lower().replace(' ', '')
         return Race(
-            id=f"oc_{track_name.lower().replace(' ', '')}_{start_time.strftime('%Y%m%d')}_r{race_number}",
+            id=f"oc_{venue_key}_{start_time.strftime('%Y%m%d')}_r{race_number}",
             venue=track_name,
             race_number=race_number,
             start_time=start_time,
@@ -7050,6 +7113,20 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                     if "HANDICAP" in title_text.upper():
                         is_handicap = True
 
+                # BUG-17: Prefer URL-based time extraction to avoid shared card-start-time issues
+                url_time = None
+                time_match = re.search(r'/(\d{4})/?$', url_path.split('?')[0])
+                if time_match:
+                    try:
+                        url_time = datetime.combine(
+                            race_date,
+                            datetime.strptime(time_match.group(1), "%H%M").time()
+                        )
+                    except Exception: pass
+
+                if url_time:
+                    start_time = url_time
+
                 if not venue:
                     # Fallback to title
                     if title_node:
@@ -7058,7 +7135,8 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                         if match:
                             time_str = match.group(1)
                             venue = normalize_venue_name(match.group(2).strip())
-                            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
+                            if not start_time:
+                                start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
 
                 if not venue or not start_time:
                     continue
@@ -7186,6 +7264,10 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
     def __init__(self, config=None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+        self.headers.update({
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Optimized for speed: CURL_CFFI is much faster than Playwright for large batches of racecards.
