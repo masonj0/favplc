@@ -36,15 +36,15 @@ POSITION_EMOJI = {
     "1": "🥇", "2": "🥈", "3": "🥉", "4": "4️⃣", "5": "5️⃣"
 }
 
-# Country flag derivation keywords
 VENUE_FLAGS: List[Tuple[List[str], str]] = [
-    (["ZA", "TURFFONTEIN", "VAAL", "KENILWORTH", "DURBANVILLE", "GREYVILLE", "SCOTTSVILLE"], "🇿🇦"),
-    (["GB", "UK", "LINGFIELD", "KEMPTON", "SOUTHWELL", "WOLVERHAMPTON", "CHELMSFORD", "NEWCASTLE", "LUDLOW", "TAUNTON", "WARWICK"], "🇬🇧"),
-    (["IE", "IRE", "PUNCHESTOWN", "NAAS", "DUNDALK", "FAIRYHOUSE", "LEOPARDSTOWN", "CURRAGH"], "🇮🇪"),
-    (["FR", "PARIS", "CHANTILLY", "DEAUVILLE", "SAINT-CLOUD", "LONGCHAMP", "CAGNES-SUR-MER"], "🇫🇷"),
-    (["AU", "AUS", "FLEMINGTON", "RANDWICK", "CAULFIELD", "MOONEE VALLEY", "ROSEHILL", "BALAKLAVA", "BALLARAT"], "🇦🇺"),
+    (["ZA", "TURFFONTEIN", "VAAL", "KENILWORTH", "DURBANVILLE", "GREYVILLE", "SCOTTSVILLE", "FAIRVIEW"], "🇿🇦"),
+    (["GB", "UK", "LINGFIELD", "KEMPTON", "SOUTHWELL", "WOLVERHAMPTON", "CHELMSFORD", "NEWCASTLE", "LUDLOW", "TAUNTON", "WARWICK", "PLUMPTON", "AYR", "HEREFORD", "FONTWELL", "CHEPSTOW", "FFOS LAS", "DONCASTER", "MARKET RASEN", "HUNTINGDON", "WINCANTON", "LEICESTER"], "🇬🇧"),
+    (["IE", "IRE", "PUNCHESTOWN", "NAAS", "DUNDALK", "FAIRYHOUSE", "LEOPARDSTOWN", "CURRAGH", "THURLES", "GOWRAN", "NAVAN", "TRAMORE", "WEXFORD"], "🇮🇪"),
+    (["FR", "PAU", "AUTEUIL", "PARIS", "CHANTILLY", "DEAUVILLE", "SAINT-CLOUD", "LONGCHAMP", "CAGNES-SUR-MER", "LE CROISE", "VINCENNES", "ENGHIEN", "FONTAINEBLEAU", "MARSEILLE", "TOULOUSE", "LYON", "STRASBOURG", "PORNICHET"], "🇫🇷"),
+    (["AU", "AUS", "FLEMINGTON", "RANDWICK", "CAULFIELD", "MOONEE VALLEY", "ROSEHILL", "BALAKLAVA", "BALLARAT", "CANTERBURY", "WARWICK FARM", "SANDOWN", "SUNSHINE COAST", "DOOMBEN", "EAGLE FARM"], "🇦🇺"),
     (["NZ", "ELLERSLIE", "TRENTHAM", "RICCARTON", "ASHBURTON"], "🇳🇿"),
-    (["US", "USA", "AQUEDUCT", "TURFWAY", "GULFSTREAM", "OAKLAWN", "SANTA ANITA", "CHURCHILL", "KEENELAND", "TAMPA"], "🇺🇸"),
+    (["US", "USA", "AQUEDUCT", "TURFWAY", "GULFSTREAM", "OAKLAWN", "SANTA ANITA", "CHURCHILL", "KEENELAND", "TAMPA", "SUNLAND", "FAIR GROUNDS", "FINGER LAKES"], "🇺🇸"),
+    (["BR", "GAVEA", "MARONAS"], "🇧🇷"),
 ]
 
 DISCIPLINE_EMOJI = {
@@ -81,13 +81,13 @@ class TipStats:
     def avg_profit(self) -> float:
         return (self.total_profit / self.decided) if self.decided > 0 else 0.0
 
+    # Lifetime average values set by _get_stats
+    lifetime_avg_payout: float = 0.0
+
     @property
     def avg_payout(self) -> float:
-        """Mean gross payout per winning bet."""
-        wins = [r for r in self.recent_tips if r[4] in CASHED_VERDICTS]
-        if not wins: return 0.0
-        # profit column is index 5
-        return sum((r[5] or 0.0) + STANDARD_BET for r in wins) / len(wins)
+        # Prefer lifetime average for better breakeven calibration (Jules Fix)
+        return self.lifetime_avg_payout if self.lifetime_avg_payout > 0 else 0.0
 
     @property
     def breakeven_pct(self) -> float:
@@ -117,7 +117,6 @@ class TipStats:
     def current_streak(self) -> Tuple[str, int]:
         decided_tips = [r for r in self.recent_tips if r[4] in list(VERDICT_EMOJI.keys())]
         if not decided_tips: return ("None", 0)
-
         kind = "W" if decided_tips[0][4] in CASHED_VERDICTS else "L"
         count = 0
         for r in decided_tips:
@@ -160,7 +159,6 @@ def _venue_flag(venue: str, discipline: Optional[str] = None) -> str:
     for keywords, flag in VENUE_FLAGS:
         if any(k in v_up for k in keywords):
             return flag
-
     if discipline:
         return DISCIPLINE_EMOJI.get(discipline.lower(), "🏇")
     return "🏇"
@@ -172,11 +170,9 @@ def _mtp(start_time_str: Any) -> float:
         if 'Z' in s:
             st = datetime.fromisoformat(s.replace('Z', '+00:00'))
         else:
-            # Try common format
             try: st = datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
             except ValueError: st = datetime.fromisoformat(s)
             if st.tzinfo is None: st = st.replace(tzinfo=ZoneInfo("UTC"))
-
         now = datetime.now(ZoneInfo("UTC"))
         return (st - now).total_seconds() / 60
     except Exception:
@@ -218,12 +214,9 @@ def _merge_harvests(paths: List[str]) -> Dict[str, Dict]:
 def _get_stats() -> TipStats:
     stats = TipStats()
     if not Path(DB_PATH).exists(): return stats
-
     try:
         with sqlite3.connect(DB_PATH) as conn:
             now_utc = datetime.now(ZoneInfo("UTC")).isoformat()
-
-            # Main counts
             res = conn.execute("""
                 SELECT
                     COUNT(*),
@@ -234,13 +227,20 @@ def _get_stats() -> TipStats:
                     SUM(COALESCE(net_profit, 0.0))
                 FROM tips
             """, (now_utc,)).fetchone()
-
             if res:
                 stats.total_tips, stats.cashed, stats.burned, stats.voided, stats.pending, stats.total_profit = (
                     res[0] or 0, res[1] or 0, res[2] or 0, res[3] or 0, res[4] or 0, res[5] or 0.0
                 )
 
-            # Recent tips
+            # Calculate lifetime average payout for breakeven analysis
+            avg_res = conn.execute("""
+                SELECT AVG(COALESCE(net_profit, 0.0) + ?)
+                FROM tips
+                WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')
+            """, (STANDARD_BET,)).fetchone()
+            if avg_res and avg_res[0]:
+                stats.lifetime_avg_payout = avg_res[0]
+
             stats.recent_tips = conn.execute("""
                 SELECT venue, race_number, selection_number, predicted_2nd_fav_odds, verdict,
                        net_profit, selection_position, actual_top_5, actual_2nd_fav_odds,
@@ -274,17 +274,81 @@ def _build_header(out: SummaryWriter, now: datetime):
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()
+
+def _build_action_plan(out: SummaryWriter, stats: TipStats):
+    """System status + recommended actions — appears FIRST for JB."""
+    status = "HEALTHY"
+    emoji = "🟢"
+    findings = []
+    actions = []
+
+    discovery = _merge_harvests(DISCOVERY_HARVEST_FILES)
+    r_count = sum(d.get('count', 0) for d in discovery.values())
+    a_count = len([d for d in discovery.values() if d.get('count', 0) > 0])
+
+    if not Path(DB_PATH).exists():
+        status, emoji = "CRITICAL", "🔴"
+        findings.append("🔴 DB file missing or unreadable.")
+        actions.append("Check DB deployment and cache restore.")
+    elif a_count == 0:
+        status, emoji = "CRITICAL", "🔴"
+        findings.append("🔴 No discovery data — all adapters failed.")
+        actions.append("Re-deploy discovery adapters. Check adapter logs in Phase 3.")
+    else:
+        findings.append(f"🟢 {r_count} races discovered from {a_count} adapters.")
+        if a_count == 1 and r_count < 20:
+            status, emoji = "WARNING", "🟡"
+            findings.append("🟡 Only 1 adapter returned data — single source risk.")
+            actions.append("Investigate failing adapters in harvest details below.")
+
+    if Path(DB_PATH).exists():
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                fresh = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
+                if fresh:
+                    last_seen = datetime.fromisoformat(fresh.replace('Z', '+00:00'))
+                    if datetime.now(ZoneInfo("UTC")) - last_seen > timedelta(hours=24):
+                        if status != "CRITICAL": status, emoji = "WARNING", "🟡"
+                        findings.append("🟡 No new tips in last 24 hours.")
+                        actions.append("Check discovery pipeline schedule and adapter health.")
+
+                q_res = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()[0]
+                if q_res == 0:
+                    if status != "CRITICAL": status, emoji = "WARNING", "🟡"
+                    findings.append("🟡 All scoring columns still NULL — check log_tips (BUG-10).")
+                    actions.append("Verify BUG-10 fix deployed: scoring columns must be in INSERT statement in log_tips.")
+                else:
+                    findings.append("🟢 Scoring signals populating.")
+
+                if stats.margin > 0:
+                    findings.append(f"🟢 Margin: +{stats.margin:.0f}pp above breakeven.")
+                elif stats.decided >= 10 and stats.margin < -5:
+                    if status == "HEALTHY": status, emoji = "WARNING", "🟡"
+                    findings.append(f"🟡 Margin: {stats.margin:.0f}pp below breakeven.")
+                    actions.append("Review qualification thresholds and gap12 minimum.")
+        except Exception:
+            pass
+
+    out.write(f"## {emoji} System: **{status}**")
+    out.write()
+    for f in findings:
+        out.write(f"- {f}")
+    out.write()
+    if actions:
+        out.write("**Action Plan:**")
+        out.write()
+        for i, a in enumerate(actions, 1):
+            out.write(f"{i}. {a}")
+        out.write()
     out.write("---")
     out.write()
 
 def _build_plays(out: SummaryWriter):
-    # 1. Try race_data.json (monitor output)
     data = _read_json("race_data.json")
     races = []
     if data:
         races = data.get("bet_now_races", []) + data.get("you_might_like_races", [])
 
-    # 2. Fallback to DB if empty
     if not races and Path(DB_PATH).exists():
         try:
             with sqlite3.connect(DB_PATH) as conn:
@@ -302,7 +366,6 @@ def _build_plays(out: SummaryWriter):
         out.write()
         return
 
-    # Process & Sort
     for r in races:
         r['_mtp_val'] = _mtp(r.get('start_time'))
 
@@ -314,14 +377,12 @@ def _build_plays(out: SummaryWriter):
         out.write()
         return
 
-    # Dynamic Header
     soon = len([r for r in upcoming if 0 < r['_mtp_val'] <= 15])
     if soon > 0: out.write(f"## 🔥 {soon} Plays Going Off Soon!")
     elif any(r.get('is_goldmine') for r in upcoming if r['_mtp_val'] > 0): out.write("## 🔥 Live Plays")
     else: out.write("## ⚡ Coming Up")
     out.write()
 
-    # Best Bet Callout
     best_bet = next((r for r in upcoming if r.get('is_goldmine') and 0 < r['_mtp_val'] < 120), None)
     if best_bet:
         flag = _venue_flag(best_bet.get('venue') or best_bet.get('track'))
@@ -335,7 +396,6 @@ def _build_plays(out: SummaryWriter):
         out.write(f"> *{mtp_s} to post · Gap: {gap:.2f}*")
         out.write()
 
-    # Monospace Table
     def _render_table(rows_list):
         out.write("```text")
         out.write(f"  MTP    VENUE                R#   FLD  PICK                   ODDS    GAP   FLAGS")
@@ -392,11 +452,9 @@ def _build_keybox(out: SummaryWriter):
         rn = r.get('race_number', "?")
         kn = r.get('superfecta_key_number') or "?"
         kname = _trunc(r.get('superfecta_key_name') or "", 18)
-
         box = r.get('superfecta_box_numbers', [])
         if isinstance(box, str): box = [b.strip() for b in box.split(',')]
         box_str = ", ".join([f"#{b}" for b in box]) if box else "—"
-
         gap = float(r.get('gap12', 0))
         out.write(f"  {mtp_s:>4}  {venue:<19}  {rn:>2}   #{kn:<2} {kname:<18}  {box_str:<21}  {gap:>5.2f}")
     out.write("```")
@@ -413,7 +471,6 @@ def _build_scoreboard(out: SummaryWriter, stats: TipStats):
     out.write("```text")
     out.write(f"  LIFETIME   {stats.cashed}/{stats.decided} ({stats.win_rate:.0f}%)    ${stats.total_profit:>+8.2f}    ROI {stats.roi:>+.1f}%")
 
-    # Last 10
     l10 = [r for r in stats.recent_tips if r[4] in list(VERDICT_EMOJI.keys())][:10]
     w10 = len([r for r in l10 if r[4] in CASHED_VERDICTS])
     p10 = sum(r[5] or 0.0 for r in l10)
@@ -441,7 +498,6 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
     out.write("## 📊 Recent Results")
     out.write()
 
-    # Drift Summary
     drifts = [(r[8] - r[3]) for r in stats.recent_tips if r[8] and r[3]]
     avg_drift = sum(drifts)/len(drifts) if drifts else 0.0
     drift_label = "stable"
@@ -462,23 +518,17 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
             sn = r[2] or "?"
             sname = _trunc(r[13] or "", 15)
             pick = f"#{sn} {sname}"
-
             pred = r[3] or 0.0
             act = r[8] or 0.0
             pl = r[5] or 0.0
-
             pos = r[6]
             fin = "—"
             if pos:
                 medal = POSITION_EMOJI.get(str(pos), "")
                 fin = f"{medal}P{pos}"
-
-            # Add exotic info if present
             if r[9]: fin = f"SF${int(r[9])}"
             elif r[10]: fin = f"T${int(r[10])}"
-
             out.write(f"  {e:<2}  {flag}{venue:<18}  {rn:>2}   {pick:<21}  {pred:>5.2f}  →  {act:>5.2f}  ${pl:>+7.2f}  {fin}")
-
         if is_first:
             out.write(f"  ────────────────────────────────────────────────────────────────────────────────────────")
             out.write(f"  DRIFT: avg {avg_drift:>+.2f} ({drift_label})")
@@ -499,7 +549,6 @@ def _build_harvest(out: SummaryWriter):
     results = _merge_harvests(RESULTS_HARVEST_FILES)
 
     if not discovery and not results and Path(DB_PATH).exists():
-        # Fallback to DB harvest logs
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 db_logs = conn.execute("SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= datetime('now', '-4 hours')").fetchall()
@@ -527,26 +576,6 @@ def _build_harvest(out: SummaryWriter):
 
     out.write("<details><summary>📋 Adapter details</summary>")
     out.write()
-    out.write("```text")
-    out.write(f"  DISCIPLINE      BETS    W    L   HIT%   AVG PAY   B/E%   MARGIN    NET P&L")
-    out.write(f"  ──────────────  ────  ───  ───  ─────  ───────  ─────  ────────  ────────")
-
-    for d in sorted(discs):
-        subset = [r for r in rows if r['discipline'] == d]
-        b = len(subset)
-        if b == 0: continue
-        wins = [r for r in subset if r['verdict'] in ('CASHED', 'CASHED_ESTIMATED')]
-        w = len(wins)
-        l = b - w
-        h = (w / b * 100)
-        pl = sum(r['net_profit'] or 0.0 for r in subset)
-
-        ap = sum((r['net_profit'] or 0.0) + STANDARD_BET for r in wins) / w if w > 0 else 0.0
-        be = (STANDARD_BET / ap * 100) if ap > 0 else 0
-        m = h - be
-
-        out.write(f"  {d:<14.14}  {b:>4}  {w:>3}  {l:>3}  {h:>4.0f}%  ${ap:>5.2f}  {be:>4.0f}%  {m:>+6.0f}pp  ${pl:>+7.2f}")
-    out.write("```")
 
     def _render_harvest_table(data, label):
         if not data: return
@@ -571,16 +600,6 @@ def _build_harvest(out: SummaryWriter):
     _render_harvest_table(results, "Results")
     out.write("</details>")
     out.write()
-    out.write("```text")
-    out.write(f"  TYPE         PAYOUT      VENUE                R#   DATE        COMBO")
-    out.write(f"  ───────────  ──────────  ───────────────────  ──   ──────────  ──────────────")
-
-    for r in rows:
-        if r['superfecta_payout']:
-            out.write(f"  {'Superfecta':<11}  ${r['superfecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19.19}  {r['race_number']:>2}   {r['dt']}  {_trunc(r['superfecta_combination'] or '', 14)}")
-        if r['trifecta_payout']:
-            out.write(f"  {'Trifecta':<11}  ${r['trifecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19.19}  {r['race_number']:>2}   {r['dt']}  {_trunc(r['trifecta_combination'] or '', 14)}")
-    out.write("```")
 
 def _build_goldmine_vs_standard(out: SummaryWriter):
     if not Path(DB_PATH).exists(): return
@@ -615,15 +634,15 @@ def _build_by_discipline(out: SummaryWriter):
         with sqlite3.connect(DB_PATH) as conn:
             rows = conn.execute("SELECT discipline, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
 
-        discs = set(r[0] for r in rows if r[0])
-        if len(discs) < 2: return
+        disc_set = set(r[0] for r in rows if r[0])
+        if len(disc_set) < 2: return
 
         out.write("## 🏁 By Discipline")
         out.write()
         out.write("```text")
         out.write(f"  DISCIPLINE      BETS    W    L   HIT%   AVG PAY   B/E%   MARGIN    NET P&L")
         out.write(f"  ──────────────  ────  ───  ───  ─────  ───────  ─────  ────────  ────────")
-        for d in sorted(discs):
+        for d in sorted(disc_set):
             subset = [r for r in rows if r[0] == d]
             b = len(subset)
             wins = [r for r in subset if r[1] in CASHED_VERDICTS]
@@ -633,7 +652,8 @@ def _build_by_discipline(out: SummaryWriter):
             ap = sum((r[2] or 0.0) + STANDARD_BET for r in wins) / w if w > 0 else 0.0
             be = (STANDARD_BET / ap * 100) if ap > 0 else 100
             m = h - be
-            out.write(f"  {d:<14.14}  {b:>4}  {w:>3}  {(b-w):>3}  {h:>4.0f}%  ${ap:>5.2f}  {be:>4.0f}%  {m:>+6.0f}pp  ${pl:>+7.2f}")
+            name = {'H':'Harness','T':'Thoroughbred','G':'Greyhound'}.get(d, d)
+            out.write(f"  {name:<14.14}  {b:>4}  {w:>3}  {(b-w):>3}  {h:>4.0f}%  ${ap:>5.2f}  {be:>4.0f}%  {m:>+6.0f}pp  ${pl:>+7.2f}")
         out.write("```")
         out.write()
     except Exception: pass
@@ -658,9 +678,9 @@ def _build_exotic_payouts(out: SummaryWriter):
         out.write(f"  TYPE         PAYOUT      VENUE                R#   DATE        COMBO")
         out.write(f"  ───────────  ──────────  ───────────────────  ──   ──────────  ──────────────")
         for r in rows:
-            if r[5]: # Superfecta
+            if r[5]:
                 out.write(f"  {'Superfecta':<11}  ${r[5]:>9.2f}  {_trunc(r[0], 19):<19}  {r[1]:>2}   {r[2]}  {_trunc(r[6] or '', 14)}")
-            if r[3]: # Trifecta
+            if r[3]:
                 out.write(f"  {'Trifecta':<11}  ${r[3]:>9.2f}  {_trunc(r[0], 19):<19}  {r[1]:>2}   {r[2]}  {_trunc(r[4] or '', 14)}")
         out.write("```")
         out.write()
@@ -678,7 +698,6 @@ def _build_data_quality(out: SummaryWriter):
     try:
         with sqlite3.connect(DB_PATH) as conn:
             for col in cols:
-                # Security: column names are from a hardcoded whitelist
                 res = conn.execute(f"SELECT COUNT(*), SUM(CASE WHEN {col} IS NOT NULL AND CAST({col} AS TEXT) != '' THEN 1 ELSE 0 END) FROM tips").fetchone()
                 sample = conn.execute(f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' LIMIT 1").fetchone()
                 t, n = res[0], res[1] or 0
@@ -706,58 +725,9 @@ def _build_intelligence_grids(out: SummaryWriter):
             out.write("</details>")
             out.write()
 
-def _build_system_status(out: SummaryWriter, stats: TipStats):
-    status = "HEALTHY"
-    emoji = "🟢"
-    findings = []
-
-    discovery = _merge_harvests(DISCOVERY_HARVEST_FILES)
-    r_count = sum(d.get('count', 0) for d in discovery.values())
-    a_count = len([d for d in discovery.values() if d.get('count', 0) > 0])
-
-    if not Path(DB_PATH).exists():
-        status, emoji = "CRITICAL", "🔴"
-        findings.append("🔴 DB file missing or unreadable")
-    elif a_count == 0:
-        status, emoji = "CRITICAL", "🔴"
-        findings.append("🔴 No discovery data — all adapters failed.")
-    else:
-        findings.append(f"🟢 {r_count} races discovered from {a_count} adapters.")
-        if a_count == 1 and r_count < 20:
-            status, emoji = "WARNING", "🟡"
-            findings.append("🟡 Only 1 adapter returned data — single source risk.")
-
-    if Path(DB_PATH).exists():
-        try:
-            with sqlite3.connect(DB_PATH) as conn:
-                # Freshness
-                fresh = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
-                if fresh:
-                    last_seen = datetime.fromisoformat(fresh.replace('Z', '+00:00'))
-                    if datetime.now(ZoneInfo("UTC")) - last_seen > timedelta(hours=24):
-                        if status != "CRITICAL": status, emoji = "WARNING", "🟡"
-                        findings.append(f"🟡 No new tips in last 24 hours.")
-
-                # Quality
-                q_res = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL").fetchone()[0]
-                if q_res == 0:
-                    if status != "CRITICAL": status, emoji = "WARNING", "🟡"
-                    findings.append("🟡 All scoring columns still NULL — check VFIX_01.")
-                else:
-                    findings.append("🟢 Scoring signals populating.")
-
-                if stats.margin > 0: findings.append(f"🟢 Margin: +{stats.margin:.0f}pp above breakeven.")
-        except Exception: pass
-
+def _build_footer(out: SummaryWriter):
     out.write("---")
     out.write()
-    out.write(f"## {emoji} System: **{status}**")
-    out.write()
-    for f in findings: out.write(f"- {f}")
-    out.write()
-    out.write("---")
-    out.write()
-
     artifacts = [
         ("📊", "Summary Grid", "summary_grid.txt"),
         ("💎", "Goldmine Report", "goldmine_report.txt"),
@@ -778,9 +748,15 @@ def main():
     stats = _get_stats()
     out = SummaryWriter()
 
+    # ── Header ─────────────────────────────────────────────────────
     try: _build_header(out, now)
     except Exception as e: out.write(f"<!-- header failed: {e} -->")
 
+    # ── ACTION PLAN (top of report for JB) ─────────────────────────
+    try: _build_action_plan(out, stats)
+    except Exception as e: out.write(f"<!-- action plan failed: {e} -->")
+
+    # ── Live Plays ─────────────────────────────────────────────────
     try: _build_plays(out)
     except Exception as e: out.write(f"<!-- plays failed: {e} -->")
 
@@ -790,6 +766,7 @@ def main():
     out.write("---")
     out.write()
 
+    # ── Performance ────────────────────────────────────────────────
     try: _build_scoreboard(out, stats)
     except Exception as e: out.write(f"<!-- scoreboard failed: {e} -->")
 
@@ -799,6 +776,7 @@ def main():
     out.write("---")
     out.write()
 
+    # ── Developer Detail ───────────────────────────────────────────
     try: _build_harvest(out)
     except Exception as e: out.write(f"<!-- harvest failed: {e} -->")
 
@@ -817,8 +795,9 @@ def main():
     try: _build_intelligence_grids(out)
     except Exception as e: out.write(f"<!-- grids failed: {e} -->")
 
-    try: _build_system_status(out, stats)
-    except Exception as e: out.write(f"<!-- status failed: {e} -->")
+    # ── Footer ─────────────────────────────────────────────────────
+    try: _build_footer(out)
+    except Exception as e: out.write(f"<!-- footer failed: {e} -->")
 
     out.flush()
 

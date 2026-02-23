@@ -1493,6 +1493,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     """Equibase summary charts — primary US thoroughbred results source."""
 
     SOURCE_NAME = "EquibaseResults"
+    DECOMMISSIONED = True
     BASE_URL = "https://www.equibase.com"
     HOST = "www.equibase.com"
     IMPERSONATE = "chrome128"
@@ -1805,6 +1806,13 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     HOST = "www.racingpost.com"
     IMPERSONATE = "chrome128"
     TIMEOUT = 60
+
+    def __init__(self, config: Optional[Config] = None):
+        super().__init__(config=config)
+        self.headers.update({
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
 
     _RP_LINK_SELECTORS: Final[tuple[str, ...]] = (
         'a[data-test-selector="RC-meetingItem__link_race"]',
@@ -3967,6 +3975,7 @@ def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
         if not getattr(c, "__abstractmethods__", None)
         and getattr(c, "ADAPTER_TYPE", "discovery") == "results"
         and hasattr(c, "SOURCE_NAME") # Filter out base classes without SOURCE_NAME (GPT5 Fix)
+        and not getattr(c, "DECOMMISSIONED", False)
     ]
 
 
