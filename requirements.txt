@@ -90,6 +90,6 @@ winotify==1.1.0
 websockets==12.0
 wheel==0.45.1
 wrapt==1.16.0
-wsproto==1.2.0
+wsproto==1.3.2
 reportlab>=4.2.5
 tomli==2.4.0
