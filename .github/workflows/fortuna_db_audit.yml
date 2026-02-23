@@ -186,7 +186,7 @@ jobs:
                   be = 2.0 / ap * 100 if ap > 0 else 100
                   mg = hr - be
                   icon = "++" if mg > 5 else ("--" if mg < 0 else "  ")
-                  emit(f"  {r['d']:<10} {dec:>5} {hr:>6.1f}% ${ap:>6.2f} {be:>6.1f}% {icon}{mg:>+5.1f}p ${r['pnl']:>+8.2f}")
+                  emit(f"  {(r['d'] or '?'):<10} {dec:>5} {hr:>6.1f}% ${ap:>6.2f} {be:>6.1f}% {icon}{mg:>+5.1f}p ${(r['pnl'] or 0):>+8.2f}")
               emit("```\n")
               flush()
 
@@ -202,7 +202,7 @@ jobs:
                   # Principle 4: Cap bars at 20 chars
                   bw, bl = min(r['w'], 20), min(r['l'], 20)
                   bar = "█" * bw + "░" * bl
-                  emit(f"  {r['d']:<12} {r['n']:>4} {r['w']:>3} {r['l']:>3} {hr:>5} ${r['pnl']:>+7.2f} ${cum:>+7.2f}  {bar}")
+                  emit(f"  {(r['d'] or 'unknown'):<12} {r['n']:>4} {r['w']:>3} {r['l']:>3} {hr:>5} ${(r['pnl'] or 0):>+7.2f} ${cum:>+7.2f}  {bar}")
               emit("```\n")
 
               # ── 2E: Goldmine vs Standard ──────────────────────────────────
@@ -228,7 +228,7 @@ jobs:
                       erows = conn.execute(f"SELECT venue, race_number, {ex} as p, verdict FROM tips WHERE {ex} > 0 ORDER BY {ex} DESC LIMIT 5").fetchall()
                       for r in erows:
                           icon = "✅" if (r['verdict'] or '').startswith("CASH") else "❌"
-                          emit(f"  {lbl:<6} {icon} ${r['p']:>8.2f} | {r['venue']:20s} R{r['race_number']}")
+                          emit(f"  {lbl:<6} {icon} ${r['p']:>8.2f} | {(r['venue'] or 'Unknown'):20s} R{r['race_number']}")
               emit("```\n")
 
               # ── 2G: Odds Gap Analysis ─────────────────────────────────────
@@ -240,7 +240,7 @@ jobs:
                       r = conn.execute(f"SELECT COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, AVG(net_profit) as pnl FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND gap12 IS NOT NULL AND {cond}").fetchone()
                       dec = (r['w'] or 0) + (r['l'] or 0)
                       if dec < 2: continue
-                      emit(f"  {label:<20} {dec:>5} {r['w']/dec*100:>6.1f}% ${r['pnl']:>+7.2f}")
+                      emit(f"  {label:<20} {dec:>5} {r['w']/dec*100:>6.1f}% ${(r['pnl'] or 0):>+7.2f}")
               else: emit("  [gap12 column missing]")
               emit("```\n")
               flush()
@@ -254,7 +254,7 @@ jobs:
                       r = conn.execute(f"SELECT COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, SUM(net_profit) as pnl FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND ({cond})").fetchone()
                       dec = (r['w'] or 0) + (r['l'] or 0)
                       if dec == 0: continue
-                      emit(f"  {label:<15} {dec:>5} {r['w']/dec*100:>6.1f}% {r['pnl']/(dec*2)*100:>+5.1f}%")
+                      emit(f"  {label:<15} {dec:>5} {r['w']/dec*100:>6.1f}% {(r['pnl'] or 0)/(dec*2)*100:>+5.1f}%")
               else: emit("  [odds columns missing]")
               emit("```\n")
 
@@ -267,7 +267,7 @@ jobs:
                   # Principle 6: Chronological sparklines
                   srows = conn.execute("SELECT verdict as v FROM tips WHERE venue=? AND audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time DESC LIMIT 5", (r['venue'],)).fetchall()
                   spark = "".join(reversed(["W" if x['v'].startswith("CASH") else "L" for x in srows]))
-                  emit(f"  {r['venue']:22s} {dec:>4} {r['w']/dec*100:>5.0f}% ${r['pnl']:>+7.2f} {r['pnl']/(dec*2)*100:>+6.1f}% {spark}")
+                  emit(f"  {(r['venue'] or 'Unknown'):22s} {dec:>4} {r['w']/dec*100:>5.0f}% ${(r['pnl'] or 0):>+7.2f} {(r['pnl'] or 0)/(dec*2)*100:>+6.1f}% {spark}")
               emit("```\n")
               flush()
 
@@ -293,7 +293,7 @@ jobs:
                   for r in conn.execute("SELECT COALESCE(qualification_grade,'?') as g, COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, AVG(net_profit) as pnl, SUM(net_profit) as tpnl FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') GROUP BY g ORDER BY g"):
                       dec = r['w'] + r['l']
                       if dec == 0: continue
-                      emit(f"  {r['g']:<8} {dec:>5} {r['w']/dec*100:>6.1f}% ${r['pnl']:>+7.2f} ${r['tpnl']:>+8.2f}")
+                      emit(f"  {(r['g'] or '?'):<8} {dec:>5} {r['w']/dec*100:>6.1f}% ${(r['pnl'] or 0):>+7.2f} ${(r['tpnl'] or 0):>+8.2f}")
               else: emit("  [grade column missing]")
               emit("```\n")
               flush()
@@ -304,7 +304,7 @@ jobs:
                   emit(f"  {'CONFIDENCE':<12} {'COUNT':>8} {'% OF TOTAL'}")
                   emit(f"  {'─'*12} {'─'*8} {'─'*10}")
                   for r in conn.execute("SELECT COALESCE(match_confidence,'none') as c, COUNT(*) as n FROM tips WHERE audit_completed=1 GROUP BY c"):
-                      emit(f"  {r['c']:<12} {r['n']:>8} {r['n']/audited*100:>8.1f}%" if audited else f"  {r['c']:<12} {r['n']:>8} 0%")
+                      emit(f"  {(r['c'] or 'none'):<12} {r['n']:>8} {r['n']/audited*100:>8.1f}%" if audited else f"  {(r['c'] or 'none'):<12} {r['n']:>8} 0%")
               else: emit("  [match_confidence missing]")
               emit("```\n")
 
@@ -313,7 +313,7 @@ jobs:
               if has_col('is_superfecta_key'):
                   r = conn.execute("SELECT COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, SUM(net_profit) as pnl FROM tips WHERE is_superfecta_key=1 AND audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchone()
                   dec = (r['w'] or 0) + (r['l'] or 0)
-                  if dec > 0: emit(f"  Bets: {dec} | Hit%: {r['w']/dec*100:.1f}% | Net: ${r['pnl']:+.2f}")
+                  if dec > 0: emit(f"  Bets: {dec} | Hit%: {r['w']/dec*100:.1f}% | Net: ${(r['pnl'] or 0):+.2f}")
                   else: emit("  No Superfecta Key plays audited yet.")
               else: emit("  [is_superfecta_key missing]")
               emit("```\n")
@@ -325,7 +325,7 @@ jobs:
               for r in conn.execute("SELECT SUBSTR(start_time, 12, 2) as hr, COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l FROM tips GROUP BY hr ORDER BY hr"):
                   dec = r['w'] + r['l']
                   hrp = f"{r['w']/dec*100:>6.1f}%" if dec else "    —"
-                  emit(f"  {r['hr']:02s}:00        {r['n']:>8} {r['w']:>5} {r['l']:>5} {hrp}")
+                  emit(f"  {(r['hr'] or '??'):02s}:00        {r['n']:>8} {r['w']:>5} {r['l']:>5} {hrp}")
               emit("```\n")
               flush()
 
@@ -337,7 +337,7 @@ jobs:
                   for r in conn.execute("SELECT source as s, COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, SUM(net_profit) as pnl FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') GROUP BY s ORDER BY n DESC"):
                       dec = r['w'] + r['l']
                       if dec == 0: continue
-                      emit(f"  {r['s']:<25} {dec:>5} {r['w']/dec*100:>6.1f}% {r['pnl']/(dec*2)*100:>+5.1f}%")
+                      emit(f"  {(r['s'] or 'unknown'):<25} {dec:>5} {r['w']/dec*100:>6.1f}% {(r['pnl'] or 0)/(dec*2)*100:>+5.1f}%")
               else: emit("  [source missing]")
               emit("```\n")
 
@@ -371,7 +371,7 @@ jobs:
                   for r in conn.execute("SELECT venue, race_number, predicted_2nd_fav_odds as p, actual_2nd_fav_odds as a, verdict FROM tips WHERE predicted_2nd_fav_odds IS NOT NULL AND actual_2nd_fav_odds IS NOT NULL AND audit_completed=1 ORDER BY start_time DESC LIMIT 10"):
                       drift = r['a'] - r['p']
                       icon = "✅" if (r['verdict'] or '').startswith("CASH") else "❌"
-                      emit(f"  {r['venue']:20s} {r['race_number']:<3} {r['p']:>5.2f} {r['a']:>7.2f} {drift:>+7.2f} {icon}")
+                      emit(f"  {(r['venue'] or 'Unknown'):20s} {r['race_number']:<3} {r['p']:>5.2f} {r['a']:>7.2f} {drift:>+7.2f} {icon}")
               else: emit("  [odds columns missing]")
               emit("```\n")
 
@@ -402,7 +402,7 @@ jobs:
               zo = conn.execute("SELECT COUNT(*) FROM tips WHERE predicted_2nd_fav_odds = 0").fetchone()[0]
               if zo: dq.append(f"❌ ZERO ODDS: {zo} tips have 0.0 odds.")
               # 8. Unmatchable Venues
-              uv = conn.execute("SELECT COUNT(*) FROM tips WHERE venue='Unknown' OR venue='unknown'").fetchone()[0]
+              uv = conn.execute("SELECT COUNT(*) FROM tips WHERE venue IS NULL OR venue='Unknown' OR venue='unknown'").fetchone()[0]
               if uv > total * 0.1: dq.append(f"❌ UNKNOWN: {uv} unmatchable venues.")
 
               if not dq: emit("  ✅ All 8 Data Quality Assertions Passed.")
@@ -428,8 +428,8 @@ jobs:
               emit(f"  {'ADAPTER':<25} {'ATTEMPTS':>8} {'OK':>5} {'RATE':>5} {'AVG R'}  LAST SUCCESS")
               emit(f"  {'─'*25} {'─'*8} {'─'*5} {'─'*5} {'─'*5}  {'─'*15}")
               for r in conn.execute("SELECT adapter_name as a, COUNT(*) as att, SUM(CASE WHEN race_count>0 THEN 1 ELSE 0 END) as ok, AVG(race_count) as avg, MAX(CASE WHEN race_count>0 THEN timestamp END) as last FROM harvest_logs WHERE timestamp >= DATE('now','-7 days') GROUP BY a ORDER BY att DESC"):
-                  rate = f"{r['ok']/r['att']*100:3.0f}%" if r['att'] else "  0%"
-                  emit(f"  {r['a']:<25} {r['att']:>8} {r['ok']:>5} {rate:>5} {r['avg'] or 0:>5.1f}  {(r['last'] or 'never')[:16]}")
+                  rate = f"{r['ok']/(r['att'] or 1)*100:3.0f}%" if r['att'] else "  0%"
+                  emit(f"  {(r['a'] or 'unknown'):<25} {r['att']:>8} {r['ok']:>5} {rate:>5} {r['avg'] or 0:>5.1f}  {(r['last'] or 'never')[:16]}")
           else: emit("  [harvest_logs missing]")
           emit("```\n")
 
@@ -449,7 +449,7 @@ jobs:
               emit(f"  {'─'*25} {'─'*8} {'─'*8}")
               tot_7d = conn.execute("SELECT COUNT(*) FROM tips WHERE start_time >= DATE('now','-7 days')").fetchone()[0] or 1
               for r in conn.execute("SELECT source as s, COUNT(*) as n FROM tips WHERE start_time >= DATE('now','-7 days') GROUP BY s ORDER BY n DESC"):
-                  emit(f"  {r['s']:<25} {r['n']:>8} {r['n']/tot_7d*100:>8.1f}%")
+                  emit(f"  {(r['s'] or 'unknown'):<25} {r['n']:>8} {r['n']/tot_7d*100:>8.1f}%")
           else: emit("  [source column missing]")
           emit("```\n")
           flush()
