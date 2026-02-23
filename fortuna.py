@@ -700,12 +700,67 @@ class DataValidationPipeline:
 
 
 # --- CORE INFRASTRUCTURE ---
+@dataclass
+class RateLimiter:
+    requests_per_second: float = 10.0
+    _tokens: float = field(default=10.0, init=False)
+    _last_update: float = field(default_factory=time.time, init=False)
+    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
+    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
+
+    def __post_init__(self):
+        self._tokens = self.requests_per_second
+
+    def _get_lock(self) -> asyncio.Lock:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Lock()
+
+        if loop not in self._locks:
+            with self._lock_sentinel:
+                if loop not in self._locks:
+                    self._locks[loop] = asyncio.Lock()
+        return self._locks[loop]
+
+    async def acquire(self) -> None:
+        lock = self._get_lock()
+
+        for _ in range(1000): # Iteration limit to prevent potential hangs
+            wait_time = 0
+            async with lock:
+                now = time.time()
+                elapsed = now - self._last_update
+                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
+                self._last_update = now
+                if self._tokens >= 1:
+                    self._tokens -= 1
+                    return
+                wait_time = (1 - self._tokens) / self.requests_per_second
+
+            if wait_time >= 0:
+                await asyncio.sleep(max(wait_time, 0.01))
+
+
 class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
     _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
     _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
+    _host_limiters: ClassVar[Dict[str, RateLimiter]] = {}
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
+
+    @classmethod
+    async def get_host_limiter(cls, host: str) -> RateLimiter:
+        """Returns a per-host rate limiter."""
+        if host not in cls._host_limiters:
+            with cls._lock_initialized:
+                if host not in cls._host_limiters:
+                    # Default to 2 requests per second per host to avoid 429s (Fix 13)
+                    limit = 2.0
+                    if "racingpost" in host: limit = 1.5 # Extra conservative for RP
+                    cls._host_limiters[host] = RateLimiter(requests_per_second=limit)
+        return cls._host_limiters[host]
 
     @classmethod
     async def _get_lock(cls) -> asyncio.Lock:
@@ -1046,46 +1101,6 @@ class CircuitBreaker:
         return self.state == "half-open"
 
 
-@dataclass
-class RateLimiter:
-    requests_per_second: float = 10.0
-    _tokens: float = field(default=10.0, init=False)
-    _last_update: float = field(default_factory=time.time, init=False)
-    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
-    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
-
-    def __post_init__(self):
-        self._tokens = self.requests_per_second
-
-    def _get_lock(self) -> asyncio.Lock:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.Lock()
-
-        if loop not in self._locks:
-            with self._lock_sentinel:
-                if loop not in self._locks:
-                    self._locks[loop] = asyncio.Lock()
-        return self._locks[loop]
-
-    async def acquire(self) -> None:
-        lock = self._get_lock()
-
-        for _ in range(1000): # Iteration limit to prevent potential hangs
-            wait_time = 0
-            async with lock:
-                now = time.time()
-                elapsed = now - self._last_update
-                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
-                self._last_update = now
-                if self._tokens >= 1:
-                    self._tokens -= 1
-                    return
-                wait_time = (1 - self._tokens) / self.requests_per_second
-
-            if wait_time >= 0:
-                await asyncio.sleep(max(wait_time, 0.01))
 
 
 class AdapterMetrics:
@@ -1390,6 +1405,14 @@ class BaseAdapterV3(ABC):
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+
+        # Apply host-based rate limiting to prevent 429s (Fix 13)
+        from urllib.parse import urlparse
+        host = urlparse(full_url).netloc
+        if host:
+            limiter = await GlobalResourceManager.get_host_limiter(host)
+            await limiter.acquire()
+
         self.logger.debug("Requesting", method=method, url=full_url)
         # Apply global concurrency limit (Memory Directive Fix)
         async with GlobalResourceManager.get_global_semaphore():
@@ -5521,14 +5544,31 @@ class FortunaDB:
                     self.logger.error("Failed to cleanup or create unique index", error=str(e))
                     # If index exists but table has duplicates, we might get IntegrityError
                     # Just log it and continue - better than crashing the whole app
-                # Composite index for audit performance
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
-
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
                 columns = [column[1] for column in cursor.fetchall()]
+                if "source" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN source TEXT")
+                if "gap12" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN gap12 TEXT")
+                if "top_five" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN top_five TEXT")
+                if "selection_number" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_number INTEGER")
+                if "verdict" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN verdict TEXT")
+                if "net_profit" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN net_profit REAL")
+                if "selection_position" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN selection_position INTEGER")
+                if "actual_top_5" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN actual_top_5 TEXT")
+                if "trifecta_payout" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_payout REAL")
+                if "trifecta_combination" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_combination TEXT")
+                if "audit_timestamp" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN audit_timestamp TEXT")
                 if "superfecta_payout" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_payout REAL")
                 if "superfecta_combination" not in columns:
@@ -5573,6 +5613,11 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_number INTEGER")
                 if "superfecta_key_name" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_name TEXT")
+
+                # Composite index for audit performance
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
         await self._run_in_executor(_init)
 
