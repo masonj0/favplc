@@ -528,6 +528,37 @@ def _build_harvest(out: SummaryWriter):
 
     out.write("<details><summary>📋 Adapter details</summary>")
     out.write()
+    out.write("```text")
+    out.write(f"  DISCIPLINE      BETS    W    L   HIT%   AVG PAY   B/E%   MARGIN    NET P&L")
+    out.write(f"  ──────────────  ────  ───  ───  ─────  ───────  ─────  ────────  ────────")
+
+    for d in sorted(discs):
+        subset = [r for r in rows if r['discipline'] == d]
+        b = len(subset)
+        if b == 0: continue
+        wins = [r for r in subset if r['verdict'] in ('CASHED', 'CASHED_ESTIMATED')]
+        w = len(wins)
+        l = b - w
+        h = (w / b * 100)
+        pl = sum(r['net_profit'] or 0.0 for r in subset)
+
+        ap = sum((r['net_profit'] or 0.0) + STANDARD_BET for r in wins) / w if w > 0 else 0.0
+        be = (STANDARD_BET / ap * 100) if ap > 0 else 0
+        m = h - be
+
+        out.write(f"  {d:<14.14}  {b:>4}  {w:>3}  {l:>3}  {h:>4.0f}%  ${ap:>5.2f}  {be:>4.0f}%  {m:>+6.0f}pp  ${pl:>+7.2f}")
+    out.write("```")
+
+# ── Section 09: Exotic Payouts ───────────────────────────────────────────────
+def section_exotic_payouts(out: SummaryWriter, conn: sqlite3.Connection):
+    if not conn: return
+    rows = conn.execute("""
+        SELECT venue, race_number, DATE(start_time) as dt, trifecta_payout, trifecta_combination,
+               superfecta_payout, superfecta_combination
+        FROM tips
+        WHERE audit_completed=1 AND (trifecta_payout IS NOT NULL OR superfecta_payout IS NOT NULL)
+        ORDER BY COALESCE(superfecta_payout,0)+COALESCE(trifecta_payout,0) DESC LIMIT 5
+    """).fetchall()
 
     def _render_harvest_table(data, label):
         if not data: return
@@ -552,6 +583,16 @@ def _build_harvest(out: SummaryWriter):
     _render_harvest_table(results, "Results")
     out.write("</details>")
     out.write()
+    out.write("```text")
+    out.write(f"  TYPE         PAYOUT      VENUE                R#   DATE        COMBO")
+    out.write(f"  ───────────  ──────────  ───────────────────  ──   ──────────  ──────────────")
+
+    for r in rows:
+        if r['superfecta_payout']:
+            out.write(f"  {'Superfecta':<11}  ${r['superfecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19.19}  {r['race_number']:>2}   {r['dt']}  {_trunc(r['superfecta_combination'] or '', 14)}")
+        if r['trifecta_payout']:
+            out.write(f"  {'Trifecta':<11}  ${r['trifecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19.19}  {r['race_number']:>2}   {r['dt']}  {_trunc(r['trifecta_combination'] or '', 14)}")
+    out.write("```")
 
 def _build_goldmine_vs_standard(out: SummaryWriter):
     if not Path(DB_PATH).exists(): return
