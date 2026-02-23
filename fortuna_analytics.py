@@ -1482,7 +1482,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "EquibaseResults"
     BASE_URL = "https://www.equibase.com"
     HOST = "www.equibase.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     _IMPERSONATION_FALLBACKS: Final[tuple[str, ...]] = (
@@ -1790,7 +1790,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingPostResults"
     BASE_URL = "https://www.racingpost.com"
     HOST = "www.racingpost.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     _RP_LINK_SELECTORS: Final[tuple[str, ...]] = (
@@ -2275,7 +2275,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         return fixed
     BASE_URL = "https://www.attheraces.com"
     HOST = "www.attheraces.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2579,7 +2579,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "AtTheRacesGreyhoundResults"
     BASE_URL = "https://greyhounds.attheraces.com"
     HOST = "greyhounds.attheraces.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2888,7 +2888,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL = "https://www.sportinglife.com"
     HOST = "www.sportinglife.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     # -- link discovery ----------------------------------------------------
@@ -3092,7 +3092,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "StandardbredCanadaResults"
     BASE_URL = "https://standardbredcanada.ca"
     HOST = "standardbredcanada.ca"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
@@ -3362,7 +3362,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingAndSportsResults"
     BASE_URL = "https://www.racingandsports.com.au"
     HOST = "www.racingandsports.com.au"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
@@ -3484,7 +3484,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "TimeformResults"
     BASE_URL = "https://www.timeform.com"
     HOST = "www.timeform.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -3589,7 +3589,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SkySportsResults"
     BASE_URL = "https://www.skysports.com"
     HOST = "www.skysports.com"
-    IMPERSONATE = "chrome124"
+    IMPERSONATE = "chrome128"
     TIMEOUT = 45
 
     def _parse_races(self, raw_data: Any) -> List["ResultRace"]:

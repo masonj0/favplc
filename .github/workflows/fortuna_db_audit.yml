@@ -417,7 +417,7 @@ jobs:
                   rows = conn.execute(f"SELECT venue, race_number, {exotic} as p, verdict FROM tips WHERE {exotic} > 0 ORDER BY {exotic} DESC LIMIT 5").fetchall()
                   for r in rows:
                       icon = "✅" if (r['verdict'] or '').startswith("CASH") else "❌"
-                      emit(f"  {label:5s} ${r['p']:>8.2f} {icon} {r['venue'][:18]:18s} R{r['race_number']}")
+                      emit(f"  {label:5s} ${r['p']:>8.2f} {icon} {(r['venue'] or '?')[:18]:18s} R{r['race_number']}")
               emit("```\n")
 
               # ── 2H: Odds Gap Analysis ──────────────────────────────────
@@ -474,7 +474,7 @@ jobs:
                           for r in drift_rows:
                               drift = (r['actual'] or 0) - (r['pred'] or 0)
                               icon = "✅" if (r['verdict'] or '').startswith("CASH") else "❌"
-                              emit(f"  {r['venue'][:22]:22s} R{r['race_number']:<2}  {r['pred']:>5.2f} → {r['actual']:>6.2f}  {drift:>+6.2f}  {icon}")
+                              emit(f"  {(r['venue'] or '?')[:22]:22s} R{r['race_number']:<2}  {r['pred']:>5.2f} → {r['actual']:>6.2f}  {drift:>+6.2f}  {icon}")
                           emit("```\n")
 
               # ── 2J: Venue Leaderboard (Trend Sparkline Fix) ────────────
@@ -494,7 +494,7 @@ jobs:
                   hr = row['w'] / (row['w']+row['l']) * 100
                   last5 = conn.execute("SELECT verdict FROM tips WHERE venue=? AND audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time DESC LIMIT 5", (row['venue'],)).fetchall()
                   spark = "".join("█" if r['verdict'].startswith("CASH") else "░" for r in reversed(last5))
-                  emit(f"  {row['venue'][:25]:25s} {row['n']:>4} {row['w']:>3} {row['l']:>3} {hr:>4.0f}% ${row['pnl']:>+7.2f}  {spark}")
+                  emit(f"  {(row['venue'] or '?')[:25]:25s} {row['n']:>4} {row['w']:>3} {row['l']:>3} {hr:>4.0f}% ${row['pnl']:>+7.2f}  {spark}")
               emit("```\n")
 
               # ── 2K: Stuck Tip Age Distribution ─────────────────────────
@@ -646,7 +646,7 @@ jobs:
                   FROM tips WHERE start_time >= DATE('now', '-7 days')
                   GROUP BY source ORDER BY n DESC
               """):
-                  emit(f"  {row['source'][:30]:<30} {row['n']:>5} {row['vs']:>6}")
+                  emit(f"  {(row['source'] or '?')[:30]:<30} {row['n']:>5} {row['vs']:>6}")
               emit("```\n")
 
               # ── 2Q: Pipeline Health ────────────────────────────────────
