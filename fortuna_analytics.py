@@ -136,16 +136,30 @@ def parse_payout_value(raw: str) -> tuple[float | None, str | None]:
         except ValueError:
             return None, None
     # Try bare numeric
-    # Case 1: European style 12,34 (comma as decimal separator)
+    # Case 1: Complex European style 1.234,56 (dot as thousands, comma as decimal)
+    if ',' in cleaned and '.' in cleaned:
+        if cleaned.rfind(',') > cleaned.rfind('.'):
+            try:
+                # Basic check: only one comma allowed for this to be a single number
+                if cleaned.count(',') == 1:
+                    val = float(cleaned.replace('.', '').replace(',', '.'))
+                    return val, None
+            except ValueError:
+                pass
+
+    # Case 2: Simple European style 12,34 (comma as decimal separator)
     if ',' in cleaned and '.' not in cleaned and re.search(r',\d{2}$', cleaned):
         try:
             val = float(cleaned.replace(',', '.'))
             return val, None
         except ValueError: pass
 
-    # Case 2: Standard numeric (ignore commas as thousands separators)
+    # Case 3: Standard numeric (ignore commas as thousands separators)
     bare = cleaned.replace(',', '').strip()
     try:
+        # If it still has multiple dots, it's likely a list or garbage
+        if bare.count('.') > 1:
+            return None, None
         return float(bare), None
     except ValueError:
         return None, None
@@ -166,21 +180,33 @@ def parse_place_payouts(raw: str) -> dict[int, float]:
     return results
 
 def parse_currency_value(value_str: str) -> float:
-    """'$1,234.56' → 1234.56.  Returns 0.0 on unparseable input."""
+    """
+    '$1,234.56' → 1234.56.  Returns 0.0 on unparseable input.
+    Hardened to handle complex international payout strings.
+    """
     if not value_str:
         return 0.0
     raw = str(value_str).strip()
     if len(raw) > _MAX_CURRENCY_INPUT_LEN:
         _currency_logger.debug("currency_input_too_long", length=len(raw))
         return 0.0
+
+    # 1. Try to use the more robust parse_payout_value engine first (Fix 11)
+    val, _ = parse_payout_value(raw)
+    if val is not None:
+        return val
+
+    # 2. Fallback for lists or other complex strings that parse_payout_value missed
     try:
         negative = raw.startswith("-") or raw.startswith("(")
 
         # Handle multi-value strings like '577.2 GBP,244.5 GBP' or '£1.20 (3), £1.90 (6)'
-        # Take the first segment
         if ',' in raw:
-            # Heuristic: if comma is NOT followed by 3 digits (thousands), it's likely a separator
-            if not re.search(r',\d{3}(?:\.|$)', raw):
+            # Check for currency codes or spaces around comma - strong indicators of a list
+            is_list = any(c in raw for c in ['GBP', 'EUR', 'USD', 'AUD', 'ZAR', 'HKD']) or ' ,' in raw or ', ' in raw
+
+            # Heuristic fallback: if comma is NOT followed by exactly 3 digits (thousands separator), it's likely a separator
+            if is_list or not re.search(r',\d{3}(?!\d)', raw):
                 raw = raw.split(',')[0].strip()
 
         if "," in raw and "." in raw:
@@ -195,13 +221,14 @@ def parse_currency_value(value_str: str) -> float:
             cleaned = raw.replace(",", ".")
         else:
             cleaned = raw.replace(",", "")
+
         cleaned = re.sub(r"[^\d.]", "", cleaned)
         if not cleaned:
             return 0.0
         result = float(cleaned)
         return -result if negative else result
     except (ValueError, TypeError):
-        # If it looks like a complex multi-payout string, don't warn
+        # If it looks like a complex multi-payout string with parens, don't warn as it might be intentional
         if "(" in str(value_str) and ")" in str(value_str):
             return 0.0
         _currency_logger.warning("failed_parsing_currency", value=value_str)
@@ -2209,9 +2236,16 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         # Case 1: Numeric ID segment
         if slug.isdigit():
             track_id = int(slug)
-            # If it's a known US ID, we're done
+            # If it's a known US ID, we verify it against the slug if available
+            # to avoid collisions like Tokyo and Santa Anita both using 315.
             if track_id in cls._USA_TRACK_IDS:
-                return True
+                if len(segments) > 1:
+                    named_slug = segments[1]
+                    if named_slug in cls._USA_TRACK_SLUGS:
+                        return True
+                    # If ID matches but slug is known and NOT USA (e.g. tokyo), it's a collision
+                    return False
+                return True # Fallback if no named slug available
 
             # If not a known ID, check the next segment for a named slug
             if len(segments) > 1:
@@ -3574,35 +3608,6 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     """Sky Sports Racing results (UK / IRE)."""
 
     SOURCE_NAME = "SkySportsResults"
-
-    def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
-        """Override to assign sequential race numbers per venue (Jules Fix)."""
-        races: List[ResultRace] = super()._parse_races(raw_data)
-        if not races:
-            return races
-
-        groups: Dict[tuple, List[ResultRace]] = defaultdict(list)
-        for r in races:
-            key = (
-                fortuna.get_canonical_venue(r.venue),
-                r.start_time.strftime("%Y%m%d"),
-            )
-            groups[key].append(r)
-
-        fixed: List[ResultRace] = []
-        for group in groups.values():
-            group.sort(key=lambda r: r.start_time)
-            for i, race in enumerate(group, start=1):
-                date_str = race.start_time.strftime("%Y-%m-%d")
-                fixed.append(
-                    race.model_copy(update={
-                        "race_number": i,
-                        "id": self._make_race_id(
-                            "sky_res", race.venue, date_str, i,
-                        ),
-                    })
-                )
-        return fixed
     BASE_URL = "https://www.skysports.com"
     HOST = "www.skysports.com"
     IMPERSONATE = "chrome128"
