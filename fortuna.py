@@ -365,12 +365,14 @@ RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
 from fortuna_utils import (
-    EASTERN, MAX_VALID_ODDS, MIN_VALID_ODDS, DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
+    EASTERN, DATE_FORMAT, DATE_FORMAT_OLD, MAX_VALID_ODDS, MIN_VALID_ODDS,
+    DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
     VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
     clean_text, node_text, get_canonical_venue, normalize_venue_name,
     parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
     is_valid_odds, scrape_available_bets, detect_discipline,
-    now_eastern, to_eastern, ensure_eastern, get_places_paid
+    now_eastern, to_eastern, ensure_eastern, get_places_paid,
+    parse_date_string, to_storage_format, from_storage_format
 )
 DEFAULT_REGION: Final[str] = "GLOBAL"
 
@@ -662,7 +664,7 @@ def generate_race_id(
         if recovered != "unknown":
             venue_slug = recovered
 
-    date_str = start_time.strftime("%Y%m%d")
+    date_str = start_time.strftime(DATE_FORMAT)
     time_str = start_time.strftime("%H%M")
 
     dl = (discipline or "Thoroughbred").lower()
@@ -892,12 +894,26 @@ class SmartFetcher:
             BrowserEngine.HTTPX: 0.5
         }
         self.last_engine: str = "unknown"
+        self._sessions: Dict[BrowserEngine, Any] = {}
+        self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
             self.fingerprint_gen = FingerprintGenerator()
         else:
             self.header_gen = None
             self.fingerprint_gen = None
+
+    async def _get_persistent_session(self, engine: BrowserEngine) -> Any:
+        """Returns a persistent session for browser-based engines to avoid launch overhead (Fix 12)."""
+        async with self._session_lock:
+            if engine not in self._sessions:
+                if engine == BrowserEngine.CAMOUFOX:
+                    self._sessions[engine] = AsyncStealthySession(headless=True)
+                    await self._sessions[engine].__aenter__()
+                elif engine == BrowserEngine.PLAYWRIGHT:
+                    self._sessions[engine] = AsyncDynamicSession(headless=True)
+                    await self._sessions[engine].__aenter__()
+            return self._sessions[engine]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
@@ -1025,8 +1041,9 @@ class SmartFetcher:
                         )
                         return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
                 except Exception as e:
-                    if "impersonate" in str(e).lower() and "not supported" in str(e).lower():
-                        self.logger.debug("curl_cffi impersonate not supported, trying next", version=imp_version)
+                    err_lower = str(e).lower()
+                    if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
+                        self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
                         last_err = e
                         continue
                     raise
@@ -1056,10 +1073,11 @@ class SmartFetcher:
             
         # For other engines, we use AsyncFetcher from scrapling
         if engine == BrowserEngine.CAMOUFOX:
-            async with AsyncStealthySession(headless=True) as s:
-                resp = await s.fetch(url, method=method, **scrapling_kwargs)
-                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            # BUG-1 Fix: Use persistent session to avoid launch overhead
+            s = await self._get_persistent_session(engine)
+            resp = await s.fetch(url, method=method, **scrapling_kwargs)
+            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             # Direct Playwright usage for cases where scrapling/camoufox fail
@@ -1087,12 +1105,13 @@ class SmartFetcher:
                 return UnifiedResponse(content, status, status, url, headers)
 
         elif engine == BrowserEngine.PLAYWRIGHT:
-            async with AsyncDynamicSession(headless=True) as s:
-                resp = await s.fetch(url, method=method, **scrapling_kwargs)
-                # Scrapling responses have a .text object that sometimes returns length 0
-                # We ensure it's a string from .body or .html_content
-                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            # BUG-1 Fix: Use persistent session to avoid launch overhead
+            s = await self._get_persistent_session(engine)
+            resp = await s.fetch(url, method=method, **scrapling_kwargs)
+            # Scrapling responses have a .text object that sometimes returns length 0
+            # We ensure it's a string from .body or .html_content
+            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
         else:
             # Fallback to simple fetcher
             async with AsyncFetcher() as fetcher:
@@ -1108,9 +1127,15 @@ class SmartFetcher:
     async def close(self) -> None:
         """
         Shared resources are managed by GlobalResourceManager.
-        This remains for API compatibility.
+        Persistent scrapling sessions are cleaned up here (Fix 12).
         """
-        pass
+        async with self._session_lock:
+            for engine, session in self._sessions.items():
+                try:
+                    await session.__aexit__(None, None, None)
+                except Exception as e:
+                    self.logger.warning(f"failed_closing_persistent_session", engine=engine.value, error=str(e))
+            self._sessions.clear()
 
 
 @dataclass
@@ -1295,7 +1320,7 @@ class DebugMixin:
         try:
             d = get_writable_path("debug_snapshots")
             d.mkdir(parents=True, exist_ok=True)
-            f = d / f"{context}_{datetime.now(EASTERN).strftime('%Y%m%d_%H%M%S')}.html"
+            f = d / f"{context}_{datetime.now(EASTERN).strftime('%y%m%d_%H%M%S')}.html"
             with open(f, "w", encoding="utf-8") as out:
                 if url: out.write(f"<!-- URL: {url} -->\n")
                 out.write(content)
@@ -1585,7 +1610,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data["date"]).date()
         except Exception: return []
 
         races: List[Race] = []
@@ -1681,7 +1706,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         parser = HTMLParser(resp.text)
         track_links = defaultdict(list)
         now = now_eastern()
-        today_str = now.strftime("%Y-%m-%d")
+        today_str = now.strftime(DATE_FORMAT)
 
         # Optimization: If it's late in ET, skip countries that are finished
         # Europe/Turkey/SA usually finished by 18:00 ET
@@ -1720,7 +1745,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data["date"]).date()
         except Exception: return []
         races: List[Race] = []
         for item in raw_data["pages"]:
@@ -1903,7 +1928,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         track_map = defaultdict(list)
 
         try:
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            target_date = parse_date_string(date_str).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -1974,7 +1999,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data["date"]).date()
         except Exception: return []
         races: List[Race] = []
         for item in raw_data["pages"]:
@@ -2206,7 +2231,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         if not items_raw: return []
 
         try:
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            target_date = parse_date_string(date_str).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2242,7 +2267,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data.get("date", "")).date()
         except Exception: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
@@ -2375,7 +2400,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Index")
 
         try:
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            target_date = parse_date_string(date_str).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2424,7 +2449,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data["date"]).date()
         except Exception: return []
         races: List[Race] = []
         for item in raw_data["pages"]:
@@ -2574,7 +2599,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         return self._get_browser_headers(host="www.skysports.com", referer="https://www.skysports.com/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = parse_date_string(date)
         index_url = f"/racing/racecards/{dt.strftime('%d-%m-%Y')}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         if not resp or not resp.text:
@@ -2585,7 +2610,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         metadata = []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = parse_date_string(date).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -2652,7 +2677,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data.get("date", "")).date()
         except Exception: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
@@ -2772,7 +2797,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         try: data = resp.json()
         except Exception: return None
         if not isinstance(data, list): return None
-        return {"venues": data, "date": date, "fetched_at": datetime.now(EASTERN).isoformat()}
+        return {"venues": data, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
@@ -2789,7 +2814,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
     def _parse_single_race(self, rd: Dict[str, Any], vn: str, cc: str) -> Optional[Race]:
         rid, rnum, dts, nr = rd.get("id"), rd.get("raceNumber"), rd.get("datetimeUtc"), rd.get("numberOfRunners", 0)
         if not all([rid, rnum, dts]): return None
-        try: st = datetime.fromisoformat(dts.replace("Z", "+00:00"))
+        try: st = from_storage_format(dts.replace("Z", "+00:00"))
         except Exception: return None
         # Only return race if we have real runners (avoid placeholder generic runners)
         runners = []
@@ -2823,7 +2848,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = parse_date_string(date)
         date_label = dt.strftime(f"%A %b {dt.day}, %Y")
         date_short = dt.strftime("%m%d") # e.g. 0208
 
@@ -2893,7 +2918,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = datetime.strptime(raw_data.get("date", ""), "%Y-%m-%d").date()
+        try: race_date = parse_date_string(raw_data.get("date", "")).date()
         except Exception: race_date = datetime.now(EASTERN).date()
         races: List[Race] = []
         for item in raw_data["pages"]:
@@ -3035,7 +3060,7 @@ class TabAdapter(BaseAdapterV3):
                 rst = rd.get("raceStartTime")
                 if not rst or not rn: continue
 
-                try: st = datetime.fromisoformat(rst.replace("Z", "+00:00"))
+                try: st = from_storage_format(rst.replace("Z", "+00:00"))
                 except Exception: continue
 
                 runners = []
@@ -3126,7 +3151,7 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
                             # Assume UTC and convert to Eastern if it looks like ISO
                             st_val = str(ri[col])
                             if "T" in st_val:
-                                start_time = to_eastern(datetime.fromisoformat(st_val.replace("Z", "+00:00")))
+                                start_time = to_eastern(from_storage_format(st_val.replace("Z", "+00:00")))
                             break
                         except Exception: pass
 
@@ -3245,7 +3270,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             race_num = r["raceNumber"]
             start_time_str = r["postTime"]
             try:
-                start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%M:%SZ")
+                start_time = datetime.strptime(start_time_str, "T%H:%M:%SZ")
             except Exception: continue
             runners = []
             for runner in detail.get("runners", []):
@@ -3312,7 +3337,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return self._get_browser_headers(host="www.equibase.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = datetime.strptime(date, "%Y-%m-%d")
+        dt = parse_date_string(date)
         date_str = dt.strftime("%m%d%y")
 
         # Try different possible index URLs
@@ -3390,7 +3415,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         all_htmls = []
         extra_links = []
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = parse_date_string(date).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -3526,12 +3551,12 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         try:
             parts = ts.replace("Post Time:", "").strip().split()
             if len(parts) >= 2:
-                dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", "%Y-%m-%d %I:%M %p")
+                dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", " %I:%M %p")
                 return dt.replace(tzinfo=EASTERN)
         except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
         try:
-            dt = datetime.strptime(ds, "%Y-%m-%d")
+            dt = parse_date_string(ds)
             return dt.replace(hour=12, minute=0, tzinfo=EASTERN)
         except Exception:
             return datetime.now(EASTERN)
@@ -3582,8 +3607,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         async def fetch_disc(disc, region="USA"):
             suffix = "" if region == "USA" else "?region=INT"
             # Try date-specific URL first, fallback to todays-races
-            # TwinSpires uses YYYY-MM-DD for races URL
-            if date == datetime.now(EASTERN).strftime("%Y-%m-%d"):
+            # TwinSpires uses YYMMDD for races URL
+            if date == datetime.now(EASTERN).strftime(DATE_FORMAT):
                 url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
             else:
                 url = f"{self.BASE_URL}/bet/races/{date}/{disc}{suffix}"
@@ -3693,7 +3718,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or "races" not in raw_data: return []
-        rl, ds, parsed = raw_data["races"], raw_data.get("date", datetime.now(EASTERN).strftime("%Y-%m-%d")), []
+        rl, ds, parsed = raw_data["races"], raw_data.get("date", datetime.now(EASTERN).strftime(DATE_FORMAT)), []
         for rd in rl:
             try:
                 r = self._parse_single_race(rd, ds)
@@ -3718,7 +3743,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         return Race(discipline=disc, id=generate_race_id("ts", tn, st, rnum, disc), venue=tn, race_number=rnum, start_time=st, runners=runners, distance=rd.get("distance"), source=self.source_name, available_bets=ab)
 
     def _parse_post_time(self, tt: Optional[str], page, ds: str) -> datetime:
-        bd = datetime.strptime(ds, "%Y-%m-%d").date()
+        bd = parse_date_string(ds).date()
         if tt:
             p = self._parse_time_string(tt, bd)
             if p: return p
@@ -3730,7 +3755,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
                     da = getattr(e, 'attrib', getattr(e, 'attributes', {})).get('datetime')
                     if da:
                         try:
-                            dt = datetime.fromisoformat(da.replace('Z', '+00:00'))
+                            dt = from_storage_format(da.replace('Z', '+00:00'))
                             # Only trust the date from HTML if it's within 1 day of what we expected
                             if abs((dt.date() - bd).days) <= 1:
                                 return dt
@@ -4730,7 +4755,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             track = get_canonical_venue(get_field(r, 'venue'))
             num = get_field(r, 'race_number')
             st = get_field(r, 'start_time')
-            st_str = st.strftime('%Y%m%d') if isinstance(st, datetime) else str(st)
+            st_str = st.strftime('%y%m%d') if isinstance(st, datetime) else str(st)
             # Use canonical key for cross-adapter deduplication
             key = (track, num, st_str)
             if key not in seen_gold:
@@ -4758,7 +4783,7 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
         start_time = get_field(r, 'start_time')
         if isinstance(start_time, str):
             try:
-                start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                start_time = from_storage_format(start_time.replace('Z', '+00:00'))
             except ValueError:
                 remaining_gold.append(r)
                 continue
@@ -4874,8 +4899,8 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
         start_time_raw = tip.get("start_time", "")
 
         try:
-            st = datetime.fromisoformat(start_time_raw.replace('Z', '+00:00'))
-            time_str = to_eastern(st).strftime("%Y-%m-%d %H:%M ET")
+            st = from_storage_format(start_time_raw.replace('Z', '+00:00'))
+            time_str = to_eastern(st).strftime(" %H:%M ET")
         except Exception:
             time_str = str(start_time_raw)[:16]
 
@@ -4912,7 +4937,7 @@ def generate_next_to_jump(races: List[Any]) -> str:
         r_time = get_field(r, 'start_time')
         if isinstance(r_time, str):
             try:
-                r_time = datetime.fromisoformat(r_time.replace('Z', '+00:00'))
+                r_time = from_storage_format(r_time.replace('Z', '+00:00'))
             except ValueError:
                 continue
 
@@ -4935,7 +4960,7 @@ def generate_next_to_jump(races: List[Any]) -> str:
 
 async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> str:
     """Generates a high-impact, friendly HTML report for the Fortuna Faucet."""
-    now_str = datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')
+    now_str = datetime.now(EASTERN).strftime(' %H:%M:%S')
 
     # 1. Best Bet Opportunities
     rows = []
@@ -4954,7 +4979,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             st_str = to_eastern(st).strftime('%H:%M')
         elif isinstance(st, str):
             try:
-                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                dt = from_storage_format(st.replace('Z', '+00:00'))
                 st_str = to_eastern(dt).strftime('%H:%M')
             except Exception:
                 s_st = str(st)
@@ -4973,7 +4998,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             d_str = st.strftime('%m/%d')
         elif isinstance(st, str):
             try:
-                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                dt = from_storage_format(st.replace('Z', '+00:00'))
                 d_str = dt.strftime('%m/%d')
             except Exception: pass
 
@@ -5002,7 +5027,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             st_str = to_eastern(st).strftime('%H:%M')
         elif isinstance(st, str):
             try:
-                dt = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                dt = from_storage_format(st.replace('Z', '+00:00'))
                 st_str = to_eastern(dt).strftime('%H:%M')
             except Exception:
                 s_st = str(st)
@@ -5202,7 +5227,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     for race in (all_races or races):
         st = get_field(race, 'start_time')
         if isinstance(st, str):
-            try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            try: st = from_storage_format(st.replace('Z', '+00:00'))
             except Exception: continue
         if st and st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
@@ -5214,7 +5239,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         canonical_track = get_canonical_venue(get_field(race, 'venue'))
         num = get_field(race, 'race_number')
         # Deduplication key: Use canonical track/num/date
-        key = (canonical_track, num, st.strftime('%Y%m%d'))
+        key = (canonical_track, num, st.strftime('%y%m%d'))
         if key in seen: continue
         seen.add(key)
 
@@ -5315,7 +5340,7 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
         st = r.start_time
         if isinstance(st, str):
             try:
-                st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                st = from_storage_format(st.replace('Z', '+00:00'))
             except Exception:
                 return 9999
         if st and st.tzinfo is None:
@@ -5337,7 +5362,7 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
         metadata = getattr(r, 'metadata', {})
         st = r.start_time
         if isinstance(st, str):
-            try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            try: st = from_storage_format(st.replace('Z', '+00:00'))
             except Exception: st = None
         date_str = st.strftime('%m/%d') if st else '??/??'
 
@@ -5778,18 +5803,18 @@ class FortunaDB:
             await self.migrate_utc_to_eastern()
             def _update_version():
                 with self._get_conn() as conn:
-                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (2, ?)", (datetime.now(EASTERN).isoformat(),))
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (2, ?)", (to_storage_format(datetime.now(EASTERN)),))
             await self._run_in_executor(_update_version)
             self.logger.info("Schema migrated to version 2")
 
         if current_version < 3:
             def _declutter():
                 # Delete old records to keep database lean (30-day retention cleanup)
-                cutoff = (datetime.now(EASTERN) - timedelta(days=30)).isoformat()
+                cutoff = to_storage_format(datetime.now(EASTERN) - timedelta(days=30))
                 with self._get_conn() as conn:
                     cursor = conn.execute("DELETE FROM tips WHERE report_date < ?", (cutoff,))
                     self.logger.info("Database decluttered (30-day retention cleanup)", deleted_count=cursor.rowcount)
-                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, ?)", (datetime.now(EASTERN).isoformat(),))
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (3, ?)", (to_storage_format(datetime.now(EASTERN)),))
             await self._run_in_executor(_declutter)
             self.logger.info("Schema migrated to version 3")
 
@@ -5805,7 +5830,7 @@ class FortunaDB:
                         conn.execute("DELETE FROM tips")
                     conn.execute(
                         "INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (4, ?)",
-                        (datetime.now(EASTERN).isoformat(),),
+                        (to_storage_format(datetime.now(EASTERN)),),
                     )
             await self._run_in_executor(_housekeeping)
             self.logger.info("Schema migrated to version 4 (Housekeeping complete, long-term retention enabled)")
@@ -5815,14 +5840,14 @@ class FortunaDB:
             def _migrate_v5():
                 with self._get_conn() as conn:
                     # Columns already added in initialization PRAGMA check if missing.
-                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, ?)", (datetime.now(EASTERN).isoformat(),))
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (5, ?)", (to_storage_format(datetime.now(EASTERN)),))
             await self._run_in_executor(_migrate_v5)
             self.logger.info("Schema migrated to version 5 — scoring signal columns added")
 
         if current_version < 6:
             def _migrate_v6():
                 with self._get_conn() as conn:
-                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (6, ?)", (datetime.now(EASTERN).isoformat(),))
+                    conn.execute("INSERT OR REPLACE INTO schema_version (version, applied_at) VALUES (6, ?)", (to_storage_format(datetime.now(EASTERN)),))
             await self._run_in_executor(_migrate_v6)
             self.logger.info("Schema migrated to version 6 — handicap status added")
 
@@ -5858,9 +5883,9 @@ class FortunaDB:
                             val = row[col]
                             if val:
                                 try:
-                                    dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+                                    dt = from_storage_format(val.replace("Z", "+00:00"))
                                     dt_eastern = ensure_eastern(dt)
-                                    updates[col] = dt_eastern.isoformat()
+                                    updates[col] = to_storage_format(dt_eastern)
                                 except Exception: pass
                         if updates:
                             try:
@@ -5881,7 +5906,7 @@ class FortunaDB:
 
         def _log():
             conn = self._get_conn()
-            now = datetime.now(EASTERN).isoformat()
+            now = to_storage_format(datetime.now(EASTERN))
             to_insert = []
             for adapter, data in harvest_summary.items():
                 if isinstance(data, dict):
@@ -5908,7 +5933,7 @@ class FortunaDB:
 
         def _get():
             conn = self._get_conn()
-            cutoff = (datetime.now(EASTERN) - timedelta(days=days)).isoformat()
+            cutoff = to_storage_format(datetime.now(EASTERN) - timedelta(days=days))
             cursor = conn.execute("""
                 SELECT adapter_name,
                        AVG(race_count) as avg_count,
@@ -5954,7 +5979,7 @@ class FortunaDB:
                 rid = tip.get("race_id")
                 if not rid: continue
 
-                report_date = tip.get("report_date") or now.isoformat()
+                report_date = tip.get("report_date") or to_storage_format(now)
                 # Prepare 23 elements for INSERT or UPDATE
                 data = (
                     rid, tip.get("venue"), tip.get("race_number"),
@@ -6024,14 +6049,14 @@ class FortunaDB:
         def _get():
             conn = self._get_conn()
             now = datetime.now(EASTERN)
-            cutoff = (now - timedelta(hours=lookback_hours)).isoformat()
+            cutoff = to_storage_format(now - timedelta(hours=lookback_hours))
 
             cursor = conn.execute(
                 """SELECT * FROM tips
                    WHERE audit_completed = 0
                    AND report_date > ?
                    AND start_time < ?""",
-                (cutoff, now.isoformat())
+                (cutoff, to_storage_format(now))
             )
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
@@ -6086,7 +6111,7 @@ class FortunaDB:
                     outcome.get("superfecta_combination"),
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
-                    datetime.now(EASTERN).isoformat(),
+                    to_storage_format(datetime.now(EASTERN)),
                     outcome.get("match_confidence", "none"),
                     outcome.get("field_size"),
                     race_id
@@ -6254,7 +6279,7 @@ class HotTipsTracker:
 
         await self.db.initialize()
         now = datetime.now(EASTERN)
-        report_date = now.isoformat()
+        report_date = to_storage_format(now)
         new_tips = []
         already_handled_soft_keys = set()
 
@@ -6288,7 +6313,7 @@ class HotTipsTracker:
 
             st = r.start_time
             if isinstance(st, str):
-                try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                try: st = from_storage_format(st.replace('Z', '+00:00'))
                 except Exception: continue
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
@@ -6299,7 +6324,7 @@ class HotTipsTracker:
                 continue
 
             # BUG-12: Secondary soft-key dedup guard
-            soft_key = f"{get_canonical_venue(r.venue)}|{r.race_number}|{st.strftime('%Y%m%d')}"
+            soft_key = f"{get_canonical_venue(r.venue)}|{r.race_number}|{st.strftime('%y%m%d')}"
             if soft_key in already_handled_soft_keys:
                 self.logger.debug("Skipping duplicate play (soft key match)", soft_key=soft_key)
                 continue
@@ -6313,7 +6338,7 @@ class HotTipsTracker:
                 "race_id": r.id,
                 "venue": r.venue,
                 "race_number": r.race_number,
-                "start_time": r.start_time.isoformat() if isinstance(r.start_time, datetime) else str(r.start_time),
+                "start_time": to_storage_format(r.start_time) if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
                 "source": r.source,
                 "1Gap2": gap12,
@@ -6365,7 +6390,7 @@ betting opportunities based on:
 3. Superfecta availability preferred
 
 Usage:
-    python favorite_to_place_monitor.py [--date YYYY-MM-DD] [--refresh-interval 30]
+    python favorite_to_place_monitor.py [--date YYMMDD] [--refresh-interval 30]
 """
 
 @dataclass
@@ -6402,7 +6427,7 @@ class RaceSummary:
             "field_size": self.field_size,
             "superfecta_offered": self.superfecta_offered,
             "adapter": self.adapter,
-            "start_time": self.start_time.isoformat(),
+            "start_time": to_storage_format(self.start_time),
             "mtp": self.mtp,
             "second_fav_odds": self.second_fav_odds,
             "second_fav_name": self.second_fav_name,
@@ -6444,7 +6469,7 @@ class FavoriteToPlaceMonitor:
         Initialize monitor.
 
         Args:
-            target_dates: Dates to fetch races for (YYYY-MM-DD), defaults to today + tomorrow
+            target_dates: Dates to fetch races for (YYMMDD), defaults to today + tomorrow
             refresh_interval: Seconds between refreshes for BET NOW list
         """
         if target_dates:
@@ -6452,7 +6477,7 @@ class FavoriteToPlaceMonitor:
         else:
             today = datetime.now(EASTERN)
             tomorrow = today + timedelta(days=1)
-            self.target_dates = [today.strftime("%Y-%m-%d"), tomorrow.strftime("%Y-%m-%d")]
+            self.target_dates = [today.strftime(DATE_FORMAT), tomorrow.strftime(DATE_FORMAT)]
 
         self.refresh_interval = refresh_interval
         self.config = config or {}
@@ -6629,7 +6654,7 @@ class FavoriteToPlaceMonitor:
                 summary = self._create_race_summary(race, adapter_name)
                 # Stable key: Canonical Venue + Race Number + Date + Discipline
                 canonical_venue = get_canonical_venue(summary.track)
-                date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
+                date_str = summary.start_time.strftime('%y%m%d') if summary.start_time else "Unknown"
                 key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
 
                 if key not in race_map:
@@ -6689,7 +6714,7 @@ class FavoriteToPlaceMonitor:
         for r in sorted(self.all_races, key=lambda x: (x.discipline, x.track, x.race_number)):
             superfecta = "Yes" if r.superfecta_offered else "No"
             # Display time in Eastern with ET suffix
-            st = r.start_time.strftime("%Y-%m-%d %H:%M ET") if r.start_time else "Unknown"
+            st = r.start_time.strftime(" %H:%M ET") if r.start_time else "Unknown"
             lines.append(f"{r.discipline:<5} {r.track[:24]:<25} {r.race_number:<4} {r.field_size:<6} {superfecta:<6} {r.adapter[:24]:<25} {st:<20}")
         lines.append("-" * 120)
         lines.append(f"Total races: {len(self.all_races)}")
@@ -6746,7 +6771,7 @@ class FavoriteToPlaceMonitor:
             "=" * 140,
             "🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140),
             "=" * 140,
-            f"Updated: {datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M:%S')} ET",
+            f"Updated: {datetime.now(EASTERN).strftime(' %H:%M:%S')} ET",
             "Criteria: -10 < MTP <= 120 minutes AND 2nd Favorite Odds >= 4.0",
             "-" * 140
         ]
@@ -6807,7 +6832,7 @@ class FavoriteToPlaceMonitor:
             structlog.get_logger("FortunaTelemetry").warning("empty_bet_now_list", golden_zone_count=len(self.golden_zone_races))
             # Create an indicator file for downstream monitoring (GPT5 Improvement)
             try:
-                alert_file.write_text(datetime.now(EASTERN).isoformat())
+                alert_file.write_text(to_storage_format(datetime.now(EASTERN)))
             except Exception: pass
         else:
             # Clear alert if it exists
@@ -6816,7 +6841,7 @@ class FavoriteToPlaceMonitor:
             except Exception: pass
 
         data = {
-            "generated_at": datetime.now(EASTERN).isoformat(),
+            "generated_at": to_storage_format(datetime.now(EASTERN)),
             "target_dates": self.target_dates,
             "total_races": len(self.all_races),
             "bet_now_count": len(bn),
@@ -6849,7 +6874,7 @@ class FavoriteToPlaceMonitor:
                 self.logger.info("Rotated prediction history file")
         except Exception: pass
 
-        timestamp = datetime.now(EASTERN).isoformat()
+        timestamp = to_storage_format(datetime.now(EASTERN))
         try:
             with open(history_file, 'a', encoding='utf-8') as f:
                 for r in races:
@@ -6955,7 +6980,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         metadata = []
 
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = parse_date_string(date).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -7018,7 +7043,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             return []
 
         try:
-            race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+            race_date = parse_date_string(raw_data["date"]).date()
         except ValueError:
             self.logger.error(
                 "Invalid date format provided to OddscheckerAdapter",
@@ -7076,7 +7101,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         # BUG-6 Fix: Use canonical venue for race ID
         venue_key = get_canonical_venue(track_name).lower().replace(' ', '')
         return Race(
-            id=f"oc_{venue_key}_{start_time.strftime('%Y%m%d')}_r{race_number}",
+            id=f"oc_{venue_key}_{start_time.strftime('%y%m%d')}_r{race_number}",
             venue=track_name,
             race_number=race_number,
             start_time=start_time,
@@ -7172,7 +7197,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         parser = HTMLParser(index_response.text)
         # Updated selector for race links
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = parse_date_string(date).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -7239,7 +7264,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
             return []
 
         try:
-            race_date = datetime.strptime(raw_data["date"], "%Y-%m-%d").date()
+            race_date = parse_date_string(raw_data["date"]).date()
         except ValueError:
             self.logger.error("Invalid date format", date=raw_data.get("date"))
             return []
@@ -7261,7 +7286,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                         venue = normalize_venue_name(data.get("location", {}).get("name", ""))
                         if sd := data.get("startDate"):
                             # 2026-01-28T14:32:00
-                            start_time = datetime.fromisoformat(sd.split('+')[0])
+                            start_time = from_storage_format(sd.split('+')[0])
                         break
 
                 title_node = parser.css_first("title")
@@ -7337,7 +7362,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                     except Exception: pass
 
                 race = Race(
-                    id=f"tf_{venue.lower().replace(' ', '')}_{start_time:%Y%m%d}_R{race_number}",
+                    id=f"tf_{venue.lower().replace(' ', '')}_{start_time:%y%m%d}_R{race_number}",
                     venue=venue,
                     race_number=race_number,
                     start_time=start_time,
@@ -7468,7 +7493,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         race_card_urls = []
         try:
-            target_date = datetime.strptime(date, "%Y-%m-%d").date()
+            target_date = parse_date_string(date).date()
         except Exception:
             target_date = datetime.now(EASTERN).date()
 
@@ -7625,12 +7650,12 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
                 race_datetime_str = f"{date} {race_time_str}"
                 try:
-                    start_time = datetime.strptime(race_datetime_str, "%Y-%m-%d %H:%M")
+                    start_time = datetime.strptime(race_datetime_str, f"{DATE_FORMAT} %H:%M")
                 except ValueError:
                     # Handle cases where time might have extra text or different format
                     time_match = re.search(r"(\d{1,2}:\d{2})", race_time_str)
                     if time_match:
-                        start_time = datetime.strptime(f"{date} {time_match.group(1)}", "%Y-%m-%d %H:%M")
+                        start_time = datetime.strptime(f"{date} {time_match.group(1)}", f"{DATE_FORMAT} %H:%M")
                     else:
                         continue
 
@@ -7864,7 +7889,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         time_str = node_text(time_node)
 
         try:
-            start_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
+            start_time = datetime.strptime(f"{date_str} {time_str}", f"{DATE_FORMAT} %H:%M").replace(tzinfo=EASTERN)
         except Exception:
             return None
 
@@ -8172,11 +8197,11 @@ async def run_discovery(
             st = race.start_time
             if isinstance(st, str):
                 try:
-                    st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                    st = from_storage_format(st.replace('Z', '+00:00'))
                 except (ValueError, TypeError):
                     pass
 
-            date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
+            date_str = st.strftime('%y%m%d') if hasattr(st, 'strftime') else "Unknown"
             # Include discipline in key to avoid misclassification
             key = f"{canonical_venue}|{race.race_number}|{date_str}|{race.discipline}"
             
@@ -8222,7 +8247,7 @@ async def run_discovery(
             st = race.start_time
             if isinstance(st, str):
                 try:
-                    st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+                    st = from_storage_format(st.replace('Z', '+00:00'))
                 except (ValueError, TypeError):
                     continue
             if st.tzinfo is None:
@@ -8289,7 +8314,7 @@ async def run_discovery(
 
         # Calculate today's stats for dashboard
         recent_tips = await tracker.db.get_recent_tips(limit=100)
-        today_str = datetime.now(EASTERN).strftime("%Y-%m-%d")
+        today_str = datetime.now(EASTERN).strftime(DATE_FORMAT)
         today_tips = [t for t in recent_tips if t.get("report_date", "").startswith(today_str)]
 
         cashed = sum(1 for t in today_tips if t.get("verdict") == "CASHED")
@@ -8377,7 +8402,7 @@ async def run_discovery(
         report_data = {
             "races": [r.model_dump(mode='json') for r in qualified],
             "analysis_metadata": result.get("criteria", {}),
-            "timestamp": datetime.now(EASTERN).isoformat(),
+            "timestamp": to_storage_format(datetime.now(EASTERN)),
         }
         qualified_path = get_writable_path("qualified_races.json")
         temp_path = qualified_path.with_suffix(".tmp")
@@ -8587,7 +8612,7 @@ async def main_all_in_one():
     config = load_config()
     logger = structlog.get_logger("main")
     parser = argparse.ArgumentParser(description="Fortuna All-In-One - Professional Racing Intelligence")
-    parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
+    parser.add_argument("--date", type=str, help="Target date (YYMMDD)")
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
     parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
     parser.add_argument("--once", action="store_true", help="Run monitor once")
@@ -8702,9 +8727,9 @@ async def main_all_in_one():
         now = datetime.now(EASTERN)
         future = now + timedelta(hours=args.hours)
 
-        target_dates = [now.strftime("%Y-%m-%d")]
+        target_dates = [now.strftime(DATE_FORMAT)]
         if future.date() > now.date():
-            target_dates.append(future.strftime("%Y-%m-%d"))
+            target_dates.append(future.strftime(DATE_FORMAT))
 
     if args.monitor:
         await ensure_browsers()

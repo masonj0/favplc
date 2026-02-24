@@ -193,7 +193,7 @@ def detect_stale_tips(
     max_age_days: int = STALE_DAYS,
 ) -> List[Dict[str, Any]]:
     """Unaudited tips older than the results lookback window."""
-    cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).isoformat()
+    cutoff = to_storage_format(datetime.utcnow() - timedelta(days=max_age_days))
     return [
         dict(r)
         for r in conn.execute("""
@@ -468,7 +468,7 @@ def run(
     mode = "🔴 EXECUTE" if execute else "🟡 DRY RUN"
     emit(f"# 🧹 Fortuna Data Purge — {mode}\n")
     emit(f"**Database:** `{db_path}` ({db_path.stat().st_size / 1024:.1f} KB)")
-    emit(f"**Time:** {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+    emit(f"**Time:** {datetime.utcnow().strftime('%y%m%dT%H:%M:%S UTC')}\n")
 
     if not db_path.exists():
         emit("❌ Database not found!")

@@ -8,6 +8,12 @@ from functools import lru_cache
 
 EASTERN = ZoneInfo("America/New_York")
 
+# JB's Preferred Date Format (YYMMDD)
+DATE_FORMAT: Final[str] = "%y%m%d"
+DATE_FORMAT_OLD: Final[str] = "%Y-%m-%d"
+# Storage format without dashes (YYMMDDTHHMMSS)
+STORAGE_FORMAT: Final[str] = "%y%m%dT%H:%M:%S"
+
 MAX_VALID_ODDS: Final[float] = 1000.0
 MIN_VALID_ODDS: Final[float] = 1.01
 # 2.75 is chosen as a conservative implied place-odds estimate (approx 7/4)
@@ -487,6 +493,43 @@ def detect_discipline(html_content: str) -> str:
     for disc, keywords in DISCIPLINE_KEYWORDS.items():
         if any(kw in html_lower for kw in keywords): return disc
     return "Thoroughbred"
+
+def parse_date_string(date_str: str) -> datetime:
+    """Parses a date string in YYMMDD (preferred) or YYYY-MM-DD (legacy) format."""
+    if not date_str:
+        return now_eastern()
+
+    # Try preferred YYMMDD first
+    try:
+        return datetime.strptime(date_str, DATE_FORMAT).replace(tzinfo=EASTERN)
+    except ValueError:
+        pass
+
+    # Try legacy YYYY-MM-DD
+    try:
+        return datetime.strptime(date_str, DATE_FORMAT_OLD).replace(tzinfo=EASTERN)
+    except ValueError:
+        pass
+
+    # Final fallback: just return now
+    return now_eastern()
+
+def to_storage_format(dt: datetime) -> str:
+    """Converts a datetime to JB's preferred storage format (YYMMDDTHH:MM:SS)."""
+    return dt.strftime(STORAGE_FORMAT)
+
+def from_storage_format(s: str) -> datetime:
+    """Parses a datetime from storage format or legacy ISO format."""
+    if not s:
+        return now_eastern()
+    try:
+        return datetime.strptime(s, STORAGE_FORMAT).replace(tzinfo=EASTERN)
+    except (ValueError, TypeError):
+        try:
+            # Fallback to ISO
+            return datetime.fromisoformat(str(s).replace("Z", "+00:00")).astimezone(EASTERN)
+        except Exception:
+            return now_eastern()
 
 def now_eastern() -> datetime:
     """Returns the current time in US Eastern Time."""
