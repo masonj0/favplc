@@ -711,7 +711,7 @@ class AuditorEngine:
             # If we only have odds for one runner (e.g. the winner), we can't find 2nd fav
             return None
 
-        # Return the odds of the actual second favorite (Claude Fix)
+        # Return the odds of the actual second favorite
         return float(runners_list[1][1])
 
     @staticmethod
@@ -749,7 +749,7 @@ class AuditorEngine:
                 # We know they placed because they won or have a win payout
                 return Verdict.CASHED_ESTIMATED, round((STANDARD_BET * max(1.1, 1.0 + ((sel.final_win_odds or fortuna.DEFAULT_ODDS_FALLBACK) - 1.0) / 5.0)) - STANDARD_BET, 2)
 
-            # Missing position often means parsing gap, not a loss (Claude Fix)
+            # Missing position often means parsing gap, not a loss
             return Verdict.VOID, 0.0
 
         places_paid = get_places_paid(len(result.active_runners), is_handicap=result.is_handicap)
@@ -1772,7 +1772,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
 
         odds_source = "extracted" if final_odds is not None else None
 
-        # Advanced heuristic fallback (Jules Fix)
+        # Advanced heuristic fallback
         if final_odds is None:
             final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
             if final_odds is not None:
@@ -1807,7 +1807,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     IMPERSONATE = "chrome128"
     TIMEOUT = 60
 
-    def __init__(self, config: Optional[Config] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(config=config)
         self.headers.update({
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
@@ -2041,7 +2041,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             )
             odds_source = "starting_price" if final_odds > 0.01 else None
 
-            # Advanced heuristic fallback (Jules Fix)
+            # Advanced heuristic fallback
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
                 if final_odds > 0.01:
@@ -2542,7 +2542,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             )
             odds_source = "starting_price" if final_odds > 0.01 else None
 
-            # Advanced heuristic fallback (Jules Fix)
+            # Advanced heuristic fallback
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
                 if final_odds > 0.01:
@@ -3080,7 +3080,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
                 'div[class*="ResultRunner__StyledRunnerPositionContainer"]',
             )
 
-            # Extract odds from HTML fallback (Jules Fix)
+            # Extract odds from HTML fallback
             final_odds = fortuna.SmartOddsExtractor.extract_from_node(row)
 
             runners.append(ResultRunner(
@@ -3161,7 +3161,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
             return []
 
         parser = HTMLParser(html)
-        # Relaxed venue detection: try headers first, then scan text if needed (Jules Fix)
+        # Relaxed venue detection: try headers first, then scan text if needed
         venue_node = parser.css_first("h1#condition-name") or parser.css_first("h1") or parser.css_first("h2") or parser.css_first("strong")
 
         venue_text = ""
@@ -3309,7 +3309,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
                         continue
 
                 # Table line: 2   Forefather(L)               2    9/14T ... 8.60   T Schlatman
-                # Relaxed regex to handle tight spacing in harness result tables (Jules Fix)
+                # Relaxed regex to handle tight spacing in harness result tables
                 rm = re.match(r"^(\d+)\s+(.+?)(?:\s{2,}|$)", clean_line)
                 if rm:
                     num = int(rm.group(1))
@@ -3463,7 +3463,7 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
             final_odds = parse_fractional_odds(fortuna.node_text(odds_node)) if odds_node else 0.0
             odds_source = "starting_price" if final_odds > 0.01 else None
 
-            # Advanced heuristic fallback (Jules Fix)
+            # Advanced heuristic fallback
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
                 if final_odds > 0.01:
@@ -3614,7 +3614,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 45
 
     def _parse_races(self, raw_data: Any) -> List["ResultRace"]:
-        """Override to assign sequential race numbers per venue (Jules Fix)."""
+        """Override to assign sequential race numbers per venue."""
         races: List[ResultRace] = super()._parse_races(raw_data)
         if not races:
             return races
@@ -3741,7 +3741,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
             )
             odds_source = "starting_price" if final_odds > 0.01 else None
 
-            # Advanced heuristic fallback (Jules Fix)
+            # Advanced heuristic fallback
             if final_odds <= 0.01:
                 final_odds = fortuna.SmartOddsExtractor.extract_from_node(row) or 0.0
                 if final_odds > 0.01:
@@ -3974,7 +3974,7 @@ def get_results_adapter_classes() -> List[Type[fortuna.BaseAdapterV3]]:
         for c in _all_subclasses(fortuna.BaseAdapterV3)
         if not getattr(c, "__abstractmethods__", None)
         and getattr(c, "ADAPTER_TYPE", "discovery") == "results"
-        and hasattr(c, "SOURCE_NAME") # Filter out base classes without SOURCE_NAME (GPT5 Fix)
+        and hasattr(c, "SOURCE_NAME") # Filter out base classes without SOURCE_NAME
         and not getattr(c, "DECOMMISSIONED", False)
     ]
 
@@ -4008,7 +4008,7 @@ async def managed_adapters(
         adapters.append(adapter)
 
         # Optimization: Do NOT double-up mobile versions for results auditing
-        # This prevents resource exhaustion and timeouts during heavy audits (Jules Fix)
+        # This prevents resource exhaustion and timeouts during heavy audits
 
     try:
         yield adapters
