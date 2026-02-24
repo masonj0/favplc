@@ -1188,10 +1188,12 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "DRFResults"
     BASE_URL = "https://www1.drf.com"
     HOST = "www1.drf.com"
+    IMPERSONATE = "chrome133"
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # BUG-1 Fix: Use CURL_CFFI with impersonation to bypass login wall
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.HTTPX,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=False,
             timeout=45
         )
@@ -1376,7 +1378,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
     """
     SOURCE_NAME = "NYRABetsResults"
     BASE_URL = "https://www.nyrabets.com"
-    API_URL = "https://iapi-webservice.nyrabets.com"
+    # BUG-1 Fix: Updated API URL to resolve DNS issues
+    API_URL = "https://api.nyrabets.com"
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
@@ -2087,6 +2090,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
     _USA_TRACK_SLUGS: Final[frozenset[str]] = frozenset({
         # ── US thoroughbred ───────────────────────────────────────────────
         "aqueduct",
+        "aqueduct-park",
         "belmont-park",
         "belmont",
         "saratoga",
@@ -2108,6 +2112,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         "tampa-bay-downs",
         "tampa-bay",
         "tampa",
+        "tampa-bay-downs-park",
         "turfway-park",
         "turfway",
         "turf-paradise",
@@ -2138,6 +2143,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         "emerald-downs",
         "sunland-park",
         "sunland",
+        "sunland-park-raceway",
         "lone-star-park",
         "lone-star",
         "delta-downs",
@@ -2255,7 +2261,16 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
                 return False
 
         # Case 2: Named slug match (exact segment match to prevent false positives)
-        return slug in cls._USA_TRACK_SLUGS
+        is_usa = slug in cls._USA_TRACK_SLUGS
+        if is_usa:
+            return True
+
+        # Fallback: substring match for slugs that might have appended noise
+        for usa_slug in cls._USA_TRACK_SLUGS:
+            if usa_slug in slug:
+                return True
+
+        return False
 
 
 # -- AT THE RACES RESULTS ADAPTER ---------------------------------------------

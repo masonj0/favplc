@@ -69,7 +69,8 @@ jobs:
           SNAP_DIR       = Path("_audit_snapshots")
           SNAP_DIR.mkdir(exist_ok=True)
           buf            = []
-          _DEADLINE      = datetime.now() + timedelta(minutes=25)
+          # BUG-1 Fix: Increased deadline to 35m to accommodate longer audit execution
+          _DEADLINE      = datetime.now() + timedelta(minutes=35)
           now_et         = datetime.now(EASTERN)
           LOOKBACK       = int(os.environ.get("LOOKBACK_HOURS", "72"))
           FORCE_DIAG     = os.environ.get("FORCE_DIAG", "false").lower() == "true"
@@ -113,9 +114,10 @@ jobs:
 
           try:
               t0 = time.time()
+              # BUG-1 Fix: Increased timeout to 1200s to handle large batches and browser overhead
               result = subprocess.run(
                   ["python3", "fortuna_analytics.py", "--days", "3", "--lookback-hours", str(LOOKBACK), "--include-lifetime-stats"],
-                  capture_output=True, text=True, timeout=600, env={**os.environ, "PYTHONPATH": "."}
+                  capture_output=True, text=True, timeout=1200, env={**os.environ, "PYTHONPATH": "."}
               )
               elapsed = time.time() - t0
               emit(f"**Exit code:** {result.returncode} · **Duration:** {elapsed:.1f}s\n")
@@ -260,7 +262,7 @@ jobs:
           elif severity == "WARNING":
               emit("1. Check Phase 3 harvest logs for failures.")
               emit("2. Review stuck tips age distribution.")
-              emit("3. If audit timed out: verify BUG-1 fix (DEFAULT_ODDS_FALLBACK) is deployed.")
+              emit("3. If audit timed out: verify BUG-1 fix (Persistent Browser Sessions) is deployed.")
           else: emit("1. System healthy. Monitor ROI trend.")
           emit("\n---\n*Audit assessment completed at " + datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET') + "*")
           flush()
