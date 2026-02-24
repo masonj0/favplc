@@ -40,7 +40,7 @@ BLOCK_SIGS = (
 
 # ── Date logic ──────────────────────────────────────────────────────
 results_date = os.environ.get("TEST_DATE", "").strip() or (
-    today - timedelta(days=1)).strftime("%Y-%m-%d")
+    today - timedelta(days=1)).strftime("%y%m%d")
 
 usa_date_env = os.environ.get("USA_DATE", "").strip()
 if usa_date_env:
@@ -49,10 +49,10 @@ else:
     # BUG FIX: Ensure Saturday doesn't jump back 7 days if run on Saturday
     days_since_sat = (today.weekday() - 5) % 7
     last_sat = today - timedelta(days=days_since_sat)
-    usa_test_date = last_sat.strftime("%Y-%m-%d")
+    usa_test_date = last_sat.strftime("%y%m%d")
 
 EQB_BASE = "https://www.equibase.com"
-DATE_SHORT = datetime.strptime(usa_test_date, "%Y-%m-%d").strftime("%m%d%y")
+DATE_SHORT = datetime.strptime(usa_test_date, "%y%m%d").strftime("%m%d%y")
 
 # ── Global configuration ────────────────────────────────────────────
 ADAPTER_TIMEOUT = 60
@@ -79,7 +79,7 @@ def save_snapshot(name, content, url=""):
         (SNAP_DIR / f"{safe}.html").write_text(content[:120_000], encoding="utf-8")
         (SNAP_DIR / f"{safe}.meta.txt").write_text(
             f"URL: {url}\nLength: {len(content)}\n"
-            f"Saved: {datetime.now(EASTERN).isoformat()}\n", encoding="utf-8")
+            f"Saved: {to_storage_format(datetime.now(EASTERN))}\n", encoding="utf-8")
     except Exception:
         pass
 
@@ -250,7 +250,7 @@ def q1_db_reality():
             h = st_et.hour
             hour_counts[h] = hour_counts.get(h, 0) + 1
             emit(f"  {row['venue']:28s} "
-                 f"{st_et.strftime('%Y-%m-%d %H:%M ET'):<18s}  "
+                 f"{st_et.strftime('%y%m%d %H:%M ET'):<18s}  "
                  f"{row['race_id']}")
         except Exception:
             emit(f"  {row['venue']:28s} "
@@ -323,7 +323,7 @@ def q3_network():
         "https://www.twinspires.com",
         "https://www.equibase.com",
         "https://www.nyrabets.com",
-        "https://brk0201-iapi-webservice.nyrabets.com",
+        "https://api.nyrabets.com",
     })
     emit("```")
     for url in domains:
@@ -783,7 +783,7 @@ def q13_diagnosis():
 # MAIN LOOP
 # ═══════════════════════════════════════════════════════════════════
 emit("# 🏇 Fortuna Diagnostic v4 — USA Thoroughbred Pipeline\n")
-emit(f"> General date: **{results_date}** · USA date: **{usa_test_date}** · Generated: {today.strftime('%Y-%m-%d %H:%M ET')}\n")
+emit(f"> General date: **{results_date}** · USA date: **{usa_test_date}** · Generated: {today.strftime('%y%m%d %H:%M ET')}\n")
 flush()
 
 for section in [q1_db_reality, q2_adapters, q3_network, q4_equibase, q5_racing_post,

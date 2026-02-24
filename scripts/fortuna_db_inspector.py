@@ -114,7 +114,7 @@ class FortunaDBInspector:
 
     def run_full_report(self) -> None:
         self.log(section("FORTUNA DATABASE INSPECTION REPORT"))
-        self.log(f"{INDENT}Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log(f"{INDENT}Generated: {datetime.now().strftime('%y%m%dT%H:%M:%S')}")
         self.log(f"{INDENT}Database:  {self.db_path.resolve()}")
 
         self._file_metadata()
@@ -139,7 +139,7 @@ class FortunaDBInspector:
 
         stat = self.db_path.stat()
         self.log(f"{INDENT}File size:     {fmt_bytes(stat.st_size)}")
-        self.log(f"{INDENT}Last modified: {datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S')}")
+        self.log(f"{INDENT}Last modified: {datetime.fromtimestamp(stat.st_mtime).strftime('%y%m%dT%H:%M:%S')}")
 
         # SQLite metadata
         self.cur.execute("PRAGMA page_size;")
