@@ -1029,7 +1029,7 @@ class PageFetchingResultsAdapter(
             return False
 
         compact_formats = (
-            dt.strftime("%Y%m%d"),       # 20260209
+            dt.strftime(DATE_FORMAT),       # 20260209
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1532,7 +1532,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             "/static/chart/summary/index.html?SAP=TN",
             f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}",
             f"/static/chart/summary/{dt.strftime('%m%d%y')}sum.html",
-            f"/static/chart/summary/{dt.strftime('%Y%m%d')}sum.html",
+            f"/static/chart/summary/{dt.strftime(DATE_FORMAT)}sum.html",
         ]
 
         resp = await self._fetch_first_valid_index(index_urls)
@@ -2236,7 +2236,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         if not segments:
             return False
 
-        # Skip the first segment if it looks like a date (YYYY-MM-DD)
+        # Skip the first segment if it looks like a date (YYMMDD)
         if segments and re.match(r'\d{4}-\d{2}-\d{2}', segments[0]):
              segments = segments[1:]
 
