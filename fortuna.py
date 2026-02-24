@@ -791,7 +791,7 @@ class GlobalResourceManager:
         async with lock:
             client = cls._clients.get(loop)
             if client is not None:
-                # Guard against None in timeout comparison (GPT5 Fix)
+                # Guard against None in timeout comparison
                 current_timeout = getattr(client.timeout, "read", None)
                 if timeout is not None and current_timeout is not None and abs(current_timeout - timeout) > 0.001:
                     try:
@@ -957,7 +957,7 @@ class SmartFetcher:
                 ua = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
                 bf_headers['User-Agent'] = ua
 
-                # Copy headers before mutation to avoid leaking state across requests (GPT5 Fix)
+                # Copy headers before mutation to avoid leaking state across requests
                 headers = dict(kwargs.get("headers", {}))
                 # Merge - browserforge headers complement provided ones
                 for k, v in bf_headers.items():
@@ -1000,8 +1000,8 @@ class SmartFetcher:
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
 
             # BUG-14: Impersonation fallback chain to handle unsupported versions
-            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome128"
-            impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome116", "chrome110"]
+            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome133"
+            impersonate_chain = [requested_impersonate, "chrome133", "chrome128", "chrome124", "chrome120", "chrome116", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
             
@@ -1321,7 +1321,7 @@ class RacePageFetcherMixin:
                         resp = None
                         for attempt in range(2): # 1 retry
                             resp = await self.make_request("GET", url, headers=headers)
-                            # Lowered threshold to 100 to avoid unnecessary retries for small valid data files (Jules Fix)
+                            # Lowered threshold to 100 to avoid unnecessary retries for small valid data files
                             if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 100:
                                 break
                             await asyncio.sleep(1 * (attempt + 1))
@@ -1345,7 +1345,7 @@ class RacePageFetcherMixin:
 # --- BASE ADAPTER ---
 class BaseAdapterV3(ABC):
     ADAPTER_TYPE: ClassVar[str] = "discovery"
-    # Default to False to ensure races with partial odds data are analyzed (GPT5 Fix)
+    # Default to False to ensure races with partial odds data are analyzed
     PROVIDES_ODDS: ClassVar[bool] = False
 
     def __init__(self, source_name: str, base_url: str, rate_limit: float = 10.0, config: Optional[Dict[str, Any]] = None, **kwargs: Any) -> None:
@@ -1354,6 +1354,7 @@ class BaseAdapterV3(ABC):
         self.config = config or {}
         # Merge kwargs into config
         self.config.update(kwargs)
+        self.headers: Dict[str, str] = {}
         self.trust_ratio = 0.0 # Tracking odds quality ratio (0.0 to 1.0)
 
         # Override rate_limit from config if present
@@ -1416,7 +1417,7 @@ class BaseAdapterV3(ABC):
         total_runners = 0
         trustworthy_runners = 0
 
-        # Propagate adapter capability flag to race metadata (GPT5 Fix)
+        # Propagate adapter capability flag to race metadata
         for r in races:
             r.metadata["provides_odds"] = self.PROVIDES_ODDS
 
@@ -1445,14 +1446,14 @@ class BaseAdapterV3(ABC):
                 if not runner.scratched:
                     # Explicitly enrich win_odds using all available sources (including fallbacks)
                     best = _get_best_win_odds(runner)
-                    # Untrustworthy odds should be flagged (Memory Directive Fix)
+                    # Untrustworthy odds should be flagged
                     is_trustworthy = best is not None
                     runner.metadata["odds_source_trustworthy"] = is_trustworthy
                     if best:
                         runner.win_odds = float(best)
                         trustworthy_runners += 1
                     else:
-                        # Clear invalid or missing odds to maintain hygiene (GPT5 Fix)
+                        # Clear invalid or missing odds to maintain hygiene
                         runner.win_odds = None
                     total_runners += 1
 
@@ -1489,7 +1490,15 @@ class BaseAdapterV3(ABC):
             await limiter.acquire()
 
         self.logger.debug("Requesting", method=method, url=full_url)
-        # Apply global concurrency limit (Memory Directive Fix)
+
+        # Merge adapter-level headers if defined
+        if hasattr(self, 'headers') and self.headers:
+            current_headers = kwargs.get("headers", {})
+            # Passed headers take precedence over adapter defaults
+            merged_headers = {**self.headers, **current_headers}
+            kwargs["headers"] = merged_headers
+
+        # Apply global concurrency limit
         async with GlobalResourceManager.get_global_semaphore():
             try:
                 # Use adapter-specific strategy
@@ -1734,7 +1743,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         header_text = clean_text(node_text(header))
 
-        # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+        # Strategy 0: Extract track name from URL if possible (most reliable)
         # URL usually /form-guide/australia/wyong/2026-02-17/R1
         venue = None
         url_parts = url.lower().split("/")
@@ -2209,7 +2218,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
             modules = json.loads(html.unescape(items_raw))
             for module in modules:
                 for meeting in module.get("data", {}).get("items", []):
-                    # Broaden window to capture multiple races (Memory Directive Fix)
+                    # Broaden window to capture multiple races
                     races = [r for r in meeting.get("items", []) if r.get("type") == "racecard"]
 
                     for race in races:
@@ -2375,7 +2384,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
 
         if data:
             for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
-                # Broaden window to capture multiple races (Memory Directive Fix)
+                # Broaden window to capture multiple races
                 races = meeting.get("races", [])
                 for i, race in enumerate(races):
                     r_time_str = race.get("time") # Usually HH:MM
@@ -2443,7 +2452,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             self.logger.debug("Skipping completed race", stage=stage, venue=summary.get("course_name"))
             return None
 
-        # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+        # Strategy 0: Extract track name from URL if possible (most reliable)
         # /racing/racecards/2026-02-18/punchestown/1340/
         track_name = None
         current_url = data.get("query", {}).get("url", "")
@@ -2477,7 +2486,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             wo = parse_odds_to_decimal(rd.get("betting", {}).get("current_odds") or rd.get("betting", {}).get("current_price") or rd.get("forecast_price") or rd.get("forecast_odds") or rd.get("betting_forecast_price") or rd.get("odds") or rd.get("bookmakerOdds") or "")
             odds_source = "extracted" if wo is not None else None
 
-            # Advanced heuristic fallback (Jules Fix)
+            # Advanced heuristic fallback
             if wo is None:
                 wo = SmartOddsExtractor.extract_from_text(str(rd))
                 odds_source = "smart_extractor" if wo is not None else None
@@ -2506,7 +2515,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         try: start_time = datetime.combine(race_date, datetime.strptime(parts[0], "%H:%M").time())
         except Exception: return None
 
-        # Strategy 0: Extract track name from URL if possible (most reliable) (Jules Fix)
+        # Strategy 0: Extract track name from URL if possible (most reliable)
         track_name = None
         url_parts = url.lower().split("/")
         if len(url_parts) >= 5:
@@ -2889,7 +2898,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         races: List[Race] = []
         for item in raw_data["pages"]:
             html_content = item.get("html")
-            # Relaxed check: allow if "Changes Made" or "Track:" exists (Jules Fix)
+            # Relaxed check: allow if "Changes Made" or "Track:" exists
             valid_content = html_content and any(x in html_content for x in ["Final Changes Made", "Changes Made", "Track:", "Post Time:"])
             if not html_content or (not valid_content and not item.get("finalized")):
                 continue
@@ -2917,7 +2926,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         if dm: dist = dm.group(1)
         runners = []
         for line in content.split("\n"):
-            # Robust runner detection: starts with number, then name. (Jules Fix)
+            # Robust runner detection: starts with number, then name.
             # Stops at multiple spaces or common odds markers to prevent swallowing odds into the name.
             m = re.search(r"^\s*(\d+)\s+([A-Z0-9'\-. ]+?)(?:\s{2,}|ML|M/L|Morning Line|$)", line, re.I)
             if m:
@@ -3135,7 +3144,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     """
     SOURCE_NAME: ClassVar[str] = "NYRABets"
     BASE_URL: ClassVar[str] = "https://www.nyrabets.com"
-    API_URL: ClassVar[str] = "https://brk0201-iapi-webservice.nyrabets.com"
+    API_URL: ClassVar[str] = "https://iapi-webservice.nyrabets.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
@@ -3148,7 +3157,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
     def _get_headers(self) -> Dict[str, str]:
         # Using the base domain as host to avoid internal API 403s (Fix 3)
-        h = self._get_browser_headers(host="brk0201-iapi-webservice.nyrabets.com")
+        h = self._get_browser_headers(host="iapi-webservice.nyrabets.com")
         h["Origin"] = "https://www.nyrabets.com"
         h["Referer"] = "https://www.nyrabets.com/"
         h["X-Requested-With"] = "XMLHttpRequest"
@@ -3316,7 +3325,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         resp = None
         for url in index_urls:
-            # Try multiple impersonations to bypass block (Memory Directive Fix)
+            # Try multiple impersonations to bypass block
             for imp in ["chrome120", "chrome110", "safari15_5"]:
                 try:
                     resp = await self.make_request("GET", url, impersonate=imp)
@@ -3393,7 +3402,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             # If it's an index page for a track, we need to extract individual race links
             if "RaceCardIndex" in p.get("url", ""):
                 sub_parser = HTMLParser(html_content)
-                # Only take the "next" race link for this track (Memory Directive Fix)
+                # Only take the "next" race link for this track
                 track_races = []
                 for a in sub_parser.css("a"):
                     sh = (a.attributes.get("href") or "").replace("\\", "/")
@@ -3932,7 +3941,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
                     race.is_handicap = True
 
             # Trustworthiness Airlock (Success Playbook Item)
-            # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
+            # Skip airlock for sources known to not provide odds (discovery-only adapters)
             skip_trust_check = race.metadata.get("provides_odds") is False
             if skip_trust_check:
                 valid_odds_count = sum(
@@ -4067,7 +4076,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             now = datetime.now(EASTERN)
 
         # Success Playbook Hardening (Council of Superbrains)
-        # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds (Jules Fix)
+        # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds
         # BUG-2 Fix: Align with expected config key
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
 
@@ -4119,7 +4128,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             total_active = len(active_runners)
 
             # Trustworthiness Airlock (Success Playbook Item)
-            # Skip airlock for sources known to not provide odds (discovery-only adapters) (GPT5 Fix)
+            # Skip airlock for sources known to not provide odds (discovery-only adapters)
             skip_trust_check = race.metadata.get("provides_odds") is False
             if skip_trust_check:
                 valid_odds_count = sum(
@@ -4150,7 +4159,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Sort odds ascending
             all_odds.sort()
 
-            # Uniform Odds Check: If all runners have identical odds, it's likely a placeholder card (Memory Directive Fix)
+            # Uniform Odds Check: If all runners have identical odds, it's likely a placeholder card
             if len(all_odds) >= 3 and len(set(all_odds)) == 1:
                 self.logger.warning("Race contains uniform odds; likely placeholder data. Skipping.", venue=race.venue, race=race.race_number, odds=float(all_odds[0]))
                 continue
@@ -4465,7 +4474,7 @@ class RaceNotifier:
             return
 
         title = "🐎 High-Value Opportunity!"
-        # Guard against None start_time (GPT5 Fix)
+        # Guard against None start_time
         time_str = race.start_time.strftime('%I:%M %p') if race.start_time else "TBD"
         message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {time_str}"
 
@@ -4586,7 +4595,7 @@ def generate_field_matrix(races: List[Any]) -> str:
         track = normalize_venue_name(get_field(r, 'venue'))
         field_size = len([run for run in get_field(r, 'runners', []) if not get_field(run, 'scratched', False)])
 
-        # Only interested in field sizes 3-14 for this report (Jules Fix)
+        # Only interested in field sizes 3-14 for this report
         if 3 <= field_size <= 14:
             is_gold = get_field(r, 'metadata', {}).get('is_goldmine', False)
             race_num = get_field(r, 'race_number')
@@ -5171,7 +5180,7 @@ async def _generate_audit_history_html() -> str:
 def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """
     Generates a Markdown table summary of upcoming races.
-    Sorted by MTP, ceiling of 18 hours from now (GPT5 Fix).
+    Sorted by MTP, ceiling of 18 hours from now.
     """
     now = datetime.now(EASTERN)
     cutoff = now + timedelta(hours=18)
@@ -5239,7 +5248,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|:---:|"
     ]
     for tr in table_races:
-        # Better alignment: leading zero for single digits (Memory Directive Fix)
+        # Better alignment: leading zero for single digits
         mtp_val = tr['mtp']
         mtp_str = f"{mtp_val:02d}" if 0 <= mtp_val < 10 else str(mtp_val)
         lines.append(f"| {mtp_str}m | {tr['cat']} | {tr['track'][:20]} | {tr['num']} | {tr['field']} | `{tr['top5']}` | {tr['gap']:.2f} | {tr['gold']} | {tr['key']} |")
@@ -5293,38 +5302,8 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
-def format_prediction_row(race: Race) -> str:
-    """Formats a single race prediction for the GHA Job Summary table."""
-    metadata = getattr(race, 'metadata', {})
-
-    st = race.start_time
-    if isinstance(st, str):
-        try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-        except Exception: st = None
-    date_str = st.strftime('%m/%d') if st else '??/??'
-
-    gold = '✅' if metadata.get('is_goldmine') else '—'
-    selection = metadata.get('selection_name') or f"#{metadata.get('selection_number', '?')}"
-    odds = metadata.get('predicted_2nd_fav_odds')
-    odds_str = f"{odds:.2f}" if odds else 'N/A'
-    top5 = getattr(race, 'top_five_numbers', 'TBD')
-    gap = metadata.get('1Gap2', 0.0)
-    gap_str = f"{gap:.2f}"
-
-    payouts = []
-    # Check both metadata and attributes for payouts
-    for label in ('top1_place_payout', 'trifecta_payout', 'superfecta_payout'):
-        val = metadata.get(label) or getattr(race, label, None)
-        if val:
-            display_label = label.replace('_', ' ').title().replace('Top1 ', '')
-            payouts.append(f"{display_label}: ${float(val):.2f}")
-
-    payout_text = ' | '.join(payouts) or 'Awaiting Results'
-    return f"| {date_str} | {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
-
-
 def format_predictions_section(qualified_races: List[Race]) -> str:
-    """Generates the Predictions & Proof section for the GHA Job Summary."""
+    """Generates the Predictions & Proof section for the GHA Job Summary (Monospace Grid)."""
     lines = ["### 🔮 Fortuna Predictions & Proof", ""]
     if not qualified_races:
         lines.append("No Goldmine predictions available for this run.")
@@ -5348,12 +5327,48 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
     # Take top 10 opportunities
     top_10 = sorted_races[:10]
 
-    lines.extend([
-        "| Date | Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
-    ])
+    lines.append("```text")
+    header = f"  {'DATE':<5}  {'VENUE':<18}  {'R#':>2}   {'PICK':<21}  {'ODDS':>6}  {'GAP':>5}  {'GOLD':<4}  {'TOP 5':<5}  PAYOUT PROOF"
+    underline = f"  {'─────':<5}  {'──────────────────':<18}  {'──':>2}   {'─────────────────────':<21}  {'──────':>6}  {'─────':>5}  {'────':<4}  {'─────':<5}  {'────────────':<12}"
+    lines.append(header)
+    lines.append(underline)
+
     for r in top_10:
-        lines.append(format_prediction_row(r))
+        metadata = getattr(r, 'metadata', {})
+        st = r.start_time
+        if isinstance(st, str):
+            try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            except Exception: st = None
+        date_str = st.strftime('%m/%d') if st else '??/??'
+
+        venue = (r.venue or 'Unknown')[:18]
+        rn = str(r.race_number or '?')
+
+        sel_name = metadata.get('selection_name') or "Unknown"
+        sel_num = metadata.get('selection_number', '?')
+        pick = f"#{sel_num} {sel_name}"[:21]
+
+        odds = metadata.get('predicted_2nd_fav_odds')
+        odds_str = f"{odds:>6.2f}" if odds else '   N/A'
+
+        gap = metadata.get('1Gap2', 0.0)
+        gap_str = f"{gap:>5.2f}"
+
+        gold = 'GOLD' if metadata.get('is_goldmine') else ' —  '
+        top5 = str(getattr(r, 'top_five_numbers', 'TBD'))[:5]
+
+        payouts = []
+        # Check both metadata and attributes for payouts
+        for label in ('top1_place_payout', 'trifecta_payout', 'superfecta_payout'):
+            val = metadata.get(label) or getattr(r, label, None)
+            if val:
+                display_label = label.replace('_', ' ').title().replace('Top1 ', '')
+                payouts.append(f"{display_label}: ${float(val):.2f}")
+
+        payout_text = ' | '.join(payouts) or 'Awaiting Results'
+        lines.append(f"  {date_str:<5}  {venue:<18}  {rn:>2}   {pick:<21}  {odds_str}  {gap_str}  {gold}  {top5:<5}  {payout_text}")
+
+    lines.append("```")
     return "\n".join(lines)
 
 
@@ -5372,30 +5387,35 @@ async def format_proof_section(db: FortunaDB) -> str:
             lines.append("Awaiting race results; nothing audited yet.")
             return "\n".join(lines)
 
-        lines.extend([
-            "| Verdict | Profit | Venue | R# | Actual Top 5 | Actual 2nd Fav Odds | Payout Details |",
-            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
-        ])
+        lines.append("```text")
+        header = f"  {'VERDICT':<13}  {'PROFIT':>8}  {'VENUE':<18}  {'R#':>2}   {'ACTUAL TOP 5':<12}  {'ODDS':>6}  PAYOUT DETAILS"
+        underline = f"  {'─────────────':<13}  {'────────':>8}  {'──────────────────':<18}  {'──':>2}   {'────────────':<12}  {'──────':>6}  {'──────────────':<14}"
+        lines.append(header)
+        lines.append(underline)
         for tip in tips:
             payouts = []
             if tip.get('superfecta_payout'):
-                payouts.append(f"Superfecta ${tip['superfecta_payout']:.2f}")
+                payouts.append(f"Super ${tip['superfecta_payout']:.2f}")
             if tip.get('trifecta_payout'):
-                payouts.append(f"Trifecta ${tip['trifecta_payout']:.2f}")
+                payouts.append(f"Tri ${tip['trifecta_payout']:.2f}")
             if tip.get('top1_place_payout'):
                 payouts.append(f"Place ${tip['top1_place_payout']:.2f}")
 
             payout_text = ' / '.join(payouts) if payouts else 'No payout data'
 
             verdict = tip.get("verdict", "?")
-            emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+            emoji = "✅" if verdict in ("CASHED", "CASHED_ESTIMATED") else "❌" if verdict == "BURNED" else "⚪"
             profit = tip.get('net_profit', 0.0)
             actual_odds = tip.get('actual_2nd_fav_odds')
-            actual_odds_str = f"{actual_odds:.2f}" if actual_odds else "N/A"
+            actual_odds_str = f"{actual_odds:>6.2f}" if actual_odds else "   N/A"
+            venue = (tip.get('venue') or 'Unknown')[:18]
+            rn = str(tip.get('race_number', '?'))
+            top5 = (tip.get('actual_top_5') or 'N/A')[:12]
 
             lines.append(
-                f"| {emoji} {verdict} | ${profit:+.2f} | {tip['venue']} | {tip['race_number']} | {tip.get('actual_top_5', 'N/A')} | {actual_odds_str} | {payout_text} |"
+                f"  {emoji} {verdict:<10}  ${profit:>7.2f}  {venue:<18}  {rn:>2}   {top5:<12}  {actual_odds_str}  {payout_text}"
             )
+        lines.append("```")
     except Exception as e:
         lines.append(f"Error generating audited proof: {e}")
 
@@ -5403,20 +5423,19 @@ async def format_proof_section(db: FortunaDB) -> str:
 
 
 def build_harvest_table(summary: Dict[str, Any], title: str) -> str:
-    """Generates a harvest performance table for the GHA Job Summary."""
+    """Generates a harvest performance table for the GHA Job Summary (Monospace)."""
     lines = [f"### {title}", ""]
-    if not summary:
-        lines.extend([
-            "| Adapter | Races | Max Odds | Status |",
-            "| --- | --- | --- | --- |",
-            "| N/A | 0 | 0.0 | ⚠️ No harvest data |"
-        ])
-        return "\n".join(lines)
 
-    lines.extend([
-        "| Adapter | Races | Max Odds | Status |",
-        "| --- | --- | --- | --- |"
-    ])
+    lines.append("```text")
+    header = f"  {'ADAPTER':<32}  {'RACES':>5}  {'MAX ODDS':>9}  STATUS"
+    underline = f"  {'────────────────────────────────':<32}  {'─────':>5}  {'─────────':>9}  ──────────"
+    lines.append(header)
+    lines.append(underline)
+
+    if not summary:
+        lines.append(f"  {'N/A':<32}  {0:>5}  {0.0:>9.1f}  ⚠️ No Data")
+        lines.append("```")
+        return "\n".join(lines)
 
     # Sort by Records Found (descending), then alphabetically
     def sort_key(item):
@@ -5435,7 +5454,9 @@ def build_harvest_table(summary: Dict[str, Any], title: str) -> str:
             max_odds = 0.0
 
         status = '✅' if count > 0 else '⚠️ No Data'
-        lines.append(f"| {adapter} | {count} | {max_odds:.1f} | {status} |")
+        lines.append(f"  {adapter:<32}  {count:>5}  {max_odds:>9.1f}  {status}")
+
+    lines.append("```")
     return "\n".join(lines)
 
 
@@ -5503,7 +5524,7 @@ def get_writable_path(filename: str) -> Path:
             out_dir = Path(appdata) / "Fortuna"
             out_dir.mkdir(parents=True, exist_ok=True)
             target = out_dir / filename
-            # Ensure subdirectories within Fortuna folder exist (Jules Fix)
+            # Ensure subdirectories within Fortuna folder exist
             target.parent.mkdir(parents=True, exist_ok=True)
             return target
     return Path(filename)
@@ -5556,7 +5577,7 @@ class FortunaDB:
                 # and a connection lock for all direct cursor operations.
                 self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
                 self._conn.row_factory = sqlite3.Row
-                # Enable WAL mode for better concurrency once during initialization (GPT5 Fix)
+                # Enable WAL mode for better concurrency once during initialization
                 try:
                     self._conn.execute("PRAGMA journal_mode=WAL")
                 except sqlite3.Error:
@@ -5651,7 +5672,7 @@ class FortunaDB:
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
 
-                # Cleanup potential duplicates before creating unique index (Memory Directive Fix)
+                # Cleanup potential duplicates before creating unique index
                 try:
                     self.logger.info("Cleaning up duplicate race_ids before indexing")
                     conn.execute("""
@@ -5826,7 +5847,7 @@ class FortunaDB:
             converted = 0
             errors = 0
 
-            # Process in chunks of 1000 for safety (Memory Directive Fix)
+            # Process in chunks of 1000 for safety
             for i in range(0, total, 1000):
                 chunk = rows[i:i+1000]
                 with conn:
@@ -6237,7 +6258,7 @@ class HotTipsTracker:
         new_tips = []
         already_handled_soft_keys = set()
 
-        # Future cutoff relaxed to allow advance tips (Jules Fix)
+        # Future cutoff relaxed to allow advance tips
         future_limit = now + timedelta(hours=24)
 
         for r in races:
@@ -6251,7 +6272,7 @@ class HotTipsTracker:
             active_runners = [run for run in r.runners if not run.scratched]
             total_active = len(active_runners)
 
-            # Ensure trustworthy odds exist before logging (Memory Directive Fix)
+            # Ensure trustworthy odds exist before logging
             if r.metadata.get('predicted_2nd_fav_odds') is None:
                 continue
 
@@ -6600,13 +6621,13 @@ class FavoriteToPlaceMonitor:
             try:
                 # Time window filtering
                 st = race.start_time
-                if not st: continue # Guard against None start_time (GPT5 Fix)
+                if not st: continue # Guard against None start_time
                 if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
                 # Time window filtering removed to ensure all unique races are counted
 
                 summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number + Date + Discipline (GPT5 Fix)
+                # Stable key: Canonical Venue + Race Number + Date + Discipline
                 canonical_venue = get_canonical_venue(summary.track)
                 date_str = summary.start_time.strftime('%Y%m%d') if summary.start_time else "Unknown"
                 key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
@@ -6648,7 +6669,7 @@ class FavoriteToPlaceMonitor:
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            # Timing window limited to 8 hours to ensure yield is audit-able (Jules Fix)
+            # Timing window limited to 8 hours to ensure yield is audit-able
             if -45 < mtp <= 480: # 8 hours
                 timing_window_summaries.append(summary)
 
@@ -6692,7 +6713,7 @@ class FavoriteToPlaceMonitor:
         ]
         # Sort by Superfecta desc, then MTP asc
         bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
-        return bet_now[:15]  # Cap to prevent overwhelming output (GPT5 Fix)
+        return bet_now[:15]  # Cap to prevent overwhelming output
 
     def get_you_might_like_races(self, bet_now_races: Optional[List[RaceSummary]] = None) -> List[RaceSummary]:
         """Get 'You Might Like' races with relaxed criteria (GPT5 Optimized)."""
@@ -6745,7 +6766,7 @@ class FavoriteToPlaceMonitor:
                     fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
                     so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
                     top5 = r.top_five_numbers or "N/A"
-                    # Leading zero alignment (Memory Directive Fix)
+                    # Leading zero alignment
                     m_str = f"{r.mtp:02d}" if 0 <= r.mtp < 10 else str(r.mtp)
                     lines.append(f"{sup:<6} {m_str:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
                 lines.append("-" * 160)
@@ -6820,7 +6841,7 @@ class FavoriteToPlaceMonitor:
         if not races: return
         history_file = get_writable_path("prediction_history.jsonl")
 
-        # Improvement 04: Rotation logic (Memory Directive Fix)
+        # Improvement 04: Rotation logic
         try:
             if history_file.exists() and history_file.stat().st_size > 10 * 1024 * 1024: # 10MB
                 backup = history_file.with_suffix(".jsonl.1")
@@ -6967,7 +6988,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         rt = datetime.strptime(r["time_txt"], "%H:%M").replace(
                             year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        # Broaden window to capture multiple races (Memory Directive Fix)
+                        # Broaden window to capture multiple races
                         diff = (rt - now_site).total_seconds() / 60
                         if not (-45 < diff <= 1080):
                             continue
@@ -6982,7 +7003,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         async def fetch_single_html(url_path: str):
             async with sem:
-                # Small delay to avoid ban (GPT5 Fix)
+                # Small delay to avoid ban
                 await asyncio.sleep(0.5 + random.random() * 0.5)
                 response = await self.make_request("GET", url_path, headers=self._get_headers())
                 return response.text if response else ""
@@ -7187,7 +7208,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
                         rt = datetime.strptime(time_match.group(1), "%H:%M").replace(
                             year=target_date.year, month=target_date.month, day=target_date.day, tzinfo=site_tz
                         )
-                        # Broaden window to capture multiple races (Memory Directive Fix)
+                        # Broaden window to capture multiple races
                         diff = (rt - now_site).total_seconds() / 60
                         if not (-45 < diff <= 1080):
                             continue
@@ -7458,7 +7479,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self._save_debug_html(index_response.text, f"racingpost_index_{date}")
             index_parser = HTMLParser(index_response.text)
 
-            # Broaden window to capture multiple races (Memory Directive Fix)
+            # Broaden window to capture multiple races
             meetings = index_parser.css('.rp-raceCourse__panel') or index_parser.css('.RC-meetingItem') or index_parser.css('.rp-meetingItem') or index_parser.css('.RC-courseCards')
             for meeting in meetings:
                 # Broaden a tag selectors to catch new Racing Post structures
@@ -7542,7 +7563,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             self.metrics.record_parse_warning()
             return None
 
-        # Deduplicate URLs to avoid redundant fetching (Memory Directive Fix)
+        # Deduplicate URLs to avoid redundant fetching
         race_card_urls = list(dict.fromkeys(race_card_urls))
         self.logger.info("Deduplicated RacingPost links", original=len(race_card_urls), unique=len(race_card_urls))
 
@@ -7650,7 +7671,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
             or parser.css('.RC-runnerRow')
         )
 
-        # Betting Forecast Fallback (Jules Fix)
+        # Betting Forecast Fallback
         forecast_map = {}
         for group in parser.css('*[data-test-selector="RC-bettingForecast_group"]'):
             group_text = node_text(group)
@@ -7790,7 +7811,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                         if not match_found:
                             continue
 
-                    # Broaden regex to match various RP result link patterns (Memory Directive Fix)
+                    # Broaden regex to match various RP result link patterns
                     if re.search(r"/results/.*?\d{5,}", href) or \
                        re.search(r"/results/\d+/", href) or \
                        re.search(r"/\d{4}-\d{2}-\d{2}/", href) or \
@@ -7907,7 +7928,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 try: number = _safe_int(node_text(num_node))
                 except Exception: pass
 
-            # Extract SP (Starting Price) odds for audit comparison (GPT5 Fix)
+            # Extract SP (Starting Price) odds for audit comparison
             win_odds = None
             odds_source = None
             sp_node = (
@@ -8017,7 +8038,7 @@ async def run_discovery(
             logger.info("Using loaded races", count=len(loaded_races))
             all_races_raw = loaded_races
             adapters = []
-            # Ensure harvest files exist even for loaded runs (Memory Directive Fix)
+            # Ensure harvest files exist even for loaded runs
             try:
                 harvest_file = get_writable_path("discovery_harvest.json")
                 if not harvest_file.exists():
@@ -8156,7 +8177,7 @@ async def run_discovery(
                     pass
 
             date_str = st.strftime('%Y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            # Include discipline in key to avoid misclassification (GPT5 Fix)
+            # Include discipline in key to avoid misclassification
             key = f"{canonical_venue}|{race.race_number}|{date_str}|{race.discipline}"
             
             if key not in race_map:
@@ -8211,7 +8232,7 @@ async def run_discovery(
             diff = st - now
             mtp = diff.total_seconds() / 60
 
-            # Timing window limited to 8 hours to ensure yield is audit-able (Jules Fix)
+            # Timing window limited to 8 hours to ensure yield is audit-able
             if -45 < mtp <= 480: # 8 hours = 480 mins
                 timing_window_races.append(race)
                 if mtp <= 45:
@@ -8525,11 +8546,11 @@ async def ensure_browsers(force_install: bool = False):
     print(f"  {sys.executable} -m playwright install chromium")
     print("Alternatively, run Fortuna with: --install-browsers\n")
 
-    # Check if we should auto-install via flag or environment variable (GPT5 Fix)
+    # Check if we should auto-install via flag or environment variable
     if force_install or os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
         structlog.get_logger().info("Auto-installing browser dependencies as requested...")
         try:
-            # Remove version pin to avoid conflicts (GPT5 Fix)
+            # Remove version pin to avoid conflicts
             subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True, capture_output=True, text=True)
             subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
             structlog.get_logger().info("Browser dependencies installed successfully.")
