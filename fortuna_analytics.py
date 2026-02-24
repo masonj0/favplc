@@ -1376,7 +1376,7 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
     """
     SOURCE_NAME = "NYRABetsResults"
     BASE_URL = "https://www.nyrabets.com"
-    API_URL = "https://brk0201-iapi-webservice.nyrabets.com"
+    API_URL = "https://iapi-webservice.nyrabets.com"
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(

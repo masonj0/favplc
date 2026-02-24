@@ -1000,8 +1000,8 @@ class SmartFetcher:
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
 
             # BUG-14: Impersonation fallback chain to handle unsupported versions
-            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome128"
-            impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome116", "chrome110"]
+            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome133"
+            impersonate_chain = [requested_impersonate, "chrome133", "chrome128", "chrome124", "chrome120", "chrome116", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
             
@@ -3144,7 +3144,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     """
     SOURCE_NAME: ClassVar[str] = "NYRABets"
     BASE_URL: ClassVar[str] = "https://www.nyrabets.com"
-    API_URL: ClassVar[str] = "https://brk0201-iapi-webservice.nyrabets.com"
+    API_URL: ClassVar[str] = "https://iapi-webservice.nyrabets.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
@@ -3157,7 +3157,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
     def _get_headers(self) -> Dict[str, str]:
         # Using the base domain as host to avoid internal API 403s (Fix 3)
-        h = self._get_browser_headers(host="brk0201-iapi-webservice.nyrabets.com")
+        h = self._get_browser_headers(host="iapi-webservice.nyrabets.com")
         h["Origin"] = "https://www.nyrabets.com"
         h["Referer"] = "https://www.nyrabets.com/"
         h["X-Requested-With"] = "XMLHttpRequest"
