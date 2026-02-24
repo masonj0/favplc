@@ -3398,11 +3398,14 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingAndSportsResults"
     BASE_URL = "https://www.racingandsports.com.au"
     HOST = "www.racingandsports.com.au"
-    IMPERSONATE = "chrome128"
+    IMPERSONATE = "safari17_0"
     TIMEOUT = 60
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         url = f"/racing-results/{date_str}"
+        # FIX_13: Add random delay to bypass RAS bot detection
+        import random
+        await asyncio.sleep(random.uniform(2, 5))
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
             return set()

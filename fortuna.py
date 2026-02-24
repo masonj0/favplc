@@ -1039,8 +1039,9 @@ class SmartFetcher:
                         )
                         return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
                 except Exception as e:
-                    if "impersonate" in str(e).lower() and "not supported" in str(e).lower():
-                        self.logger.debug("curl_cffi impersonate not supported, trying next", version=imp_version)
+                    err_lower = str(e).lower()
+                    if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
+                        self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
                         last_err = e
                         continue
                     raise
