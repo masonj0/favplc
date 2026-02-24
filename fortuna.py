@@ -1017,7 +1017,7 @@ class SmartFetcher:
 
             # BUG-14: Impersonation fallback chain to handle unsupported versions
             requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome133"
-            impersonate_chain = [requested_impersonate, "chrome133", "chrome128", "chrome124", "chrome120", "chrome116", "chrome110"]
+            impersonate_chain = [requested_impersonate, "chrome133", "chrome128", "chrome124", "chrome120"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
             
@@ -1691,7 +1691,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         return self._get_browser_headers(host="www.skyracingworld.com")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome128")
+        kwargs.setdefault("impersonate", "chrome133")
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -1875,7 +1875,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome128")
+        kwargs.setdefault("impersonate", "chrome133")
         return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
@@ -3326,8 +3326,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome128 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
-        kwargs.setdefault("impersonate", "chrome128")
+        # Force chrome133 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
+        kwargs.setdefault("impersonate", "chrome133")
         # Let SmartFetcher/curl_cffi handle headers mostly, but provide minimal essentials if not already set
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.equibase.com/"
@@ -3352,7 +3352,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         resp = None
         for url in index_urls:
             # Try multiple impersonations to bypass block
-            for imp in ["chrome120", "chrome110", "safari15_5"]:
+            for imp in ["chrome133", "chrome128", "safari17_0"]:
                 try:
                     resp = await self.make_request("GET", url, impersonate=imp)
                     if resp and resp.status == 200 and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
@@ -3590,8 +3590,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome128 for TwinSpires to bypass basic bot checks
-        kwargs.setdefault("impersonate", "chrome128")
+        # Force chrome133 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome133")
         # Provide common browser-like headers for TwinSpires
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.google.com/"

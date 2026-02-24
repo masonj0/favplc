@@ -323,7 +323,7 @@ def q3_network():
         "https://www.twinspires.com",
         "https://www.equibase.com",
         "https://www.nyrabets.com",
-        "https://brk0201-iapi-webservice.nyrabets.com",
+        "https://api.nyrabets.com",
     })
     emit("```")
     for url in domains:
