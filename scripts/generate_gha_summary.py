@@ -275,7 +275,7 @@ class SummaryWriter:
 # ═══════════════════════════════════════════════════════════════════
 
 def _build_header(out: SummaryWriter, now: datetime):
-    out.write(f"# 🎯 Fortuna — {now.strftime('%A %b %d, %I:%M %p')} ET")
+    out.write(f"# 🎯 Fortuna — {now.strftime('%y%m%d %A %b %d, %I:%M %p')} ET")
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()

@@ -28,7 +28,7 @@ from fortuna_utils import (
     DISCIPLINE_KEYWORDS, clean_text, node_text, get_canonical_venue,
     normalize_venue_name, parse_odds_to_decimal, SmartOddsExtractor,
     is_placeholder_odds, is_valid_odds, now_eastern, to_eastern,
-    get_places_paid, parse_date_string
+    get_places_paid, parse_date_string, from_storage_format
 )
 import fortuna
 

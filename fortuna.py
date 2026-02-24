@@ -3270,7 +3270,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             race_num = r["raceNumber"]
             start_time_str = r["postTime"]
             try:
-                start_time = datetime.strptime(start_time_str, "T%H:%M:%SZ")
+                # ISO format example: 2026-02-24T14:35:00Z
+                start_time = datetime.strptime(start_time_str, "%Y-%m-%dT%H:%M:%SZ")
             except Exception: continue
             runners = []
             for runner in detail.get("runners", []):
@@ -3551,7 +3552,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         try:
             parts = ts.replace("Post Time:", "").strip().split()
             if len(parts) >= 2:
-                dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", " %I:%M %p")
+                dt = datetime.strptime(f"{ds} {parts[0]} {parts[1]}", f"{DATE_FORMAT} %I:%M %p")
                 return dt.replace(tzinfo=EASTERN)
         except Exception: pass
         # Fallback to noon UTC for the given date if time parsing fails
@@ -4900,7 +4901,8 @@ def generate_historical_goldmine_report(audited_tips: List[Dict[str, Any]]) -> s
 
         try:
             st = from_storage_format(start_time_raw.replace('Z', '+00:00'))
-            time_str = to_eastern(st).strftime(" %H:%M ET")
+            # Use YYMMDD format as per system-wide overhaul
+            time_str = to_eastern(st).strftime("%y%m%dT%H:%M ET")
         except Exception:
             time_str = str(start_time_raw)[:16]
 
@@ -4995,11 +4997,11 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
 
         d_str = '??/??'
         if isinstance(st, datetime):
-            d_str = st.strftime('%m/%d')
+            d_str = st.strftime(DATE_FORMAT)
         elif isinstance(st, str):
             try:
                 dt = from_storage_format(st.replace('Z', '+00:00'))
-                d_str = dt.strftime('%m/%d')
+                d_str = dt.strftime(DATE_FORMAT)
             except Exception: pass
 
         rows.append(f"""
@@ -5364,7 +5366,7 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
         if isinstance(st, str):
             try: st = from_storage_format(st.replace('Z', '+00:00'))
             except Exception: st = None
-        date_str = st.strftime('%m/%d') if st else '??/??'
+        date_str = st.strftime(DATE_FORMAT) if st else '??/??'
 
         venue = (r.venue or 'Unknown')[:18]
         rn = str(r.race_number or '?')
@@ -5851,8 +5853,68 @@ class FortunaDB:
             await self._run_in_executor(_migrate_v6)
             self.logger.info("Schema migrated to version 6 — handicap status added")
 
+        if current_version < 7:
+            def _migrate_v7():
+                with self._get_conn() as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.execute(
+                        "SELECT id, race_id, venue, start_time, "
+                        "race_number, discipline FROM tips"
+                    )
+                    rows = cursor.fetchall()
+                    updates = []
+                    skipped = 0
+                    for row in rows:
+                        try:
+                            old_id = row['race_id']
+                            # Extract prefix (e.g., 'RP') or default to 'unk'
+                            prefix = old_id.split('_')[0] if '_' in old_id else 'unk'
+                            st = from_storage_format(row['start_time'])
+                            new_id = generate_race_id(
+                                prefix, row['venue'], st,
+                                row['race_number'], row['discipline']
+                            )
+                            if old_id != new_id:
+                                updates.append((new_id, row['id']))
+                        except Exception as e:
+                            skipped += 1
+                            self.logger.warning("v7_migration_skip",
+                                race_id=row['race_id'] if isinstance(row, sqlite3.Row) else 'unknown',
+                                error=str(e))
+
+                    updated = 0
+                    deleted = 0
+                    for new_id, row_id in updates:
+                        try:
+                            conn.execute(
+                                "UPDATE tips SET race_id = ? WHERE id = ?",
+                                (new_id, row_id)
+                            )
+                            updated += 1
+                        except sqlite3.IntegrityError:
+                            # If new_id already exists, delete this duplicate record
+                            conn.execute(
+                                "DELETE FROM tips WHERE id = ?",
+                                (row_id,)
+                            )
+                            deleted += 1
+
+                    self.logger.info("v7_migration_stats",
+                        rows_examined=len(rows),
+                        updated=updated,
+                        deleted_duplicates=deleted,
+                        skipped=skipped)
+
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_version "
+                        "(version, applied_at) VALUES (7, ?)",
+                        (to_storage_format(datetime.now(EASTERN)),)
+                    )
+            await self._run_in_executor(_migrate_v7)
+            self.logger.info("Schema migrated to version 7 — race_ids re-keyed")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 6))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 7))
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -6714,7 +6776,7 @@ class FavoriteToPlaceMonitor:
         for r in sorted(self.all_races, key=lambda x: (x.discipline, x.track, x.race_number)):
             superfecta = "Yes" if r.superfecta_offered else "No"
             # Display time in Eastern with ET suffix
-            st = r.start_time.strftime(" %H:%M ET") if r.start_time else "Unknown"
+            st = r.start_time.strftime("%y%m%dT%H:%M ET") if r.start_time else "Unknown"
             lines.append(f"{r.discipline:<5} {r.track[:24]:<25} {r.race_number:<4} {r.field_size:<6} {superfecta:<6} {r.adapter[:24]:<25} {st:<20}")
         lines.append("-" * 120)
         lines.append(f"Total races: {len(self.all_races)}")
