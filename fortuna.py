@@ -5302,38 +5302,8 @@ def format_grid_code(race_info_list, wrap_width=4):
     return wrap_text(code, wrap_width)
 
 
-def format_prediction_row(race: Race) -> str:
-    """Formats a single race prediction for the GHA Job Summary table."""
-    metadata = getattr(race, 'metadata', {})
-
-    st = race.start_time
-    if isinstance(st, str):
-        try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
-        except Exception: st = None
-    date_str = st.strftime('%m/%d') if st else '??/??'
-
-    gold = '✅' if metadata.get('is_goldmine') else '—'
-    selection = metadata.get('selection_name') or f"#{metadata.get('selection_number', '?')}"
-    odds = metadata.get('predicted_2nd_fav_odds')
-    odds_str = f"{odds:.2f}" if odds else 'N/A'
-    top5 = getattr(race, 'top_five_numbers', 'TBD')
-    gap = metadata.get('1Gap2', 0.0)
-    gap_str = f"{gap:.2f}"
-
-    payouts = []
-    # Check both metadata and attributes for payouts
-    for label in ('top1_place_payout', 'trifecta_payout', 'superfecta_payout'):
-        val = metadata.get(label) or getattr(race, label, None)
-        if val:
-            display_label = label.replace('_', ' ').title().replace('Top1 ', '')
-            payouts.append(f"{display_label}: ${float(val):.2f}")
-
-    payout_text = ' | '.join(payouts) or 'Awaiting Results'
-    return f"| {date_str} | {race.venue} | {race.race_number} | {selection} | {odds_str} | {gap_str} | {gold} | {top5} | {payout_text} |"
-
-
 def format_predictions_section(qualified_races: List[Race]) -> str:
-    """Generates the Predictions & Proof section for the GHA Job Summary."""
+    """Generates the Predictions & Proof section for the GHA Job Summary (Monospace Grid)."""
     lines = ["### 🔮 Fortuna Predictions & Proof", ""]
     if not qualified_races:
         lines.append("No Goldmine predictions available for this run.")
@@ -5357,12 +5327,48 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
     # Take top 10 opportunities
     top_10 = sorted_races[:10]
 
-    lines.extend([
-        "| Date | Venue | Race# | Selection | Odds | Gap | Goldmine? | Pred Top 5 | Payout Proof |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
-    ])
+    lines.append("```text")
+    header = f"  {'DATE':<5}  {'VENUE':<18}  {'R#':>2}   {'PICK':<21}  {'ODDS':>6}  {'GAP':>5}  {'GOLD':<4}  {'TOP 5':<5}  PAYOUT PROOF"
+    underline = f"  {'─────':<5}  {'──────────────────':<18}  {'──':>2}   {'─────────────────────':<21}  {'──────':>6}  {'─────':>5}  {'────':<4}  {'─────':<5}  {'────────────':<12}"
+    lines.append(header)
+    lines.append(underline)
+
     for r in top_10:
-        lines.append(format_prediction_row(r))
+        metadata = getattr(r, 'metadata', {})
+        st = r.start_time
+        if isinstance(st, str):
+            try: st = datetime.fromisoformat(st.replace('Z', '+00:00'))
+            except Exception: st = None
+        date_str = st.strftime('%m/%d') if st else '??/??'
+
+        venue = (r.venue or 'Unknown')[:18]
+        rn = str(r.race_number or '?')
+
+        sel_name = metadata.get('selection_name') or "Unknown"
+        sel_num = metadata.get('selection_number', '?')
+        pick = f"#{sel_num} {sel_name}"[:21]
+
+        odds = metadata.get('predicted_2nd_fav_odds')
+        odds_str = f"{odds:>6.2f}" if odds else '   N/A'
+
+        gap = metadata.get('1Gap2', 0.0)
+        gap_str = f"{gap:>5.2f}"
+
+        gold = 'GOLD' if metadata.get('is_goldmine') else ' —  '
+        top5 = str(getattr(r, 'top_five_numbers', 'TBD'))[:5]
+
+        payouts = []
+        # Check both metadata and attributes for payouts
+        for label in ('top1_place_payout', 'trifecta_payout', 'superfecta_payout'):
+            val = metadata.get(label) or getattr(r, label, None)
+            if val:
+                display_label = label.replace('_', ' ').title().replace('Top1 ', '')
+                payouts.append(f"{display_label}: ${float(val):.2f}")
+
+        payout_text = ' | '.join(payouts) or 'Awaiting Results'
+        lines.append(f"  {date_str:<5}  {venue:<18}  {rn:>2}   {pick:<21}  {odds_str}  {gap_str}  {gold}  {top5:<5}  {payout_text}")
+
+    lines.append("```")
     return "\n".join(lines)
 
 
@@ -5381,30 +5387,35 @@ async def format_proof_section(db: FortunaDB) -> str:
             lines.append("Awaiting race results; nothing audited yet.")
             return "\n".join(lines)
 
-        lines.extend([
-            "| Verdict | Profit | Venue | R# | Actual Top 5 | Actual 2nd Fav Odds | Payout Details |",
-            "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
-        ])
+        lines.append("```text")
+        header = f"  {'VERDICT':<13}  {'PROFIT':>8}  {'VENUE':<18}  {'R#':>2}   {'ACTUAL TOP 5':<12}  {'ODDS':>6}  PAYOUT DETAILS"
+        underline = f"  {'─────────────':<13}  {'────────':>8}  {'──────────────────':<18}  {'──':>2}   {'────────────':<12}  {'──────':>6}  {'──────────────':<14}"
+        lines.append(header)
+        lines.append(underline)
         for tip in tips:
             payouts = []
             if tip.get('superfecta_payout'):
-                payouts.append(f"Superfecta ${tip['superfecta_payout']:.2f}")
+                payouts.append(f"Super ${tip['superfecta_payout']:.2f}")
             if tip.get('trifecta_payout'):
-                payouts.append(f"Trifecta ${tip['trifecta_payout']:.2f}")
+                payouts.append(f"Tri ${tip['trifecta_payout']:.2f}")
             if tip.get('top1_place_payout'):
                 payouts.append(f"Place ${tip['top1_place_payout']:.2f}")
 
             payout_text = ' / '.join(payouts) if payouts else 'No payout data'
 
             verdict = tip.get("verdict", "?")
-            emoji = "✅" if verdict == "CASHED" else "❌" if verdict == "BURNED" else "⚪"
+            emoji = "✅" if verdict in ("CASHED", "CASHED_ESTIMATED") else "❌" if verdict == "BURNED" else "⚪"
             profit = tip.get('net_profit', 0.0)
             actual_odds = tip.get('actual_2nd_fav_odds')
-            actual_odds_str = f"{actual_odds:.2f}" if actual_odds else "N/A"
+            actual_odds_str = f"{actual_odds:>6.2f}" if actual_odds else "   N/A"
+            venue = (tip.get('venue') or 'Unknown')[:18]
+            rn = str(tip.get('race_number', '?'))
+            top5 = (tip.get('actual_top_5') or 'N/A')[:12]
 
             lines.append(
-                f"| {emoji} {verdict} | ${profit:+.2f} | {tip['venue']} | {tip['race_number']} | {tip.get('actual_top_5', 'N/A')} | {actual_odds_str} | {payout_text} |"
+                f"  {emoji} {verdict:<10}  ${profit:>7.2f}  {venue:<18}  {rn:>2}   {top5:<12}  {actual_odds_str}  {payout_text}"
             )
+        lines.append("```")
     except Exception as e:
         lines.append(f"Error generating audited proof: {e}")
 
@@ -5412,20 +5423,19 @@ async def format_proof_section(db: FortunaDB) -> str:
 
 
 def build_harvest_table(summary: Dict[str, Any], title: str) -> str:
-    """Generates a harvest performance table for the GHA Job Summary."""
+    """Generates a harvest performance table for the GHA Job Summary (Monospace)."""
     lines = [f"### {title}", ""]
-    if not summary:
-        lines.extend([
-            "| Adapter | Races | Max Odds | Status |",
-            "| --- | --- | --- | --- |",
-            "| N/A | 0 | 0.0 | ⚠️ No harvest data |"
-        ])
-        return "\n".join(lines)
 
-    lines.extend([
-        "| Adapter | Races | Max Odds | Status |",
-        "| --- | --- | --- | --- |"
-    ])
+    lines.append("```text")
+    header = f"  {'ADAPTER':<32}  {'RACES':>5}  {'MAX ODDS':>9}  STATUS"
+    underline = f"  {'────────────────────────────────':<32}  {'─────':>5}  {'─────────':>9}  ──────────"
+    lines.append(header)
+    lines.append(underline)
+
+    if not summary:
+        lines.append(f"  {'N/A':<32}  {0:>5}  {0.0:>9.1f}  ⚠️ No Data")
+        lines.append("```")
+        return "\n".join(lines)
 
     # Sort by Records Found (descending), then alphabetically
     def sort_key(item):
@@ -5444,7 +5454,9 @@ def build_harvest_table(summary: Dict[str, Any], title: str) -> str:
             max_odds = 0.0
 
         status = '✅' if count > 0 else '⚠️ No Data'
-        lines.append(f"| {adapter} | {count} | {max_odds:.1f} | {status} |")
+        lines.append(f"  {adapter:<32}  {count:>5}  {max_odds:>9.1f}  {status}")
+
+    lines.append("```")
     return "\n".join(lines)
 
 
