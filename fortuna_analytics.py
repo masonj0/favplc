@@ -24,10 +24,11 @@ from pydantic import Field, model_validator
 from selectolax.parser import HTMLParser, Node
 
 from fortuna_utils import (
-    EASTERN, VENUE_MAP, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
-    clean_text, node_text, get_canonical_venue, normalize_venue_name,
-    parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
-    is_valid_odds, now_eastern, to_eastern, get_places_paid
+    EASTERN, DATE_FORMAT, DATE_FORMAT_OLD, VENUE_MAP, BET_TYPE_KEYWORDS,
+    DISCIPLINE_KEYWORDS, clean_text, node_text, get_canonical_venue,
+    normalize_venue_name, parse_odds_to_decimal, SmartOddsExtractor,
+    is_placeholder_odds, is_valid_odds, now_eastern, to_eastern,
+    get_places_paid, parse_date_string
 )
 import fortuna
 
@@ -237,7 +238,7 @@ def parse_currency_value(value_str: str) -> float:
 
 def validate_date_format(date_str: str) -> bool:
     try:
-        datetime.strptime(date_str, "%Y-%m-%d")
+        parse_date_string(date_str)
         return True
     except ValueError:
         return False
@@ -324,7 +325,7 @@ class ResultRace(fortuna.Race):
 
     @property
     def canonical_key(self) -> str:
-        d = self.start_time.strftime("%Y%m%d")
+        d = self.start_time.strftime(DATE_FORMAT)
         t = self.start_time.strftime("%H%M")
         disc = (self.discipline or "T")[:1].upper()
         return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{d}|{t}|{disc}"
@@ -332,7 +333,7 @@ class ResultRace(fortuna.Race):
     @property
     def relaxed_key(self) -> str:
         """Venue|Race|Date|Disc — no time component for fuzzy matching."""
-        d = self.start_time.strftime("%Y%m%d")
+        d = self.start_time.strftime(DATE_FORMAT)
         disc = (self.discipline or "T")[:1].upper()
         return f"{fortuna.get_canonical_venue(self.venue)}|{self.race_number}|{d}|{disc}"
 
@@ -629,7 +630,7 @@ class AuditorEngine:
             return (
                 f"{fortuna.get_canonical_venue(venue)}"
                 f"|{race_number}"
-                f"|{st.strftime('%Y%m%d')}"
+                f"|{st.strftime(DATE_FORMAT)}"
                 f"|{st.strftime('%H%M')}"
                 f"|{disc}"
             )
@@ -673,7 +674,7 @@ class AuditorEngine:
             "selection_position": (
                 sel_result.position_numeric if sel_result else None
             ),
-            "audit_timestamp": now_eastern().isoformat(),
+            "audit_timestamp": to_storage_format(now_eastern()),
             "trifecta_payout": result.trifecta_payout,
             "trifecta_combination": result.trifecta_combination,
             "superfecta_payout": result.superfecta_payout,
@@ -808,10 +809,10 @@ def build_start_time(
     *,
     tz: ZoneInfo = EASTERN,
 ) -> datetime:
-    """Build a tz-aware datetime from YYYY-MM-DD + optional HH:MM."""
+    """Build a tz-aware datetime from YYMMDD + optional HH:MM."""
     _log = structlog.get_logger("build_start_time")
     try:
-        base = datetime.strptime(date_str, "%Y-%m-%d")
+        base = parse_date_string(date_str)
     except ValueError:
         _log.warning("unparseable_date", date=date_str)
         base = datetime.now(tz)
@@ -1023,12 +1024,12 @@ class PageFetchingResultsAdapter(
             return True
 
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = parse_date_string(date_str)
         except ValueError:
             return False
 
         compact_formats = (
-            dt.strftime("%Y%m%d"),       # 20260209
+            dt.strftime(DATE_FORMAT),       # 20260209
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1117,7 +1118,7 @@ class PageFetchingResultsAdapter(
         if not raw_data:
             return []
         date_str = raw_data.get(
-            "date", now_eastern().strftime("%Y-%m-%d"),
+            "date", now_eastern().strftime("%y%m%d"),
         )
         races: List[ResultRace] = []
         for item in raw_data.get("pages", []):
@@ -1206,8 +1207,9 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
         }
 
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
-        # YYYY-MM-DD -> YYYYMMDD
-        drf_date = date_str.replace("-", "")
+        # Convert to YYYYMMDD for DRF API
+        dt = parse_date_string(date_str)
+        drf_date = dt.strftime(DATE_FORMAT)
         # FIX_10: Use absolute URL for DRF results
         url = f"{self.BASE_URL}/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE={drf_date}"
         try:
@@ -1399,7 +1401,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
 
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
         # 1. Get Cards for the date
-        nyra_date = f"{date_str}T00:00:00.000"
+        dt = parse_date_string(date_str)
+        nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
         }
@@ -1520,7 +1523,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = parse_date_string(date_str)
         except ValueError:
             self.logger.error("Invalid date format", date=date_str)
             return set()
@@ -1529,7 +1532,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             "/static/chart/summary/index.html?SAP=TN",
             f"/static/chart/summary/index.html?date={dt.strftime('%m/%d/%Y')}",
             f"/static/chart/summary/{dt.strftime('%m%d%y')}sum.html",
-            f"/static/chart/summary/{dt.strftime('%Y%m%d')}sum.html",
+            f"/static/chart/summary/{dt.strftime(DATE_FORMAT)}sum.html",
         ]
 
         resp = await self._fetch_first_valid_index(index_urls)
@@ -1752,7 +1755,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
                 t = datetime.strptime(
                     f"{m.group(1)} {m.group(2).upper()}", "%I:%M %p",
                 ).time()
-                d = datetime.strptime(date_str, "%Y-%m-%d")
+                d = parse_date_string(date_str)
                 return datetime.combine(d, t).replace(tzinfo=EASTERN)
             except ValueError:
                 pass
@@ -1829,7 +1832,10 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     # -- link discovery ----------------------------------------------------
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
-        url = f"/results/{date_str}"
+        # RP requires YYYY-MM-DD
+        dt = parse_date_string(date_str)
+        rp_date = dt.strftime("%Y-%m-%d")
+        url = f"/results/{rp_date}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
             return set()
@@ -2230,7 +2236,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         if not segments:
             return False
 
-        # Skip the first segment if it looks like a date (YYYY-MM-DD)
+        # Skip the first segment if it looks like a date (YYMMDD)
         if segments and re.match(r'\d{4}-\d{2}-\d{2}', segments[0]):
              segments = segments[1:]
 
@@ -2291,7 +2297,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         for r in races:
             key = (
                 fortuna.get_canonical_venue(r.venue),
-                r.start_time.strftime("%Y%m%d"),
+                r.start_time.strftime(DATE_FORMAT),
             )
             groups[key].append(r)
 
@@ -2299,7 +2305,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         for group in groups.values():
             group.sort(key=lambda r: r.start_time)
             for i, race in enumerate(group, start=1):
-                date_str = race.start_time.strftime("%Y-%m-%d")
+                date_str = race.start_time.strftime("%y%m%d")
                 fixed.append(
                     race.model_copy(update={
                         "race_number": i,
@@ -2345,7 +2351,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     # -- link discovery ----------------------------------------------------
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        dt = parse_date_string(date_str)
         index_urls = [
             f"/results/{date_str}",
             f"/results/{dt.strftime('%d-%B-%Y')}",
@@ -2629,7 +2635,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = parse_date_string(date_str)
             url_date = dt.strftime("%d-%B-%Y")
         except ValueError:
             url_date = date_str
@@ -2800,7 +2806,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
         for r in races:
             key = (
                 fortuna.get_canonical_venue(r.venue),
-                r.start_time.strftime("%Y%m%d"),
+                r.start_time.strftime(DATE_FORMAT),
             )
             groups[key].append(r)
 
@@ -2808,7 +2814,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
         for group in groups.values():
             group.sort(key=lambda r: r.start_time)
             for i, race in enumerate(group, start=1):
-                date_str = race.start_time.strftime("%Y-%m-%d")
+                date_str = race.start_time.strftime("%y%m%d")
                 fixed.append(
                     race.model_copy(update={
                         "race_number": i,
@@ -2930,9 +2936,12 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     # -- link discovery ----------------------------------------------------
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
+        # SportingLife requires YYYY-MM-DD
+        dt = parse_date_string(date_str)
+        sl_date = dt.strftime("%Y-%m-%d")
         resp = await self.make_request(
             "GET",
-            f"/racing/results/{date_str}",
+            f"/racing/results/{sl_date}",
             headers=self._get_headers(),
         )
         if not resp or not resp.text:
@@ -3161,7 +3170,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
         )
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
-        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        dt = parse_date_string(date_str)
         date_short = dt.strftime("%m%d")
         return {
             f"/racing/results/data/r{date_short}{track}.dat"
@@ -3402,7 +3411,10 @@ class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 60
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
-        url = f"/racing-results/{date_str}"
+        # RAS requires YYYY-MM-DD
+        dt = parse_date_string(date_str)
+        ras_date = dt.strftime("%Y-%m-%d")
+        url = f"/racing-results/{ras_date}"
         # FIX_13: Add random delay to bypass RAS bot detection
         import random
         await asyncio.sleep(random.uniform(2, 5))
@@ -3536,7 +3548,10 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
         )
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
-        url = f"/horse-racing/results/{date_str}"
+        # Timeform requires YYYY-MM-DD
+        dt = parse_date_string(date_str)
+        tf_date = dt.strftime("%Y-%m-%d")
+        url = f"/horse-racing/results/{tf_date}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
             return set()
@@ -3641,7 +3656,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
         for r in races:
             key = (
                 fortuna.get_canonical_venue(r.venue),
-                r.start_time.strftime("%Y%m%d"),
+                r.start_time.strftime(DATE_FORMAT),
             )
             groups[key].append(r)
 
@@ -3649,7 +3664,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
         for group in groups.values():
             group.sort(key=lambda r: r.start_time)
             for i, race in enumerate(group, start=1):
-                date_str = race.start_time.strftime("%Y-%m-%d")
+                date_str = race.start_time.strftime("%y%m%d")
                 fixed.append(
                     race.model_copy(update={
                         "race_number": i,
@@ -3662,7 +3677,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         try:
-            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            dt = parse_date_string(date_str)
             url_date = dt.strftime("%d-%m-%Y")
         except ValueError:
             url_date = date_str
@@ -3790,8 +3805,8 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
 def _format_tip_time(tip: Dict[str, Any]) -> str:
     raw = tip.get("start_time", "")
     try:
-        dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        return to_eastern(dt).strftime("%Y-%m-%d %H:%M ET")
+        dt = from_storage_format(str(raw).replace("Z", "+00:00"))
+        return to_eastern(dt).strftime("%y%m%dT%H:%M ET")
     except (ValueError, TypeError):
         return str(raw)[:16].replace("T", " ")
 
@@ -3804,7 +3819,7 @@ def generate_analytics_report(
     include_lifetime_stats: bool = False,
 ) -> str:
     """Build the human-readable performance audit report."""
-    now_str = now_eastern().strftime("%Y-%m-%d %H:%M ET")
+    now_str = now_eastern().strftime("%y%m%dT%H:%M ET")
     lines: list[str] = [
         _REPORT_SEP,
         "🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION".center(_REPORT_WIDTH),
@@ -4324,12 +4339,12 @@ def _build_target_dates(
     if explicit_date:
         if not validate_date_format(explicit_date):
             raise ValueError(
-                f"Invalid date format '{explicit_date}'.  Use YYYY-MM-DD.",
+                f"Invalid date format '{explicit_date}'.  Use YYMMDD.",
             )
         return [explicit_date]
     now = now_eastern()
     return [
-        (now - timedelta(days=i)).strftime("%Y-%m-%d")
+        (now - timedelta(days=i)).strftime("%y%m%d")
         for i in range(lookback_days)
     ]
 
@@ -4338,7 +4353,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Fortuna Analytics Engine — Race result auditing and performance analysis",
     )
-    parser.add_argument("--date", type=str, help="Target date (YYYY-MM-DD)")
+    parser.add_argument("--date", type=str, help="Target date (YYMMDD)")
     parser.add_argument(
         "--region",
         type=str,

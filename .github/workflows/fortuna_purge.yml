@@ -10,9 +10,9 @@ on:
         type: choice
         options: ['false', 'true']
       cutoff_date:
-        description: 'Delete ALL tips before this date (YYYY-MM-DD, default is the 2026-02-22 Insight Upgrade)'
+        description: 'Delete ALL tips before this date (YYMMDD, default is the 260222 Insight Upgrade)'
         required: false
-        default: '2026-02-22'
+        default: "260222"
         type: string
       cutoff_time:
         description: 'Delete tips before this time on cutoff date (HH:MM in ET, default: 11:00)'
@@ -106,14 +106,14 @@ jobs:
 
               now_et = datetime.now(EASTERN)
               if not cutoff_date:
-                  cutoff_date = "2026-02-22"
+                  cutoff_date = "260222"
 
               try:
-                  cutoff_dt = datetime.strptime(f"{cutoff_date} {cutoff_time}", "%Y-%m-%d %H:%M").replace(tzinfo=EASTERN)
+                  cutoff_dt = datetime.strptime(f"{cutoff_date} {cutoff_time}", "%y%m%d %H:%M").replace(tzinfo=EASTERN)
               except ValueError:
                   print(f"❌ Invalid cutoff_date format: {cutoff_date}")
                   sys.exit(1)
-              cutoff_iso = cutoff_dt.isoformat()
+              cutoff_iso = to_storage_format(cutoff_dt)
 
               # 2. INITIALIZE & MIGRATE DB
               db_manager = fortuna.FortunaDB("fortuna.db")
@@ -136,8 +136,8 @@ jobs:
 
               print(f"# 🧹 Fortuna Data Purge — {'🔴 EXECUTE' if execute else '🟡 DRY RUN'}\n")
               print(f"**Database:** `fortuna.db` ({size_before:.1f} KB)")
-              print(f"**Time:** {now_et.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-              print(f"**Cutoff:** {cutoff_dt.strftime('%Y-%m-%d %H:%M %Z')}\n")
+              print(f"**Time:** {now_et.strftime('%y%m%d %H:%M:%S %Z')}")
+              print(f"**Cutoff:** {cutoff_dt.strftime('%y%m%d %H:%M %Z')}\n")
 
               print(f"## 📊 Pre-Purge State\n")
               print(f"- **Total tips:** {total}")

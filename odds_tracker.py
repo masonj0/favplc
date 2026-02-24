@@ -4,8 +4,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from notifications import DesktopNotifier
-
-EASTERN = ZoneInfo("America/New_York")
+from fortuna_utils import EASTERN, DATE_FORMAT
 
 class LiveOddsTracker:
     """
@@ -79,7 +78,7 @@ class LiveOddsTracker:
         """Fetch current odds from live source."""
         try:
             # Re-fetch the race data
-            races = await adapter.get_races(datetime.now(EASTERN).strftime("%Y-%m-%d"))
+            races = await adapter.get_races(datetime.now(EASTERN).strftime(DATE_FORMAT))
             target_num = getattr(race, 'race_number', None)
 
             match = next((r for r in races if getattr(r, 'race_number', None) == target_num), None)

@@ -102,7 +102,7 @@ jobs:
 
           # ═══════════════════════════════════════════════════════════════════
           emit("# 🔍 DB Auditor + Pipeline Health Monitor v3.1\n")
-          emit(f"> **Time:** {now_et.strftime('%Y-%m-%d %H:%M ET')} · **Lookback:** {LOOKBACK}h · **Status:** {'Active' if db_existed else 'RECONSTRUCTING'}\n")
+          emit(f"> **Time:** {now_et.strftime('%y%m%d %H:%M ET')} · **Lookback:** {LOOKBACK}h · **Status:** {'Active' if db_existed else 'RECONSTRUCTING'}\n")
           flush()
 
           # ═══════════════════════════════════════════════════════════════════
@@ -264,7 +264,7 @@ jobs:
               emit("2. Review stuck tips age distribution.")
               emit("3. If audit timed out: verify BUG-1 fix (Persistent Browser Sessions) is deployed.")
           else: emit("1. System healthy. Monitor ROI trend.")
-          emit("\n---\n*Audit assessment completed at " + datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET') + "*")
+          emit("\n---\n*Audit assessment completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
           flush()
 
           # ═══════════════════════════════════════════════════════════════════
@@ -448,7 +448,7 @@ jobs:
               emit("### 2O: Tip Distribution by Time (ET)\n```text")
               emit(f"  {'HOUR (ET)':<12} {'COUNT':>8} {'W':>5} {'L':>5} {'HIT%':>7}")
               emit(f"  {'─'*12} {'─'*8} {'─'*5} {'─'*5} {'─'*7}")
-              for r in conn.execute("SELECT SUBSTR(start_time, 12, 2) as hr, COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l FROM tips GROUP BY hr ORDER BY hr"):
+              for r in conn.execute("SELECT SUBSTR(start_time, 8, 2) as hr, COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l FROM tips GROUP BY hr ORDER BY hr"):
                   dec = r['w'] + r['l']
                   hrp = f"{r['w']/dec*100:>6.1f}%" if dec else "    —"
                   emit(f"  {r['hr']:02s}:00        {r['n']:>8} {r['w']:>5} {r['l']:>5} {hrp}")
@@ -559,7 +559,7 @@ jobs:
           emit("```\n")
           flush()
 
-          emit("\n---\n*Audit completed at " + datetime.now(EASTERN).strftime('%Y-%m-%d %H:%M ET') + "*")
+          emit("\n---\n*Audit completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
           flush()
 
           conn.close()
