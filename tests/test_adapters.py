@@ -47,7 +47,7 @@ async def test_at_the_races_adapter_parsing():
     now_site = datetime.now(ZoneInfo("Europe/London"))
     # Set time to 2 hours from now to be safe
     future_time = (now_site + timedelta(hours=2))
-    target_date_str = future_time.strftime("%Y-%m-%d")
+    target_date_str = future_time.strftime("%y%m%d")
     time_str = future_time.strftime("%H%M")
     index_html = f'<html><a href="/racecard/newmarket/{time_str}">Newmarket</a></html>'
 
@@ -212,9 +212,9 @@ def test_generate_race_id_new_format():
     rid = generate_race_id("srw", "Randwick", st, 1, "Thoroughbred")
 
     # Format: {prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}
-    # Expected: srw_randwick_20260207_1430_R1_t
-    assert rid == "srw_randwick_20260207_1430_R1_t"
+    # Expected: srw_randwick_260207_1430_R1_t (Shortened year)
+    assert rid == "srw_randwick_260207_1430_R1_t"
 
     # Harness
     rid_h = generate_race_id("ts", "Meadowlands", st, 5, "Harness")
-    assert rid_h == "ts_meadowlands_20260207_1430_R5_h"
+    assert rid_h == "ts_meadowlands_260207_1430_R5_h"

@@ -170,8 +170,13 @@ def _mtp(start_time_str: Any) -> float:
         if 'Z' in s:
             st = datetime.fromisoformat(s.replace('Z', '+00:00'))
         else:
-            try: st = datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
-            except ValueError: st = datetime.fromisoformat(s)
+            # Try YYMMDD format first (JB's new preference)
+            # Remove any non-alphanumeric separators for parsing flexibility
+            cleaned_s = s.replace('-', '').replace(' ', 'T').split('.')[0].split('+')[0].split('-')[0]
+            try: st = datetime.strptime(cleaned_s, "%y%m%dT%H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
+            except ValueError:
+                try: st = datetime.strptime(cleaned_s, "%Y%m%dT%H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
+                except ValueError: st = datetime.fromisoformat(s)
             if st.tzinfo is None: st = st.replace(tzinfo=ZoneInfo("UTC"))
         now = datetime.now(ZoneInfo("UTC"))
         return (st - now).total_seconds() / 60
@@ -270,7 +275,7 @@ class SummaryWriter:
 # ═══════════════════════════════════════════════════════════════════
 
 def _build_header(out: SummaryWriter, now: datetime):
-    out.write(f"# 🎯 Fortuna — {now.strftime('%A %b %d, %I:%M %p')} ET")
+    out.write(f"# 🎯 Fortuna — {now.strftime('%y%m%d %A %b %d, %I:%M %p')} ET")
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()

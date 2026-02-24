@@ -24,7 +24,14 @@ def merge_json_races(input_files, output_file):
                     num = r.get('raceNumber', r.get('race_number', 0))
                     # Use only date part of start_time if possible
                     st = r.get('startTime', r.get('start_time', ''))
-                    date_str = st[:10] if len(st) >= 10 else "Unknown"
+                    # Improved date extraction (Fix 07):
+                    # STORAGE_FORMAT: 'YYMMDDTHH:MM:SS' (15 chars, has T, no Z) -> first 6 chars = YYMMDD
+                    # ISO fallback: 'YYYY-MM-DD...' -> strip dashes -> '20YYMMDD' -> last 6 chars = YYMMDD
+                    if 'T' in st and len(st) == 15 and 'Z' not in st:
+                        date_str = st[:6]
+                    else:
+                        date_str = st[:10].replace("-", "")[-6:]
+
                     key = f"{venue}|{num}|{date_str}"
 
                     if key not in seen_keys:
@@ -59,6 +66,7 @@ def ensure_schema(conn):
             start_time TEXT NOT NULL,
             report_date TEXT NOT NULL,
             is_goldmine INTEGER NOT NULL,
+            source TEXT,
             gap12 TEXT,
             top_five TEXT,
             selection_number INTEGER,
@@ -78,10 +86,26 @@ def ensure_schema(conn):
             predicted_2nd_fav_odds REAL,
             audit_timestamp TEXT,
             field_size INTEGER,
-            match_confidence TEXT
+            market_depth REAL,
+            place_prob REAL,
+            predicted_ev REAL,
+            race_type TEXT,
+            condition_modifier REAL,
+            qualification_grade TEXT,
+            composite_score REAL,
+            match_confidence TEXT,
+            is_handicap INTEGER,
+            is_best_bet INTEGER,
+            is_superfecta_key INTEGER DEFAULT 0,
+            superfecta_key_number INTEGER,
+            superfecta_key_name TEXT
         )
     """)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+    # Missing indexes (Fix 08)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
 def merge_databases(primary_db, secondary_dbs):
     print(f"Merging {len(secondary_dbs)} databases into {primary_db}...")
@@ -149,7 +173,11 @@ def merge_databases(primary_db, secondary_dbs):
                     selection_position, actual_top_5, actual_2nd_fav_odds,
                     trifecta_payout, trifecta_combination, superfecta_payout,
                     superfecta_combination, top1_place_payout,
-                    top2_place_payout, audit_timestamp, field_size, match_confidence
+                    top2_place_payout, audit_timestamp, field_size, match_confidence,
+                    source, market_depth, place_prob, predicted_ev, race_type,
+                    condition_modifier, qualification_grade, composite_score,
+                    is_handicap, is_best_bet, is_superfecta_key,
+                    superfecta_key_number, superfecta_key_name
                 )
                 SELECT
                     race_id, venue, race_number, discipline, start_time, report_date,
@@ -160,7 +188,13 @@ def merge_databases(primary_db, secondary_dbs):
                     {col_or_null('superfecta_payout')}, {col_or_null('superfecta_combination')},
                     {col_or_null('top1_place_payout')}, {col_or_null('top2_place_payout')},
                     {col_or_null('audit_timestamp')}, {col_or_null('field_size')},
-                    {col_or_null('match_confidence')}
+                    {col_or_null('match_confidence')}, {col_or_null('source')},
+                    {col_or_null('market_depth')}, {col_or_null('place_prob')},
+                    {col_or_null('predicted_ev')}, {col_or_null('race_type')},
+                    {col_or_null('condition_modifier')}, {col_or_null('qualification_grade')},
+                    {col_or_null('composite_score')}, {col_or_null('is_handicap')},
+                    {col_or_null('is_best_bet')}, {col_or_null('is_superfecta_key')},
+                    {col_or_null('superfecta_key_number')}, {col_or_null('superfecta_key_name')}
                 FROM sec.tips
                 WHERE true
                 ON CONFLICT(race_id) DO UPDATE SET
@@ -178,7 +212,20 @@ def merge_databases(primary_db, secondary_dbs):
                     top2_place_payout = COALESCE(excluded.top2_place_payout, tips.top2_place_payout),
                     audit_timestamp = COALESCE(excluded.audit_timestamp, tips.audit_timestamp),
                     field_size = COALESCE(tips.field_size, excluded.field_size),
-                    match_confidence = COALESCE(excluded.match_confidence, tips.match_confidence)
+                    match_confidence = COALESCE(excluded.match_confidence, tips.match_confidence),
+                    source = COALESCE(excluded.source, tips.source),
+                    market_depth = COALESCE(excluded.market_depth, tips.market_depth),
+                    place_prob = COALESCE(excluded.place_prob, tips.place_prob),
+                    predicted_ev = COALESCE(excluded.predicted_ev, tips.predicted_ev),
+                    race_type = COALESCE(excluded.race_type, tips.race_type),
+                    condition_modifier = COALESCE(excluded.condition_modifier, tips.condition_modifier),
+                    qualification_grade = COALESCE(excluded.qualification_grade, tips.qualification_grade),
+                    composite_score = COALESCE(excluded.composite_score, tips.composite_score),
+                    is_handicap = COALESCE(excluded.is_handicap, tips.is_handicap),
+                    is_best_bet = COALESCE(excluded.is_best_bet, tips.is_best_bet),
+                    is_superfecta_key = COALESCE(excluded.is_superfecta_key, tips.is_superfecta_key),
+                    superfecta_key_number = COALESCE(excluded.superfecta_key_number, tips.superfecta_key_number),
+                    superfecta_key_name = COALESCE(excluded.superfecta_key_name, tips.superfecta_key_name)
                 WHERE (excluded.audit_completed = 1 AND tips.audit_completed = 0) OR (tips.audit_completed = 0)
             """
             cursor.execute(insert_sql)

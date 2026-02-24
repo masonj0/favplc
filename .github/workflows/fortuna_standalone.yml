@@ -245,7 +245,7 @@ jobs:
             "sha": "${{ github.sha }}",
             "actor": "${{ github.actor }}",
             "event": "${{ github.event_name }}",
-            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            "timestamp": "$(date -u +%y%m%dT%H:%M:%SZ)"
           }
           EOF
 

@@ -1,6 +1,6 @@
 import pytest
 import aiosqlite
-from fortuna import FortunaDB, EASTERN
+from fortuna import FortunaDB, EASTERN, to_storage_format
 from datetime import datetime, timedelta
 
 @pytest.mark.asyncio
@@ -18,10 +18,10 @@ async def test_fortuna_db_get_adapter_scores(tmp_path):
 
     logs = [
         # (timestamp, region, adapter_name, race_count, max_odds)
-        ((now - timedelta(days=1)).isoformat(), "USA", "AdapterA", 10, 30.0),
-        ((now - timedelta(days=2)).isoformat(), "USA", "AdapterA", 12, 40.0),
-        ((now - timedelta(days=1)).isoformat(), "USA", "AdapterB", 2, 5.0),
-        ((now - timedelta(days=40)).isoformat(), "USA", "AdapterC", 50, 100.0), # Too old
+        (to_storage_format(now - timedelta(days=1)), "USA", "AdapterA", 10, 30.0),
+        (to_storage_format(now - timedelta(days=2)), "USA", "AdapterA", 12, 40.0),
+        (to_storage_format(now - timedelta(days=1)), "USA", "AdapterB", 2, 5.0),
+        (to_storage_format(now - timedelta(days=40)), "USA", "AdapterC", 50, 100.0), # Too old
     ]
 
     async with aiosqlite.connect(str(db_file)) as conn:

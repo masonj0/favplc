@@ -3,12 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       test_date:
-        description: 'General results date (YYYY-MM-DD, default: yesterday ET)'
+        description: 'General results date (YYMMDD, default: yesterday ET)'
         required: false
         default: ''
         type: string
       usa_date:
-        description: 'USA adapter date (YYYY-MM-DD, default: last Saturday — peak US card)'
+        description: 'USA adapter date (YYMMDD, default: last Saturday — peak US card)'
         required: false
         default: ''
         type: string
