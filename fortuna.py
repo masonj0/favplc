@@ -892,12 +892,26 @@ class SmartFetcher:
             BrowserEngine.HTTPX: 0.5
         }
         self.last_engine: str = "unknown"
+        self._sessions: Dict[BrowserEngine, Any] = {}
+        self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
             self.fingerprint_gen = FingerprintGenerator()
         else:
             self.header_gen = None
             self.fingerprint_gen = None
+
+    async def _get_persistent_session(self, engine: BrowserEngine) -> Any:
+        """Returns a persistent session for browser-based engines to avoid launch overhead (Fix 12)."""
+        async with self._session_lock:
+            if engine not in self._sessions:
+                if engine == BrowserEngine.CAMOUFOX:
+                    self._sessions[engine] = AsyncStealthySession(headless=True)
+                    await self._sessions[engine].__aenter__()
+                elif engine == BrowserEngine.PLAYWRIGHT:
+                    self._sessions[engine] = AsyncDynamicSession(headless=True)
+                    await self._sessions[engine].__aenter__()
+            return self._sessions[engine]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
@@ -1025,8 +1039,9 @@ class SmartFetcher:
                         )
                         return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
                 except Exception as e:
-                    if "impersonate" in str(e).lower() and "not supported" in str(e).lower():
-                        self.logger.debug("curl_cffi impersonate not supported, trying next", version=imp_version)
+                    err_lower = str(e).lower()
+                    if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
+                        self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
                         last_err = e
                         continue
                     raise
@@ -1056,10 +1071,11 @@ class SmartFetcher:
             
         # For other engines, we use AsyncFetcher from scrapling
         if engine == BrowserEngine.CAMOUFOX:
-            async with AsyncStealthySession(headless=True) as s:
-                resp = await s.fetch(url, method=method, **scrapling_kwargs)
-                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            # BUG-1 Fix: Use persistent session to avoid launch overhead
+            s = await self._get_persistent_session(engine)
+            resp = await s.fetch(url, method=method, **scrapling_kwargs)
+            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             # Direct Playwright usage for cases where scrapling/camoufox fail
@@ -1087,12 +1103,13 @@ class SmartFetcher:
                 return UnifiedResponse(content, status, status, url, headers)
 
         elif engine == BrowserEngine.PLAYWRIGHT:
-            async with AsyncDynamicSession(headless=True) as s:
-                resp = await s.fetch(url, method=method, **scrapling_kwargs)
-                # Scrapling responses have a .text object that sometimes returns length 0
-                # We ensure it's a string from .body or .html_content
-                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            # BUG-1 Fix: Use persistent session to avoid launch overhead
+            s = await self._get_persistent_session(engine)
+            resp = await s.fetch(url, method=method, **scrapling_kwargs)
+            # Scrapling responses have a .text object that sometimes returns length 0
+            # We ensure it's a string from .body or .html_content
+            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
+            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
         else:
             # Fallback to simple fetcher
             async with AsyncFetcher() as fetcher:
@@ -1108,9 +1125,15 @@ class SmartFetcher:
     async def close(self) -> None:
         """
         Shared resources are managed by GlobalResourceManager.
-        This remains for API compatibility.
+        Persistent scrapling sessions are cleaned up here (Fix 12).
         """
-        pass
+        async with self._session_lock:
+            for engine, session in self._sessions.items():
+                try:
+                    await session.__aexit__(None, None, None)
+                except Exception as e:
+                    self.logger.warning(f"failed_closing_persistent_session", engine=engine.value, error=str(e))
+            self._sessions.clear()
 
 
 @dataclass
