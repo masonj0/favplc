@@ -2352,10 +2352,11 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         dt = parse_date_string(date_str)
+        date_iso = dt.strftime("%Y-%m-%d")
         index_urls = [
-            f"/results/{date_str}",
+            f"/results/{date_iso}",
             f"/results/{dt.strftime('%d-%B-%Y')}",
-            f"/results/international/{date_str}",
+            f"/results/international/{date_iso}",
             f"/results/international/{dt.strftime('%d-%B-%Y')}",
         ]
 
