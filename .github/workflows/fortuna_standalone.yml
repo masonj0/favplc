@@ -208,6 +208,13 @@ jobs:
           path: snapshots/
           key: fortuna-snapshot-${{ needs.resolve-mode.outputs.daypart_tag }}
 
+      - name: Restore Snapshot from Cache
+        id: cache-snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: snapshots/
+          key: fortuna-snapshot-${{ needs.resolve-mode.outputs.daypart_tag }}
+
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
