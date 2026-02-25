@@ -64,7 +64,7 @@ pytz==2023.3.post1
 pywebview[cef]==5.2
 pyyaml==6.0.1
 rich==13.7.0
-redis==5.0.1
+redis==7.2.1
 requests==2.31.0
 scrapling==0.3.14
 playwright==1.49.1
