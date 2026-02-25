@@ -518,7 +518,8 @@ class AuditorEngine:
                 for obj in venue_results:
                     # Match race number and discipline (BUG-7: handle None discipline as wildcard)
                     result_disc = (obj.discipline or "")[:1].upper()
-                    if str(obj.race_number) == race_str and (result_disc == disc or (result_disc == "" and len(venue_results) <= 5)):
+                    # Phase D1: None discipline acts as wildcard for better harness/greyhound matching
+                    if str(obj.race_number) == race_str and (result_disc == disc or not result_disc):
                         res_time = obj.start_time.strftime("%H%M")
                         res_minutes = int(res_time[:2]) * 60 + int(res_time[2:])
                         delta = abs(tip_minutes - res_minutes)
