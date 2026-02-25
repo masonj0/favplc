@@ -89,7 +89,10 @@ async def test_simply_success_analyzer_1Gap2():
         source="Test",
         runners=[
             Runner(name="Fav", number=1, odds=fav_odds, metadata={"odds_source_trustworthy": True}),
-            Runner(name="Sec", number=2, odds=sec_odds, metadata={"odds_source_trustworthy": True})
+            Runner(name="Sec", number=2, odds=sec_odds, metadata={"odds_source_trustworthy": True}),
+            Runner(name="T3", number=3, win_odds=10.0, metadata={"odds_source_trustworthy": True}),
+            Runner(name="T4", number=4, win_odds=15.0, metadata={"odds_source_trustworthy": True}),
+            Runner(name="T5", number=5, win_odds=20.0, metadata={"odds_source_trustworthy": True})
         ]
     )
 

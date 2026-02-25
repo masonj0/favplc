@@ -373,7 +373,7 @@ from fortuna_utils import (
     parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
     is_valid_odds, scrape_available_bets, detect_discipline,
     now_eastern, to_eastern, ensure_eastern, get_places_paid,
-    parse_date_string, to_storage_format, from_storage_format,
+    parse_date_string, to_storage_format, from_storage_format, STORAGE_FORMAT,
     DayPart, resolve_daypart, resolve_daypart_from_dt, get_daypart_tag
 )
 DEFAULT_REGION: Final[str] = "GLOBAL"
@@ -689,6 +689,20 @@ class Race(FortunaBaseModel):
     error_message: Optional[str] = None
 
 # --- UTILITIES ---
+async def fetch_json(url: str, *, client: httpx.AsyncClient, adapter_name: str, **kwargs) -> dict:
+    """Centralized helper for fetching JSON with strict status validation (GPT5 Fix)."""
+    response = await client.get(url, **kwargs)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        structlog.get_logger('adapter').error(
+            'adapter_http_error', adapter=adapter_name, url=url,
+            status=exc.response.status_code, body_snippet=exc.response.text[:200]
+        )
+        raise
+    return response.json()
+
+
 def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     """Helper to get a field from either an object or a dictionary."""
     if isinstance(obj, dict):
@@ -741,7 +755,18 @@ def generate_race_id(
     date_str = start_time.strftime(DATE_FORMAT)
     time_str = start_time.strftime("%H%M")
 
+    # Discipline suffix: _t (thoroughbred) | _h (harness) | _g (greyhound) | _q (quarter)
     dl = (discipline or "Thoroughbred").lower()
+    if "harness" in dl:
+        disc_suffix = "_h"
+    elif "greyhound" in dl:
+        disc_suffix = "_g"
+    elif "quarter" in dl:
+        disc_suffix = "_q"
+    else:
+        disc_suffix = "_t"
+
+    return f"{prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}"
 
 
 def get_scorable_races(
@@ -1640,6 +1665,7 @@ class BaseAdapterV3(ABC):
         self.smart_fetcher = SmartFetcher(strategy=self._configure_fetch_strategy())
         self.last_race_count = 0
         self.last_duration_s = 0.0
+        self.last_response_status: Optional[Union[int, str]] = None
 
     @abstractmethod
     def _configure_fetch_strategy(self) -> FetchStrategy: pass
@@ -1665,8 +1691,21 @@ class BaseAdapterV3(ABC):
                     return []
 
             if not await self.circuit_breaker.allow_request(): return []
-            await self.rate_limiter.acquire()
-            raw = await self._fetch_data(date)
+
+            raw = None
+            # GPT5 Fix: Implement retries with strict status validation
+            for attempt in range(3):
+                try:
+                    await self.rate_limiter.acquire()
+                    raw = await self._fetch_data(date)
+                    if raw:
+                        break
+                except Exception as e:
+                    if attempt == 2:
+                        raise
+                    self.logger.warning("Fetch attempt failed, retrying", attempt=attempt+1, error=str(e))
+                    await asyncio.sleep(1)
+
             if not raw:
                 await self.circuit_breaker.record_failure()
                 return []
@@ -1774,12 +1813,24 @@ class BaseAdapterV3(ABC):
                 # Use adapter-specific strategy
                 kwargs.setdefault("strategy", self.smart_fetcher.strategy)
                 resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
-                status = get_resp_status(resp)
-                self.logger.debug("Response received", method=method, url=full_url, status=status)
+                self.last_response_status = get_resp_status(resp)
+                self.logger.debug("Response received", method=method, url=full_url, status=self.last_response_status)
+
+                # GPT5 Fix: Raise for status if not 200
+                if self.last_response_status != 200:
+                    self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=self.last_response_status)
+                    if hasattr(resp, "raise_for_status"):
+                        try:
+                            resp.raise_for_status()
+                        except Exception:
+                            raise httpx.HTTPStatusError(f"HTTP {self.last_response_status}", request=None, response=resp)
+                    else:
+                        raise Exception(f"HTTP {self.last_response_status}")
+
                 return resp
             except Exception as e:
                 self.logger.error("Request failed", method=method, url=full_url, error=str(e))
-                return None
+                raise
 
     async def close(self) -> None: await self.smart_fetcher.close()
     async def shutdown(self) -> None: await self.close()
@@ -7148,6 +7199,10 @@ class HotTipsTracker:
                 except Exception: continue
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
+            # Re-added 24h safety guard for DB logging (Fix for test_housekeeping)
+            if st > future_limit:
+                continue
+
             # Timing gate removed (Phase B7). Caller (run_score_now) has already filtered to 0 < MTP <= 15.
 
             # BUG-12: Secondary soft-key dedup guard
@@ -8449,15 +8504,18 @@ async def run_quarter_fetch(
     async def fetch_one(a, d_str):
         try:
             races = await a.get_races(d_str)
-            return a.source_name, races
+            # Record last status for Phase 1 logging (GPT5 Fix)
+            status = getattr(a, 'last_response_status', None)
+            return a.source_name, races, status
         except Exception as e:
             logger.error("Error fetching from adapter", adapter=a.source_name, date=d_str, error=str(e))
-            return a.source_name, []
+            return a.source_name, [], "error"
 
     fetch_tasks = [fetch_one(a, date_str) for a in adapters]
     results = await asyncio.gather(*fetch_tasks)
 
-    for adapter_name, r_list in results:
+    for adapter_name, r_list, status in results:
+        logger.info("adapter_fetch_complete", adapter=adapter_name, count=len(r_list), status=status)
         all_races_raw.extend(r_list)
         m_odds = 0.0
         for r in r_list:
@@ -8465,7 +8523,10 @@ async def run_quarter_fetch(
                 if run.win_odds and run.win_odds > m_odds:
                     m_odds = float(run.win_odds)
 
+        if adapter_name not in harvest_summary:
+            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
         harvest_summary[adapter_name]["count"] += len(r_list)
+        harvest_summary[adapter_name]["status"] = status
         if m_odds > harvest_summary[adapter_name]["max_odds"]:
             harvest_summary[adapter_name]["max_odds"] = m_odds
 
