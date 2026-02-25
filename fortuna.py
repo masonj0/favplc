@@ -1626,10 +1626,9 @@ class HKJCAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFet
         # Find race links
         # HKJC uses specific icons or text for race numbers
         metadata = []
-        # Case-insensitive attribute match for RaceNo (Fix 16)
-        for a in parser.css("a"):
-            href = a.attributes.get("href", "")
-            if "RaceNo=" in href or "raceno=" in href:
+        for a in parser.css("a[href*='RaceNo=']"):
+            href = a.attributes.get("href")
+            if href:
                 metadata.append({"url": href})
 
         if not metadata:
