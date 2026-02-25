@@ -374,7 +374,7 @@ from fortuna_utils import (
     is_valid_odds, scrape_available_bets, detect_discipline,
     now_eastern, to_eastern, ensure_eastern, get_places_paid,
     parse_date_string, to_storage_format, from_storage_format,
-    DayPart, resolve_daypart, get_daypart_tag
+    DayPart, resolve_daypart, resolve_daypart_from_dt, get_daypart_tag
 )
 DEFAULT_REGION: Final[str] = "GLOBAL"
 
@@ -4857,118 +4857,103 @@ class TinyFieldTrifectaAnalyzer(TrifectaAnalyzer):
         return "tiny_field_trifecta_analyzer"
 
 
-class SimplySuccessAnalyzer(BaseAnalyzer):
-    """An analyzer that qualifies every race to show maximum successes (HTTP 200)."""
+# Discipline-specific qualification thresholds (Phase J: Strategic Option B)
+DISCIPLINE_THRESHOLDS: Final[Dict[str, Dict[str, float]]] = {
+    "Thoroughbred": {
+        "min_gap12": 0.40,
+        "min_odds": 3.0,
+        "max_odds": 15.0,
+        "min_field_size": 5,
+        "max_field_size": 14,
+    },
+    "Greyhound": {
+        "min_gap12": 1.00,  # Stricter requirement for dominant plays
+        "min_odds": 3.5,
+        "max_odds": 7.0,    # Narrow value window
+        "min_field_size": 5,
+        "max_field_size": 6,
+    },
+    "Harness": {
+        "min_gap12": 0.50,
+        "min_odds": 3.0,
+        "max_odds": 10.0,
+        "min_field_size": 5,
+        "max_field_size": 12,
+    },
+}
 
-    @property
-    def name(self) -> str:
-        return "simply_success"
+def get_discipline_threshold(discipline: str, key: str) -> float:
+    """Helper to retrieve threshold based on normalized discipline name."""
+    d = (discipline or "Thoroughbred").title()
+    if "Grey" in d or "Hound" in d:
+        norm_d = "Greyhound"
+    elif "Harness" in d:
+        norm_d = "Harness"
+    else:
+        norm_d = "Thoroughbred"
+    return DISCIPLINE_THRESHOLDS.get(norm_d, DISCIPLINE_THRESHOLDS["Thoroughbred"]).get(key, 0.0)
+
+class SimplySuccessAnalyzer(BaseAnalyzer):
+    """
+    Core qualification engine for Fortuna.
+    Implements the 'Simply Success' playbook strategy:
+    - Target 2nd favorite (optimal risk/reward for Place betting)
+    - Require significant odds gap (gap12)
+    - Detect 'Goldmines' where 2nd fav has dominant value
+    """
 
     def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
-        """Returns races with a perfect score, applying global timing and chalk filters."""
+        """Returns qualified races, applying regional, chalk, and discipline-specific filters."""
         qualified = []
         if now is None:
-            now = datetime.now(EASTERN)
+            now = now_eastern()
 
-        # Success Playbook Hardening (Council of Superbrains)
-        # Lowered from 0.4 to 0.25 to improve yield from adapters with partial odds
-        # BUG-2 Fix: Align with expected config key
         TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
-
-        # Valid Region Filter (Item 6)
-        # South Africa ('za', 'sa') and Australia ('au', 'aus') removed by user request (JB override)
-        # This allows 24/7 coverage during overnight US hours.
         INVALID_REGION_PREFIXES = ('fr', 'jp', 'hk', 'uae')
-
-        # Blocklist for bare venue names in invalid regions (FIX_04)
         BLOCKED_VENUES = {
-            # France
             'fontainebleau', 'cagnessurmer', 'longchamp', 'chantilly', 'deauville',
             'parislongchamp', 'saintcloud', 'compiegne', 'vichy', 'clairefontaine',
             'marseilleborely', 'toulouse', 'lyon', 'strasbourg', 'amiens',
-            # Japan
             'tokyo', 'nakayama', 'hanshin', 'kyoto', 'kokura', 'niigata', 'sapporo', 'fukushima', 'chukyo',
-            # Hong Kong
-            'shatin', 'happyvalley',
-            # UAE
-            'meydan', 'abudhabi', 'jebelali',
-            # Italy
+            'shatin', 'happyvalley', 'meydan', 'abudhabi', 'jebelali',
             'milan', 'sanrossore', 'capannelle',
         }
 
-        # For duplicate content detection (FIX_03)
         fingerprints = {}
 
         for race in races:
-            # Region filtering (Item 6 + FIX_04)
             canonical_venue = get_canonical_venue(race.venue)
             if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES) or canonical_venue in BLOCKED_VENUES:
                 self.logger.info("Skipping race in untested region", venue=race.venue, canonical=canonical_venue)
                 continue
 
-            # Timing Filter: Removed (Phase B6). Caller (run_score_now) handles strict timing (0 < MTP <= 15).
-
-            # Goldmine Detection: 2nd favorite >= 4.5 decimal
-            is_goldmine = False
-            is_best_bet = False
-            gap12 = 0.0
-            is_superfecta_key = False
-            superfecta_key_number = None
-            superfecta_key_name = None
-            superfecta_box_numbers = []
             active_runners = [r for r in race.runners if not r.scratched]
             total_active = len(active_runners)
 
-            # Trustworthiness Airlock (Success Playbook Item)
-            # Skip airlock for sources known to not provide odds (discovery-only adapters)
+            # Discipline-specific gate (Phase J)
+            min_field = get_discipline_threshold(race.discipline, 'min_field_size')
+            max_field = get_discipline_threshold(race.discipline, 'max_field_size')
+            if total_active < min_field or (max_field > 0 and total_active > max_field):
+                self.logger.debug("Skipping race: field size outside discipline limits", venue=race.venue, size=total_active, disc=race.discipline)
+                continue
+
+            # Trustworthiness Airlock
             skip_trust_check = race.metadata.get("provides_odds") is False
             if skip_trust_check:
-                valid_odds_count = sum(
-                    1 for r in active_runners
-                    if isinstance(r.win_odds, (int, float)) and r.win_odds > 0
-                )
+                valid_odds_count = sum(1 for r in active_runners if isinstance(r.win_odds, (int, float)) and r.win_odds > 0)
                 if valid_odds_count < 2:
-                    self.logger.debug("Skipping race: provides_odds=False and fewer than 2 runners with valid odds", race_id=race.id)
                     continue
-
-            if total_active > 0 and not skip_trust_check:
+            elif total_active > 0:
                 trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
-                    self.logger.warning("Not enough trustworthy odds; skipping race", venue=race.venue, race=race.race_number, ratio=round(trustworthy_count/total_active, 2))
                     continue
 
-            gap12 = 0.0
-            all_odds = []
-
-            # 1. Collect and Enrich Odds
-            for runner in active_runners:
-                odds = _get_best_win_odds(runner)
-                if odds is not None:
-                    # Propagate fresh odds to runner object for reporting
-                    runner.win_odds = float(odds)
-                    all_odds.append(odds)
-
-            # Sort odds ascending
-            all_odds.sort()
-
-            # Uniform Odds Check: If all runners have identical odds, it's likely a placeholder card
-            if len(all_odds) >= 3 and len(set(all_odds)) == 1:
-                self.logger.warning("Race contains uniform odds; likely placeholder data. Skipping.", venue=race.venue, race=race.race_number, odds=float(all_odds[0]))
-                continue
-
-            # Stability Check: Ensure we have at least 2 active runners to compare
-            if len(active_runners) < 2:
-                self.logger.debug("Excluding race with < 2 runners", venue=race.venue)
-                continue
-
-            # 2. Derive Selection (2nd favorite) and Top 5
-            # Collect valid runners with their enriched odds (Using Decimal for consistency - GPT5 Improvement)
             all_valid_with_odds = sorted(
                 [(r, odds) for r in active_runners if (odds := _get_best_win_odds(r)) is not None],
                 key=lambda x: x[1]
             )
 
-            # BUG-18: Deduplicate by name to prevent same runner occupying multiple favorite slots
+            # Deduplicate by name and number
             seen_runner_names = set()
             valid_r_with_odds = []
             for r, odds in all_valid_with_odds:
@@ -4977,7 +4962,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     seen_runner_names.add(name_key)
                     valid_r_with_odds.append((r, odds))
 
-            # BUG-19: Deduplicate by number for top_five_numbers
+            if len(valid_r_with_odds) < 2:
+                continue
+
             seen_nums = set()
             top_nums = []
             for r, o in valid_r_with_odds:
@@ -4988,205 +4975,84 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 if len(top_nums) >= 5: break
             race.top_five_numbers = ", ".join(top_nums)
 
-            if len(valid_r_with_odds) >= 2:
-                sec_fav = valid_r_with_odds[1][0]
-                race.metadata['selection_number'] = sec_fav.number
-                race.metadata['selection_name'] = sec_fav.name
+            sec_fav = valid_r_with_odds[1][0]
+            sec_fav_odds = float(valid_r_with_odds[1][1])
+            fav_odds = float(valid_r_with_odds[0][1])
+            race.metadata['selection_number'] = sec_fav.number
+            race.metadata['selection_name'] = sec_fav.name
 
-            # Duplicate Content Detection (FIX_03)
+            # Uniform Odds Check
+            if len(valid_r_with_odds) >= 3 and len(set(o for r, o in valid_r_with_odds[:3])) == 1:
+                continue
+
+            # Duplicate Content Detection
             active_content = [(r.name, str(r.win_odds)) for r in race.runners if not r.scratched]
             content_fp = (race.venue, frozenset(active_content))
             if content_fp in fingerprints:
-                fingerprints[content_fp] += 1
-                if fingerprints[content_fp] >= 3:
-                    self.logger.warning("Duplicate race content detected, skipping", venue=race.venue, race=race.race_number)
-                    continue
-            else:
-                fingerprints[content_fp] = 1
+                continue
+            fingerprints[content_fp] = 1
 
-            # 3. Apply Best Bet Logic
-            # Initialize all scoring metadata with defaults to prevent NULLs in DB (VFIX_01)
-            race.metadata.update({
-                'place_prob': 0.0,
-                'predicted_ev': 0.0,
-                'market_depth': 0.0,
-                'condition_modifier': 0.0,
-                'qualification_grade': 'D',
-                'composite_score': 0.0,
-                'predicted_2nd_fav_odds': None,
-                '1Gap2': 0.0,
-                'is_goldmine': False,
-                'is_best_bet': False,
-                'is_superfecta_key': False
-            })
+            # 3. Apply Scoring Math
+            is_goldmine = False
+            is_best_bet = False
+            is_superfecta_key = False
+            gap12 = (sec_fav_odds - fav_odds) / fav_odds
 
-            try:
-                if len(all_odds) >= 2:
-                    fav, sec = all_odds[0], all_odds[1]
-                else:
-                    fav, sec = None, None
+            # Tighten Goldmine (Fix 6a)
+            # Goldmine must have significant gap AND fall in sweet spot field/odds
+            if sec_fav_odds >= 4.5 and gap12 >= 0.50:
+                if 5 <= total_active <= 10: # Sweet spot for place value
+                    is_goldmine = True
 
-                # S0 — Extract race type from conditions if missing (Item 2 / Step 5)
-                if not race.race_type:
-                    # Search metadata or raw text if available (heuristics)
-                    # We'll use a broad text search across common metadata fields
-                    search_text = " ".join([str(v) for v in race.metadata.values() if isinstance(v, str)])
-                    rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap)', search_text, re.I)
-                    if rt_match:
-                        race.race_type = rt_match.group(1).title()
+            # Superfecta Key Strategy
+            if gap12 >= 1.0:
+                is_superfecta_key = True
+                race.metadata['superfecta_key_number'] = valid_r_with_odds[0][0].number
+                race.metadata['superfecta_key_name'] = valid_r_with_odds[0][0].name
+                race.metadata['superfecta_box_numbers'] = [str(r[0].number) for r in valid_r_with_odds[1:4]]
 
-                    if "HANDICAP" in search_text.upper():
-                        race.is_handicap = True
+            # Composite Scoring (S0-S8)
+            composite = 50.0 + (gap12 * 10)
+            if total_active > 12: composite -= 5
+            elif total_active < 6: composite -= 10
+            if sec_fav_odds > 10.0: composite += 5
 
-                # S1 — implied place probability for the favourite (Insight 3)
-                place_prob = 0.0
-                if all_odds and len(active_runners) >= 2:
-                    fav_float = float(all_odds[0])
-                    n = len(active_runners)
-                    np_ = get_places_paid(n, is_handicap=race.is_handicap)
-                    win_p = 1.0 / fav_float
-                    # Corrected formula: p_win + (1 - p_win) * (places - 1) / (n - 1)
-                    if n > 1:
-                        place_prob = round(min(win_p + (1.0 - win_p) * (np_ - 1) / (n - 1), 0.97), 3)
-                    else:
-                        place_prob = win_p if n == 1 else 0.0
-                race.metadata['place_prob'] = place_prob
-
-                # predicted_ev: expected value of a $2 place bet at discovery time
-                BET_UNIT = 2.0
-                if place_prob > 0 and all_odds:
-                    fav_float = float(all_odds[0])
-                    est_place_payout = BET_UNIT * max(1.1, 1.0 + (fav_float - 1.0) / 5.0)
-                    predicted_ev = round(place_prob * est_place_payout - (1.0 - place_prob) * BET_UNIT, 3)
-                else:
-                    predicted_ev = None
-                race.metadata['predicted_ev'] = predicted_ev
-
-                # S3 — percentage gap instead of absolute
-                if fav and sec:
-                    gap12 = round(float((sec - fav) / fav), 3)
-                else:
-                    gap12 = 0.0
-
-                # NULL-ODDS-FIX: Zero gap with no valid odds
-                if gap12 == 0.0 and (not fav or fav <= 0):
-                    self.logger.debug("Skipping race: zero gap with no valid odds", race_id=race.id)
-                    continue
-
-                # S4 — market depth (whole-field view, not just top-2)
-                market_depth = 0.0
-                if fav and len(all_odds) >= 4:
-                    median_idx = len(all_odds) // 2
-                    median_odds = float(all_odds[median_idx])
-                    fav_float = float(fav)
-                    market_depth = round(min((median_odds / fav_float - 1.0) * 4.0, 10.0), 2)
-                race.metadata['market_depth'] = market_depth
-
-                # S5 — race-type condition modifier
-                rt = (race.race_type or "").lower()
-                condition_modifier = 0.0
-                if "maiden" in rt:
-                    condition_modifier -= 0.15   # penalise unpredictable first-timers
-                if "stakes" in rt or "graded" in rt:
-                    condition_modifier -= 0.10   # compressed markets, upsets more common
-                if "claiming" in rt and "maiden" not in rt:
-                    condition_modifier += 0.08   # claimers run reliably to their odds
-                race.metadata['condition_modifier'] = round(condition_modifier, 2)
-
-                # S6 — Composite score for grading
-                _gap_score    = min(gap12 * 40.0, 20.0)
-                _depth_score  = min(market_depth, 10.0)
-                _prob_score   = place_prob * 40.0
-                _cond_score   = condition_modifier * 20.0
-                _composite    = _gap_score + _depth_score + _prob_score + _cond_score
-
-                _GRADE_THRESHOLDS = [(70,'A+'), (60,'A'), (50,'B+'), (42,'B'), (32,'C')]
-                qualification_grade = next((g for t,g in _GRADE_THRESHOLDS if _composite >= t), 'D')
-                race.metadata['qualification_grade'] = qualification_grade
-                race.metadata['composite_score']     = round(_composite, 1)
-
-                # Enforce gap requirement (Item 5: approach A — raise threshold to account for drift)
-                # Recalibrated ratio: 0.55 (~2.5 absolute drift buffer)
-                GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
-
-                if gap12 < GAP_RATIO_THRESHOLD:
-                    self.logger.debug("Insufficient gap detected (ratio below threshold), ineligible for Best Bet treatment", venue=race.venue, race=race.race_number, gap=gap12, required=GAP_RATIO_THRESHOLD)
-                else:
-                    # Preferred Predictions (S7: Exclude maiden)
-                    is_maiden = "maiden" in (race.race_type or "").lower()
-                    if len(active_runners) <= 9 and sec >= Decimal("4.5") and not is_maiden:
-                        is_goldmine = True
-                        is_best_bet = True
-
-                    # S8 — Grade-based Best Bets (Expand to all A+ and A)
-                    if qualification_grade in ('A+', 'A'):
-                        is_best_bet = True
-
-                # ── SUPERFECTA KEYBOX STRATEGY ──────────────────────────────────────────
-                # Trigger: top favourite is strongly dominant (gap12 > 0.75).
-                # Key the favourite in 1st; box the next 3 runners in 2-3-4.
-                KEYBOX_GAP_THRESHOLD = 0.75
-
-                if gap12 > KEYBOX_GAP_THRESHOLD and len(valid_r_with_odds) >= 4:
-                    key_runner = valid_r_with_odds[0][0]          # top favourite
-                    is_superfecta_key = True
-                    superfecta_key_number = key_runner.number
-                    superfecta_key_name   = key_runner.name
-                    # Next 3 runners (by odds) form the box legs
-                    superfecta_box_numbers = [
-                        r[0].number for r in valid_r_with_odds[1:4] if r[0].number is not None
-                    ]
-
-                # ────────────────────────────────────────────────────────────────────────
-
-                if sec is not None:
-                    race.metadata['predicted_2nd_fav_odds'] = float(sec)
-                else:
-                    # Fallback if insufficient odds data
-                    race.metadata['predicted_2nd_fav_odds'] = None
-                    race.metadata['place_prob'] = 0.0
-                    race.metadata['predicted_ev'] = None
-                    race.metadata['market_depth'] = 0.0
-                    race.metadata['condition_modifier'] = 0.0
-                    race.metadata['qualification_grade'] = 'D'
-                    race.metadata['composite_score'] = 0.0
-            except Exception as e:
-                self.logger.error("Scoring pipeline failed for race", venue=race.venue, error=str(e), exc_info=True)
-                # Ensure defaults are maintained on error (FIX_02 / VFIX_01)
+            # Discipline-specific adjustments (Strategic)
+            min_gap = get_discipline_threshold(race.discipline, 'min_gap12')
+            if gap12 < min_gap:
+                composite -= 20
                 is_goldmine = False
-                is_best_bet = False
-                is_superfecta_key = False
 
-            # FIX_01: Hard guard to ensure flags are NOT set if gap12 is below threshold
-            GAP_RATIO_THRESHOLD = self.config.get("analysis", {}).get("min_gap_ratio", 0.55)
-            if (is_goldmine or is_best_bet) and gap12 < GAP_RATIO_THRESHOLD:
-                self.logger.warning("Goldmine/BestBet flag reset due to insufficient gap12", venue=race.venue, gap12=gap12)
+            race.metadata['composite_score'] = round(composite, 2)
+            if composite >= 60:
+                race.metadata['qualification_grade'] = 'A+'
+                is_best_bet = True
+            elif composite >= 50:
+                race.metadata['qualification_grade'] = 'A'
+                is_best_bet = True
+            elif composite >= 40:
+                race.metadata['qualification_grade'] = 'B+'
+            else:
+                race.metadata['qualification_grade'] = 'D'
+                race.metadata['composite_score'] = 0.0
                 is_goldmine = False
                 is_best_bet = False
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
-            race.metadata['1Gap2'] = gap12
+            race.metadata['1Gap2'] = round(gap12, 4)
             race.metadata['is_superfecta_key'] = is_superfecta_key
-            race.metadata['superfecta_key_number'] = superfecta_key_number
-            race.metadata['superfecta_key_name'] = superfecta_key_name
-            race.metadata['superfecta_box_numbers'] = superfecta_box_numbers
             race.qualification_score = 100.0
             qualified.append(race)
-
-        if not qualified:
-            self.logger.warning("🔭 SimplySuccess analyzer pass returned 0 qualified races", input_count=len(races))
 
         return {
             "criteria": {
                 "mode": "simply_success",
-                "timing_filter": "45m_past_to_120m_future",
-                "chalk_filter": "disabled",
-                "goldmine_threshold": 4.5
+                "goldmine_threshold": 4.5,
+                "gap_min": 0.50
             },
             "races": qualified
         }
-
 
 class AnalyzerEngine:
     """Discovers and manages all available analyzer plugins."""
@@ -6459,7 +6325,8 @@ class FortunaDB:
                         is_best_bet INTEGER,
                         is_superfecta_key INTEGER DEFAULT 0,
                         superfecta_key_number INTEGER,
-                        superfecta_key_name TEXT
+                        superfecta_key_name TEXT,
+                        daypart TEXT
                     )
                 """)
                 conn.execute('''CREATE TABLE IF NOT EXISTS quarter_harvests (
@@ -6502,6 +6369,8 @@ class FortunaDB:
                     conn.execute("ALTER TABLE tips ADD COLUMN source TEXT")
                 if "gap12" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN gap12 TEXT")
+                if "daypart" not in columns:
+                    conn.execute("ALTER TABLE tips ADD COLUMN daypart TEXT")
                 if "top_five" not in columns:
                     conn.execute("ALTER TABLE tips ADD COLUMN top_five TEXT")
                 if "selection_number" not in columns:
@@ -6864,7 +6733,7 @@ class FortunaDB:
 
         def _log():
             conn = self._get_conn()
-            now = datetime.now(EASTERN)
+            now = now_eastern()
 
             # Batch check for recently logged tips to avoid redundant entries
             race_ids = [t.get("race_id") for t in tips if t.get("race_id")]
@@ -6879,17 +6748,72 @@ class FortunaDB:
             )
             already_logged = {row["race_id"] for row in cursor.fetchall()}
 
+            # ── BUG-3 FIX: Cross-race clone detection ────────────────────
+            seen_selections = set()
+            today_str = now.strftime("%y%m%d")
+            existing_selections = set()
+            try:
+                for row in conn.execute(
+                    "SELECT venue, selection_name FROM tips "
+                    "WHERE start_time LIKE ? AND selection_name IS NOT NULL",
+                    (f"{today_str}%",)
+                ).fetchall():
+                    key = (str(row["venue"]).upper(), str(row["selection_name"]).upper())
+                    existing_selections.add(key)
+            except Exception:
+                pass
+
             to_insert = []
             to_update = []
+            skipped_clones = 0
+
             for tip in tips:
                 rid = tip.get("race_id")
                 if not rid: continue
 
+                # ── BUG-3 FIX: Clone detection ──────────────────────────
+                sel_name = tip.get("selection_name", "")
+                venue = tip.get("venue", "")
+                if sel_name and venue:
+                    clone_key = (venue.upper(), sel_name.upper())
+                    if clone_key in seen_selections or clone_key in existing_selections:
+                        self.logger.warning("clone_selection_blocked",
+                            race_id=rid, venue=venue,
+                            selection=sel_name,
+                            msg="Same horse already tipped at this venue today")
+                        skipped_clones += 1
+                        continue
+                    seen_selections.add(clone_key)
+
+                # ── BUG-2c FIX: Normalize start_time ────────────────────
+                raw_st = tip.get("start_time")
+                if isinstance(raw_st, datetime):
+                    normalized_st = to_storage_format(ensure_eastern(raw_st))
+                elif isinstance(raw_st, str):
+                    try:
+                        datetime.strptime(raw_st, STORAGE_FORMAT)
+                        normalized_st = raw_st
+                    except ValueError:
+                        try:
+                            dt = datetime.fromisoformat(raw_st.replace("Z", "+00:00"))
+                            normalized_st = to_storage_format(ensure_eastern(dt))
+                        except (ValueError, TypeError):
+                            normalized_st = raw_st
+                else:
+                    normalized_st = to_storage_format(now) if raw_st is None else str(raw_st)
+
+                # ── BUG-4c: Add daypart column ──────────────────────────
+                try:
+                    st_dt = datetime.strptime(normalized_st, STORAGE_FORMAT).replace(tzinfo=EASTERN)
+                    daypart_val = resolve_daypart_from_dt(st_dt).value
+                except Exception:
+                    daypart_val = None
+
                 report_date = tip.get("report_date") or to_storage_format(now)
-                # Prepare 23 elements for INSERT or UPDATE
+                # Prepare elements for INSERT or UPDATE (27 elements)
                 data = (
                     rid, tip.get("venue"), tip.get("race_number"),
-                    tip.get("discipline"), tip.get("start_time"), report_date,
+                    tip.get("discipline"), normalized_st, report_date,
                     1 if tip.get("is_goldmine") else 0,
                     tip.get("source"),
                     str(tip.get("1Gap2", 0.0)),
@@ -6907,7 +6831,8 @@ class FortunaDB:
                     1 if tip.get("is_best_bet") else 0,
                     1 if tip.get("is_superfecta_key") else 0,
                     tip.get("superfecta_key_number"),
-                    tip.get("superfecta_key_name")
+                    tip.get("superfecta_key_name"),
+                    daypart_val
                 )
 
                 if rid not in already_logged:
@@ -6915,7 +6840,7 @@ class FortunaDB:
                     already_logged.add(rid) # Avoid duplicates within the same batch
                 else:
                     # Update existing record if not audited to refresh scoring/metadata
-                    # We shift rid to the end for the WHERE clause
+                    # Shift rid to the end for WHERE clause, exclude rid from SET clause
                     update_tuple = data[1:] + (rid,)
                     to_update.append(update_tuple)
 
@@ -6928,8 +6853,8 @@ class FortunaDB:
                                 is_goldmine, source, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                                 field_size, market_depth, place_prob, predicted_ev, race_type,
                                 condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet,
-                                is_superfecta_key, superfecta_key_number, superfecta_key_name
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                is_superfecta_key, superfecta_key_number, superfecta_key_name, daypart
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, to_insert)
 
                     if to_update:
@@ -6940,11 +6865,11 @@ class FortunaDB:
                                 predicted_2nd_fav_odds=?, field_size=?, market_depth=?, place_prob=?,
                                 predicted_ev=?, race_type=?, condition_modifier=?, qualification_grade=?,
                                 composite_score=?, is_handicap=?, is_best_bet=?,
-                                is_superfecta_key=?, superfecta_key_number=?, superfecta_key_name=?
+                                is_superfecta_key=?, superfecta_key_number=?, superfecta_key_name=?, daypart=?
                             WHERE race_id=? AND audit_completed=0
                         """, to_update)
 
-                self.logger.info("Hot tips processed", inserted=len(to_insert), updated=len(to_update))
+                self.logger.info("Hot tips processed", inserted=len(to_insert), updated=len(to_update), clones_skipped=skipped_clones)
 
         await self._run_in_executor(_log)
 
@@ -8682,386 +8607,66 @@ async def run_discovery(
     config: Optional[Dict[str, Any]] = None,
     now: Optional[datetime] = None
 ):
-    logger = structlog.get_logger("run_discovery")
-    logger.info("Running Discovery", dates=target_dates, window_hours=window_hours)
+    """Legacy discovery wrapper that calls the new two-tier architecture."""
+    logger = structlog.get_logger("run_discovery_legacy")
+
+    # 1. Fetch
+    if loaded_races is not None:
+        races = loaded_races
+    else:
+        dt = now or now_eastern()
+        daypart = resolve_daypart_from_dt(dt)
+        daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
+
+        if adapter_names:
+            adapter_filter = adapter_names
+        else:
+            adapter_filter = list(get_daypart_discovery_adapters(daypart))
+
+        races = await run_quarter_fetch(
+            config=config or {},
+            daypart_tag=daypart_tag,
+            adapter_filter=adapter_filter,
+            save_path=save_path,
+            force_fetch=True
+        )
+
+    if fetch_only:
+        return races
 
     db = FortunaDB()
     await db.initialize()
 
+    analyzer = SimplySuccessAnalyzer(config or {})
+    result = analyzer.qualify_races(races)
+    qualified = result.get("races", [])
+
+    logger.info("Legacy analysis complete", total=len(races), qualified=len(qualified))
+
+    tracker = HotTipsTracker(db, config or {})
+    await tracker.log_tips(qualified)
+
+    # 4. Post-run reporting (legacy fallback)
     try:
-        if now is None:
-            now = datetime.now(EASTERN)
-        cutoff = now + timedelta(hours=window_hours) if window_hours else None
+        from scripts.generate_gha_summary import EASTERN as SUMMARY_EASTERN
+        timestamp = datetime.now(SUMMARY_EASTERN).strftime("%y%m%dT%H:%M:%S")
+    except ImportError:
+        timestamp = to_storage_format(now_eastern())
 
-        all_races_raw = []
-        harvest_summary = {}
+    report_data = {
+        "qualified_races": [r.model_dump(mode='json') for r in qualified],
+        "races": [r.model_dump(mode='json') for r in qualified],
+        "analysis_metadata": result.get("criteria", {}),
+        "timestamp": timestamp,
+    }
 
-        # Pre-populate harvest_summary based on region/filter for visibility
-        target_region = region or DEFAULT_REGION
-        if target_region == "USA":
-            target_set = USA_DISCOVERY_ADAPTERS
-        elif target_region == "INT":
-            target_set = INT_DISCOVERY_ADAPTERS
-        else:
-            target_set = GLOBAL_DISCOVERY_ADAPTERS
+    try:
+        with open(get_writable_path("qualified_races.json"), "w") as f:
+            json.dump(report_data, f, indent=4)
+    except Exception: pass
 
-        # Determine which adapters should be visible in the harvest summary
-        if adapter_names:
-            visible_adapters = [n for n in adapter_names if n in target_set]
-        else:
-            visible_adapters = list(target_set)
+    return qualified
 
-        for adapter_name in visible_adapters:
-            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
-
-        if loaded_races is not None:
-            logger.info("Using loaded races", count=len(loaded_races))
-            all_races_raw = loaded_races
-            adapters = []
-            # Ensure harvest files exist even for loaded runs
-            try:
-                harvest_file = get_writable_path("discovery_harvest.json")
-                if not harvest_file.exists():
-                    with open(harvest_file, "w") as f:
-                        json.dump(harvest_summary, f)
-            except Exception: pass
-        else:
-            # Auto-discover discovery adapter classes
-            adapter_classes = get_discovery_adapter_classes()
-
-            if adapter_names:
-                adapter_classes = [c for c in adapter_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
-
-            # Load historical performance scores to prioritize adapters
-            adapter_scores = await db.get_adapter_scores(days=30)
-
-            # Prioritize adapters by score (descending), with name as deterministic tiebreaker
-            adapter_classes = sorted(
-                adapter_classes,
-                key=lambda c: (
-                    -adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
-                    getattr(c, "SOURCE_NAME", c.__name__)
-                )
-            )
-
-            # Get adapter-specific configs from global config (GPT5 Improvement)
-            adapter_configs = config.get("adapters", {}) if config else {}
-
-            adapters = []
-            for cls in adapter_classes:
-                try:
-                    name = cls.SOURCE_NAME if hasattr(cls, "SOURCE_NAME") else cls.__name__
-                    specific_config = adapter_configs.get(name, {}).copy() # Use copy to avoid shared mutation
-                    # Merge with basic region config
-                    specific_config.update({"region": region})
-                    adapters.append(cls(config=specific_config))
-
-                    # Optimization: Removed dynamic doubling of mobile adapters to reduce noise/timeouts (Item 7)
-
-                except Exception as e:
-                    logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
-
-            try:
-                async def fetch_one(a, date_str):
-                    try:
-                        races = await a.get_races(date_str)
-                        return a.source_name, races
-                    except Exception as e:
-                        logger.error("Error fetching from adapter", adapter=a.source_name, date=date_str, error=str(e))
-                        return a.source_name, []
-
-                fetch_tasks = []
-                for d in target_dates:
-                    for a in adapters:
-                        fetch_tasks.append(fetch_one(a, d))
-
-                results = await asyncio.gather(*fetch_tasks)
-                for adapter_name, r_list in results:
-                    all_races_raw.extend(r_list)
-
-                    # Track count and MaxOdds (Proxy for successful odds fetching)
-                    m_odds = 0.0
-                    for r in r_list:
-                        for run in r.runners:
-                            if run.win_odds and run.win_odds > m_odds:
-                                m_odds = float(run.win_odds)
-
-                    if adapter_name not in harvest_summary:
-                        harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0}
-
-                    harvest_summary[adapter_name]["count"] += len(r_list)
-                    if m_odds > harvest_summary[adapter_name]["max_odds"]:
-                        harvest_summary[adapter_name]["max_odds"] = m_odds
-
-                    # Find the adapter instance to extract its trust_ratio
-                    matching_adapter = next((a for a in adapters if a.source_name == adapter_name), None)
-                    if matching_adapter:
-                        harvest_summary[adapter_name]["trust_ratio"] = max(
-                            harvest_summary[adapter_name].get("trust_ratio", 0.0),
-                            getattr(matching_adapter, "trust_ratio", 0.0)
-                        )
-
-                logger.info("Fetched total races", count=len(all_races_raw))
-            finally:
-                # Save discovery harvest summary for GHA reporting and DB persistence
-                try:
-                    harvest_file = get_writable_path("discovery_harvest.json")
-                    # Only create if it doesn't exist or we have data
-                    if harvest_summary or not harvest_file.exists():
-                        with open(harvest_file, "w") as f:
-                            json.dump(harvest_summary, f)
-
-                    if harvest_summary:
-                        await db.log_harvest(harvest_summary, region=region)
-                except Exception: pass
-
-                # Shutdown adapters
-                for a in adapters:
-                    try: await a.close()
-                    except Exception: pass
-
-        # Apply time window filter if requested to avoid overloading
-        # Initial time window filtering removed to ensure all unique races are tracked for reporting
-
-        # Resilience check (FIX_10)
-        adapter_success_counts = {name: data['count'] for name, data in harvest_summary.items() if isinstance(data, dict) and data.get('count', 0) > 0}
-        active_adapters = list(adapter_success_counts.keys())
-        total_fetched = sum(adapter_success_counts.values())
-
-        if not all_races_raw:
-            logger.error("No races fetched from any adapter. Discovery aborted.")
-            if save_path:
-                try:
-                    target_save = get_writable_path(save_path)
-                    with open(target_save, "w") as f:
-                        json.dump([], f)
-                    logger.info("Saved empty race list to file", path=str(target_save))
-                except Exception as e:
-                    logger.error("Failed to save empty race list", error=str(e))
-            return
-
-        if len(active_adapters) == 1 and total_fetched < 20:
-            logger.critical("DISCOVERY DEGRADED: only one adapter returned data. Results may be unreliable.",
-                           adapter=active_adapters[0], count=total_fetched)
-
-        # Deduplicate
-        race_map = {}
-        for race in all_races_raw:
-            canonical_venue = get_canonical_venue(race.venue)
-            # Use Canonical Venue + Race Number + Date + Discipline as stable key
-            st = race.start_time
-            if isinstance(st, str):
-                try:
-                    st = from_storage_format(st.replace('Z', '+00:00'))
-                except (ValueError, TypeError):
-                    pass
-
-            date_str = st.strftime('%y%m%d') if hasattr(st, 'strftime') else "Unknown"
-            # Include discipline in key to avoid misclassification
-            key = f"{canonical_venue}|{race.race_number}|{date_str}|{race.discipline}"
-            
-            if key not in race_map:
-                race_map[key] = race
-            else:
-                existing = race_map[key]
-                # Merge runners/odds
-                for nr in race.runners:
-                    # Match by number OR name (if numbers are missing)
-                    er = next((r for r in existing.runners if (r.number != 0 and r.number == nr.number) or (r.name.lower() == nr.name.lower())), None)
-                    if er:
-                        for source, odds_data in nr.odds.items():
-                            if source not in er.odds:
-                                er.odds[source] = odds_data
-                                continue
-                            existing_odds = er.odds[source]
-                            new_ts = getattr(odds_data, 'last_updated', None)
-                            old_ts = getattr(existing_odds, 'last_updated', None)
-                            if new_ts and old_ts and new_ts > old_ts:
-                                er.odds[source] = odds_data
-
-                        if not er.win_odds and nr.win_odds:
-                            er.win_odds = nr.win_odds
-                        if not er.number and nr.number:
-                            er.number = nr.number
-                    else:
-                        existing.runners.append(nr)
-
-                # Update source
-                sources = set((existing.source or "").split(", "))
-                sources.add(race.source or "Unknown")
-                existing.source = ", ".join(sorted(list(filter(None, sources))))
-
-        unique_races = list(race_map.values())
-        logger.info("Unique races identified", count=len(unique_races))
-
-        # Phase E: Simplified discovery filtering.
-        # Everything unique is passed to analysis in legacy mode.
-        logger.info("Total unique races available for analysis", count=len(unique_races))
-
-        # Save raw fetched/merged races if requested (Save EVERYTHING unique)
-        if save_path:
-            try:
-                target_save = get_writable_path(save_path)
-                with open(target_save, "w") as f:
-                    json.dump([r.model_dump(mode='json') for r in unique_races], f, indent=4)
-                logger.info("Saved all unique races to file", path=str(target_save))
-            except Exception as e:
-                logger.error("Failed to save races", error=str(e))
-
-        if fetch_only:
-            logger.info("Fetch-only mode active. Skipping analysis and reporting.")
-            return
-
-        # Analyze ALL unique races to ensure Grid is populated with Top 5 info (News Mode)
-        analyzer = SimplySuccessAnalyzer(config=config)
-        result = analyzer.qualify_races(unique_races, now=now)
-        qualified = result.get("races", [])
-
-        # Generate Grid & Goldmine (Grid uses unique_races for the broader context)
-        grid = generate_summary_grid(qualified, all_races=unique_races)
-        logger.info("Summary Grid Generated")
-
-        # Generate Field Matrix for all unique races
-        field_matrix = generate_field_matrix(unique_races)
-        logger.info("Field Matrix Generated")
-
-        # Log Hot Tips & Fetch recent historical results for the report
-        tracker = HotTipsTracker(config=config)
-        await tracker.log_tips(qualified)
-
-        historical_goldmines = await tracker.db.get_recent_audited_goldmines(limit=15)
-        historical_report = generate_historical_goldmine_report(historical_goldmines)
-
-        gm_report = generate_goldmine_report(qualified, all_races=unique_races)
-        if historical_report:
-            gm_report += "\n" + historical_report
-
-        # NEW: Dashboard and Live Tracking
-        goldmines = [r for r in qualified if get_field(r, 'metadata', {}).get('is_goldmine')]
-
-        # Calculate today's stats for dashboard
-        recent_tips = await tracker.db.get_recent_tips(limit=100)
-        today_str = datetime.now(EASTERN).strftime(DATE_FORMAT)
-        today_tips = [t for t in recent_tips if t.get("report_date", "").startswith(today_str)]
-
-        cashed = sum(1 for t in today_tips if t.get("verdict") == "CASHED")
-        total_tips = len(today_tips)
-        profit = sum((t.get("net_profit") or 0.0) for t in today_tips)
-
-        stats = {
-            "tips": total_tips,
-            "cashed": cashed,
-            "profit": profit
-        }
-
-        # Generate friendly HTML report
-        try:
-            html_content = await generate_friendly_html_report(qualified, stats)
-            html_path = get_writable_path("fortuna_report.html")
-            html_path.write_text(html_content, encoding="utf-8")
-            logger.info("Friendly HTML report generated", path=str(html_path))
-
-            # Launch the report if running as a portable app (not in GHA)
-            if not os.getenv("GITHUB_ACTIONS"):
-                try:
-                    # Use absolute path for reliable opening
-                    abs_path = html_path.absolute()
-                    if sys.platform == "win32":
-                        os.startfile(abs_path)
-                    else:
-                        webbrowser.open(f"file://{abs_path}")
-                except Exception as e:
-                    logger.warning("Failed to automatically launch report", error=str(e))
-        except Exception as e:
-            logger.error("Failed to generate HTML report", error=str(e))
-
-        if live_dashboard:
-            try:
-                from rich.live import Live
-                from rich.console import Console
-                # Check if our custom dashboard exists
-                try:
-                    from dashboard import FortunaDashboard
-                    dash = FortunaDashboard()
-                    dash.update(goldmines, stats)
-
-                    # Start odds tracker if requested
-                    if track_odds:
-                        try:
-                            from odds_tracker import LiveOddsTracker
-                            adapter_classes = get_discovery_adapter_classes()
-                            odds_tracker = LiveOddsTracker(goldmines, adapter_classes)
-                            asyncio.create_task(odds_tracker.start_tracking())
-                        except ImportError:
-                            logger.warning("LiveOddsTracker not available")
-
-                    await dash.run_live()
-                except (ImportError, Exception) as e:
-                    logger.warning(f"Rich dashboard component missing or failed: {e}")
-                    # Fallback to simple rich display if possible
-                    console = Console()
-                    console.print("\n" + grid + "\n")
-            except ImportError:
-                logger.warning("Rich library not available, falling back to static display")
-                print("\n" + grid + "\n")
-        else:
-            # Fallback to static print
-            try:
-                from dashboard import print_dashboard
-                print_dashboard(goldmines, stats)
-            except Exception as e:
-                # Silently fallback to standard print if dashboard fails
-                pass
-
-            print("\n" + grid + "\n")
-            if historical_report:
-                print("\n" + historical_report + "\n")
-
-        # Always save reports to files (GPT5 Improvement: Defensive guards)
-        try:
-            with open(get_writable_path("summary_grid.txt"), "w", encoding='utf-8') as f: f.write(grid)
-            with open(get_writable_path("field_matrix.txt"), "w", encoding='utf-8') as f: f.write(field_matrix)
-            with open(get_writable_path("goldmine_report.txt"), "w", encoding='utf-8') as f: f.write(gm_report)
-        except Exception as e:
-            logger.error("failed_saving_text_reports", error=str(e))
-
-        # Save qualified races to JSON using atomic write (Improvement 1)
-        report_data = {
-            "races": [r.model_dump(mode='json') for r in qualified],
-            "analysis_metadata": result.get("criteria", {}),
-            "timestamp": to_storage_format(datetime.now(EASTERN)),
-        }
-        qualified_path = get_writable_path("qualified_races.json")
-        temp_path = qualified_path.with_suffix(".tmp")
-        try:
-            with open(temp_path, "w", encoding='utf-8') as f:
-                json.dump(report_data, f, indent=4)
-                f.flush()
-                os.fsync(f.fileno())
-            temp_path.replace(qualified_path)
-
-            # Record freshness in GHA output
-            is_fresh = validate_artifact_freshness(str(qualified_path))
-            _write_github_output("qualified_fresh", "1" if is_fresh else "0")
-            _write_github_output("qualified_count", len(qualified))
-        except Exception as e:
-            logger.error("failed_saving_qualified_races", error=str(e))
-
-        # NEW: Write GHA Job Summary
-        if 'GITHUB_STEP_SUMMARY' in os.environ:
-            try:
-                predictions_md = format_predictions_section(qualified)
-                # We need a db instance for format_proof_section
-                proof_md = await format_proof_section(tracker.db)
-                harvest_md = build_harvest_table(harvest_summary, "🛰️ Discovery Harvest Performance")
-                artifacts_md = format_artifact_links()
-                write_job_summary(predictions_md, harvest_md, proof_md, artifacts_md)
-                logger.info("GHA Job Summary written")
-            except Exception as e:
-                logger.error("Failed to write GHA summary", error=str(e))
-
-    finally:
-        await GlobalResourceManager.cleanup()
 async def start_desktop_app():
     """Starts a FastAPI server and opens a webview window for the Fortuna Dashboard."""
     try:

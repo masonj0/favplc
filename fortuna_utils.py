@@ -580,8 +580,11 @@ def resolve_daypart(args: Optional[Any] = None) -> DayPart:
         except (ValueError, AttributeError):
             pass
 
-    now = now_eastern()
-    hour = now.hour
+    return resolve_daypart_from_dt(now_eastern())
+
+def resolve_daypart_from_dt(dt: datetime) -> DayPart:
+    """Resolves DayPart from a specific datetime object (in Eastern)."""
+    hour = dt.hour
     if 0 <= hour < 6:
         return DayPart.Q1
     elif 6 <= hour < 12:

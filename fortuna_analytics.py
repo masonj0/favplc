@@ -426,7 +426,16 @@ class AuditorEngine:
                 if not result:
                     continue
 
+                # ── BUG-3 FIX: Result Sanity Check ──────────────────────────
+                if not self._validate_result_sanity(result, tip):
+                    continue
+                # ─────────────────────────────────────────────────────────────
+
                 outcome = self._evaluate_tip(tip, result, confidence=confidence)
+                # ── BUG-5 FIX: Ensure confidence is in outcome dict ─────────
+                if 'match_confidence' not in outcome:
+                    outcome['match_confidence'] = confidence
+                # ─────────────────────────────────────────────────────────────
                 outcomes_to_batch.append((race_id, outcome))
                 audited.append({**tip, **outcome, "audit_completed": True})
 
@@ -640,6 +649,33 @@ class AuditorEngine:
 
     # -- evaluation --------------------------------------------------------
 
+    def _validate_result_sanity(self, result: ResultRace, tip: Dict[str, Any]) -> bool:
+        """Reject clearly corrupted result data before using it for audit (Fix 3c)."""
+        field_size = tip.get('field_size') or len(result.active_runners)
+
+        # Check 1: Saddle cloth numbers shouldn't exceed field_size + buffer
+        max_reasonable_number = max(field_size * 2, 20)  # Allow for scratching gaps
+
+        for runner in result.active_runners:
+            if runner.number and runner.number > max_reasonable_number:
+                self.logger.warning('result_sanity_failed',
+                    race_id=tip.get('race_id'),
+                    runner_number=runner.number,
+                    field_size=field_size,
+                    msg=f'Saddle cloth {runner.number} exceeds max reasonable {max_reasonable_number}')
+                return False
+
+        # Check 2: Position values shouldn't exceed field size
+        for runner in result.active_runners:
+            if runner.position_numeric and runner.position_numeric > field_size + 5:
+                self.logger.warning('result_sanity_failed',
+                    race_id=tip.get('race_id'),
+                    position=runner.position_numeric,
+                    field_size=field_size)
+                return False
+
+        return True
+
     def _evaluate_tip(
         self,
         tip: Dict[str, Any],
@@ -682,6 +718,7 @@ class AuditorEngine:
             "superfecta_combination": result.superfecta_combination,
             "top1_place_payout": top1_place,
             "top2_place_payout": top2_place,
+            "match_confidence": confidence,
         }
 
     @staticmethod
