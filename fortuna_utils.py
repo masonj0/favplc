@@ -193,6 +193,23 @@ VENUE_MAP = {
 "RP": "Remington Park",
 "REMINGTON": "Remington Park",
 "REMINGTON PARK": "Remington Park",
+"ZIA": "Zia Park",
+"ZIA PARK": "Zia Park",
+"FL": "Finger Lakes",
+"FINGER LAKES": "Finger Lakes",
+"TDN": "Thistledown",
+"THISTLEDOWN": "Thistledown",
+"BTP": "Belterra Park",
+"BELTERRA": "Belterra Park",
+"BELTERRA PARK": "Belterra Park",
+"FE": "Fort Erie",
+"FORT ERIE": "Fort Erie",
+"HST": "Hastings Racecourse",
+"HASTINGS": "Hastings Racecourse",
+"HASTINGS RACECOURSE": "Hastings Racecourse",
+"MVR": "Mahoning Valley",
+"MAHONING VALLEY": "Mahoning Valley",
+"MAHONING VALLEY RACE COURSE": "Mahoning Valley",
 }
 
 DRF_VENUE_MAP: Final[Dict[str, str]] = {
