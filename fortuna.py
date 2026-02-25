@@ -385,14 +385,33 @@ USA_DISCOVERY_ADAPTERS: Final[set] = {
     "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
-    "Official_TheMeadowlands", "Official_YonkersRaceway"
+    "Official_TheMeadowlands", "Official_YonkersRaceway", "Official_Woodbine",
+    "Official_LaurelPark", "Official_Pimlico", "Official_FairGrounds",
+    "Official_ParxRacing", "Official_PennNational", "Official_CharlesTown",
+    "Official_Mountaineer", "Official_TurfParadise", "Official_EmeraldDowns",
+    "Official_LoneStarPark", "Official_SamHouston", "Official_RemingtonPark",
+    "Official_SunlandPark", "Official_ZiaPark", "Official_FingerLakes",
+    "Official_Thistledown", "Official_MahoningValley", "Official_BelterraPark",
+    "Official_SaratogaHarness", "Official_HoosierPark", "Official_NorthfieldPark",
+    "Official_SciotoDowns", "Official_FortErie", "Official_Hastings"
 }
-INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist", "HKJC", "JRA", "Official_JRAJapan"}
+INT_DISCOVERY_ADAPTERS: Final[set] = {
+    "TAB", "BetfairDataScientist", "HKJC", "JRA", "Official_JRAJapan",
+    "Official_Ascot", "Official_Cheltenham", "Official_Flemington"
+}
 OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
     "Official_Woodbine", "Official_TheMeadowlands", "Official_YonkersRaceway",
-    "Official_JRAJapan"
+    "Official_JRAJapan", "Official_LaurelPark", "Official_Pimlico",
+    "Official_FairGrounds", "Official_ParxRacing", "Official_PennNational",
+    "Official_CharlesTown", "Official_Mountaineer", "Official_TurfParadise",
+    "Official_EmeraldDowns", "Official_LoneStarPark", "Official_SamHouston",
+    "Official_RemingtonPark", "Official_SunlandPark", "Official_ZiaPark",
+    "Official_FingerLakes", "Official_Thistledown", "Official_MahoningValley",
+    "Official_BelterraPark", "Official_SaratogaHarness", "Official_HoosierPark",
+    "Official_NorthfieldPark", "Official_SciotoDowns", "Official_FortErie",
+    "Official_Hastings", "Official_Ascot", "Official_Cheltenham", "Official_Flemington"
 }
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
@@ -1581,18 +1600,23 @@ class HKJCAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFet
         dt = parse_date_string(date)
         date_hk = dt.strftime("%Y/%m/%d")
 
-        # Entries URL
-        url = f"/racing/information/English/Racing/LocalResults.aspx?RaceDate={date_hk}"
+        # Try RaceCard first (Discovery)
+        url = f"/racing/information/English/racing/RaceCard.aspx?RaceDate={date_hk}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
+
+        if not resp or not resp.text or "Information will be released shortly" in resp.text:
+            # Try Results page if RaceCard is not available (maybe it just finished)
+            url = f"/racing/information/English/Racing/LocalResults.aspx?RaceDate={date_hk}"
+            resp = await self.make_request("GET", url, headers=self._get_headers())
+
         if not resp or not resp.text:
             return None
 
         self._save_debug_snapshot(resp.text, f"hkjc_index_{date}")
         parser = HTMLParser(resp.text)
 
-        # In HKJC, if information is not released, it says "Information will be released shortly"
+        # If still no info, try the general entries page
         if "Information will be released shortly" in resp.text:
-            # Try Entries page
             entries_url = "/racing/information/English/racing/Entries.aspx"
             resp = await self.make_request("GET", entries_url, headers=self._get_headers())
             if not resp or not resp.text:
@@ -1788,6 +1812,114 @@ class OfficialJRAAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_JRAJapan"
     def __init__(self, config=None): super().__init__("JRA Japan", "https://japanracing.jp/", config=config)
 
+class OfficialLaurelParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_LaurelPark"
+    def __init__(self, config=None): super().__init__("Laurel Park", "https://www.laurelpark.com/racing/entries", config=config)
+
+class OfficialPimlicoAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Pimlico"
+    def __init__(self, config=None): super().__init__("Pimlico", "https://www.pimlico.com/racing/entries", config=config)
+
+class OfficialFairGroundsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_FairGrounds"
+    def __init__(self, config=None): super().__init__("Fair Grounds", "https://www.fairgroundsracecourse.com/racing/entries", config=config)
+
+class OfficialParxRacingAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_ParxRacing"
+    def __init__(self, config=None): super().__init__("Parx Racing", "https://www.parxracing.com/overnights.php", config=config)
+
+class OfficialPennNationalAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_PennNational"
+    def __init__(self, config=None): super().__init__("Penn National", "https://www.pennnational.com/racing/entries", config=config)
+
+class OfficialCharlesTownAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_CharlesTown"
+    def __init__(self, config=None): super().__init__("Charles Town", "https://www.hollywoodcasinocharlestown.com/racing/entries", config=config)
+
+class OfficialMountaineerAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Mountaineer"
+    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.mountaineer-casino.com/racing/entries", config=config)
+
+class OfficialTurfParadiseAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_TurfParadise"
+    def __init__(self, config=None): super().__init__("Turf Paradise", "https://www.turfparadise.com/racing/entries/", config=config)
+
+class OfficialEmeraldDownsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_EmeraldDowns"
+    def __init__(self, config=None): super().__init__("Emerald Downs", "https://emeralddowns.com/racing/entries/", config=config)
+
+class OfficialLoneStarParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_LoneStarPark"
+    def __init__(self, config=None): super().__init__("Lone Star Park", "https://www.lonestarpark.com/racing/entries/", config=config)
+
+class OfficialSamHoustonAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_SamHouston"
+    def __init__(self, config=None): super().__init__("Sam Houston", "https://www.shrp.com/racing/entries", config=config)
+
+class OfficialRemingtonParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_RemingtonPark"
+    def __init__(self, config=None): super().__init__("Remington Park", "https://www.remingtonpark.com/racing/entries/", config=config)
+
+class OfficialSunlandParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_SunlandPark"
+    def __init__(self, config=None): super().__init__("Sunland Park", "https://www.sunlandpark.com/racing/entries/", config=config)
+
+class OfficialZiaParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_ZiaPark"
+    def __init__(self, config=None): super().__init__("Zia Park", "https://www.ziapark.com/racing/entries/", config=config)
+
+class OfficialFingerLakesAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_FingerLakes"
+    def __init__(self, config=None): super().__init__("Finger Lakes", "https://www.fingerlakesracing.com/racing/entries/", config=config)
+
+class OfficialThistledownAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Thistledown"
+    def __init__(self, config=None): super().__init__("Thistledown", "https://www.thistledown.com/racing/entries/", config=config)
+
+class OfficialMahoningValleyAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_MahoningValley"
+    def __init__(self, config=None): super().__init__("Mahoning Valley", "https://www.hollywood-mahoning-valley.com/racing/entries", config=config)
+
+class OfficialBelterraParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_BelterraPark"
+    def __init__(self, config=None): super().__init__("Belterra Park", "https://www.belterrapark.com/racing/entries/", config=config)
+
+class OfficialSaratogaHarnessAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_SaratogaHarness"
+    def __init__(self, config=None): super().__init__("Saratoga Harness", "https://saratogacasino.com/racing/entries/", config=config)
+
+class OfficialHoosierParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_HoosierPark"
+    def __init__(self, config=None): super().__init__("Hoosier Park", "https://www.hoosierpark.com/racing/entries/", config=config)
+
+class OfficialNorthfieldParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_NorthfieldPark"
+    def __init__(self, config=None): super().__init__("Northfield Park", "https://www.mgmnorthfieldpark.com/racing/entries/", config=config)
+
+class OfficialSciotoDownsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_SciotoDowns"
+    def __init__(self, config=None): super().__init__("Scioto Downs", "https://www.eldoradoscioto.com/racing/entries/", config=config)
+
+class OfficialFortErieAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_FortErie"
+    def __init__(self, config=None): super().__init__("Fort Erie", "https://www.forterieracing.com/racing/entries", config=config)
+
+class OfficialHastingsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Hastings"
+    def __init__(self, config=None): super().__init__("Hastings Racecourse", "https://www.hastingsracecourse.com/racing/entries", config=config)
+
+class OfficialAscotAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Ascot"
+    def __init__(self, config=None): super().__init__("Ascot", "https://www.ascot.com/", config=config)
+
+class OfficialCheltenhamAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Cheltenham"
+    def __init__(self, config=None): super().__init__("Cheltenham", "https://www.cheltenham.co.uk/", config=config)
+
+class OfficialFlemingtonAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Flemington"
+    def __init__(self, config=None): super().__init__("Flemington", "https://www.vrc.com.au/", config=config)
+
 class JRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     """
     Adapter for Japan Racing Association (JRA).
@@ -1931,7 +2063,9 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         return self._get_browser_headers(host="www.racingandsports.com.au")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        url = f"/racing-index?date={date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        url = f"/racing-index?date={date_iso}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
             return None
@@ -3380,12 +3514,14 @@ class TabAdapter(BaseAdapterV3):
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        url = f"{self.base_url}/dates/{date}/meetings"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        url = f"{self.base_url}/dates/{date_iso}/meetings"
         resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
 
         if not resp or resp.status != 200:
             self.logger.info("Falling back to STABLE TAB API")
-            url = f"{self.BASE_URL_STABLE}/dates/{date}/meetings"
+            url = f"{self.BASE_URL_STABLE}/dates/{date_iso}/meetings"
             resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
 
         if not resp: return None
@@ -3491,7 +3627,9 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
         return FetchStrategy(primary_engine=BrowserEngine.HTTPX)
 
     async def _fetch_data(self, date: str) -> Optional[StringIO]:
-        endpoint = f"?date={date}&presenter=RatingsPresenter&csv=true"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        endpoint = f"?date={date_iso}&presenter=RatingsPresenter&csv=true"
         resp = await self.make_request("GET", endpoint)
         if not resp or not resp.text:
             self.metrics.record_parse_warning()
@@ -8237,7 +8375,9 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         return self._get_browser_headers(host="www.racingpost.com")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        url = f"/results/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        url = f"/results/{date_iso}"
         resp = await self.make_request("GET", url, headers=self._get_headers())
         if not resp or not resp.text:
             return None
