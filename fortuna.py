@@ -2013,16 +2013,24 @@ class OfficialTrackAdapter(BaseAdapterV3):
         super().__init__(source_name=source, base_url=url, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, timeout=30)
+        # Use HTTPX with JS disabled to maximize performance (JB/Council Strategy)
+        # fallback to CURL_CFFI for better compatibility
+        return FetchStrategy(
+            primary_engine=BrowserEngine.HTTPX,
+            engines=[BrowserEngine.HTTPX, BrowserEngine.CURL_CFFI],
+            timeout=10
+        )
 
     async def _fetch_data(self, date: str) -> Optional[str]:
         # Perform a GET to check status
         try:
+            # We use make_request which now retries and raises on non-200.
+            # BaseAdapterV3.get_races handles the multi-engine fallback if configured.
             resp = await self.make_request("GET", "")
             if resp and get_resp_status(resp) == 200:
                 return "ALIVE"
-        except Exception:
-            pass
+        except Exception as e:
+            self.logger.debug("Health check request failed", error=str(e))
         return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
