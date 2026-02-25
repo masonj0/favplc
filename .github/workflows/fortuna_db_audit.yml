@@ -162,15 +162,67 @@ jobs:
           # ═══════════════════════════════════════════════════════════════════
           dq = []
           total, audited, pending = 0, 0, 0
+          def _parse_any_dt(raw: str) -> datetime:
+              """Parse any date format found in the tips table.
+              Handles:
+                - STORAGE_FORMAT: '260225T06:38:57'
+                - ISO 8601:       '2026-02-25T06:38:57'
+                - ISO with tz:    '2026-02-25T06:38:57-05:00'
+                - ISO with Z:     '2026-02-25T06:38:57Z'
+                - Date only:      '2026-02-25' or '260225'
+              """
+              if not raw:
+                  return now_et
+              s = str(raw).strip()
+
+              # 1. STORAGE_FORMAT: YYMMDDTHH:MM:SS
+              if re.match(r'^\d{6}T\d{2}:\d{2}:\d{2}$', s):
+                  return datetime.strptime(s, '%y%m%dT%H:%M:%S').replace(tzinfo=EASTERN)
+
+              # 2. STORAGE_FORMAT without time: YYMMDD
+              if re.match(r'^\d{6}$', s):
+                  return datetime.strptime(s, '%y%m%d').replace(tzinfo=EASTERN)
+
+              # 3. ISO 8601 variants
+              try:
+                  dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+                  if dt.tzinfo is None:
+                      return dt.replace(tzinfo=EASTERN)
+                  return dt.astimezone(EASTERN)
+              except (ValueError, TypeError):
+                  pass
+
+              # 4. ISO date only: YYYY-MM-DD
+              if re.match(r'^\d{4}-\d{2}-\d{2}$', s):
+                  return datetime.strptime(s, '%Y-%m-%d').replace(tzinfo=EASTERN)
+
+              # 5. Last resort
+              return now_et
+
           if has_table("tips"):
               f = conn.execute("SELECT MAX(start_time), MAX(audit_timestamp), COUNT(*), SUM(CASE WHEN audit_completed=1 THEN 1 ELSE 0 END), SUM(CASE WHEN audit_completed=0 THEN 1 ELSE 0 END), MAX(report_date) FROM tips").fetchone()
               total, audited, pending = f[2], f[3] or 0, f[4] or 0
+
+              # ── Staleness calculation (Fix 1a) ─────────────────────────────
               try:
-                  if f[5]:
-                      last_tip_et = datetime.fromisoformat(f[5]).replace(tzinfo=EASTERN)
-                      STALE_HOURS = (now_et - last_tip_et).total_seconds() / 3600
-                  else: STALE_HOURS = 999.0
-              except: STALE_HOURS = 999.0
+                  # f[5] = MAX(report_date), f[0] = MAX(start_time)
+                  # Use the MORE RECENT of report_date or start_time
+                  candidates = []
+                  for raw_val in [f[5], f[0]]:
+                      if raw_val:
+                          parsed = _parse_any_dt(str(raw_val))
+                          if parsed != now_et:  # Didn't fall through to default
+                              candidates.append(parsed)
+
+                  if candidates:
+                      most_recent = max(candidates)
+                      STALE_HOURS = (now_et - most_recent).total_seconds() / 3600
+                      # Sanity: if negative (future tips), clamp to 0
+                      STALE_HOURS = max(0.0, STALE_HOURS)
+                  else:
+                      STALE_HOURS = 999.0
+              except Exception:
+                  STALE_HOURS = 999.0
 
               # Pre-compute data quality assertions
               sc = conn.execute("SELECT start_time, venue, selection_number, COUNT(*) as ct FROM tips GROUP BY start_time, venue, selection_number HAVING ct > 1").fetchall()
@@ -185,8 +237,28 @@ jobs:
               if total and ns > total * 0.2: dq.append(f"❌ NULL SCORING: {ns}/{total} tips missing signals.")
               ud = conn.execute("SELECT COUNT(*) FROM tips WHERE discipline IS NULL OR discipline='?'").fetchone()[0]
               if ud: dq.append(f"❌ DISCIPLINE: {ud} tips missing discipline.")
-              fa = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed=1 AND julianday(audit_timestamp) < julianday(start_time)").fetchone()[0]
+
+              # Section 2T: Time travel assertion (Fix 1b)
+              # julianday() can't parse STORAGE_FORMAT either — use a Python-side check
+              def _count_time_travelers(conn) -> int:
+                  rows = conn.execute(
+                      "SELECT start_time, audit_timestamp FROM tips "
+                      "WHERE audit_completed=1 AND audit_timestamp IS NOT NULL"
+                  ).fetchall()
+                  count = 0
+                  for row in rows:
+                      try:
+                          st = _parse_any_dt(str(row['start_time']))
+                          at = _parse_any_dt(str(row['audit_timestamp']))
+                          if at < st:
+                              count += 1
+                      except Exception:
+                          pass
+                  return count
+
+              fa = _count_time_travelers(conn)
               if fa: dq.append(f"❌ TIME TRAVEL: {fa} tips audited before they ran.")
+
               zo = conn.execute("SELECT COUNT(*) FROM tips WHERE predicted_2nd_fav_odds = 0").fetchone()[0]
               if zo: dq.append(f"❌ ZERO ODDS: {zo} tips have 0.0 odds.")
               uv = conn.execute("SELECT COUNT(*) FROM tips WHERE venue IS NULL OR venue='Unknown' OR venue='unknown'").fetchone()[0]
@@ -394,10 +466,32 @@ jobs:
               emit("```\n")
               flush()
 
-              # ── 2J: Stuck Tip Age ─────────────────────────────────────────
+              # ── 2J: Stuck Tip Age Distribution (Fix 1c) ───────────────────
               emit("### 2J: Stuck Tip Age Distribution\n```text")
-              for r in conn.execute("SELECT CASE WHEN julianday('now')-julianday(start_time) < 1 THEN ' < 24h' WHEN julianday('now')-julianday(start_time) < 2 THEN ' 1-2d' WHEN julianday('now')-julianday(start_time) < 4 THEN ' 2-4d' ELSE ' > 4d' END as age, COUNT(*) as n FROM tips WHERE audit_completed=0 GROUP BY age ORDER BY age"):
-                  emit(f"  {r['age']:<15} {r['n']:>5} tips")
+              stuck_rows = conn.execute(
+                  "SELECT start_time FROM tips WHERE audit_completed=0"
+              ).fetchall()
+
+              age_buckets = defaultdict(int)
+              for row in stuck_rows:
+                  try:
+                      st = _parse_any_dt(str(row['start_time']))
+                      age_hours = (now_et - st).total_seconds() / 3600
+                      if age_hours < 0:
+                          age_buckets[' Future?!'] += 1
+                      elif age_hours < 24:
+                          age_buckets[' < 24h'] += 1
+                      elif age_hours < 48:
+                          age_buckets[' 1-2d'] += 1
+                      elif age_hours < 96:
+                          age_buckets[' 2-4d'] += 1
+                      else:
+                          age_buckets[' > 4d'] += 1
+                  except Exception:
+                      age_buckets[' Parse Error'] += 1
+
+              for age_label in sorted(age_buckets.keys()):
+                  emit(f"  {age_label:<15} {age_buckets[age_label]:>5} tips")
               emit("```\n")
 
               # ── 2K: Scoring Signal Inventory ──────────────────────────────
@@ -444,14 +538,96 @@ jobs:
               else: emit("  [is_superfecta_key missing]")
               emit("```\n")
 
-              # ── 2O: Tip Distribution by Time (ET) ──────────────────────────
+              # ── 2O: Tip Distribution by Time (ET) — format-aware (Fix 2a) ──
               emit("### 2O: Tip Distribution by Time (ET)\n```text")
-              emit(f"  {'HOUR (ET)':<12} {'COUNT':>8} {'W':>5} {'L':>5} {'HIT%':>7}")
-              emit(f"  {'─'*12} {'─'*8} {'─'*5} {'─'*5} {'─'*7}")
-              for r in conn.execute("SELECT SUBSTR(start_time, 8, 2) as hr, COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l FROM tips GROUP BY hr ORDER BY hr"):
+              emit(f"  {'HOUR (ET)':<12} {'COUNT':>8} {'W':>5} {'L':>5} {'HIT%':>7}  DAYPART")
+              emit(f"  {'─'*12} {'─'*8} {'─'*5} {'─'*5} {'─'*7}  {'─'*10}")
+
+              hour_data = conn.execute("""
+                  SELECT
+                      CASE
+                          WHEN start_time LIKE '______T%'
+                              THEN CAST(SUBSTR(start_time, 8, 2) AS INTEGER)
+                          WHEN start_time LIKE '____-__-__T%'
+                              THEN CAST(SUBSTR(start_time, 12, 2) AS INTEGER)
+                          ELSE -1
+                      END as hr,
+                      COUNT(*) as n,
+                      SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                      SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l
+                  FROM tips
+                  WHERE hr >= 0
+                  GROUP BY hr
+                  ORDER BY hr
+              """).fetchall()
+
+              for r in hour_data:
+                  hr = r['hr']
                   dec = r['w'] + r['l']
                   hrp = f"{r['w']/dec*100:>6.1f}%" if dec else "    —"
-                  emit(f"  {r['hr']:02s}:00        {r['n']:>8} {r['w']:>5} {r['l']:>5} {hrp}")
+                  # Map hour to daypart label
+                  dp_label = ['Q1 ANZ','Q1 ANZ','Q1 ANZ','Q1 ANZ','Q1 ANZ','Q1 ANZ',
+                              'Q2 UK ','Q2 UK ','Q2 UK ','Q2 UK ','Q2 UK ','Q2 UK ',
+                              'Q3 US ','Q3 US ','Q3 US ','Q3 US ','Q3 US ','Q3 US ',
+                              'Q4 EVE','Q4 EVE','Q4 EVE','Q4 EVE','Q4 EVE','Q4 EVE'][hr]
+                  emit(f"  {hr:02d}:00        {r['n']:>8} {r['w']:>5} {r['l']:>5} {hrp}  {dp_label}")
+              emit("```\n")
+              flush()
+
+              # ── 2O-bis: Performance by Daypart (Fix 2b) ───────────────────
+              emit("### 2O-bis: Performance by Daypart Quarter\n```text")
+              emit(f"  {'DAYPART':<22} {'BETS':>5} {'W':>4} {'L':>4} {'HIT%':>7} {'NET P&L':>10} {'ROI':>8}")
+              emit(f"  {'─'*22} {'─'*5} {'─'*4} {'─'*4} {'─'*7} {'─'*10} {'─'*8}")
+
+              daypart_data = conn.execute("""
+                  SELECT
+                      CASE
+                          WHEN CAST(
+                              CASE
+                                  WHEN start_time LIKE '______T%' THEN SUBSTR(start_time, 8, 2)
+                                  WHEN start_time LIKE '____-__-__T%' THEN SUBSTR(start_time, 12, 2)
+                                  ELSE '-1'
+                              END AS INTEGER
+                          ) BETWEEN 0 AND 5 THEN 'Q1 Overnight (ANZ)'
+                          WHEN CAST(
+                              CASE
+                                  WHEN start_time LIKE '______T%' THEN SUBSTR(start_time, 8, 2)
+                                  WHEN start_time LIKE '____-__-__T%' THEN SUBSTR(start_time, 12, 2)
+                                  ELSE '-1'
+                              END AS INTEGER
+                          ) BETWEEN 6 AND 11 THEN 'Q2 Morning (UK/SA)'
+                          WHEN CAST(
+                              CASE
+                                  WHEN start_time LIKE '______T%' THEN SUBSTR(start_time, 8, 2)
+                                  WHEN start_time LIKE '____-__-__T%' THEN SUBSTR(start_time, 12, 2)
+                                  ELSE '-1'
+                              END AS INTEGER
+                          ) BETWEEN 12 AND 17 THEN 'Q3 Afternoon (US+UK)'
+                          WHEN CAST(
+                              CASE
+                                  WHEN start_time LIKE '______T%' THEN SUBSTR(start_time, 8, 2)
+                                  WHEN start_time LIKE '____-__-__T%' THEN SUBSTR(start_time, 12, 2)
+                                  ELSE '-1'
+                              END AS INTEGER
+                          ) BETWEEN 18 AND 23 THEN 'Q4 Evening (US)'
+                          ELSE 'Unknown'
+                      END as daypart,
+                      COUNT(*) as n,
+                      SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                      SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l,
+                      SUM(net_profit) as pnl
+                  FROM tips
+                  WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
+                  GROUP BY daypart
+                  ORDER BY daypart
+              """).fetchall()
+
+              for r in daypart_data:
+                  dec = r['w'] + r['l']
+                  if dec == 0: continue
+                  hr_pct = f"{r['w']/dec*100:>6.1f}%"
+                  roi = f"{(r['pnl'] or 0)/(dec*STANDARD_BET)*100:>+6.1f}%"
+                  emit(f"  {r['daypart']:<22} {dec:>5} {r['w']:>4} {r['l']:>4} {hr_pct} ${(r['pnl'] or 0):>+8.2f} {roi}")
               emit("```\n")
               flush()
 
