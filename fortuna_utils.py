@@ -2,11 +2,28 @@ import re
 import structlog
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union, Final
 from zoneinfo import ZoneInfo
 from functools import lru_cache
 
 EASTERN = ZoneInfo("America/New_York")
+
+class DayPart(Enum):
+    """
+    Quarter-based day parts for targeted fetching and scoring.
+    Q1: 00:00 - 05:59 (AU/NZ focus)
+    Q2: 06:00 - 11:59 (UK/SA focus)
+    Q3: 12:00 - 17:59 (US/UK afternoon focus)
+    Q4: 18:00 - 23:59 (US evening, UK all-weather focus)
+    """
+    Q1 = "Q1"
+    Q2 = "Q2"
+    Q3 = "Q3"
+    Q4 = "Q4"
+
+    def __str__(self):
+        return self.value
 
 # JB's Preferred Date Format (YYMMDD)
 DATE_FORMAT: Final[str] = "%y%m%d"
@@ -551,6 +568,40 @@ def from_storage_format(s: str) -> datetime:
 def now_eastern() -> datetime:
     """Returns the current time in US Eastern Time."""
     return datetime.now(EASTERN)
+
+def resolve_daypart(args: Optional[Any] = None) -> DayPart:
+    """
+    Resolves the active DayPart based on the provided CLI arguments
+    or the current time in US Eastern.
+    """
+    if args and getattr(args, "daypart", None) and args.daypart != "auto":
+        try:
+            return DayPart(args.daypart.upper())
+        except (ValueError, AttributeError):
+            pass
+
+    return resolve_daypart_from_dt(now_eastern())
+
+def resolve_daypart_from_dt(dt: datetime) -> DayPart:
+    """Resolves DayPart from a specific datetime object (in Eastern)."""
+    hour = dt.hour
+    if 0 <= hour < 6:
+        return DayPart.Q1
+    elif 6 <= hour < 12:
+        return DayPart.Q2
+    elif 12 <= hour < 18:
+        return DayPart.Q3
+    else:
+        return DayPart.Q4
+
+def get_daypart_tag(args: Optional[Any] = None) -> str:
+    """
+    Returns a string tag for the current DayPart and date (e.g., 'Q3_260225').
+    Used for snapshot file naming and database keys.
+    """
+    dp = resolve_daypart(args)
+    date_str = now_eastern().strftime(DATE_FORMAT)
+    return f"{dp}_{date_str}"
 
 def to_eastern(dt: datetime) -> datetime:
     """Converts a datetime object to US Eastern Time."""

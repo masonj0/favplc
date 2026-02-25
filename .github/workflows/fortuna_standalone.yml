@@ -5,40 +5,107 @@ on:
     branches: [main]
     paths-ignore: ["**.md", ".github/workflows/build_monolith.yml", "docs/**"]
   schedule:
-    - cron: '0 * * * *'
+    - cron: "5 5,11,17,23 * * *"   # Quarter fetch - 5 min after UTC quarter boundaries
+    - cron: "*/15 0-5,10-23 * * *" # Scoring loop - every 15 min during racing hours
   workflow_dispatch:
     inputs:
-      hours:
-        description: 'Discovery window in hours'
+      daypart:
+        description: 'Specify daypart (auto/Q1/Q2/Q3/Q4)'
         required: false
-        default: '8'
-        type: string
+        default: 'auto'
+        type: choice
+        options: [auto, Q1, Q2, Q3, Q4]
+      mode:
+        description: 'Execution mode (auto/quarter-fetch/score-now)'
+        required: false
+        default: 'auto'
+        type: choice
+        options: [auto, quarter-fetch, score-now]
+      force_fetch:
+        description: 'Force structural re-fetch'
+        required: false
+        default: false
+        type: boolean
       days:
         description: 'Audit lookback days'
         required: false
         default: '4'
         type: string
+      quality:
+        description: 'Filter by adapter quality'
+        required: false
+        default: ''
+        type: choice
+        options: ['', solid, lousy]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # PHASE 1: Parallel Discovery
-  # Fetches racing data from distinct sets of adapters.
-  fetch:
+  resolve-mode:
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
-    strategy:
-      matrix:
-        include:
-          - type: entry
-            quality: solid
-            slug: entry-solid
-          - type: entry
-            quality: lousy
-            slug: entry-lousy
-      fail-fast: false
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.decide.outputs.mode }}
+      daypart: ${{ steps.decide.outputs.daypart }}
+      daypart_tag: ${{ steps.decide.outputs.daypart_tag }}
+    steps:
+      - id: decide
+        name: Detect Mode and Daypart
+        run: |
+          #!/bin/bash
+          set -e
+
+          # Manual override from workflow_dispatch
+          MODE_INPUT="${{ inputs.mode || 'auto' }}"
+          FORCE="${{ inputs.force_fetch || 'false' }}"
+
+          # Detect daypart
+          DAYPART_INPUT="${{ inputs.daypart || 'auto' }}"
+          if [ "$DAYPART_INPUT" = "auto" ] || [ -z "$DAYPART_INPUT" ]; then
+            HOUR=$(TZ=America/New_York date +%-H)
+            QUARTER=$(( (HOUR / 6) + 1 ))
+            DAYPART="Q${QUARTER}"
+          else
+            DAYPART="$DAYPART_INPUT"
+          fi
+
+          DATE_STR=$(TZ=America/New_York date +%y%m%d)
+          DAYPART_TAG="${DAYPART}_${DATE_STR}"
+
+          echo "daypart=${DAYPART}" >> "$GITHUB_OUTPUT"
+          echo "daypart_tag=${DAYPART_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Determine mode
+          if [ "$MODE_INPUT" != "auto" ]; then
+            # Map choice to internal mode name
+            if [ "$MODE_INPUT" = "quarter-fetch" ]; then
+              echo "mode=quarter_fetch" >> "$GITHUB_OUTPUT"
+            elif [ "$MODE_INPUT" = "score-now" ]; then
+              echo "mode=scoring_loop" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode=$MODE_INPUT" >> "$GITHUB_OUTPUT"
+            fi
+          elif [ "$FORCE" = "true" ]; then
+            echo "mode=quarter_fetch" >> "$GITHUB_OUTPUT"
+          else
+            MINUTE=$(TZ=America/New_York date +%-M)
+            HOUR=$(TZ=America/New_York date +%-H)
+            # Quarter boundary = first 20 minutes of hours 0, 6, 12, 18 (Eastern Standard)
+            # or 1, 7, 13, 19 (Eastern Daylight).
+            if (( (HOUR % 6 == 0) || (HOUR % 6 == 1) )) && (( MINUTE < 20 )); then
+              echo "mode=quarter_fetch" >> "$GITHUB_OUTPUT"
+            else
+              echo "mode=scoring_loop" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  quarter-fetch:
+    needs: resolve-mode
+    if: needs.resolve-mode.outputs.mode == 'quarter_fetch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,17 +116,15 @@ jobs:
           path: |
             ~/.cache/pip
             ~/.cache/ms-playwright
-          key: deps-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
-      - name: Restore Regional Database
+      - name: Restore Master Database
         id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          # Scenario A: Regions maintain separate history baseline to avoid race conditions.
-          # These are merged in the audit-results job later.
-          key: fortuna-db-v3-${{ matrix.slug }}-${{ github.run_number }}
-          restore-keys: fortuna-db-v3-${{ matrix.slug }}-
+          key: fortuna-db-v4-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
         run: |
@@ -72,48 +137,112 @@ jobs:
         if: steps.cache-db.outputs.cache-hit != 'true'
         run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
 
-      - name: Run Fetcher (Entry or Results)
-        timeout-minutes: 20
+      - name: Run Quarter Fetch
         env:
           PYTHONPATH: .
         run: |
-          START_TIME=$(date +%s)
-
-          echo "Running ${{ matrix.quality }} Entry Discovery..."
+          QUALITY_FLAG=""
+          if [ -n "${{ inputs.quality }}" ]; then
+            QUALITY_FLAG="--quality ${{ inputs.quality }}"
+          fi
+          FORCE_FLAG=""
+          if [ "${{ inputs.force_fetch }}" = "true" ]; then
+            FORCE_FLAG="--force-fetch"
+          fi
           python3 fortuna.py \
-            --quality ${{ matrix.quality }} \
-            --save "races_${{ matrix.slug }}.json" \
-            --hours "${{ github.event.inputs.hours || '8' }}" \
-          || echo '[]' > "races_${{ matrix.slug }}.json"
+            --daypart ${{ needs.resolve-mode.outputs.daypart }} \
+            --quarter-fetch \
+            $QUALITY_FLAG \
+            $FORCE_FLAG \
+            --save "races_${{ needs.resolve-mode.outputs.daypart_tag }}.json"
 
-          END_TIME=$(date +%s)
-          DURATION=$((END_TIME - START_TIME))
-          echo "::notice::${{ matrix.slug }} completed in ${DURATION}s"
+      - name: Save Snapshot to Cache
+        uses: actions/cache/save@v4
+        with:
+          path: snapshots/
+          key: fortuna-snapshot-${{ needs.resolve-mode.outputs.daypart_tag }}
 
       - name: Prepare Artifact
         if: always()
         run: |
-          cp fortuna.db "fortuna_${{ matrix.slug }}.db"
-          mv discovery_harvest.json "discovery_harvest_${{ matrix.slug }}.json" 2>/dev/null \
-            || echo '{}' > "discovery_harvest_${{ matrix.slug }}.json"
-          mv results_harvest.json "results_harvest_${{ matrix.slug }}.json" 2>/dev/null \
-            || echo '{}' > "results_harvest_${{ matrix.slug }}.json"
+          cp fortuna.db "fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db"
+          mv discovery_harvest.json "discovery_harvest_${{ needs.resolve-mode.outputs.daypart_tag }}.json" 2>/dev/null || echo '{}' > "discovery_harvest_${{ needs.resolve-mode.outputs.daypart_tag }}.json"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: results-${{ matrix.slug }}
+          name: discovery-${{ needs.resolve-mode.outputs.daypart_tag }}
           path: |
-            races_${{ matrix.slug }}.json
-            fortuna_${{ matrix.slug }}.db
-            discovery_harvest_${{ matrix.slug }}.json
+            races_${{ needs.resolve-mode.outputs.daypart_tag }}.json
+            fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db
+            discovery_harvest_${{ needs.resolve-mode.outputs.daypart_tag }}.json
           retention-days: 1
 
-  # PHASE 2: Data Consolidation & Audit
-  # Merges regional data and verifies results against the historical database.
-  audit-results:
-    needs: [fetch]
-    if: always()
+  scoring-loop:
+    needs: resolve-mode
+    if: needs.resolve-mode.outputs.mode == 'scoring_loop'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
+
+      - name: Restore Master Database
+        id: cache-db
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-v4-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v4-master-
+
+      - name: Restore Snapshot from Cache
+        id: cache-snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: snapshots/
+          key: fortuna-snapshot-${{ needs.resolve-mode.outputs.daypart_tag }}
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: Run Scoring Now
+        if: steps.cache-snapshot.outputs.cache-hit == 'true'
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 fortuna.py \
+            --daypart ${{ needs.resolve-mode.outputs.daypart }} \
+            --score-now
+
+      - name: Log Warning if No Snapshot
+        if: steps.cache-snapshot.outputs.cache-hit != 'true'
+        run: echo "::warning::No snapshot found for ${{ needs.resolve-mode.outputs.daypart_tag }}. Skipping scoring."
+
+      - name: Prepare Artifact
+        if: always()
+        run: cp fortuna.db "fortuna_scoring_${{ github.run_number }}.db"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}
+          path: |
+            summary_grid.txt
+            goldmine_report.txt
+            fortuna_scoring_${{ github.run_number }}.db
+          retention-days: 1
+
+  audit:
+    needs: [resolve-mode, quarter-fetch]
+    if: always() && needs.resolve-mode.outputs.mode == 'quarter_fetch'
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -123,77 +252,35 @@ jobs:
           python-version: '3.12'
       - uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: deps-${{ runner.os }}-py311-audit-${{ hashFiles('requirements.txt') }}
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-playwright
+          key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
-        id: cache-db
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
-          restore-keys: fortuna-db-v3-master-
+          key: fortuna-db-v4-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
           python3 -m browserforge update
+          playwright install --with-deps chromium
 
-      - name: Initialize DB if needed
-        if: steps.cache-db.outputs.cache-hit != 'true'
-        run: python3 -c "import fortuna; import asyncio; asyncio.run(fortuna.FortunaDB().initialize())"
-
-      - name: Download Discovery Artifacts
+      - name: Download Discovery Artifact
         uses: actions/download-artifact@v4
-
-      - name: Consolidate Discovery Data
-        run: |
-          set -eo pipefail
-          echo "Validating parallel artifacts..."
-
-          ARTIFACT_COUNT=0
-          for slug in entry-solid entry-lousy; do
-            DIR="results-${slug}"
-            if [ -d "$DIR" ]; then
-              ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
-              cp "$DIR/races_${slug}.json" . 2>/dev/null || echo '[]' > "races_${slug}.json"
-              # Try to get the regional DB, fallback to master ONLY if it exists
-              cp "$DIR/fortuna_${slug}.db" . 2>/dev/null || { [ -f fortuna.db ] && cp fortuna.db "fortuna_${slug}.db" || true; }
-              cp "$DIR/discovery_harvest_${slug}.json" . 2>/dev/null || echo '{}' > "discovery_harvest_${slug}.json"
-              cp "$DIR/results_harvest_${slug}.json" . 2>/dev/null || echo '{}' > "results_harvest_${slug}.json"
-            else
-              echo "::warning::Artifact directory $DIR missing"
-              echo '[]' > "races_${slug}.json"
-              [ -f fortuna.db ] && cp fortuna.db "fortuna_${slug}.db" || true
-              echo '{}' > "discovery_harvest_${slug}.json"
-              echo '{}' > "results_harvest_${slug}.json"
-            fi
-          done
-
-          if [ $ARTIFACT_COUNT -eq 0 ]; then
-            echo "::error::No discovery artifacts found! All fetch jobs failed."
-            exit 1
-          fi
-
-          echo "Consolidating $ARTIFACT_COUNT regional artifacts..."
-          python3 scripts/consolidate_parallel_runs.py \
-            --json-pattern "races_*.json" \
-            --db-pattern "fortuna_*.db" \
-            --output-json "raw_races.json" \
-            --output-db "fortuna.db"
+        with:
+          name: discovery-${{ needs.resolve-mode.outputs.daypart_tag }}
 
       - name: Run Results Audit
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           PYTHONPATH: .
-        run: python3 fortuna_analytics.py --days "${{ github.event.inputs.days || '4' }}"
-
-      - name: Prepare Audit Artifact
-        if: always()
-        run: |
-          cp results_harvest.json results_harvest_audit.json 2>/dev/null \
-            || echo '{}' > results_harvest_audit.json
+        run: python3 fortuna_analytics.py --days "${{ inputs.days || '4' }}"
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -202,18 +289,13 @@ jobs:
           path: |
             analytics_report.txt
             fortuna.db
-            raw_races.json
-            results_harvest_audit.json
-            discovery_harvest_*.json
           retention-days: 1
 
-  # PHASE 3: Reporting & Summary
-  # Generates the dashboard and persists the updated master database.
   conclude:
-    needs: [audit-results]
+    needs: [resolve-mode, quarter-fetch, scoring-loop, audit]
     if: always()
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -222,17 +304,26 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: deps-conclude-${{ runner.os }}-py311-${{ hashFiles('requirements.txt') }}
+          key: deps-conclude-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
-      - name: Download Audit Artifact
+      - name: Download All Artifacts
         uses: actions/download-artifact@v4
-        with:
-          name: audit-results
 
-      - name: Install summary dependencies
+      - name: Install dependencies
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
+
+      - name: Consolidate Database
+        run: |
+          # Use the most recent/relevant DB
+          if [ -f audit-results/fortuna.db ]; then
+            cp audit-results/fortuna.db fortuna.db
+          elif [ -f scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}/fortuna_scoring_${{ github.run_number }}.db ]; then
+            cp scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}/fortuna_scoring_${{ github.run_number }}.db fortuna.db
+          elif [ -f discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db ]; then
+            cp discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db fortuna.db
+          fi
 
       - name: Generate Workflow Metadata
         run: |
@@ -245,16 +336,26 @@ jobs:
             "sha": "${{ github.sha }}",
             "actor": "${{ github.actor }}",
             "event": "${{ github.event_name }}",
-            "timestamp": "$(date -u +%y%m%dT%H:%M:%SZ)"
+            "mode": "${{ needs.resolve-mode.outputs.mode }}",
+            "daypart": "${{ needs.resolve-mode.outputs.daypart }}",
+            "timestamp": "$(TZ=America/New_York date +%y%m%dT%H:%M:%SZ)"
           }
           EOF
 
-      - name: Run Monitor Report
+      - name: Score Approaching Races
         run: |
-          if [ -s raw_races.json ] && python3 -c "import json; d=json.load(open('raw_races.json')); assert len(d)>0" 2>/dev/null; then
-            python3 fortuna.py --load raw_races.json --monitor --once
+          # If we have raw races (from discovery or audit artifact), we can score now
+          RAW_RACES=""
+          if [ -f discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/races_${{ needs.resolve-mode.outputs.daypart_tag }}.json ]; then
+            RAW_RACES="discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/races_${{ needs.resolve-mode.outputs.daypart_tag }}.json"
+          elif [ -f audit-results/raw_races.json ]; then
+            RAW_RACES="audit-results/raw_races.json"
+          fi
+
+          if [ -n "$RAW_RACES" ] && [ -s "$RAW_RACES" ] && python3 -c "import json; d=json.load(open('$RAW_RACES')); assert len(d)>0" 2>/dev/null; then
+            python3 fortuna.py --daypart ${{ needs.resolve-mode.outputs.daypart }} --load "$RAW_RACES" --score-now
           else
-            echo "::warning::No valid race data to monitor"
+            echo "::warning::No valid race data to score in conclude job"
           fi
 
       - name: Generate Job Summary
@@ -266,19 +367,17 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
+          key: fortuna-db-v4-master-${{ github.run_number }}
 
       - name: Upload Final Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: best-bet-reports-${{ github.run_number }}
-          if-no-files-found: warn
           path: |
             summary_grid.txt
             goldmine_report.txt
             analytics_report.txt
-            race_data.json
             fortuna.db
             workflow_metadata.json
           retention-days: 1
