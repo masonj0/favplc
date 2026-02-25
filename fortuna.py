@@ -62,6 +62,7 @@ from typing import (
     Final,
     List,
     Optional,
+    Set,
     Tuple,
     Type,
     TypeVar,
@@ -372,7 +373,8 @@ from fortuna_utils import (
     parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
     is_valid_odds, scrape_available_bets, detect_discipline,
     now_eastern, to_eastern, ensure_eastern, get_places_paid,
-    parse_date_string, to_storage_format, from_storage_format
+    parse_date_string, to_storage_format, from_storage_format,
+    DayPart, resolve_daypart, get_daypart_tag
 )
 DEFAULT_REGION: Final[str] = "GLOBAL"
 
@@ -411,7 +413,10 @@ OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
     "Official_FingerLakes", "Official_Thistledown", "Official_MahoningValley",
     "Official_BelterraPark", "Official_SaratogaHarness", "Official_HoosierPark",
     "Official_NorthfieldPark", "Official_SciotoDowns", "Official_FortErie",
-    "Official_Hastings", "Official_Ascot", "Official_Cheltenham", "Official_Flemington"
+    "Official_Hastings", "Official_Ascot", "Official_Cheltenham", "Official_Flemington",
+    "Official_BHA", "Official_Cork", "Official_Dubai", "Official_TheValley",
+    "Official_AjaxDowns", "Official_BataviaDowns", "Official_CanterburyPark",
+    "Official_Clonmel", "Official_ColonialDowns", "Official_DownRoyal"
 }
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
@@ -435,6 +440,47 @@ INT_RESULTS_ADAPTERS: Final[set] = {
 
 # Quality-based Partitioning (JB/Council Strategy)
 SOLID_DISCOVERY_ADAPTERS: Final[set] = {"TwinSpires", "SkyRacingWorld", "RacingPost"}
+
+# Scoring Loop Infrastructure (Phase B1)
+SCORING_MTP_MAX: Final[int] = 15
+ODDS_REFRESH_ADAPTERS: Final[List[str]] = ["TwinSpires", "Oddschecker", "NYRABets"]
+SNAPSHOT_DIR: Final[str] = "snapshots"
+
+# DayPart regional mapping - Phase A2 fix (adding INT/GLOBAL to Q4)
+DAYPART_ACTIVE_REGIONS: Final[Dict[DayPart, frozenset]] = {
+    DayPart.Q1: frozenset({'INT', 'GLOBAL'}), # AU/NZ focus
+    DayPart.Q2: frozenset({'INT', 'GLOBAL'}), # UK/SA focus
+    DayPart.Q3: frozenset({'USA', 'INT', 'GLOBAL'}), # US/UK afternoon
+    DayPart.Q4: frozenset({'USA', 'INT', 'GLOBAL'}), # US evening, UK all-weather
+}
+
+def get_daypart_discovery_adapters(daypart: DayPart) -> Set[str]:
+    """Returns the set of discovery adapter names for the specified DayPart."""
+    regions = DAYPART_ACTIVE_REGIONS.get(daypart, frozenset())
+    adapters = set()
+    if 'USA' in regions:
+        adapters |= USA_DISCOVERY_ADAPTERS
+    if 'INT' in regions:
+        adapters |= INT_DISCOVERY_ADAPTERS
+    if 'GLOBAL' in regions:
+        adapters |= GLOBAL_DISCOVERY_ADAPTERS
+    return adapters
+
+def get_daypart_results_adapters(daypart: DayPart) -> Set[str]:
+    """Returns the set of results adapter names for auditing."""
+    # We audit results from the *previous* quarter
+    # Q1 audits Q4, Q2 audits Q1, etc.
+    prev_idx = (list(DayPart).index(daypart) - 1) % 4
+    prev_daypart = list(DayPart)[prev_idx]
+    prev_regions = DAYPART_ACTIVE_REGIONS.get(prev_daypart, frozenset())
+
+    adapters = set()
+    # Results adapters always include INT for broad coverage (Phase A1 fix)
+    # (UK/IRE/AUS results are needed for catch-up regardless of quarter)
+    adapters |= INT_RESULTS_ADAPTERS
+    if 'USA' in prev_regions:
+        adapters |= set(USA_RESULTS_ADAPTERS)
+    return adapters
 SOLID_RESULTS_ADAPTERS: Final[set] = {
     "StandardbredCanadaResults",
     "RacingPostResults",
@@ -696,6 +742,177 @@ def generate_race_id(
     time_str = start_time.strftime("%H%M")
 
     dl = (discipline or "Thoroughbred").lower()
+
+
+def get_scorable_races(
+    cached_races: List[Race],
+    already_scored: Optional[Set[str]] = None,
+) -> List[Race]:
+    """Filter to races within SCORING_MTP_MAX minutes of post that haven't been scored yet."""
+    now = now_eastern()
+    already = already_scored or set()
+    scorable = []
+    for race in cached_races:
+        if race.id in already:
+            continue
+        mtp_seconds = (race.start_time - now).total_seconds()
+        mtp_minutes = mtp_seconds / 60
+        # This is the ONLY timing gate in the scoring path.
+        if 0 < mtp_minutes <= SCORING_MTP_MAX:
+            scorable.append(race)
+    return scorable
+
+
+def save_quarter_snapshot(
+    daypart_tag: str,
+    races: List[Race],
+    output_dir: str = SNAPSHOT_DIR,
+) -> str:
+    """Save structural race data for later scoring runs."""
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"{daypart_tag}_races.json"
+    filepath = os.path.join(output_dir, filename)
+    tmp_path = filepath + ".tmp"
+
+    # Serialize races — reuse existing race serialization pattern
+    race_dicts = []
+    for race in races:
+        rd = race.model_dump(mode="python")
+        # Convert datetimes to STORAGE_FORMAT strings
+        if isinstance(rd.get("start_time"), datetime):
+            rd["start_time"] = to_storage_format(rd["start_time"])
+        # Convert runner odds datetimes
+        for runner in rd.get("runners", []):
+            if not isinstance(runner.get("odds"), dict):
+                continue
+            for odds_data in runner.get("odds", {}).values():
+                if isinstance(odds_data.get("last_updated"), datetime):
+                    odds_data["last_updated"] = to_storage_format(odds_data["last_updated"])
+        race_dicts.append(rd)
+
+    with open(tmp_path, "w") as f:
+        json.dump(race_dicts, f, default=str)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, filepath)
+
+    logger = structlog.get_logger("save_quarter_snapshot")
+    logger.info("quarter_snapshot_saved",
+        daypart_tag=daypart_tag, race_count=len(races), path=filepath)
+    return filepath
+
+
+def load_quarter_snapshot(
+    daypart_tag: str,
+    output_dir: str = SNAPSHOT_DIR,
+) -> Optional[List[Race]]:
+    """Load structural race data from a quarter snapshot."""
+    filepath = os.path.join(output_dir, f"{daypart_tag}_races.json")
+    if not os.path.exists(filepath):
+        return None
+
+    logger = structlog.get_logger("load_quarter_snapshot")
+    try:
+        with open(filepath) as f:
+            race_dicts = json.load(f)
+
+        races = []
+        for rd in race_dicts:
+            # Parse start_time back to datetime
+            if isinstance(rd.get("start_time"), str):
+                rd["start_time"] = from_storage_format(rd["start_time"])
+            # Parse runner odds datetimes
+            for runner in rd.get("runners", []):
+                if not isinstance(runner.get("odds"), dict):
+                    continue
+                for odds_data in runner.get("odds", {}).values():
+                    if isinstance(odds_data.get("last_updated"), str):
+                        odds_data["last_updated"] = from_storage_format(odds_data["last_updated"])
+            races.append(Race(**rd))
+
+        logger.info("quarter_snapshot_loaded",
+            daypart_tag=daypart_tag, race_count=len(races))
+        return races
+    except Exception as e:
+        logger.error("quarter_snapshot_load_failed",
+            daypart_tag=daypart_tag, error=str(e))
+        return None
+
+
+def _find_adapter_class(source_name: str) -> Optional[Type[BaseAdapterV3]]:
+    """Find adapter class by SOURCE_NAME."""
+    def get_all_subclasses(cls):
+        return set(cls.__subclasses__()).union(
+            [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+        )
+
+    for cls in get_all_subclasses(BaseAdapterV3):
+        if getattr(cls, "SOURCE_NAME", None) == source_name:
+            return cls
+    return None
+
+
+async def refresh_odds_for_races(
+    scorable_races: List[Race],
+    config: Dict,
+) -> List[Race]:
+    """Fetch fresh odds from fast adapters and merge into scorable races."""
+    if not scorable_races:
+        return scorable_races
+
+    logger = structlog.get_logger("refresh_odds")
+    date_str = now_eastern().strftime(DATE_FORMAT)
+
+    # Build lookup for matching: (canonical_venue, race_number) -> Race
+    race_lookup: Dict[tuple, Race] = {}
+    for race in scorable_races:
+        key = (get_canonical_venue(race.venue), race.race_number)
+        race_lookup[key] = race
+
+    # Fetch from HTTPX-only adapters
+    fresh_count = 0
+    for adapter_name in ODDS_REFRESH_ADAPTERS:
+        adapter_cls = _find_adapter_class(adapter_name)
+        if not adapter_cls:
+            continue
+        adapter = adapter_cls(config=config)
+        try:
+            fresh_races = await adapter.get_races(date_str)
+            for fresh_race in fresh_races:
+                key = (get_canonical_venue(fresh_race.venue), fresh_race.race_number)
+                target = race_lookup.get(key)
+                if not target:
+                    continue
+                # Merge runners: match by number, then by name
+                for new_runner in fresh_race.runners:
+                    matched = None
+                    for existing_runner in target.runners:
+                        if (new_runner.number and existing_runner.number
+                                and new_runner.number == existing_runner.number):
+                            matched = existing_runner
+                            break
+                        if new_runner.name.lower() == existing_runner.name.lower():
+                            matched = existing_runner
+                            break
+                    if matched:
+                        matched.odds.update(new_runner.odds)
+                        if new_runner.win_odds and not matched.win_odds:
+                            matched.win_odds = new_runner.win_odds
+                        fresh_count += 1
+        except Exception as e:
+            logger.warning("odds_refresh_failed",
+                adapter=adapter_name, error=str(e))
+        finally:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+
+    logger.info("odds_refresh_complete",
+        adapters_used=len(ODDS_REFRESH_ADAPTERS),
+        runners_updated=fresh_count,
+        races_targeted=len(scorable_races))
+    return scorable_races
     if "harness" in dl:
         disc_suffix = "_h"
     elif "greyhound" in dl:
@@ -1920,6 +2137,46 @@ class OfficialCheltenhamAdapter(OfficialTrackAdapter):
 class OfficialFlemingtonAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Flemington"
     def __init__(self, config=None): super().__init__("Flemington", "https://www.vrc.com.au/", config=config)
+
+class OfficialBHAAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_BHA"
+    def __init__(self, config=None): super().__init__("BHA", "https://www.britishhorseracing.com", config=config)
+
+class OfficialCorkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Cork"
+    def __init__(self, config=None): super().__init__("Cork", "https://www.corkracecourse.ie", config=config)
+
+class OfficialDubaiAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Dubai"
+    def __init__(self, config=None): super().__init__("Dubai", "https://www.dubairacingclub.com", config=config)
+
+class OfficialTheValleyAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_TheValley"
+    def __init__(self, config=None): super().__init__("The Valley", "https://www.thevalley.com.au", config=config)
+
+class OfficialAjaxDownsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_AjaxDowns"
+    def __init__(self, config=None): super().__init__("Ajax Downs", "https://www.ajaxdowns.com", config=config)
+
+class OfficialBataviaDownsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_BataviaDowns"
+    def __init__(self, config=None): super().__init__("Batavia Downs", "https://www.batavia-downs.com", config=config)
+
+class OfficialCanterburyParkAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_CanterburyPark"
+    def __init__(self, config=None): super().__init__("Canterbury Park", "https://www.canterburypark.com", config=config)
+
+class OfficialClonmelAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Clonmel"
+    def __init__(self, config=None): super().__init__("Clonmel", "https://www.clonmelraces.ie", config=config)
+
+class OfficialColonialDownsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_ColonialDowns"
+    def __init__(self, config=None): super().__init__("Colonial Downs", "https://www.colonialdowns.com", config=config)
+
+class OfficialDownRoyalAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_DownRoyal"
+    def __init__(self, config=None): super().__init__("Down Royal", "https://www.downroyal.com", config=config)
 
 class JRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     """
@@ -4649,10 +4906,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 self.logger.info("Skipping race in untested region", venue=race.venue, canonical=canonical_venue)
                 continue
 
-            # 1. Timing Filter: Relaxed for "News" mode (GPT5: Caller handles strict timing)
-            st = race.start_time
-            if st.tzinfo is None:
-                st = st.replace(tzinfo=EASTERN)
+            # Timing Filter: Removed (Phase B6). Caller (run_score_now) handles strict timing (0 < MTP <= 15).
 
             # Goldmine Detection: 2nd favorite >= 4.5 decimal
             is_goldmine = False
@@ -6208,6 +6462,19 @@ class FortunaDB:
                         superfecta_key_name TEXT
                     )
                 """)
+                conn.execute('''CREATE TABLE IF NOT EXISTS quarter_harvests (
+                    quarter_id TEXT PRIMARY KEY,
+                    region TEXT NOT NULL DEFAULT 'GLOBAL',
+                    daypart TEXT,
+                    card_fetch_started TEXT,
+                    card_fetch_completed TEXT,
+                    race_count INTEGER DEFAULT 0,
+                    snapshot_path TEXT,
+                    scoring_runs INTEGER DEFAULT 0,
+                    last_scoring_run TEXT,
+                    tips_produced INTEGER DEFAULT 0,
+                    audit_completed INTEGER DEFAULT 0
+                )''')
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
 
@@ -6427,6 +6694,71 @@ class FortunaDB:
 
         self._initialized = True
         self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 7))
+
+    async def is_quarter_fetched(self, quarter_id: str) -> bool:
+        def _check():
+            conn = self._get_conn()
+            row = conn.execute(
+                'SELECT 1 FROM quarter_harvests WHERE quarter_id = ? AND card_fetch_completed IS NOT NULL',
+                (quarter_id,)
+            ).fetchone()
+            return row is not None
+        return await self._run_in_executor(_check)
+
+    async def log_quarter_fetch(self, quarter_id: str, region: str, daypart: str, race_count: int, snapshot_path: str) -> None:
+        def _log():
+            conn = self._get_conn()
+            now = to_storage_format(now_eastern())
+            with conn:
+                conn.execute(
+                    '''INSERT OR REPLACE INTO quarter_harvests
+                       (quarter_id, region, daypart, card_fetch_started, card_fetch_completed,
+                        race_count, snapshot_path)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    (quarter_id, region, daypart, now, now, race_count, snapshot_path)
+                )
+        return await self._run_in_executor(_log)
+
+    async def log_scoring_run(self, quarter_id: str, tips_count: int) -> None:
+        def _log():
+            conn = self._get_conn()
+            now = to_storage_format(now_eastern())
+            with conn:
+                conn.execute(
+                    '''UPDATE quarter_harvests
+                       SET scoring_runs = scoring_runs + 1,
+                           last_scoring_run = ?,
+                           tips_produced = tips_produced + ?
+                       WHERE quarter_id = ?''',
+                    (now, tips_count, quarter_id)
+                )
+        return await self._run_in_executor(_log)
+
+    async def get_scored_race_ids(self, daypart_tag: str) -> Set[str]:
+        def _get():
+            conn = self._get_conn()
+            # daypart_tag format: 'Q3_260225'
+            # Extract date portion for report_date range filtering
+            parts = daypart_tag.split('_')
+            if len(parts) != 2:
+                return set()
+            daypart_enum, date_str = parts[0], parts[1]
+            # Quarter boundaries
+            try:
+                q_num = int(daypart_enum[1])  # Q3 -> 3
+            except (ValueError, IndexError):
+                return set()
+            start_hour = (q_num - 1) * 6
+            end_hour = q_num * 6
+            # Build STORAGE_FORMAT range bounds
+            q_start = f'{date_str}T{start_hour:02d}:00:00'
+            q_end = f'{date_str}T{end_hour:02d}:00:00'
+            cursor = conn.execute(
+                'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
+                (q_start, q_end)
+            )
+            return {row['race_id'] for row in cursor.fetchall()}
+        return await self._run_in_executor(_get)
 
     async def migrate_utc_to_eastern(self) -> None:
         """Migrates existing database records from UTC to US Eastern Time."""
@@ -6891,11 +7223,7 @@ class HotTipsTracker:
                 except Exception: continue
             if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
 
-            # Reject races too far in the future
-            # BUG-4 Fix: Expand timing gate to 60m to prevent dropping late-detected goldmines
-            if st > future_limit or st < now - timedelta(minutes=60):
-                self.logger.debug("Rejecting far-future or ancient race", venue=r.venue, start_time=st)
-                continue
+            # Timing gate removed (Phase B7). Caller (run_score_now) has already filtered to 0 < MTP <= 15.
 
             # BUG-12: Secondary soft-key dedup guard
             soft_key = f"{get_canonical_venue(r.venue)}|{r.race_number}|{st.strftime('%y%m%d')}"
@@ -7035,481 +7363,6 @@ def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
     ]
 
 
-class FavoriteToPlaceMonitor:
-    """Monitor for favorite-to-place betting opportunities."""
-
-    def __init__(self, target_dates: Optional[List[str]] = None, refresh_interval: int = 30, config: Optional[Dict] = None):
-        """
-        Initialize monitor.
-
-        Args:
-            target_dates: Dates to fetch races for (YYMMDD), defaults to today + tomorrow
-            refresh_interval: Seconds between refreshes for BET NOW list
-        """
-        if target_dates:
-            self.target_dates = target_dates
-        else:
-            today = datetime.now(EASTERN)
-            tomorrow = today + timedelta(days=1)
-            self.target_dates = [today.strftime(DATE_FORMAT), tomorrow.strftime(DATE_FORMAT)]
-
-        self.refresh_interval = refresh_interval
-        self.config = config or {}
-        self.all_races: List[RaceSummary] = []
-        self.adapters: List = []
-        self.logger = structlog.get_logger(self.__class__.__name__)
-        self.tracker = HotTipsTracker(config=self.config)
-
-    async def initialize_adapters(self, adapter_names: Optional[List[str]] = None):
-        """Initialize all adapters, optionally filtered by name."""
-        all_discovery_classes = get_discovery_adapter_classes()
-
-        classes_to_init = all_discovery_classes
-        if adapter_names:
-            classes_to_init = [c for c in all_discovery_classes if c.__name__ in adapter_names or getattr(c, "SOURCE_NAME", "") in adapter_names]
-
-        self.logger.info("Initializing adapters", count=len(classes_to_init))
-
-        # Get adapter-specific configs from global config (GPT5 Improvement)
-        adapter_configs = self.config.get("adapters", {})
-
-        for adapter_class in classes_to_init:
-            try:
-                name = adapter_class.SOURCE_NAME if hasattr(adapter_class, "SOURCE_NAME") else adapter_class.__name__
-                specific_config = adapter_configs.get(name, {}).copy() # Use copy to avoid shared mutation
-                # Merge with basic region config
-                specific_config.update({"region": self.config.get("region")})
-                adapter = adapter_class(config=specific_config)
-                self.adapters.append(adapter)
-                self.logger.debug("Adapter initialized", adapter=adapter_class.__name__)
-            except Exception as e:
-                self.logger.error("Adapter initialization failed", adapter=adapter_class.__name__, error=str(e))
-
-        self.logger.info("Adapters initialization complete", initialized=len(self.adapters))
-
-    async def fetch_all_races(self) -> List[Tuple[Race, str]]:
-        """Fetch races from all adapters."""
-        self.logger.info("Fetching races", dates=self.target_dates)
-
-        all_races_with_adapters = []
-
-        # Run fetches in parallel for speed
-        async def fetch_one(adapter, date_str):
-            name = adapter.__class__.__name__
-            try:
-                races = await adapter.get_races(date_str)
-                self.logger.info("Fetch complete", adapter=name, date=date_str, count=len(races))
-                return [(r, name) for r in races]
-            except Exception as e:
-                self.logger.error("Fetch failed", adapter=name, date=date_str, error=str(e))
-                return []
-
-        fetch_tasks = []
-        for d in self.target_dates:
-            for a in self.adapters:
-                fetch_tasks.append(fetch_one(a, d))
-
-        results = await asyncio.gather(*fetch_tasks)
-        for r_list in results:
-            all_races_with_adapters.extend(r_list)
-
-        self.logger.info("Total races fetched", total=len(all_races_with_adapters))
-        return all_races_with_adapters
-
-    def _get_discipline_code(self, race: Race) -> str:
-        """Get discipline code (T/H/G)."""
-        if not race.discipline:
-            return "T"
-
-        d = race.discipline.lower()
-        if "harness" in d or "standardbred" in d: return "H"
-        if "greyhound" in d or "dog" in d: return "G"
-        return "T"
-
-    def _calculate_field_size(self, race: Race) -> int:
-        """Calculate active field size."""
-        return len([r for r in race.runners if not r.scratched])
-
-    def _has_superfecta(self, race: Race) -> bool:
-        """Check if race offers Superfecta."""
-        ab = race.available_bets or []
-        # Support metadata fallback if field not populated
-        if not ab and hasattr(race, 'metadata'):
-            ab = race.metadata.get('available_bets', [])
-        return "Superfecta" in ab
-
-    def _get_top_runners(self, race: Race, limit: int = 5) -> List[Runner]:
-        """Get top runners by odds, sorted lowest first."""
-        # Get active runners with valid odds
-        r_with_odds = []
-        for r in race.runners:
-            if r.scratched:
-                continue
-            # Refresh odds to avoid stale metadata in continuous monitor mode
-            wo = _get_best_win_odds(r)
-            if wo is not None and wo > 1.0:
-                # Update runner object with fresh odds for downstream summaries
-                r.win_odds = float(wo)
-                # Store the Decimal odds directly for sorting to avoid conversion
-                r_with_odds.append((r, wo))
-
-        if not r_with_odds:
-            return []
-
-        # Sort by odds (lowest first)
-        sorted_r = sorted(r_with_odds, key=lambda x: x[1])
-        return [x[0] for x in sorted_r[:limit]]
-
-    def _calculate_mtp(self, start_time: Optional[datetime]) -> int:
-        """Calculate minutes to post. Returns -9999 if start_time is None."""
-        if not start_time: return -9999
-        now = now_eastern()
-        # Use ensure_eastern to handle naive or other timezones correctly
-        st = ensure_eastern(start_time)
-        delta = st - now
-        return int(delta.total_seconds() / 60)
-
-    def _get_top_n_runners(self, race: Race, n: int = 5) -> str:
-        """Get top N runners by win odds."""
-        top_runners = self._get_top_runners(race, limit=n)
-        return ", ".join([str(r.number) if r.number is not None else "?" for r in top_runners])
-
-    def _create_race_summary(self, race: Race, adapter_name: str) -> RaceSummary:
-        """Create a RaceSummary from a Race object."""
-        top_runners = self._get_top_runners(race, limit=5)
-        favorite = top_runners[0] if len(top_runners) >= 1 else None
-        second_fav = top_runners[1] if len(top_runners) >= 2 else None
-
-        gap12 = 0.0
-        if favorite and second_fav and favorite.win_odds and second_fav.win_odds:
-            gap12 = round((second_fav.win_odds - favorite.win_odds) / favorite.win_odds, 2)
-
-        return RaceSummary(
-            discipline=self._get_discipline_code(race),
-            track=normalize_venue_name(race.venue),
-            race_number=race.race_number,
-            field_size=self._calculate_field_size(race),
-            superfecta_offered=self._has_superfecta(race),
-            adapter=adapter_name,
-            start_time=race.start_time,
-            mtp=self._calculate_mtp(race.start_time),
-            second_fav_odds=second_fav.win_odds if second_fav else None,
-            second_fav_name=second_fav.name if second_fav else None,
-            selection_number=second_fav.number if second_fav else None,
-            favorite_odds=favorite.win_odds if favorite else None,
-            favorite_name=favorite.name if favorite else None,
-            top_five_numbers=self._get_top_n_runners(race, 5),
-            gap12=gap12,
-            is_goldmine=race.metadata.get('is_goldmine', False),
-            is_best_bet=race.metadata.get('is_best_bet', False),
-            is_superfecta_key=race.metadata.get('is_superfecta_key', False),
-            superfecta_key_number=race.metadata.get('superfecta_key_number'),
-            superfecta_key_name=race.metadata.get('superfecta_key_name'),
-            superfecta_box_numbers=race.metadata.get('superfecta_box_numbers', [])
-        )
-
-    async def build_race_summaries(self, races_with_adapters: List[Tuple[Race, str]], window_hours: Optional[int] = 12):
-        """Build and deduplicate summary list, with optional time window filtering."""
-        race_map = {}
-        now = datetime.now(EASTERN)
-        cutoff = now + timedelta(hours=window_hours) if window_hours else None
-
-        adapter_scores = await self.tracker.db.get_adapter_scores(days=30) if hasattr(self.tracker, 'db') else {}
-
-        for race, adapter_name in races_with_adapters:
-            try:
-                # Time window filtering
-                st = race.start_time
-                if not st: continue # Guard against None start_time
-                if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
-
-                # Time window filtering removed to ensure all unique races are counted
-
-                summary = self._create_race_summary(race, adapter_name)
-                # Stable key: Canonical Venue + Race Number + Date + Discipline
-                canonical_venue = get_canonical_venue(summary.track)
-                date_str = summary.start_time.strftime('%y%m%d') if summary.start_time else "Unknown"
-                key = f"{canonical_venue}|{summary.race_number}|{date_str}|{summary.discipline}"
-
-                if key not in race_map:
-                    race_map[key] = summary
-                else:
-                    existing = race_map[key]
-                    incoming_odds = summary.second_fav_odds or 0.0
-                    existing_odds = existing.second_fav_odds or 0.0
-                    if incoming_odds > existing_odds:
-                        summary.superfecta_offered = summary.superfecta_offered or existing.superfecta_offered
-                        race_map[key] = summary
-                    elif incoming_odds == existing_odds:
-                        incoming_score = adapter_scores.get(summary.adapter, 0)
-                        existing_score = adapter_scores.get(existing.adapter, 0)
-                        if incoming_score > existing_score:
-                            summary.superfecta_offered = summary.superfecta_offered or existing.superfecta_offered
-                            race_map[key] = summary
-                        elif summary.superfecta_offered and not existing.superfecta_offered:
-                            existing.superfecta_offered = True
-                    else:
-                        if summary.superfecta_offered and not existing.superfecta_offered:
-                            existing.superfecta_offered = True
-            except Exception: pass
-
-        unique_summaries = list(race_map.values())
-        self.all_races = sorted(unique_summaries, key=lambda x: x.start_time)
-
-        # GPT5 Improvement: Keep all races within window for analysis, not just one per track.
-        # Window broadened to 18 hours (News Mode)
-        timing_window_summaries = []
-        now = datetime.now(EASTERN)
-        for summary in unique_summaries:
-            st = summary.start_time
-            if st.tzinfo is None: st = st.replace(tzinfo=EASTERN)
-
-            # Calculate Minutes to Post
-            diff = st - now
-            mtp = diff.total_seconds() / 60
-
-            # Timing window limited to 8 hours to ensure yield is audit-able
-            if -45 < mtp <= 480: # 8 hours
-                timing_window_summaries.append(summary)
-
-        self.golden_zone_races = timing_window_summaries
-        if not self.golden_zone_races:
-            self.logger.warning("🔭 Monitor found 0 races in the timing window (-45m to 8h)", total_unique=len(unique_summaries))
-
-    def print_full_list(self):
-        """Log all fetched races."""
-        lines = [
-            "=" * 120,
-            "FULL RACE LIST".center(120),
-            "=" * 120,
-            f"{'DISC':<5} {'TRACK':<25} {'R#':<4} {'FIELD':<6} {'SUPER':<6} {'ADAPTER':<25} {'START TIME':<20}",
-            "-" * 120
-        ]
-        for r in sorted(self.all_races, key=lambda x: (x.discipline, x.track, x.race_number)):
-            superfecta = "Yes" if r.superfecta_offered else "No"
-            # Display time in Eastern with ET suffix
-            st = r.start_time.strftime("%y%m%dT%H:%M ET") if r.start_time else "Unknown"
-            lines.append(f"{r.discipline:<5} {r.track[:24]:<25} {r.race_number:<4} {r.field_size:<6} {superfecta:<6} {r.adapter[:24]:<25} {st:<20}")
-        lines.append("-" * 120)
-        lines.append(f"Total races: {len(self.all_races)}")
-        self.logger.info("\n".join(lines))
-
-    def get_bet_now_races(self) -> List[RaceSummary]:
-        """Get races meeting BET NOW criteria (GPT5 Alignment)."""
-        # Configurable thresholds
-        ana_config = self.config.get("analysis", {})
-        min_odds = ana_config.get("bet_now_min_odds", 4.0)
-        max_field = ana_config.get("max_field_size", 11)
-        min_gap = ana_config.get("min_gap", 0.25)
-        mtp_limit = ana_config.get("bet_now_mtp_limit", 120)
-
-        bet_now = [
-            r for r in self.golden_zone_races
-            if r.mtp is not None and -10 < r.mtp <= mtp_limit
-            and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
-            and r.field_size <= max_field
-            and r.gap12 >= min_gap
-        ]
-        # Sort by Superfecta desc, then MTP asc
-        bet_now.sort(key=lambda r: (not r.superfecta_offered, r.mtp))
-        return bet_now[:15]  # Cap to prevent overwhelming output
-
-    def get_you_might_like_races(self, bet_now_races: Optional[List[RaceSummary]] = None) -> List[RaceSummary]:
-        """Get 'You Might Like' races with relaxed criteria (GPT5 Optimized)."""
-        # Configurable thresholds
-        ana_config = self.config.get("analysis", {})
-        min_odds = ana_config.get("yml_min_odds", 3.0)
-        max_field = ana_config.get("max_field_size", 11)
-        min_gap = ana_config.get("min_gap", 0.25)
-        mtp_limit = ana_config.get("yml_mtp_limit", 240)
-
-        if bet_now_races is None:
-            bet_now_races = self.get_bet_now_races()
-        bet_now_keys = {(r.track, r.race_number) for r in bet_now_races}
-        yml = [
-            r for r in self.golden_zone_races
-            if r.mtp is not None and -10 < r.mtp <= mtp_limit
-            and r.second_fav_odds is not None and r.second_fav_odds >= min_odds
-            and r.field_size <= max_field
-            and r.gap12 >= min_gap
-            and (r.track, r.race_number) not in bet_now_keys
-        ]
-        # Sort by MTP asc
-        yml.sort(key=lambda r: r.mtp)
-        return yml[:5]  # Limit to top 5 recommendations
-
-    async def print_bet_now_list(self):
-        """Log filtered BET NOW list and recent audited goldmine results."""
-        bet_now = self.get_bet_now_races()
-        lines = [
-            "=" * 140,
-            "🎯 BET NOW - FAVORITE TO PLACE OPPORTUNITIES".center(140),
-            "=" * 140,
-            f"Updated: {datetime.now(EASTERN).strftime(' %H:%M:%S')} ET",
-            "Criteria: -10 < MTP <= 120 minutes AND 2nd Favorite Odds >= 4.0",
-            "-" * 140
-        ]
-        if not bet_now:
-            lines.append("⏳ No races currently meet BET NOW criteria.")
-            yml = self.get_you_might_like_races(bet_now_races=bet_now)
-            if yml:
-                lines.extend([
-                    "=" * 160,
-                    "🌟 YOU MIGHT LIKE - NEAR-MISS OPPORTUNITIES".center(160),
-                    "=" * 160,
-                    f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}",
-                    "-" * 160
-                ])
-                for r in yml:
-                    sup = "✅" if r.superfecta_offered else "❌"
-                    fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
-                    so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
-                    top5 = r.top_five_numbers or "N/A"
-                    # Leading zero alignment
-                    m_str = f"{r.mtp:02d}" if 0 <= r.mtp < 10 else str(r.mtp)
-                    lines.append(f"{sup:<6} {m_str:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
-                lines.append("-" * 160)
-            self.logger.info("\n".join(lines))
-            return
-
-        lines.extend([
-            f"{'SUPER':<6} {'MTP':<5} {'DISC':<5} {'TRACK':<20} {'R#':<4} {'FIELD':<6} {'ODDS':<20} {'TOP 5':<20}",
-            "-" * 160
-        ])
-        for r in bet_now:
-            sup = "✅" if r.superfecta_offered else "❌"
-            fo = f"{r.favorite_odds:.2f}" if r.favorite_odds else "N/A"
-            so = f"{r.second_fav_odds:.2f}" if r.second_fav_odds else "N/A"
-            top5 = r.top_five_numbers or "N/A"
-            m_str = f"{r.mtp:02d}" if 0 <= r.mtp < 10 else str(r.mtp)
-            lines.append(f"{sup:<6} {m_str:<5} {r.discipline:<5} {r.track[:19]:<20} {r.race_number:<4} {r.field_size:<6}  ~ {fo}, {so:<15} [{top5}]")
-        lines.extend(["-" * 160, f"Total opportunities: {len(bet_now)}"])
-        self.logger.info("\n".join(lines))
-
-        # Include recent audited results to provide proof of system performance
-        history = await self.tracker.db.get_recent_audited_goldmines(limit=10)
-        if history:
-            historical_report = generate_historical_goldmine_report(history)
-            self.logger.info(historical_report)
-
-    def save_to_json(self, filename: str = "race_data.json"):
-        """Export to JSON."""
-        bn = self.get_bet_now_races()
-        yml = self.get_you_might_like_races(bet_now_races=bn)
-
-        target_file = get_writable_path(filename)
-        alert_file = get_writable_path("monitor_empty.alert")
-
-        if not bn:
-            self.logger.warning("🔭 Monitor found 0 BET NOW opportunities", total_checked=len(self.golden_zone_races))
-            # Structured telemetry for monitoring
-            structlog.get_logger("FortunaTelemetry").warning("empty_bet_now_list", golden_zone_count=len(self.golden_zone_races))
-            # Create an indicator file for downstream monitoring (GPT5 Improvement)
-            try:
-                alert_file.write_text(to_storage_format(datetime.now(EASTERN)))
-            except Exception: pass
-        else:
-            # Clear alert if it exists
-            try:
-                if alert_file.exists(): alert_file.unlink()
-            except Exception: pass
-
-        data = {
-            "generated_at": to_storage_format(datetime.now(EASTERN)),
-            "target_dates": self.target_dates,
-            "total_races": len(self.all_races),
-            "bet_now_count": len(bn),
-            "you_might_like_count": len(yml),
-            "all_races": [r.to_dict() for r in self.all_races],
-            "bet_now_races": [r.to_dict() for r in bn],
-            "you_might_like_races": [r.to_dict() for r in yml],
-        }
-        try:
-            # Ensure parent directory exists (GPT5 Improvement)
-            target_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(target_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
-        except Exception as e:
-            self.logger.error("failed_saving_race_data", path=str(target_file), error=str(e))
-
-        # Persistent history log
-        self._append_to_history(bn + yml)
-
-    def _append_to_history(self, races: List[RaceSummary]):
-        """Append races to persistent history for future result matching."""
-        if not races: return
-        history_file = get_writable_path("prediction_history.jsonl")
-
-        # Improvement 04: Rotation logic
-        try:
-            if history_file.exists() and history_file.stat().st_size > 10 * 1024 * 1024: # 10MB
-                backup = history_file.with_suffix(".jsonl.1")
-                history_file.replace(backup)
-                self.logger.info("Rotated prediction history file")
-        except Exception: pass
-
-        timestamp = to_storage_format(datetime.now(EASTERN))
-        try:
-            with open(history_file, 'a', encoding='utf-8') as f:
-                for r in races:
-                    record = r.to_dict()
-                    record["logged_at"] = timestamp
-                    f.write(json.dumps(record) + "\n")
-        except Exception as e:
-            self.logger.error("History logging failed", error=str(e))
-
-    async def run_once(self, loaded_races: Optional[List[Race]] = None, adapter_names: Optional[List[str]] = None):
-        try:
-            if loaded_races is not None:
-                self.logger.info("Using loaded races", count=len(loaded_races))
-                # Map to (Race, AdapterName) tuple expected by build_race_summaries
-                raw = [(r, r.source) for r in loaded_races]
-            else:
-                await self.initialize_adapters(adapter_names=adapter_names)
-                raw = await self.fetch_all_races()
-
-            await self.build_race_summaries(raw, window_hours=12) # Use 12h window for monitor
-            self.print_full_list()
-            await self.print_bet_now_list()
-            for r in self.all_races:
-                r.mtp = self._calculate_mtp(r.start_time)
-            self.save_to_json()
-        finally:
-            for a in self.adapters: await a.shutdown()
-            await GlobalResourceManager.cleanup()
-
-    async def run_continuous(self):
-        await self.initialize_adapters()
-        raw = await self.fetch_all_races()
-        await self.build_race_summaries(raw, window_hours=12)
-        self.print_full_list()
-        try:
-            for _ in range(1000): # Iteration limit to prevent potential hangs
-                for r in self.all_races: r.mtp = self._calculate_mtp(r.start_time)
-                await self.print_bet_now_list()
-                self.save_to_json()
-                await asyncio.sleep(self.refresh_interval)
-        except KeyboardInterrupt:
-            self.logger.info("Stopped by user")
-        except asyncio.CancelledError:
-            self.logger.info("Monitor task cancelled")
-        finally:
-            for a in self.adapters: await a.shutdown()
-            await GlobalResourceManager.cleanup()
-
-
-
-
-
-# ----------------------------------------
-# EXPANDED ADAPTERS
-# ----------------------------------------
-# python_service/adapters/oddschecker_adapter.py
-
-
-
-
-
 class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """Adapter for scraping horse racing odds from Oddschecker, migrated to BaseAdapterV3."""
 
@@ -7633,7 +7486,9 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 continue
             try:
                 parser = HTMLParser(html)
-                race = self._parse_race_page(parser, race_date)
+                # Phase D2: Detect discipline (Greyhound support)
+                discipline = detect_discipline(html)
+                race = self._parse_race_page(parser, race_date, discipline=discipline)
                 if race:
                     all_races.append(race)
             except (AttributeError, IndexError, ValueError):
@@ -7644,7 +7499,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 continue
         return all_races
 
-    def _parse_race_page(self, parser: HTMLParser, race_date) -> Optional[Race]:
+    def _parse_race_page(self, parser: HTMLParser, race_date, discipline: str = "Thoroughbred") -> Optional[Race]:
         track_name_node = parser.css_first("h1.meeting-name")
         if not track_name_node:
             return None
@@ -7676,13 +7531,15 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         # BUG-6 Fix: Use canonical venue for race ID
         venue_key = get_canonical_venue(track_name).lower().replace(' ', '')
+        # BUG-11: Pass discipline to generate correct race IDs (Phase D2)
         return Race(
-            id=f"oc_{venue_key}_{start_time.strftime('%y%m%d')}_r{race_number}",
+            id=generate_race_id("oc", track_name, start_time, race_number, discipline=discipline),
             venue=track_name,
             race_number=race_number,
             start_time=start_time,
             runners=runners,
             source=self.source_name,
+            discipline=discipline
         )
 
     def _parse_runner_row(self, row: Node) -> Optional[Runner]:
@@ -8591,6 +8448,227 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 # MASTER ORCHESTRATOR
 # ----------------------------------------
 
+async def run_quarter_fetch(
+    config: Dict,
+    daypart_tag: str,
+    adapter_filter: Optional[List[str]] = None,
+    quality: Optional[str] = None,
+    save_path: Optional[str] = None,
+    force_fetch: bool = False,
+) -> List[Race]:
+    """
+    Performs the structural discovery sweep and saves a snapshot.
+    Does NOT score or persist tips.
+    """
+    logger = structlog.get_logger("run_quarter_fetch")
+    db = FortunaDB()
+    await db.initialize()
+
+    if await db.is_quarter_fetched(daypart_tag) and not force_fetch:
+        logger.info("quarter_already_fetched_skipping", daypart_tag=daypart_tag)
+        return []
+
+    # Get active daypart from tag (e.g. Q3_260225 -> Q3)
+    try:
+        dp_str = daypart_tag.split("_")[0]
+        daypart = DayPart(dp_str)
+    except (ValueError, IndexError):
+        daypart = resolve_daypart()
+
+    # Determine region from daypart
+    # We use 'GLOBAL' as a safe default for logging
+    region = "GLOBAL"
+
+    # Get adapter names for this daypart
+    if not adapter_filter:
+        adapter_filter = list(get_daypart_discovery_adapters(daypart))
+
+    # Apply quality filter on top
+    if quality == "solid":
+        adapter_filter = [n for n in adapter_filter if n in SOLID_DISCOVERY_ADAPTERS]
+    elif quality == "lousy":
+        adapter_filter = [n for n in adapter_filter if n not in SOLID_DISCOVERY_ADAPTERS]
+
+    # Auto-discover discovery adapter classes
+    all_adapter_classes = get_discovery_adapter_classes()
+    adapter_classes = [c for c in all_adapter_classes if getattr(c, "SOURCE_NAME", c.__name__) in adapter_filter]
+
+    # Load historical performance scores to prioritize adapters
+    adapter_scores = await db.get_adapter_scores(days=30)
+    adapter_classes = sorted(
+        adapter_classes,
+        key=lambda c: (
+            -adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
+            getattr(c, "SOURCE_NAME", c.__name__)
+        )
+    )
+
+    adapter_configs = config.get("adapters", {}) if config else {}
+    adapters = []
+    for cls in adapter_classes:
+        try:
+            name = getattr(cls, "SOURCE_NAME", cls.__name__)
+            specific_config = adapter_configs.get(name, {}).copy()
+            specific_config.update({"region": region})
+            adapters.append(cls(config=specific_config))
+        except Exception as e:
+            logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
+
+    all_races_raw = []
+    harvest_summary = {}
+    for a in adapters:
+        harvest_summary[a.source_name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
+
+    date_str = daypart_tag.split("_")[1] # 260225
+
+    async def fetch_one(a, d_str):
+        try:
+            races = await a.get_races(d_str)
+            return a.source_name, races
+        except Exception as e:
+            logger.error("Error fetching from adapter", adapter=a.source_name, date=d_str, error=str(e))
+            return a.source_name, []
+
+    fetch_tasks = [fetch_one(a, date_str) for a in adapters]
+    results = await asyncio.gather(*fetch_tasks)
+
+    for adapter_name, r_list in results:
+        all_races_raw.extend(r_list)
+        m_odds = 0.0
+        for r in r_list:
+            for run in r.runners:
+                if run.win_odds and run.win_odds > m_odds:
+                    m_odds = float(run.win_odds)
+
+        harvest_summary[adapter_name]["count"] += len(r_list)
+        if m_odds > harvest_summary[adapter_name]["max_odds"]:
+            harvest_summary[adapter_name]["max_odds"] = m_odds
+
+        matching_adapter = next((a for a in adapters if a.source_name == adapter_name), None)
+        if matching_adapter:
+            harvest_summary[adapter_name]["trust_ratio"] = max(
+                harvest_summary[adapter_name].get("trust_ratio", 0.0),
+                getattr(matching_adapter, "trust_ratio", 0.0)
+            )
+
+    # Shutdown adapters
+    for a in adapters:
+        try: await a.close()
+        except Exception: pass
+
+    # Deduplicate
+    race_map = {}
+    for race in all_races_raw:
+        canonical_venue = get_canonical_venue(race.venue)
+        st = race.start_time
+        if isinstance(st, str):
+            try: st = from_storage_format(st.replace('Z', '+00:00'))
+            except Exception: pass
+
+        d_str = st.strftime('%y%m%d') if hasattr(st, 'strftime') else "Unknown"
+        key = f"{canonical_venue}|{race.race_number}|{d_str}|{race.discipline}"
+
+        if key not in race_map:
+            race_map[key] = race
+        else:
+            existing = race_map[key]
+            for nr in race.runners:
+                er = next((r for r in existing.runners if (r.number != 0 and r.number == nr.number) or (r.name.lower() == nr.name.lower())), None)
+                if er:
+                    er.odds.update(nr.odds)
+                    if not er.win_odds and nr.win_odds: er.win_odds = nr.win_odds
+                    if not er.number and nr.number: er.number = nr.number
+                else:
+                    existing.runners.append(nr)
+            sources = set((existing.source or "").split(", "))
+            sources.add(race.source or "Unknown")
+            existing.source = ", ".join(sorted(list(filter(None, sources))))
+
+    unique_races = list(race_map.values())
+    logger.info("Unique races identified", count=len(unique_races))
+
+    # Save snapshot
+    snapshot_path = save_quarter_snapshot(daypart_tag, unique_races)
+
+    # Log to DB
+    await db.log_quarter_fetch(daypart_tag, region, str(daypart), len(unique_races), snapshot_path)
+
+    # Save harvest_summary (existing pattern)
+    try:
+        harvest_file = get_writable_path("discovery_harvest.json")
+        with open(harvest_file, "w") as f:
+            json.dump(harvest_summary, f)
+        await db.log_harvest(harvest_summary, region=region)
+    except Exception: pass
+
+    # Generate summary_grid.txt and field_matrix.txt (minimal versions)
+    # This part is omitted here for brevity but could be added if needed for GHA visibility.
+
+    return unique_races
+
+
+async def run_score_now(
+    config: Dict,
+    daypart_tag: str,
+    loaded_races: Optional[List[Race]] = None,
+) -> List[Race]:
+    """
+    Loads a snapshot, refreshes odds for approaching races, scores, and persists tips.
+    """
+    logger = structlog.get_logger("run_score_now")
+    db = FortunaDB()
+    await db.initialize()
+
+    # 2. Load races
+    if loaded_races:
+        logger.info("Using loaded races for scoring", count=len(loaded_races))
+        cached_races = loaded_races
+    else:
+        cached_races = load_quarter_snapshot(daypart_tag)
+
+    if cached_races is None:
+        logger.warning("No snapshot file found for scoring", daypart_tag=daypart_tag)
+        return []
+
+    if not cached_races:
+        logger.info("Snapshot exists but contains 0 races", daypart_tag=daypart_tag)
+        return []
+
+    # 4. Get already scored
+    already_scored = await db.get_scored_race_ids(daypart_tag)
+
+    # 5. Filter scorable
+    scorable = get_scorable_races(cached_races, already_scored)
+
+    if not scorable:
+        logger.info("No races within scoring window", mtp_max=SCORING_MTP_MAX)
+        return []
+
+    logger.info("Scoring races approaching post", count=len(scorable))
+
+    # 8. Refresh odds
+    await refresh_odds_for_races(scorable, config)
+
+    # 9. Score
+    analyzer = SimplySuccessAnalyzer(config)
+    analysis_result = analyzer.qualify_races(scorable)
+    qualified = analysis_result.get("qualified_races", [])
+
+    # 11. Persist
+    if qualified:
+        tracker = HotTipsTracker(db, config)
+        await tracker.log_tips(qualified)
+        logger.info("Persisted qualified tips", count=len(qualified))
+
+    # 12. Log scoring run
+    await db.log_scoring_run(daypart_tag, len(qualified))
+
+    # 13. Reports (goldmine_report.txt, summary_grid.txt for this batch)
+    # Simplified here.
+
+    return qualified
+
+
 async def run_discovery(
     target_dates: List[str],
     window_hours: Optional[int] = 8,
@@ -8816,36 +8894,8 @@ async def run_discovery(
         unique_races = list(race_map.values())
         logger.info("Unique races identified", count=len(unique_races))
 
-        # GPT5 Improvement: Keep all races within window for analysis, not just one per track.
-        # Window broadened to 18 hours to match grid cutoff (News Mode)
-        timing_window_races = []
-        now = datetime.now(EASTERN)
-        for race in unique_races:
-            st = race.start_time
-            if isinstance(st, str):
-                try:
-                    st = from_storage_format(st.replace('Z', '+00:00'))
-                except (ValueError, TypeError):
-                    continue
-            if st.tzinfo is None:
-                st = st.replace(tzinfo=EASTERN)
-
-            # Calculate Minutes to Post
-            diff = st - now
-            mtp = diff.total_seconds() / 60
-
-            # Timing window limited to 8 hours to ensure yield is audit-able
-            if -45 < mtp <= 480: # 8 hours = 480 mins
-                timing_window_races.append(race)
-                if mtp <= 45:
-                    logger.info(f"  💰 Found Gold Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
-                else:
-                    logger.debug(f"  🔭 Found Upcoming Candidate: {race.venue} R{race.race_number} ({mtp:.1f} MTP)")
-
-        golden_zone_races = timing_window_races
-        if not golden_zone_races:
-            logger.warning("🔭 No races found in the broadened window (-45m to 8h).")
-
+        # Phase E: Simplified discovery filtering.
+        # Everything unique is passed to analysis in legacy mode.
         logger.info("Total unique races available for analysis", count=len(unique_races))
 
         # Save raw fetched/merged races if requested (Save EVERYTHING unique)
@@ -9191,8 +9241,10 @@ async def main_all_in_one():
     parser = argparse.ArgumentParser(description="Fortuna All-In-One - Professional Racing Intelligence")
     parser.add_argument("--date", type=str, help="Target date (YYMMDD)")
     parser.add_argument("--hours", type=int, default=8, help="Discovery time window in hours (default: 8)")
-    parser.add_argument("--monitor", action="store_true", help="Run in monitor mode")
-    parser.add_argument("--once", action="store_true", help="Run monitor once")
+    parser.add_argument("--daypart", type=str, choices=["auto", "Q1", "Q2", "Q3", "Q4"], default="auto", help="Specify daypart for fetching/scoring")
+    parser.add_argument("--quarter-fetch", action="store_true", help="Structural discovery sweep for current daypart. Saves snapshot for later scoring. Does NOT score races.")
+    parser.add_argument("--score-now", action="store_true", help="Load quarter snapshot, refresh odds for races within 15min of post, score and persist tips.")
+    parser.add_argument("--force-fetch", action="store_true", help="Force structural re-fetch even if quarter already cached. Use with --quarter-fetch.")
     parser.add_argument("--region", type=str, choices=["USA", "INT", "GLOBAL"], help="Filter by region (USA, INT or GLOBAL)")
     parser.add_argument("--quality", choices=["solid", "lousy"], help="Filter by adapter quality (Solid Top 3 vs others)")
     parser.add_argument("--include", type=str, help="Comma-separated adapter names to include")
@@ -9298,6 +9350,34 @@ async def main_all_in_one():
                 print(f"Error loading {path}: {e}")
                 logger.error("Failed to load race data", path=path, error=str(e), exc_info=True)
 
+    # Phase B8: CLI Execution Logic
+    if args.quarter_fetch:
+        if args.score_now:
+            parser.error("--quarter-fetch and --score-now are mutually exclusive")
+
+        await ensure_browsers()
+        daypart_tag = get_daypart_tag(args)
+
+        await run_quarter_fetch(
+            config,
+            daypart_tag,
+            adapter_filter=adapter_filter,
+            quality=args.quality,
+            save_path=args.save,
+            force_fetch=args.force_fetch
+        )
+        return
+
+    if args.score_now:
+        daypart_tag = get_daypart_tag(args)
+
+        await run_score_now(
+            config,
+            daypart_tag,
+            loaded_races=loaded_races
+        )
+        return
+
     if args.date:
         target_dates = [args.date]
     else:
@@ -9308,34 +9388,22 @@ async def main_all_in_one():
         if future.date() > now.date():
             target_dates.append(future.strftime(DATE_FORMAT))
 
-    if args.monitor:
-        await ensure_browsers()
-        monitor = FavoriteToPlaceMonitor(target_dates=target_dates, config=config)
-        # Pass region config to monitor
-        monitor.config["region"] = args.region
-        if args.once:
-            await monitor.run_once(loaded_races=loaded_races, adapter_names=adapter_filter)
-            if config.get("ui", {}).get("auto_open_report", True) and not os.getenv("GITHUB_ACTIONS"):
-                open_report_in_browser()
-        else:
-            await monitor.run_continuous() # Continuous mode doesn't support load/filter yet for simplicity
-    else:
-        await ensure_browsers()
-        await run_discovery(
-            target_dates,
-            window_hours=args.hours,
-            loaded_races=loaded_races,
-            adapter_names=adapter_filter,
-            save_path=args.save,
-            fetch_only=args.fetch_only,
-            live_dashboard=args.live_dashboard,
-            track_odds=args.track_odds,
-            region=args.region, # Pass region to run_discovery
-            config=config
-        )
-        # Post-run UI enhancements (Council of Superbrains Directive)
-        if config.get("ui", {}).get("auto_open_report", True) and not os.getenv("GITHUB_ACTIONS"):
-            open_report_in_browser()
+    await ensure_browsers()
+    await run_discovery(
+        target_dates,
+        window_hours=args.hours,
+        loaded_races=loaded_races,
+        adapter_names=adapter_filter,
+        save_path=args.save,
+        fetch_only=args.fetch_only,
+        live_dashboard=args.live_dashboard,
+        track_odds=args.track_odds,
+        region=args.region, # Pass region to run_discovery
+        config=config
+    )
+    # Post-run UI enhancements (Council of Superbrains Directive)
+    if config.get("ui", {}).get("auto_open_report", True) and not os.getenv("GITHUB_ACTIONS"):
+        open_report_in_browser()
 
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
