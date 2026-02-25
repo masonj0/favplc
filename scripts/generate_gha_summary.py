@@ -566,7 +566,12 @@ def _build_harvest(out: SummaryWriter):
     if not discovery and not results and Path(DB_PATH).exists():
         try:
             with sqlite3.connect(DB_PATH) as conn:
-                db_logs = conn.execute("SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= datetime('now', '-4 hours')").fetchall()
+                # Phase D3: Fixed timezone comparison (SQLite datetime('now') is UTC, harvest timestamp is ET)
+                cutoff = (datetime.now(EASTERN) - timedelta(hours=4)).strftime("%y%m%dT%H:%M:%S")
+                db_logs = conn.execute(
+                    "SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= ?",
+                    (cutoff,)
+                ).fetchall()
                 results = {l[0]: {'count': l[1], 'max_odds': l[2]} for l in db_logs}
         except Exception: pass
 
