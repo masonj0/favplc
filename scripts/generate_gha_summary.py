@@ -163,25 +163,31 @@ def _venue_flag(venue: str, discipline: Optional[str] = None) -> str:
         return DISCIPLINE_EMOJI.get(discipline.lower(), "🏇")
     return "🏇"
 
+def _parse_dt(s: Any) -> Optional[datetime]:
+    """Phase D3: Robust datetime parsing for both STORAGE_FORMAT and ISO strings."""
+    if not s: return None
+    s = str(s)
+    # 1. Try STORAGE_FORMAT (YYMMDDTHH:MM:SS) - usually Eastern
+    try:
+        return datetime.strptime(s, "%y%m%dT%H:%M:%S").replace(tzinfo=EASTERN)
+    except (ValueError, TypeError):
+        pass
+    # 2. Try ISO (YYYY-MM-DD...)
+    try:
+        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=EASTERN)
+        return dt.astimezone(EASTERN)
+    except (ValueError, TypeError):
+        pass
+    return None
+
 def _mtp(start_time_str: Any) -> float:
     if not start_time_str: return 9999.0
-    try:
-        s = str(start_time_str)
-        if 'Z' in s:
-            st = datetime.fromisoformat(s.replace('Z', '+00:00'))
-        else:
-            # Try YYMMDD format first (JB's new preference)
-            # Remove any non-alphanumeric separators for parsing flexibility
-            cleaned_s = s.replace('-', '').replace(' ', 'T').split('.')[0].split('+')[0].split('-')[0]
-            try: st = datetime.strptime(cleaned_s, "%y%m%dT%H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
-            except ValueError:
-                try: st = datetime.strptime(cleaned_s, "%Y%m%dT%H:%M:%S").replace(tzinfo=ZoneInfo("UTC"))
-                except ValueError: st = datetime.fromisoformat(s)
-            if st.tzinfo is None: st = st.replace(tzinfo=ZoneInfo("UTC"))
-        now = datetime.now(ZoneInfo("UTC"))
-        return (st - now).total_seconds() / 60
-    except Exception:
-        return 9999.0
+    st = _parse_dt(start_time_str)
+    if not st: return 9999.0
+    now = _now_et()
+    return (st - now).total_seconds() / 60
 
 def _mtp_str(minutes: float) -> str:
     if minutes < 0: return "OFF"
@@ -221,21 +227,23 @@ def _get_stats() -> TipStats:
     if not Path(DB_PATH).exists(): return stats
     try:
         with sqlite3.connect(DB_PATH) as conn:
-            now_utc = datetime.now(ZoneInfo("UTC")).isoformat()
-            res = conn.execute("""
-                SELECT
-                    COUNT(*),
-                    SUM(CASE WHEN verdict LIKE 'CASHED%' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN verdict = 'BURNED' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN verdict = 'VOID' THEN 1 ELSE 0 END),
-                    SUM(CASE WHEN audit_completed = 0 AND start_time < ? THEN 1 ELSE 0 END),
-                    SUM(COALESCE(net_profit, 0.0))
-                FROM tips
-            """, (now_utc,)).fetchone()
-            if res:
-                stats.total_tips, stats.cashed, stats.burned, stats.voided, stats.pending, stats.total_profit = (
-                    res[0] or 0, res[1] or 0, res[2] or 0, res[3] or 0, res[4] or 0, res[5] or 0.0
-                )
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT verdict, audit_completed, start_time, net_profit FROM tips").fetchall()
+
+            now = _now_et()
+            for r in rows:
+                stats.total_tips += 1
+                v = r['verdict'] or ""
+                if v.startswith('CASHED'): stats.cashed += 1
+                elif v == 'BURNED': stats.burned += 1
+                elif v == 'VOID': stats.voided += 1
+
+                if r['audit_completed'] == 0:
+                    st = _parse_dt(r['start_time'])
+                    if st and st < now:
+                        stats.pending += 1
+
+                stats.total_profit += (r['net_profit'] or 0.0)
 
             # Calculate lifetime average payout for breakeven analysis
             avg_res = conn.execute("""
@@ -311,8 +319,8 @@ def _build_action_plan(out: SummaryWriter, stats: TipStats):
             with sqlite3.connect(DB_PATH) as conn:
                 fresh = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
                 if fresh:
-                    last_seen = datetime.fromisoformat(fresh.replace('Z', '+00:00'))
-                    if datetime.now(ZoneInfo("UTC")) - last_seen > timedelta(hours=24):
+                    last_seen = _parse_dt(fresh)
+                    if last_seen and (_now_et() - last_seen > timedelta(hours=24)):
                         if status != "CRITICAL": status, emoji = "WARNING", "🟡"
                         findings.append("🟡 No new tips in last 24 hours.")
                         actions.append("Check discovery pipeline schedule and adapter health.")
@@ -358,12 +366,14 @@ def _build_plays(out: SummaryWriter):
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
-                db_races = conn.execute("""
-                    SELECT * FROM tips WHERE audit_completed=0
-                    AND start_time > datetime('now', '-10 minutes')
-                    ORDER BY start_time ASC LIMIT 15
-                """).fetchall()
-                races = [dict(r) for r in db_races]
+                db_races = conn.execute("SELECT * FROM tips WHERE audit_completed=0 ORDER BY start_time ASC").fetchall()
+
+                now = _now_et()
+                for r in db_races:
+                    st = _parse_dt(r['start_time'])
+                    if st and st > now - timedelta(minutes=10):
+                        races.append(dict(r))
+                        if len(races) >= 15: break
         except Exception: pass
 
     if not races:
@@ -556,7 +566,12 @@ def _build_harvest(out: SummaryWriter):
     if not discovery and not results and Path(DB_PATH).exists():
         try:
             with sqlite3.connect(DB_PATH) as conn:
-                db_logs = conn.execute("SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= datetime('now', '-4 hours')").fetchall()
+                # Phase D3: Fixed timezone comparison (SQLite datetime('now') is UTC, harvest timestamp is ET)
+                cutoff = (datetime.now(EASTERN) - timedelta(hours=4)).strftime("%y%m%dT%H:%M:%S")
+                db_logs = conn.execute(
+                    "SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= ?",
+                    (cutoff,)
+                ).fetchall()
                 results = {l[0]: {'count': l[1], 'max_odds': l[2]} for l in db_logs}
         except Exception: pass
 
@@ -667,8 +682,9 @@ def _build_exotic_payouts(out: SummaryWriter):
     if not Path(DB_PATH).exists(): return
     try:
         with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
             rows = conn.execute("""
-                SELECT venue, race_number, DATE(start_time), trifecta_payout, trifecta_combination,
+                SELECT venue, race_number, start_time, trifecta_payout, trifecta_combination,
                        superfecta_payout, superfecta_combination
                 FROM tips WHERE audit_completed=1
                 AND (trifecta_payout > 0 OR superfecta_payout > 0)
@@ -683,10 +699,12 @@ def _build_exotic_payouts(out: SummaryWriter):
         out.write(f"  TYPE         PAYOUT      VENUE                R#   DATE        COMBO")
         out.write(f"  ───────────  ──────────  ───────────────────  ──   ──────────  ──────────────")
         for r in rows:
-            if r[5]:
-                out.write(f"  {'Superfecta':<11}  ${r[5]:>9.2f}  {_trunc(r[0], 19):<19}  {r[1]:>2}   {r[2]}  {_trunc(r[6] or '', 14)}")
-            if r[3]:
-                out.write(f"  {'Trifecta':<11}  ${r[3]:>9.2f}  {_trunc(r[0], 19):<19}  {r[1]:>2}   {r[2]}  {_trunc(r[4] or '', 14)}")
+            st_dt = _parse_dt(r['start_time'])
+            date_str = st_dt.strftime("%Y-%m-%d") if st_dt else "???"
+            if r['superfecta_payout']:
+                out.write(f"  {'Superfecta':<11}  ${r['superfecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19}  {r['race_number']:>2}   {date_str}  {_trunc(r['superfecta_combination'] or '', 14)}")
+            if r['trifecta_payout']:
+                out.write(f"  {'Trifecta':<11}  ${r['trifecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19}  {r['race_number']:>2}   {date_str}  {_trunc(r['trifecta_combination'] or '', 14)}")
         out.write("```")
         out.write()
     except Exception: pass
