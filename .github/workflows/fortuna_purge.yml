@@ -58,8 +58,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-
-          restore-keys: fortuna-db-v3-master-
+          key: fortuna-db-v4-master-
+          restore-keys: fortuna-db-v4-master-
 
       - name: Check DB exists
         run: |
@@ -113,7 +113,7 @@ jobs:
               except ValueError:
                   print(f"❌ Invalid cutoff_date format: {cutoff_date}")
                   sys.exit(1)
-              cutoff_iso = to_storage_format(cutoff_dt)
+              cutoff_iso = fortuna.to_storage_format(cutoff_dt)
 
               # 2. INITIALIZE & MIGRATE DB
               db_manager = fortuna.FortunaDB("fortuna.db")
@@ -203,7 +203,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
+          key: fortuna-db-v4-master-${{ github.run_number }}
 
       - name: Clear Old Caches
         if: inputs.execute == 'true'
@@ -214,8 +214,8 @@ jobs:
           # Delete ALL old master caches (keep only the one we just saved)
           deleted=0
           gh cache list --json key -q ".[].key" | \
-            grep "fortuna-db-v3-master-" | \
-            grep -v "fortuna-db-v3-master-${{ github.run_number }}" | \
+            grep "fortuna-db-v4-master-" | \
+            grep -v "fortuna-db-v4-master-${{ github.run_number }}" | \
             while read -r key; do
               echo "  🗑️  Deleting cache: \`$key\`" >> "$GITHUB_STEP_SUMMARY"
               gh cache delete "$key" 2>/dev/null || true
