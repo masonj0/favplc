@@ -382,14 +382,23 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {
     # "Equibase", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
-    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets"
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
+    "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
+    "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
+    "Official_TheMeadowlands", "Official_YonkersRaceway"
 }
-INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist"}
+INT_DISCOVERY_ADAPTERS: Final[set] = {"TAB", "BetfairDataScientist", "HKJC", "JRA", "Official_JRAJapan"}
+OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
+    "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
+    "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
+    "Official_Woodbine", "Official_TheMeadowlands", "Official_YonkersRaceway",
+    "Official_JRAJapan"
+}
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
-    "RacingAndSports"
-}
+    "RacingAndSports", "HKJC", "JRA"
+} | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
     # "EquibaseResults", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
@@ -1546,6 +1555,359 @@ class BaseAdapterV3(ABC):
 # ----------------------------------------
 # EquibaseAdapter
 # ----------------------------------------
+class HKJCAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for Hong Kong Jockey Club (HKJC).
+    Extremely reliable data source for Hong Kong racing.
+    """
+    SOURCE_NAME: ClassVar[str] = "HKJC"
+    BASE_URL: ClassVar[str] = "https://racing.hkjc.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.HTTPX,
+            enable_js=False,
+            timeout=30
+        )
+
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="racing.hkjc.com")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # date is YYMMDD, HKJC results/entries often use YYYY/MM/DD
+        dt = parse_date_string(date)
+        date_hk = dt.strftime("%Y/%m/%d")
+
+        # Entries URL
+        url = f"/racing/information/English/Racing/LocalResults.aspx?RaceDate={date_hk}"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            return None
+
+        self._save_debug_snapshot(resp.text, f"hkjc_index_{date}")
+        parser = HTMLParser(resp.text)
+
+        # In HKJC, if information is not released, it says "Information will be released shortly"
+        if "Information will be released shortly" in resp.text:
+            # Try Entries page
+            entries_url = "/racing/information/English/racing/Entries.aspx"
+            resp = await self.make_request("GET", entries_url, headers=self._get_headers())
+            if not resp or not resp.text:
+                return None
+            parser = HTMLParser(resp.text)
+
+        # Find race links
+        # HKJC uses specific icons or text for race numbers
+        metadata = []
+        for a in parser.css("a[href*='RaceNo=']"):
+            href = a.attributes.get("href")
+            if href:
+                metadata.append({"url": href})
+
+        if not metadata:
+            # Maybe it's a single race page or all-races page
+            if "Race Card" in resp.text:
+                return {"html": resp.text, "url": url, "date": date}
+            return None
+
+        # Fetch all races
+        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data: return []
+        races = []
+        date_str = raw_data["date"]
+        try:
+            race_date = parse_date_string(date_str).date()
+        except Exception:
+            race_date = datetime.now(EASTERN).date()
+
+        if "pages" in raw_data:
+            for p in raw_data["pages"]:
+                if p and p.get("html"):
+                    race = self._parse_single_race(p["html"], p.get("url", ""), race_date)
+                    if race: races.append(race)
+        elif "html" in raw_data:
+            race = self._parse_single_race(raw_data["html"], raw_data.get("url", ""), race_date)
+            if race: races.append(race)
+
+        return races
+
+    def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
+        parser = HTMLParser(html_content)
+
+        # Venue is usually Sha Tin or Happy Valley
+        venue = "Hong Kong"
+        if "Sha Tin" in html_content: venue = "Sha Tin"
+        elif "Happy Valley" in html_content: venue = "Happy Valley"
+
+        # Race number
+        race_num = 1
+        num_match = re.search(r"RaceNo=(\d+)", url)
+        if num_match:
+            race_num = int(num_match.group(1))
+        else:
+            # Try to find in text "Race 1"
+            txt_match = re.search(r"Race\s+(\d+)", html_content, re.I)
+            if txt_match: race_num = int(txt_match.group(1))
+
+        # Runners
+        runners = []
+        # HKJC uses a table with class 'performance'
+        for row in parser.css("table.performance tr"):
+            cols = row.css("td")
+            if len(cols) < 5: continue
+
+            # Saddle cloth number
+            try:
+                num = int(clean_text(node_text(cols[0])))
+            except Exception: continue
+
+            # Horse Name
+            name_node = cols[2].css_first("a")
+            name = clean_text(node_text(name_node or cols[2]))
+            if not name or name.upper() in ["HORSE", "NAME"]: continue
+
+            # Odds
+            win_odds = None
+            # HKJC odds are usually in a specific column or can be found in text
+            # For now, we'll use SmartOddsExtractor as HKJC layout is complex
+            win_odds = SmartOddsExtractor.extract_from_node(row)
+
+            odds_data = {}
+            if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                odds_data[self.SOURCE_NAME] = ov
+
+            runners.append(Runner(name=name, number=num, odds=odds_data, win_odds=win_odds))
+
+        if not runners: return None
+
+        # Start time - HKJC usually lists it
+        start_time = datetime.combine(race_date, datetime.min.time())
+        time_match = re.search(r"(\d{1,2}:\d{2})", html_content)
+        if time_match:
+            try:
+                start_time = datetime.combine(race_date, datetime.strptime(time_match.group(1), "%H:%M").time())
+            except Exception: pass
+
+        return Race(
+            id=generate_race_id("hkjc", venue, start_time, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=ensure_eastern(start_time),
+            runners=runners,
+            source=self.SOURCE_NAME,
+            discipline="Thoroughbred"
+        )
+
+class OfficialTrackAdapter(BaseAdapterV3):
+    """
+    Adapter that verifies the availability of an official racetrack website.
+    Supports a '200 OK' health check as requested by JB.
+    """
+    ADAPTER_TYPE = "discovery"
+    PROVIDES_ODDS = False
+
+    def __init__(self, track_name: str, url: str, config: Optional[Dict[str, Any]] = None):
+        self.track_name = track_name
+        self.official_url = url
+        # Use a safe name for the source
+        source = f"Official_{track_name.replace(' ', '').replace('/', '')}"
+        super().__init__(source_name=source, base_url=url, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, timeout=30)
+
+    async def _fetch_data(self, date: str) -> Optional[str]:
+        # Perform a GET to check status
+        try:
+            resp = await self.make_request("GET", "")
+            if resp and get_resp_status(resp) == 200:
+                return "ALIVE"
+        except Exception:
+            pass
+        return None
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        # Return a single dummy race to indicate success in harvest logs
+        if raw_data == "ALIVE":
+             now = datetime.now(EASTERN)
+             return [Race(
+                 id=f"ping_{get_canonical_venue(self.track_name)}_{now.strftime('%y%m%d')}",
+                 venue=self.track_name,
+                 race_number=1,
+                 start_time=now,
+                 runners=[Runner(name="Status OK", number=1), Runner(name="Health Check", number=2)],
+                 source=self.source_name,
+                 discipline="StatusCheck",
+                 metadata={"status": "HTTP 200", "url": self.official_url}
+             )]
+        return []
+
+class OfficialDelMarAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_DelMar"
+    def __init__(self, config=None): super().__init__("Del Mar", "https://www.dmtc.com/racing/entries", config=config)
+
+class OfficialGulfstreamAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_GulfstreamPark"
+    def __init__(self, config=None): super().__init__("Gulfstream Park", "https://www.gulfstreampark.com/racing/entries", config=config)
+
+class OfficialTampaBayAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_TampaBayDowns"
+    def __init__(self, config=None): super().__init__("Tampa Bay Downs", "https://www.tampabaydowns.com/racing/entries-results/entries", config=config)
+
+class OfficialOaklawnAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_OaklawnPark"
+    def __init__(self, config=None): super().__init__("Oaklawn Park", "https://www.oaklawn.com/racing/entries/", config=config)
+
+class OfficialSantaAnitaAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_SantaAnita"
+    def __init__(self, config=None): super().__init__("Santa Anita", "https://www.santaanita.com/racing/entries", config=config)
+
+class OfficialMonmouthAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_MonmouthPark"
+    def __init__(self, config=None): super().__init__("Monmouth Park", "https://www.monmouthpark.com/racing-info/entries/", config=config)
+
+class OfficialWoodbineAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_Woodbine"
+    def __init__(self, config=None): super().__init__("Woodbine", "https://woodbine.com/racing/entries-results/", config=config)
+
+class OfficialMeadowlandsAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_TheMeadowlands"
+    def __init__(self, config=None): super().__init__("The Meadowlands", "https://playmeadowlands.com/racing/racing-info/", config=config)
+
+class OfficialYonkersAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_YonkersRaceway"
+    def __init__(self, config=None): super().__init__("Yonkers Raceway", "https://empirecitycasino.mgmresorts.com/en/racing.html", config=config)
+
+class OfficialJRAAdapter(OfficialTrackAdapter):
+    SOURCE_NAME = "Official_JRAJapan"
+    def __init__(self, config=None): super().__init__("JRA Japan", "https://japanracing.jp/", config=config)
+
+class JRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for Japan Racing Association (JRA).
+    Provides high-quality data for Japanese racing.
+    """
+    SOURCE_NAME: ClassVar[str] = "JRA"
+    BASE_URL: ClassVar[str] = "https://japanracing.jp"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.HTTPX,
+            enable_js=False,
+            timeout=30
+        )
+
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="japanracing.jp")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # JRA uses /racing/calendar/{YYYY}/{MM}/{DD}.html or similar
+        dt = parse_date_string(date)
+        url = f"/racing/calendar/{dt.year}/{dt.month}/{dt.day}.html"
+
+        # Actually JRA has a simpler entries page
+        # https://japanracing.jp/en/racing/go_racing/jra_racecourses/
+        # For now we'll check the calendar
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text:
+            # Fallback to current entries
+            resp = await self.make_request("GET", "/en/racing/go_racing/", headers=self._get_headers())
+            if not resp or not resp.text: return None
+
+        self._save_debug_snapshot(resp.text, f"jra_index_{date}")
+        parser = HTMLParser(resp.text)
+
+        metadata = []
+        # JRA layout is very structured. Look for race links.
+        for a in parser.css("a[href*='/racing/calendar/']"):
+            href = a.attributes.get("href")
+            if href and "index.html" not in href:
+                metadata.append({"url": href})
+
+        if not metadata:
+             return None
+
+        pages = await self._fetch_race_pages_concurrent(metadata[:20], self._get_headers())
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        races = []
+        date_str = raw_data["date"]
+        try:
+            race_date = parse_date_string(date_str).date()
+        except Exception:
+            race_date = datetime.now(EASTERN).date()
+
+        for p in raw_data["pages"]:
+            if p and p.get("html"):
+                race = self._parse_single_race(p["html"], p.get("url", ""), race_date)
+                if race: races.append(race)
+
+        return races
+
+    def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
+        parser = HTMLParser(html_content)
+
+        # Extract venue from header or URL
+        venue = "Japan"
+        header = parser.css_first("h1") or parser.css_first("h2")
+        if header:
+            venue = normalize_venue_name(node_text(header))
+
+        # Race number
+        race_num = 1
+        num_match = re.search(r"race(\d+)", url)
+        if num_match: race_num = int(num_match.group(1))
+
+        # Runners
+        runners = []
+        for row in parser.css("table.race_table tr"):
+            cols = row.css("td")
+            if len(cols) < 5: continue
+
+            try:
+                num = int(clean_text(node_text(cols[0])))
+                name = clean_text(node_text(cols[2]))
+                if not name or name.upper() in ["HORSE", "NAME"]: continue
+
+                win_odds = SmartOddsExtractor.extract_from_node(row)
+                odds_data = {}
+                if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                    odds_data[self.SOURCE_NAME] = ov
+
+                runners.append(Runner(name=name, number=num, odds=odds_data, win_odds=win_odds))
+            except Exception: continue
+
+        if not runners: return None
+
+        # Start time
+        start_time = datetime.combine(race_date, datetime.min.time())
+        time_match = re.search(r"(\d{1,2}:\d{2})", html_content)
+        if time_match:
+            try:
+                start_time = datetime.combine(race_date, datetime.strptime(time_match.group(1), "%H:%M").time())
+            except Exception: pass
+
+        return Race(
+            id=generate_race_id("jra", venue, start_time, race_num),
+            venue=venue,
+            race_number=race_num,
+            start_time=ensure_eastern(start_time),
+            runners=runners,
+            source=self.SOURCE_NAME,
+            discipline="Thoroughbred"
+        )
+
 class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     """
     Adapter for Racing & Sports (RAS).
@@ -1696,7 +2058,9 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         # Index for the day
-        index_url = f"/form-guide/thoroughbred/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/form-guide/thoroughbred/{date_iso}"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
@@ -1713,7 +2077,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         skip_finished_countries = (now.hour >= 18 or now.hour < 6) and (date == today_str)
         finished_keywords = ["turkey", "south-africa", "united-kingdom", "france", "germany", "dubai", "bahrain"]
 
-        for link in parser.css("a.fg-race-link"):
+        # Broaden selectors for race links (Fix 15)
+        for link in parser.css("a.fg-race-link, a[href*='/form-guide/'][href*='/R']"):
             url = link.attributes.get("href")
             if url:
                 if not url.startswith("http"):
@@ -1894,8 +2259,10 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        index_url = f"/racecards/{date}"
-        intl_url = f"/racecards/international/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/racecards/{date_iso}"
+        intl_url = f"/racecards/international/{date_iso}"
 
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         intl_resp = await self.make_request("GET", intl_url, headers=self._get_headers())
@@ -2194,7 +2561,9 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         return self._get_browser_headers(host="greyhounds.attheraces.com", referer="https://greyhounds.attheraces.com/racecards")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        index_url = f"/racecards/{date}" if date else "/racecards"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/racecards/{date_iso}" if date else "/racecards"
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
@@ -2380,7 +2749,9 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         return self._get_browser_headers(host="www.sportinglife.com", referer="https://www.sportinglife.com/racing/racecards")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        index_url = f"/racing/racecards/{date}/" if date else "/racing/racecards/"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/racing/racecards/{date_iso}/" if date else "/racing/racecards/"
         resp = await self.make_request("GET", index_url, headers=self._get_headers(), follow_redirects=True)
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
@@ -2791,7 +3162,9 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, max_retries=3, timeout=20)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        endpoint = f"/v2/racecards/daily/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        endpoint = f"/v2/racecards/daily/{date_iso}"
         resp = await self.make_request("GET", endpoint)
         if not resp: return None
         try: data = resp.json()
@@ -7029,7 +7402,9 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         Fetches the raw HTML for all race pages for a given date. This involves a multi-level fetch.
         """
         sem = asyncio.Semaphore(3)
-        index_url = f"/horse-racing/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/horse-racing/{date_iso}"
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
             self.logger.warning("Failed to fetch Oddschecker index page", url=index_url)
@@ -7248,7 +7623,9 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         Fetches the raw HTML for all race pages for a given date.
         """
         sem = asyncio.Semaphore(5)
-        index_url = f"/horse-racing/racecards/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/horse-racing/racecards/{date_iso}"
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
             self.logger.warning("Failed to fetch Timeform index page", url=index_url)
@@ -7536,11 +7913,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         Fetches the raw HTML content for all races on a given date, including international.
         """
-        index_url = f"/racecards/{date}"
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/racecards/{date_iso}"
         # RacingPost international URL sometimes varies
         intl_urls = [
-            f"/racecards/international/{date}",
-            f"/racecards/{date}/international",
+            f"/racecards/international/{date_iso}",
+            f"/racecards/{date_iso}/international",
             "/racecards/international"
         ]
 
@@ -7631,19 +8010,14 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         if not race_card_urls:
             self.logger.warning("Standard RacingPost link discovery failed, trying aggressive fallback", date=date)
-            if index_response and index_response.text:
-                index_parser = HTMLParser(index_response.text)
-                for a in index_parser.css('a[href*="/racecards/"]'):
-                    href = a.attributes.get("href", "")
-                    if re.search(r"/\d+/.*/\d{4}-\d{2}-\d{2}/\d+", href):
-                        race_card_urls.append(href)
-
-            if intl_response and intl_response.text:
-                intl_parser = HTMLParser(intl_response.text)
-                for a in intl_parser.css('a[href*="/racecards/"]'):
-                    href = a.attributes.get("href", "")
-                    if re.search(r"/\d+/.*/\d{4}-\d{2}-\d{2}/\d+", href):
-                        race_card_urls.append(href)
+            for resp in [index_response, intl_response]:
+                if resp and resp.text:
+                    p = HTMLParser(resp.text)
+                    # Even more aggressive: any link containing /racecards/ and a date-like pattern
+                    for a in p.css('a[href*="/racecards/"]'):
+                        href = a.attributes.get("href", "")
+                        if re.search(r"/\d{4}-\d{2}-\d{2}/", href) or re.search(r"/\d+/.*/\d+/?$", href):
+                            race_card_urls.append(href)
 
         if not race_card_urls:
             self.logger.warning("Failed to fetch RacingPost racecard links", date=date)
