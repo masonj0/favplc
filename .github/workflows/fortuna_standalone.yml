@@ -123,8 +123,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
-          restore-keys: fortuna-db-v3-master-
+          key: fortuna-db-v4-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
         run: |
@@ -198,8 +198,15 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
-          restore-keys: fortuna-db-v3-master-
+          key: fortuna-db-v4-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v4-master-
+
+      - name: Restore Snapshot from Cache
+        id: cache-snapshot
+        uses: actions/cache/restore@v4
+        with:
+          path: snapshots/
+          key: fortuna-snapshot-${{ needs.resolve-mode.outputs.daypart_tag }}
 
       - name: Restore Snapshot from Cache
         id: cache-snapshot
@@ -261,8 +268,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
-          restore-keys: fortuna-db-v3-master-
+          key: fortuna-db-v4-master-${{ github.run_number }}
+          restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
         run: |
@@ -367,7 +374,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
+          key: fortuna-db-v4-master-${{ github.run_number }}
 
       - name: Upload Final Reports
         if: always()
