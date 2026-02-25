@@ -12,15 +12,15 @@ EASTERN = ZoneInfo("America/New_York")
 class DayPart(Enum):
     """
     Quarter-based day parts for targeted fetching and scoring.
-    Q1: 00:00 - 05:59 (AU/NZ focus)
-    Q2: 06:00 - 11:59 (UK/SA focus)
-    Q3: 12:00 - 17:59 (US/UK afternoon focus)
-    Q4: 18:00 - 23:59 (US evening, UK all-weather focus)
+    Q1: 00:00 - 05:59 Eastern (AU/NZ focus)
+    Q2: 06:00 - 11:59 Eastern (UK/SA focus)
+    Q3: 12:00 - 17:59 Eastern (US/UK afternoon)
+    Q4: 18:00 - 23:59 Eastern (US evening, UK all-weather)
     """
-    Q1 = "Q1"
-    Q2 = "Q2"
-    Q3 = "Q3"
-    Q4 = "Q4"
+    Q1 = 'Q1'
+    Q2 = 'Q2'
+    Q3 = 'Q3'
+    Q4 = 'Q4'
 
     def __str__(self):
         return self.value
