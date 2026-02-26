@@ -376,12 +376,8 @@ def _build_action_plan(out: SummaryWriter, stats: TipStats):
     out.write()
 
 def _build_plays(out: SummaryWriter):
-    data = _read_json("race_data.json")
     races = []
-    if data:
-        races = data.get("bet_now_races", []) + data.get("you_might_like_races", [])
-
-    if not races and Path(DB_PATH).exists():
+    if Path(DB_PATH).exists():
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row

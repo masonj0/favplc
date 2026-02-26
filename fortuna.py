@@ -923,8 +923,9 @@ async def refresh_odds_for_races(
                             matched = existing_runner
                             break
                     if matched:
+                        matched.odds.clear()
                         matched.odds.update(new_runner.odds)
-                        if new_runner.win_odds and not matched.win_odds:
+                        if new_runner.win_odds is not None:
                             matched.win_odds = new_runner.win_odds
                         fresh_count += 1
         except Exception as e:
@@ -2053,19 +2054,8 @@ class OfficialTrackAdapter(BaseAdapterV3):
         return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
-        # Return a single dummy race to indicate success in harvest logs
-        if raw_data == "ALIVE":
-             now = datetime.now(EASTERN)
-             return [Race(
-                 id=f"ping_{get_canonical_venue(self.track_name)}_{now.strftime('%y%m%d')}",
-                 venue=self.track_name,
-                 race_number=1,
-                 start_time=now,
-                 runners=[Runner(name="Status OK", number=1), Runner(name="Health Check", number=2)],
-                 source=self.source_name,
-                 discipline=getattr(self, 'DISCIPLINE', 'Thoroughbred'),
-                 metadata={"status": "HTTP 200", "url": self.official_url}
-             )]
+        # Return empty list; health check success is tracked via BaseAdapterV3 metrics/logs
+        # (Fix GEMINI_4: Remove dummy race pollution)
         return []
 
 class OfficialDelMarAdapter(OfficialTrackAdapter):
@@ -4946,7 +4936,7 @@ class TinyFieldTrifectaAnalyzer(TrifectaAnalyzer):
 # Discipline-specific qualification thresholds (Phase J: Strategic Option B)
 DISCIPLINE_THRESHOLDS: Final[Dict[str, Dict[str, float]]] = {
     "Thoroughbred": {
-        "min_gap12": 0.40,
+        "min_gap12": 0.75,
         "min_odds": 3.0,
         "max_odds": 15.0,
         "min_field_size": 5,
@@ -4960,7 +4950,7 @@ DISCIPLINE_THRESHOLDS: Final[Dict[str, Dict[str, float]]] = {
         "max_field_size": 6,
     },
     "Harness": {
-        "min_gap12": 0.50,
+        "min_gap12": 0.75,
         "min_odds": 3.0,
         "max_odds": 10.0,
         "min_field_size": 5,
@@ -5110,6 +5100,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # absolute odds gap (decimal points), not ratio
             gap_abs = sec_fav_odds - fav_odds
 
+            # Initialize flags for this race (ISSUE-2 Fix)
+            is_goldmine = False
+            is_best_bet = False
+            is_superfecta_key = False
+            tip_tier = 'best_bet'
+
             # Gate 3: minimum gap
             if gap_abs <= GAP_ABS_MIN: continue
 
@@ -5125,12 +5121,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Gap contribution (capped at 8 points of gap)
             composite += min(gap_abs, 8.0) * 2.5
 
-            # Field size tiers
+            # Field size tiers (ISSUE-13 FIX: Order matters to avoid shadowing)
             if 5 <= total_active <= 8:    composite += 8.0   # sweet spot
-            elif total_active <= 10:      composite += 4.0   # good
-            elif total_active <= 12:      pass               # neutral
-            elif total_active > 12:       composite -= 5.0   # too many runners
-            elif total_active < 5:        composite -= 10.0  # tiny field, unreliable
+            elif total_active <= 10:      composite += 4.0   # 9-10
+            elif total_active <= 12:      pass               # 11-12
+            elif total_active > 12:       composite -= 5.0   # 13+
+            else:                         composite -= 10.0  # < 5
 
             # Favourite odds quality (Place-value sweet spot)
             if 2.00 <= fav_odds <= 4.00:  composite += 5.0   # ideal Place range
@@ -5147,8 +5143,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 is_goldmine = False
 
             # Grade -> Tip Tier mapping
-            is_best_bet = False
-            tip_tier = 'best_bet'
             if composite >= 60:
                 race.metadata['qualification_grade'] = 'A+'
                 is_best_bet = True
@@ -5170,7 +5164,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 continue
 
             # Superfecta Key adjustment
-            is_superfecta_key = False
             if gap_abs >= SUPERFECTA_GAP_MIN:
                 # Superfecta Key horse: FAVOURITE (same as selection)
                 is_superfecta_key = True
@@ -5203,7 +5196,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             est_payout = (fav_odds / place_divisor) + 1.0
             race.metadata['predicted_ev'] = round((p_place * est_payout) - 1.0, 4)
 
-            race.qualification_score = 100.0
+            race.qualification_score = round(composite, 2)
             qualified.append(race)
 
         return {
@@ -8654,15 +8647,30 @@ async def run_quarter_fetch(
 
     date_str = daypart_tag.split("_")[1] # 260225
 
+    # Add semaphore for browser-heavy adapters to prevent resource thrashing
+    playwright_semaphore = asyncio.Semaphore(3)
+
     async def fetch_one(a, d_str):
+        # Determine if this adapter uses Playwright
+        strategy = getattr(a, 'strategy', None)
+        use_playwright_sem = False
+        if strategy and strategy.primary_engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.PLAYWRIGHT_LEGACY, BrowserEngine.CAMOUFOX):
+            use_playwright_sem = True
+
         try:
-            # Phase 4: Implement per-adapter timeout (60s default)
-            races = await asyncio.wait_for(a.get_races(d_str), timeout=60.0)
+            # GEMINI_3: Increase per-adapter timeout in run_quarter_fetch to 180s
+            fetch_timeout = 180.0
+            if use_playwright_sem:
+                async with playwright_semaphore:
+                    races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)
+            else:
+                races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)
+
             # Record last status for Phase 1 logging (GPT5 Fix)
             status = getattr(a, 'last_response_status', None)
             return a.source_name, races, status
         except asyncio.TimeoutError:
-            logger.warning("adapter_timeout", adapter=a.source_name, timeout=60.0)
+            logger.warning("adapter_timeout", adapter=a.source_name, timeout=fetch_timeout)
             return a.source_name, [], "timeout"
         except Exception as e:
             logger.error("Error fetching from adapter", adapter=a.source_name, date=d_str, error=str(e))
@@ -8807,7 +8815,18 @@ async def run_score_now(
     await db.log_scoring_run(daypart_tag, len(qualified))
 
     # 13. Reports (goldmine_report.txt, summary_grid.txt for this batch)
-    # Simplified here.
+    try:
+        grid = generate_summary_grid(qualified, all_races=scorable)
+        field_matrix = generate_field_matrix(scorable)
+        gm_report = generate_goldmine_report(qualified, all_races=scorable)
+        with open(get_writable_path('summary_grid.txt'), 'w', encoding='utf-8') as f:
+            f.write(grid)
+        with open(get_writable_path('field_matrix.txt'), 'w', encoding='utf-8') as f:
+            f.write(field_matrix)
+        with open(get_writable_path('goldmine_report.txt'), 'w', encoding='utf-8') as f:
+            f.write(gm_report)
+    except Exception as e:
+        logger.error('failed_saving_text_reports', error=str(e))
 
     return qualified
 
@@ -8823,7 +8842,8 @@ async def run_discovery(
     track_odds: bool = False,
     region: Optional[str] = None,
     config: Optional[Dict[str, Any]] = None,
-    now: Optional[datetime] = None
+    now: Optional[datetime] = None,
+    daypart_tag: Optional[str] = None
 ):
     """Legacy discovery wrapper that calls the new two-tier architecture."""
     logger = structlog.get_logger("run_discovery_legacy")
@@ -8832,9 +8852,10 @@ async def run_discovery(
     if loaded_races is not None:
         races = loaded_races
     else:
-        dt = now or now_eastern()
-        daypart = resolve_daypart_from_dt(dt)
-        daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
+        if not daypart_tag:
+            dt = now or now_eastern()
+            daypart = resolve_daypart_from_dt(dt)
+            daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
 
         if adapter_names:
             adapter_filter = adapter_names
@@ -8862,10 +8883,11 @@ async def run_discovery(
     logger.info("Legacy analysis complete", total=len(races), qualified=len(qualified))
 
     tracker = HotTipsTracker(db, config or {})
-    # Calculate daypart_tag for legacy discovery
-    dt = now or now_eastern()
-    daypart = resolve_daypart_from_dt(dt)
-    daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
+    # Use the tag computed during fetch or passed by caller
+    if not daypart_tag:
+        dt = now or now_eastern()
+        daypart = resolve_daypart_from_dt(dt)
+        daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
     await tracker.log_tips(qualified, daypart_tag=daypart_tag)
 
     # 4. Post-run reporting (legacy fallback)
