@@ -5,12 +5,13 @@ from fortuna import SimplySuccessAnalyzer, Race, Runner, EASTERN
 
 def test_superfecta_key_trigger():
     # Setup a race that should trigger superfecta key
-    # gap12 > 0.75 and runners >= 4
+    # gap12 >= 1.0 and runners >= 5 (for Thoroughbred)
     runners = [
         Runner(number=1, name="Fav", win_odds=1.5),
-        Runner(number=2, name="Sec", win_odds=3.0), # (3.0-1.5)/1.5 = 1.0 > 0.75
+        Runner(number=2, name="Sec", win_odds=3.0), # (3.0-1.5)/1.5 = 1.0 >= 1.0
         Runner(number=3, name="Third", win_odds=5.0),
         Runner(number=4, name="Fourth", win_odds=10.0),
+        Runner(number=5, name="Fifth", win_odds=20.0),
     ]
     # Set odds_source_trustworthy to True so it passes the airlock
     for r in runners:
@@ -22,17 +23,21 @@ def test_superfecta_key_trigger():
     analyzer = SimplySuccessAnalyzer(config={})
     results = analyzer.qualify_races([race])
 
+    assert len(results['races']) == 1
     analyzed_race = results['races'][0]
     assert analyzed_race.metadata.get('is_superfecta_key') is True
     assert analyzed_race.metadata.get('superfecta_key_number') == 1
-    assert analyzed_race.metadata.get('superfecta_box_numbers') == [2, 3, 4]
+    # Note: selection_number and box numbers are stored as strings or ints depending on logic
+    # In fortuna.py: [str(r[0].number) for r in valid_r_with_odds[1:4]]
+    assert analyzed_race.metadata.get('superfecta_box_numbers') == ["2", "3", "4"]
 
 def test_superfecta_key_not_triggered_low_gap():
     runners = [
         Runner(number=1, name="Fav", win_odds=2.0),
-        Runner(number=2, name="Sec", win_odds=3.0), # (3.0-2.0)/2.0 = 0.5 < 0.75
+        Runner(number=2, name="Sec", win_odds=3.0), # (3.0-2.0)/2.0 = 0.5 < 1.0
         Runner(number=3, name="Third", win_odds=5.0),
         Runner(number=4, name="Fourth", win_odds=10.0),
+        Runner(number=5, name="Fifth", win_odds=20.0),
     ]
     for r in runners:
         r.metadata['odds_source_trustworthy'] = True
@@ -43,14 +48,16 @@ def test_superfecta_key_not_triggered_low_gap():
     analyzer = SimplySuccessAnalyzer(config={})
     results = analyzer.qualify_races([race])
 
+    assert len(results['races']) == 1
     analyzed_race = results['races'][0]
     assert analyzed_race.metadata.get('is_superfecta_key') is False
 
 def test_superfecta_key_not_triggered_low_runners():
     runners = [
         Runner(number=1, name="Fav", win_odds=1.5),
-        Runner(number=2, name="Sec", win_odds=3.0), # gap 1.0 > 0.75
+        Runner(number=2, name="Sec", win_odds=3.0), # gap 1.0
         Runner(number=3, name="Third", win_odds=5.0),
+        Runner(number=4, name="Fourth", win_odds=10.0),
     ]
     for r in runners:
         r.metadata['odds_source_trustworthy'] = True
@@ -61,5 +68,5 @@ def test_superfecta_key_not_triggered_low_runners():
     analyzer = SimplySuccessAnalyzer(config={})
     results = analyzer.qualify_races([race])
 
-    analyzed_race = results['races'][0]
-    assert analyzed_race.metadata.get('is_superfecta_key') is False
+    # Should be skipped entirely due to min_field_size = 5
+    assert len(results['races']) == 0
