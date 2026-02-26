@@ -99,8 +99,8 @@ async def test_simply_success_analyzer_1Gap2():
     result = analyzer.qualify_races([race])
     qualified = result["races"]
     assert len(qualified) == 1
-    # Percentage gap: (5.0 - 2.0) / 2.0 = 1.5
-    assert qualified[0].metadata["1Gap2"] == 1.5
+    # Absolute gap: (5.0 - 2.0) = 3.0
+    assert qualified[0].metadata["1Gap2"] == 3.0
     assert qualified[0].metadata["is_goldmine"] is True # 2nd fav 5.0 and gap ratio 1.5 (>=0.35)
 
 @pytest.mark.asyncio

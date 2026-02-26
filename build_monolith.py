@@ -150,6 +150,36 @@ def verify_exe(exe_path):
         return False
 
 
+def sign_exe(exe_path):
+    """Sign the EXE using signtool.exe if a certificate is configured."""
+    cert_path = os.environ.get("CODE_SIGN_CERT_PATH")
+    cert_pass = os.environ.get("CODE_SIGN_CERT_PASS")
+
+    if not cert_path or not cert_pass:
+        print("\n[SKIP] Code signing skipped (ENV vars CODE_SIGN_CERT_PATH/PASS not set)")
+        return
+
+    print("\nSigning EXE...")
+    try:
+        # Check if signtool is in path
+        subprocess.run(["signtool", "/?"], capture_output=True, check=False)
+
+        subprocess.run([
+            "signtool", "sign",
+            "/f", cert_path,
+            "/p", cert_pass,
+            "/tr", "http://timestamp.digicert.com",
+            "/td", "sha256",
+            "/fd", "sha256",
+            exe_path
+        ], check=True)
+        print("[PASS] EXE signed successfully")
+    except FileNotFoundError:
+        print("[FAIL] signtool.exe not found in PATH. Please install Windows SDK.")
+    except Exception as e:
+        print(f"[FAIL] Signing failed: {e}")
+
+
 def build_exe(console_mode: bool = True, debug: bool = False):
     """Build the Fortuna Monolith executable."""
     print("Preparing to build Fortuna Intelligence Monolith EXE...")
@@ -230,6 +260,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
     hidden_imports = [
         # ── Fortuna modules (imported dynamically) ─────────────────────────────
         "fortuna_analytics",
+        "fortuna_utils",
 
         # ── Async & DB ─────────────────────────────────────────────────────────
         "aiosqlite",
@@ -240,6 +271,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         # ── Timezone (CRITICAL on Windows) ─────────────────────────────────────
         "zoneinfo",
         "tzdata",
+        "tomli",
 
         # ── Data processing ────────────────────────────────────────────────────
         "pandas",
@@ -344,6 +376,9 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         print("[SUCCESS] Build complete!")
         print(f"   Output: {exe_path}")
         print(f"   Size:   {size_mb:.1f} MB")
+
+        # Attempt to sign the EXE if credentials are provided
+        sign_exe(exe_path)
 
         if verify_exe(exe_path):
             print("=" * 60)
