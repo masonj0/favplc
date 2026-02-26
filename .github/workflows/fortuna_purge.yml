@@ -10,9 +10,9 @@ on:
         type: choice
         options: ['false', 'true']
       cutoff_date:
-        description: 'Delete ALL tips before this date (YYMMDD, default is the 260222 Insight Upgrade)'
+        description: 'Delete ALL tips before this date (YYMMDD, default is 260225)'
         required: false
-        default: "260222"
+        default: "260225"
         type: string
       cutoff_time:
         description: 'Delete tips before this time on cutoff date (HH:MM in ET, default: 11:00)'
@@ -106,7 +106,7 @@ jobs:
 
               now_et = datetime.now(EASTERN)
               if not cutoff_date:
-                  cutoff_date = "260222"
+                  cutoff_date = "260225"
 
               try:
                   cutoff_dt = datetime.strptime(f"{cutoff_date} {cutoff_time}", "%y%m%d %H:%M").replace(tzinfo=EASTERN)

@@ -34,8 +34,8 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-
-          restore-keys: fortuna-db-v3-master-
+          key: fortuna-db-v4-master-
+          restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
         run: |
@@ -764,4 +764,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: fortuna.db
-          key: fortuna-db-v3-master-${{ github.run_number }}
+          key: fortuna-db-v4-master-${{ github.run_number }}

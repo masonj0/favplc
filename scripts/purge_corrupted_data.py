@@ -40,7 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 DB_PATH = PROJECT_ROOT / "fortuna.db"
 STALE_DAYS = 4  # tips older than this with no audit are likely unmatchable
-INSIGHT_UPGRADE_DATE = "2026-02-22"  # delete all records before this date
+INSIGHT_UPGRADE_DATE = "2026-02-25"  # delete all records before this date
 
 # ── output helpers ───────────────────────────────────────────────────
 _buf: list[str] = []
