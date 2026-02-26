@@ -1067,7 +1067,9 @@ class PageFetchingResultsAdapter(
             return False
 
         compact_formats = (
-            dt.strftime(DATE_FORMAT),       # 20260209
+            dt.strftime(DATE_FORMAT),       # 260209
+            dt.strftime("%Y-%m-%d"),     # 2026-02-09
+            dt.strftime("%Y/%m/%d"),     # 2026/02/09
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1234,7 +1236,8 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=False,
-            timeout=45
+            timeout=45,
+            impersonate="chrome133"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -1424,7 +1427,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            timeout=45
+            timeout=45,
+            impersonate="chrome133"
         )
 
     def _get_headers(self) -> Dict[str, str]:
