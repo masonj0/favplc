@@ -430,9 +430,15 @@ jobs:
               # ── 2G: Odds Gap Analysis ─────────────────────────────────────
               emit("### 2G: Odds Gap vs Outcome Correlation\n```text")
               if has_col('gap12'):
-                  emit(f"  {'GAP BUCKET':<20} {'BETS':>5} {'HIT%':>7} {'AVG P&L':>9}")
-                  emit(f"  {'─'*20} {'─'*5} {'─'*7} {'─'*9}")
-                  for label, cond in [("< 0.20 (Tight)", "CAST(gap12 AS REAL) < 0.20"), ("0.20 - 0.50", "CAST(gap12 AS REAL) >= 0.20 AND CAST(gap12 AS REAL) < 0.50"), ("0.50 - 1.00", "CAST(gap12 AS REAL) >= 0.50 AND CAST(gap12 AS REAL) < 1.00"), ("> 1.00 (Dominant)", "CAST(gap12 AS REAL) >= 1.00")]:
+                  emit(f"  {'GAP BUCKET':<25} {'BETS':>5} {'HIT%':>7} {'AVG P&L':>9}")
+                  emit(f"  {'─'*25} {'─'*5} {'─'*7} {'─'*9}")
+                  # Updated gap buckets for ABSOLUTE gap values (v2)
+                  for label, cond in [
+                      ("0.75 - 1.50 (Qualifying)", "CAST(gap12 AS REAL) >= 0.75 AND CAST(gap12 AS REAL) < 1.50"),
+                      ("1.50 - 2.50 (Solid)",      "CAST(gap12 AS REAL) >= 1.50 AND CAST(gap12 AS REAL) < 2.50"),
+                      ("2.50 - 4.00 (Strong)",     "CAST(gap12 AS REAL) >= 2.50 AND CAST(gap12 AS REAL) < 4.00"),
+                      ("> 4.00 (Dominant)",        "CAST(gap12 AS REAL) >= 4.00")
+                  ]:
                       r = conn.execute(f"SELECT COUNT(*) as n, SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, AVG(net_profit) as pnl FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') AND gap12 IS NOT NULL AND {cond}").fetchone()
                       dec = (r['w'] or 0) + (r['l'] or 0)
                       if dec < 2: continue
