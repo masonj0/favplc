@@ -3996,8 +3996,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     Uses the internal JSON API for fast discovery and detailed runner info.
     """
     SOURCE_NAME: ClassVar[str] = "NYRABets"
-    BASE_URL: ClassVar[str] = "https://www.nyrabets.com"
-    API_URL: ClassVar[str] = "https://iapi-webservice.nyrabets.com"
+    BASE_URL: ClassVar[str] = "https://api.nyrabets.com"
+    API_URL: ClassVar[str] = "https://api.nyrabets.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
@@ -4010,7 +4010,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
     def _get_headers(self) -> Dict[str, str]:
         # Using the base domain as host to avoid internal API 403s (Fix 3)
-        h = self._get_browser_headers(host="iapi-webservice.nyrabets.com")
+        h = self._get_browser_headers(host="api.nyrabets.com")
         h["Origin"] = "https://www.nyrabets.com"
         h["Referer"] = "https://www.nyrabets.com/"
         h["X-Requested-With"] = "XMLHttpRequest"
