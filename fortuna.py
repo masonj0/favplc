@@ -5116,6 +5116,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = round(gap12, 4)
             race.metadata['is_superfecta_key'] = is_superfecta_key
+            race.metadata['predicted_2nd_fav_odds'] = sec_fav_odds
 
             # S5 — populate extra scoring signals (BUG-10)
             race.metadata['market_depth'] = float(len(valid_r_with_odds))
