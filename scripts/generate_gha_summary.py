@@ -69,6 +69,11 @@ class TipStats:
     total_profit: float = 0.0
     recent_tips: list[tuple] = field(default_factory=list)
 
+    # Tiered stats (Phase 3)
+    best_bet_count: int = 0
+    best_bet_cashed: int = 0
+    best_bet_profit: float = 0.0
+
     @property
     def decided(self) -> int:
         return self.cashed + self.burned
@@ -232,15 +237,24 @@ def _get_stats() -> TipStats:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT verdict, audit_completed, start_time, net_profit FROM tips").fetchall()
+            # Phase 3: Fetch tip_tier and predicted_fav_odds
+            rows = conn.execute("SELECT verdict, audit_completed, start_time, net_profit, tip_tier FROM tips").fetchall()
 
             now = _now_et()
             for r in rows:
                 stats.total_tips += 1
                 v = r['verdict'] or ""
-                if v.startswith('CASHED'): stats.cashed += 1
+                tier = r['tip_tier'] or 'best_bet'
+
+                is_cashed = v.startswith('CASHED')
+                if is_cashed: stats.cashed += 1
                 elif v == 'BURNED': stats.burned += 1
                 elif v == 'VOID': stats.voided += 1
+
+                if tier == 'best_bet' and v in (CASHED_VERDICTS + ['BURNED']):
+                    stats.best_bet_count += 1
+                    if is_cashed: stats.best_bet_cashed += 1
+                    stats.best_bet_profit += (r['net_profit'] or 0.0)
 
                 if r['audit_completed'] == 0:
                     st = _parse_dt(r['start_time'])
@@ -259,10 +273,10 @@ def _get_stats() -> TipStats:
                 stats.lifetime_avg_payout = avg_res[0]
 
             stats.recent_tips = conn.execute("""
-                SELECT venue, race_number, selection_number, predicted_2nd_fav_odds, verdict,
-                       net_profit, selection_position, actual_top_5, actual_2nd_fav_odds,
+                SELECT venue, race_number, selection_number, predicted_fav_odds, verdict,
+                       net_profit, selection_position, actual_top_5, actual_fav_odds,
                        superfecta_payout, trifecta_payout, top1_place_payout, discipline,
-                       selection_name
+                       selection_name, predicted_2nd_fav_odds, gap12, tip_tier
                 FROM tips WHERE audit_completed = 1
                 ORDER BY audit_timestamp DESC LIMIT 30
             """).fetchall()
@@ -287,7 +301,8 @@ class SummaryWriter:
 # ═══════════════════════════════════════════════════════════════════
 
 def _build_header(out: SummaryWriter, now: datetime):
-    out.write(f"# 🎯 Fortuna — {now.strftime('%y%m%d %A %b %d, %I:%M %p')} ET")
+    out.write(f"# 🏇 Favourite to Place — Simply Success Picks")
+    out.write(f"### {now.strftime('%y%m%d %A %b %d, %I:%M %p')} ET")
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()
@@ -377,7 +392,7 @@ def _build_plays(out: SummaryWriter):
                     st = _parse_dt(r['start_time'])
                     if st and st > now - timedelta(minutes=10):
                         races.append(dict(r))
-                        if len(races) >= 15: break
+                        if len(races) >= 30: break
         except Exception: pass
 
     if not races:
@@ -388,36 +403,25 @@ def _build_plays(out: SummaryWriter):
     for r in races:
         r['_mtp_val'] = _mtp(r.get('start_time'))
 
-    upcoming = sorted([r for r in races if r['_mtp_val'] > -5], key=lambda x: x['_mtp_val'])
-    upcoming = upcoming[:MAX_PREDICTIONS]
+    upcoming = sorted([r for r in races if r['_mtp_val'] > -10], key=lambda x: x['_mtp_val'])
 
-    if not upcoming:
+    best_bets = [r for r in upcoming if r.get('tip_tier') == 'best_bet' or r.get('is_best_bet')]
+    yml_plays = [r for r in upcoming if r.get('tip_tier') == 'you_might_like']
+
+    if not best_bets and not yml_plays:
         out.write("No imminent plays found.")
         out.write()
         return
 
     soon = len([r for r in upcoming if 0 < r['_mtp_val'] <= 15])
     if soon > 0: out.write(f"## 🔥 {soon} Plays Going Off Soon!")
-    elif any(r.get('is_goldmine') for r in upcoming if r['_mtp_val'] > 0): out.write("## 🔥 Live Plays")
     else: out.write("## ⚡ Coming Up")
     out.write()
 
-    best_bet = next((r for r in upcoming if r.get('is_goldmine') and 0 < r['_mtp_val'] < 120), None)
-    if best_bet:
-        flag = _venue_flag(best_bet.get('venue') or best_bet.get('track'))
-        vname = best_bet.get('venue') or best_bet.get('track')
-        sel = best_bet.get('selection_number') or "?"
-        name = best_bet.get('selection_name') or best_bet.get('second_fav_name') or "Unknown"
-        odds = float(best_bet.get('predicted_2nd_fav_odds') or best_bet.get('second_fav_odds') or 0)
-        mtp_s = _mtp_str(best_bet['_mtp_val'])
-        gap = float(best_bet.get('gap12', 0))
-        out.write(f"> 🏆 **Best Bet:** {flag} {vname} R{best_bet.get('race_number')} — **#{sel} {name}** @ {odds:.2f}")
-        out.write(f"> *{mtp_s} to post · Gap: {gap:.2f}*")
-        out.write()
-
-    def _render_table(rows_list):
+    def _render_table(rows_list, is_best_bet=True):
         out.write("```text")
-        out.write(f"  MTP    VENUE                R#   FLD  PICK                   ODDS    GAP   FLAGS")
+        # Recalibrated header for Favourite-based logic
+        out.write(f"  MTP    VENUE                R#   FLD  FAVOURITE              FAV@    GAP   FLAGS")
         out.write(f"  ─────  ───────────────────  ──   ───  ─────────────────────  ──────  ─────  ─────")
         for r in rows_list:
             mtp_s = _mtp_str(r['_mtp_val'])
@@ -427,27 +431,40 @@ def _build_plays(out: SummaryWriter):
             rn = r.get('race_number', "?")
             fld = r.get('field_size') or "?"
             sn = r.get('selection_number') or "?"
-            sname = _trunc(r.get('selection_name') or r.get('second_fav_name') or "", 17)
-            odds = float(r.get('predicted_2nd_fav_odds') or r.get('second_fav_odds') or 0)
+            sname = _trunc(r.get('selection_name') or r.get('fav_name') or "Unknown", 17)
+            # Use predicted_fav_odds if available
+            odds = float(r.get('predicted_fav_odds') or r.get('fav_odds') or 0)
             gap = float(r.get('gap12') or 0)
 
             flags = []
             if r.get('is_goldmine'): flags.append("GOLD")
             if r.get('is_superfecta_key'): flags.append("KEY")
             grade = r.get('qualification_grade')
-            if grade in ('A+', 'A'): flags.append(grade)
+            if grade: flags.append(grade)
             flag_str = " ".join(flags)
 
             out.write(f"  {mtp_s:>4}  {flag}{venue:<18}  {rn:>2}   {fld:>3}  #{sn:<2} {sname:<17}  {odds:>6.2f}  {gap:>5.2f}  {flag_str}")
         out.write("```")
 
-    _render_table(upcoming[:HERO_VISIBLE])
-
-    if len(upcoming) > HERO_VISIBLE:
-        out.write(f"<details><summary>📋 See all {len(upcoming)} plays</summary>")
+    if best_bets:
+        out.write("### 🏆 Best Bets")
+        _render_table(best_bets[:HERO_VISIBLE])
+        if len(best_bets) > HERO_VISIBLE:
+            out.write(f"<details><summary>📋 See all {len(best_bets)} Best Bets</summary>")
+            out.write()
+            _render_table(best_bets[HERO_VISIBLE:])
+            out.write("</details>")
         out.write()
-        _render_table(upcoming[HERO_VISIBLE:])
-        out.write("</details>")
+
+    if yml_plays:
+        out.write("---")
+        out.write("### 👀 You Might Like")
+        _render_table(yml_plays[:HERO_VISIBLE], is_best_bet=False)
+        if len(yml_plays) > HERO_VISIBLE:
+            out.write(f"<details><summary>📋 See all {len(yml_plays)} supplemental plays</summary>")
+            out.write()
+            _render_table(yml_plays[HERO_VISIBLE:], is_best_bet=False)
+            out.write("</details>")
         out.write()
 
 def _build_keybox(out: SummaryWriter):
@@ -488,7 +505,14 @@ def _build_scoreboard(out: SummaryWriter, stats: TipStats):
         return
 
     out.write("```text")
-    out.write(f"  LIFETIME   {stats.cashed}/{stats.decided} ({stats.win_rate:.0f}%)    ${stats.total_profit:>+8.2f}    ROI {stats.roi:>+.1f}%")
+    # Primary stat: Best Bets
+    bb_decided = stats.best_bet_count
+    bb_hit = (stats.best_bet_cashed / bb_decided * 100) if bb_decided > 0 else 0.0
+    bb_roi = (stats.best_bet_profit / (bb_decided * STANDARD_BET) * 100) if bb_decided > 0 else 0.0
+    out.write(f"  🏆 BEST BETS  {stats.best_bet_cashed}/{bb_decided} ({bb_hit:.0f}%)    ${stats.best_bet_profit:>+8.2f}    ROI {bb_roi:>+.1f}%")
+
+    # Secondary stat: Combined
+    out.write(f"  👀 ALL PICKS   {stats.cashed}/{stats.decided} ({stats.win_rate:.0f}%)    ${stats.total_profit:>+8.2f}    ROI {stats.roi:>+.1f}%")
 
     l10 = [r for r in stats.recent_tips if r[4] in list(VERDICT_EMOJI.keys())][:10]
     w10 = len([r for r in l10 if r[4] in CASHED_VERDICTS])
@@ -517,6 +541,8 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
     out.write("## 📊 Recent Results")
     out.write()
 
+    # Drift tracking for Favourite odds (Phase 3)
+    # r[8] is actual_fav_odds, r[3] is predicted_fav_odds
     drifts = [(r[8] - r[3]) for r in stats.recent_tips if r[8] and r[3]]
     avg_drift = sum(drifts)/len(drifts) if drifts else 0.0
     drift_label = "stable"
@@ -525,7 +551,7 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
 
     def _render_res_table(rows, is_first=False):
         out.write("```text")
-        out.write(f"       VENUE                R#   PICK                   ODDS  →  ACTUAL   P/L       FIN")
+        out.write(f"       VENUE                R#   PICK                   FAV@  →  ACTUAL   P/L       FIN")
         out.write(f"  ───  ───────────────────  ──   ─────────────────────  ─────    ──────  ────────  ─────")
         for r in rows:
             v = r[4]
@@ -537,8 +563,9 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
             sn = r[2] or "?"
             sname = _trunc(r[13] or "", 15)
             pick = f"#{sn} {sname}"
-            pred = r[3] or 0.0
-            act = r[8] or 0.0
+            pred = r[3] or 0.0 # predicted_fav_odds
+            act = r[8] or 0.0 # actual_fav_odds
+            # But the table header says ACTUAL.
             pl = r[5] or 0.0
             pos = r[6]
             fin = "—"
