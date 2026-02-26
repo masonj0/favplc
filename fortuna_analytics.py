@@ -695,17 +695,22 @@ class AuditorEngine:
 
         actual_2nd_fav_odds = self._find_actual_2nd_fav_odds(result)
 
+        # Phase 3: Track actual Favourite odds (selection is now Favourite)
+        actual_fav_odds = None
         sel_result = self._find_selection_runner(
             result, selection_num, selection_name,
         )
+        if sel_result:
+            actual_fav_odds = sel_result.final_win_odds
 
-        verdict, profit = self._compute_verdict(sel_result, result)
+        verdict, profit = self._compute_verdict(sel_result, result, tip=tip)
 
         return {
             "field_size": len(result.active_runners),
             "match_confidence": confidence,
             "actual_top_5": ", ".join(actual_top_5),
             "actual_2nd_fav_odds": actual_2nd_fav_odds,
+            "actual_fav_odds": actual_fav_odds, # NEW
             "verdict": verdict.value,
             "net_profit": round(profit, 2),
             "selection_position": (
@@ -718,7 +723,6 @@ class AuditorEngine:
             "superfecta_combination": result.superfecta_combination,
             "top1_place_payout": top1_place,
             "top2_place_payout": top2_place,
-            "match_confidence": confidence,
         }
 
     @staticmethod
@@ -777,16 +781,24 @@ class AuditorEngine:
     def _compute_verdict(
         sel: Optional[ResultRunner],
         result: ResultRace,
+        tip: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Verdict, float]:
         if sel is None:
             return Verdict.VOID, 0.0
+
+        # Phase 3: Selection return estimate fallback (AUD-2)
+        # Use predicted_fav_odds if final odds are missing from result
+        fav_fallback = fortuna.DEFAULT_ODDS_FALLBACK
+        if tip:
+            fav_fallback = tip.get('predicted_fav_odds') or tip.get('predicted_2nd_fav_odds') or fav_fallback
+
         if sel.position_numeric is None:
             # Fallback (Item 4): If position is missing but we have payouts, they placed!
             if (sel.place_payout and sel.place_payout > 0.01) or (sel.win_payout and sel.win_payout > 0.01):
                 if sel.place_payout and sel.place_payout > 0.01:
                     return Verdict.CASHED, sel.place_payout - STANDARD_BET
                 # We know they placed because they won or have a win payout
-                return Verdict.CASHED_ESTIMATED, round((STANDARD_BET * max(1.1, 1.0 + ((sel.final_win_odds or fortuna.DEFAULT_ODDS_FALLBACK) - 1.0) / 5.0)) - STANDARD_BET, 2)
+                return Verdict.CASHED_ESTIMATED, round((STANDARD_BET * max(1.1, 1.0 + ((sel.final_win_odds or fav_fallback) - 1.0) / 5.0)) - STANDARD_BET, 2)
 
             # Missing position often means parsing gap, not a loss
             return Verdict.VOID, 0.0
@@ -801,11 +813,11 @@ class AuditorEngine:
             return Verdict.CASHED, sel.place_payout - STANDARD_BET
 
         # Heuristic estimate: ~1/5 of (win odds - 1) for place return
-        odds = sel.final_win_odds if (sel.final_win_odds and sel.final_win_odds > 0) else fortuna.DEFAULT_ODDS_FALLBACK
-        odds = max(1.1, odds)
+        odds = sel.final_win_odds if (sel.final_win_odds and sel.final_win_odds > 0) else fav_fallback
+        odds = max(1.1, float(odds))
         if not (sel.final_win_odds and sel.final_win_odds > 0):
             structlog.get_logger("AuditorEngine").debug(
-                "odds_defaulted", runner=sel.name, fallback=fortuna.DEFAULT_ODDS_FALLBACK
+                "odds_defaulted", runner=sel.name, fallback=fav_fallback
             )
         estimated_place_return = STANDARD_BET * max(1.1, 1.0 + (odds - 1.0) / 5.0)
         return Verdict.CASHED_ESTIMATED, round(estimated_place_return - STANDARD_BET, 2)
@@ -1067,7 +1079,9 @@ class PageFetchingResultsAdapter(
             return False
 
         compact_formats = (
-            dt.strftime(DATE_FORMAT),       # 20260209
+            dt.strftime(DATE_FORMAT),       # 260209
+            dt.strftime("%Y-%m-%d"),     # 2026-02-09
+            dt.strftime("%Y/%m/%d"),     # 2026/02/09
             dt.strftime("%m%d%y"),       # 020926
             dt.strftime("%d%m%Y"),       # 09022026
             dt.strftime("%d-%m-%Y"),     # 09-02-2026
@@ -1234,7 +1248,8 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=False,
-            timeout=45
+            timeout=45,
+            impersonate="chrome133"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -1424,7 +1439,8 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            timeout=45
+            timeout=45,
+            impersonate="chrome133"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -3959,8 +3975,9 @@ def _append_recent_performance(
         if p1 or p2:
             detail_parts.append(f"P: {p1 or 0:.2f}/{p2 or 0:.2f}")
 
-        po = tip.get("predicted_2nd_fav_odds")
-        ao = tip.get("actual_2nd_fav_odds")
+        # Phase 3: Display Favourite odds (prefer new predicted_fav_odds column)
+        po = tip.get("predicted_fav_odds") or tip.get("predicted_2nd_fav_odds")
+        ao = tip.get("actual_fav_odds") or tip.get("actual_2nd_fav_odds")
         if po is not None or ao is not None:
             po_s = f"{po:.1f}" if po is not None else "?"
             ao_s = f"{ao:.1f}" if ao is not None else "?"
@@ -4118,7 +4135,8 @@ async def _harvest_results(
     ) -> Tuple[str, List[ResultRace]]:
         async with sem:
             try:
-                races = await adapter.get_races(date_str)
+                # PIPE-4 Fix: Add per-adapter timeout to prevent runaway audits
+                races = await asyncio.wait_for(adapter.get_races(date_str), timeout=180.0)
                 _analytics_logger.debug(
                     "Fetched results",
                     adapter=adapter.source_name,
