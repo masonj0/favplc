@@ -167,17 +167,21 @@ def _parse_dt(s: Any) -> Optional[datetime]:
     """Phase D3: Robust datetime parsing for both STORAGE_FORMAT and ISO strings."""
     if not s: return None
     s = str(s)
-    # 1. Try STORAGE_FORMAT (YYMMDDTHH:MM:SS) - usually Eastern
+    # 1. Try STORAGE_FORMAT (YYMMDDTHH:MM:SS) - DEFINITELY Eastern
     try:
         return datetime.strptime(s, "%y%m%dT%H:%M:%S").replace(tzinfo=EASTERN)
     except (ValueError, TypeError):
         pass
     # 2. Try ISO (YYYY-MM-DD...)
     try:
-        dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
-        if dt.tzinfo is None:
+        # If it has a Z or + timezone, it is UTC/Aware and we convert to Eastern
+        # If it has NO timezone, we assume it's Eastern (fix for Bug 3)
+        if 'Z' in s or '+' in s:
+            dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
+            return dt.astimezone(EASTERN)
+        else:
+            dt = datetime.fromisoformat(s)
             return dt.replace(tzinfo=EASTERN)
-        return dt.astimezone(EASTERN)
     except (ValueError, TypeError):
         pass
     return None

@@ -6693,27 +6693,31 @@ class FortunaDB:
     async def get_scored_race_ids(self, daypart_tag: str) -> Set[str]:
         def _get():
             conn = self._get_conn()
-            # daypart_tag format: 'Q3_260225'
-            # Extract date portion for report_date range filtering
-            parts = daypart_tag.split('_')
-            if len(parts) != 2:
-                return set()
-            daypart_enum, date_str = parts[0], parts[1]
-            # Quarter boundaries
-            try:
-                q_num = int(daypart_enum[1])  # Q3 -> 3
-            except (ValueError, IndexError):
-                return set()
-            start_hour = (q_num - 1) * 6
-            end_hour = q_num * 6
-            # Build STORAGE_FORMAT range bounds
-            q_start = f'{date_str}T{start_hour:02d}:00:00'
-            q_end = f'{date_str}T{end_hour:02d}:00:00'
+            # Primary: Check explicit daypart column
             cursor = conn.execute(
-                'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
-                (q_start, q_end)
+                'SELECT race_id FROM tips WHERE daypart = ?',
+                (daypart_tag,)
             )
-            return {row['race_id'] for row in cursor.fetchall()}
+            results = {row['race_id'] for row in cursor.fetchall()}
+
+            # Fallback: Check report_date range for legacy records (migration period)
+            if not results:
+                parts = daypart_tag.split('_')
+                if len(parts) == 2:
+                    daypart_enum, date_str = parts[0], parts[1]
+                    try:
+                        q_num = int(daypart_enum[1])
+                        start_hour = (q_num - 1) * 6
+                        q_start = f'{date_str}T{start_hour:02d}:00:00'
+                        q_end = f'{date_str}T{q_num * 6:02d}:00:00'
+                        cursor = conn.execute(
+                            'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
+                            (q_start, q_end)
+                        )
+                        results.update({row['race_id'] for row in cursor.fetchall()})
+                    except (ValueError, IndexError):
+                        pass
+            return results
         return await self._run_in_executor(_get)
 
     async def migrate_utc_to_eastern(self) -> None:
@@ -6889,12 +6893,14 @@ class FortunaDB:
                 else:
                     normalized_st = to_storage_format(now) if raw_st is None else str(raw_st)
 
-                # ── BUG-4c: Add daypart column ──────────────────────────
-                try:
-                    st_dt = datetime.strptime(normalized_st, STORAGE_FORMAT).replace(tzinfo=EASTERN)
-                    daypart_val = resolve_daypart_from_dt(st_dt).value
-                except Exception:
-                    daypart_val = None
+                # ── BUG-1 Fix: Use passed daypart tag if available
+                daypart_val = tip.get("daypart")
+                if not daypart_val:
+                    try:
+                        st_dt = datetime.strptime(normalized_st, STORAGE_FORMAT).replace(tzinfo=EASTERN)
+                        daypart_val = resolve_daypart_from_dt(st_dt).value
+                    except Exception:
+                        daypart_val = None
 
                 report_date = tip.get("report_date") or to_storage_format(now)
                 # Prepare elements for INSERT or UPDATE (27 elements)
@@ -7186,15 +7192,21 @@ class FortunaDB:
 
 class HotTipsTracker:
     """Logs reported opportunities to a SQLite database."""
-    def __init__(self, db_path: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
-        self.db = FortunaDB(db_path) if db_path else FortunaDB()
+    def __init__(self, db: Optional[Union[str, FortunaDB]] = None, config: Optional[Dict[str, Any]] = None):
+        if db and hasattr(db, '_get_conn'): # Duck typing for FortunaDB (handles mixed import versions)
+            self.db = db
+        elif isinstance(db, str):
+            self.db = FortunaDB(db)
+        else:
+            self.db = db if db else FortunaDB()
         self.config = config or {}
         self.logger = structlog.get_logger(self.__class__.__name__)
 
-    async def log_tips(self, races: List[Race]):
+    async def log_tips(self, races: List[Race], daypart_tag: Optional[str] = None):
         if not races:
             return
 
+        # Ensure daypart_tag is passed if available
         await self.db.initialize()
         now = datetime.now(EASTERN)
         report_date = to_storage_format(now)
@@ -7277,7 +7289,8 @@ class HotTipsTracker:
                 "is_best_bet": r.metadata.get('is_best_bet', False),
                 "is_superfecta_key":     r.metadata.get('is_superfecta_key', False),
                 "superfecta_key_number": r.metadata.get('superfecta_key_number'),
-                "superfecta_key_name":   r.metadata.get('superfecta_key_name')
+                "superfecta_key_name":   r.metadata.get('superfecta_key_name'),
+                "daypart":               daypart_tag
             }
             new_tips.append(tip_data)
 
@@ -8679,7 +8692,7 @@ async def run_score_now(
     # 11. Persist
     if qualified:
         tracker = HotTipsTracker(db, config)
-        await tracker.log_tips(qualified)
+        await tracker.log_tips(qualified, daypart_tag=daypart_tag)
         logger.info("Persisted qualified tips", count=len(qualified))
 
     # 12. Log scoring run
@@ -8741,7 +8754,11 @@ async def run_discovery(
     logger.info("Legacy analysis complete", total=len(races), qualified=len(qualified))
 
     tracker = HotTipsTracker(db, config or {})
-    await tracker.log_tips(qualified)
+    # Calculate daypart_tag for legacy discovery
+    dt = now or now_eastern()
+    daypart = resolve_daypart_from_dt(dt)
+    daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
+    await tracker.log_tips(qualified, daypart_tag=daypart_tag)
 
     # 4. Post-run reporting (legacy fallback)
     try:
