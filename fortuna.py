@@ -1804,6 +1804,7 @@ class BaseAdapterV3(ABC):
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+        raise_for_status = kwargs.pop("raise_for_status", True)
 
         # Apply host-based rate limiting to prevent 429s (Fix 13)
         from urllib.parse import urlparse
@@ -1831,7 +1832,7 @@ class BaseAdapterV3(ABC):
                 self.logger.debug("Response received", method=method, url=full_url, status=self.last_response_status)
 
                 # GPT5 Fix: Raise for status if not 200
-                if self.last_response_status != 200:
+                if raise_for_status and self.last_response_status != 200:
                     self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=self.last_response_status)
                     if hasattr(resp, "raise_for_status"):
                         try:
@@ -2128,11 +2129,11 @@ class OfficialCharlesTownAdapter(OfficialTrackAdapter):
 
 class OfficialMountaineerAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Mountaineer"
-    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.mountaineer-casino.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.mountaineer-casino.com/racing/", config=config)
 
 class OfficialTurfParadiseAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TurfParadise"
-    def __init__(self, config=None): super().__init__("Turf Paradise", "https://www.turfparadise.com/", config=config)
+    def __init__(self, config=None): super().__init__("Turf Paradise", "https://www.turfparadise.com/racing/", config=config)
 
 class OfficialEmeraldDownsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_EmeraldDowns"
@@ -7192,13 +7193,13 @@ class FortunaDB:
 
 class HotTipsTracker:
     """Logs reported opportunities to a SQLite database."""
-    def __init__(self, db: Optional[Union[str, FortunaDB]] = None, config: Optional[Dict[str, Any]] = None):
-        if db and hasattr(db, '_get_conn'): # Duck typing for FortunaDB (handles mixed import versions)
-            self.db = db
-        elif isinstance(db, str):
-            self.db = FortunaDB(db)
+    def __init__(self, db_path: Optional[Union[str, FortunaDB]] = None, config: Optional[Dict[str, Any]] = None):
+        if db_path and hasattr(db_path, '_get_conn'): # Duck typing for FortunaDB (handles mixed import versions)
+            self.db = db_path
+        elif isinstance(db_path, str):
+            self.db = FortunaDB(db_path)
         else:
-            self.db = db if db else FortunaDB()
+            self.db = db_path if db_path else FortunaDB()
         self.config = config or {}
         self.logger = structlog.get_logger(self.__class__.__name__)
 
@@ -7952,10 +7953,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         intl_response = None
         for url in intl_urls:
-            resp = await self.make_request("GET", url, headers=self._get_headers())
-            if resp and resp.status == 200:
-                intl_response = resp
-                break
+            try:
+                resp = await self.make_request("GET", url, headers=self._get_headers(), raise_for_status=False)
+                if resp and get_resp_status(resp) == 200:
+                    intl_response = resp
+                    break
+            except Exception:
+                continue
 
         race_card_urls = []
         try:
