@@ -1147,10 +1147,15 @@ class FetchStrategy(FortunaBaseModel):
     wait_until: Optional[str] = None
     network_idle: bool = False
     wait_for_selector: Optional[str] = None
+    impersonate: Optional[str] = None
 
 
 class SmartFetcher:
-    BOT_DETECTION_KEYWORDS: ClassVar[List[str]] = ["datadome", "perimeterx", "access denied", "captcha", "cloudflare", "please verify"]
+    BOT_DETECTION_KEYWORDS: ClassVar[List[str]] = [
+        "datadome", "perimeterx", "access denied", "captcha", "cloudflare",
+        "please verify", "client challenge", "javascript is disabled",
+        "just a moment", "enable cookies", "sucuri", "unsupported browser"
+    ]
     def __init__(self, strategy: Optional[FetchStrategy] = None):
         self.strategy = strategy or FetchStrategy()
         self.logger = structlog.get_logger(self.__class__.__name__)
@@ -1217,6 +1222,15 @@ class SmartFetcher:
         for engine in engines:
             try:
                 response = await self._fetch_with_engine(engine, url, method=method, **kwargs)
+
+                # Check for bot detection in response body (GPT5 Fix)
+                if response and hasattr(response, "text") and response.text:
+                    body_lower = response.text.lower()
+                    for kw in self.BOT_DETECTION_KEYWORDS:
+                        if kw in body_lower:
+                            self.logger.warning("bot_challenge_detected", engine=engine.value, keyword=kw, url=url)
+                            raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
+
                 async with self._health_lock:
                     self._engine_health[engine] = min(1.0, self._engine_health[engine] + 0.1)
                 self.last_engine = engine.value
@@ -1790,6 +1804,7 @@ class BaseAdapterV3(ABC):
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+        raise_for_status = kwargs.pop("raise_for_status", True)
 
         # Apply host-based rate limiting to prevent 429s (Fix 13)
         from urllib.parse import urlparse
@@ -1817,7 +1832,7 @@ class BaseAdapterV3(ABC):
                 self.logger.debug("Response received", method=method, url=full_url, status=self.last_response_status)
 
                 # GPT5 Fix: Raise for status if not 200
-                if self.last_response_status != 200:
+                if raise_for_status and self.last_response_status != 200:
                     self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=self.last_response_status)
                     if hasattr(resp, "raise_for_status"):
                         try:
@@ -2014,10 +2029,9 @@ class OfficialTrackAdapter(BaseAdapterV3):
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Use HTTPX with JS disabled to maximize performance (JB/Council Strategy)
-        # fallback to CURL_CFFI for better compatibility
+        # SmartFetcher handles fallback to other engines automatically
         return FetchStrategy(
             primary_engine=BrowserEngine.HTTPX,
-            engines=[BrowserEngine.HTTPX, BrowserEngine.CURL_CFFI],
             timeout=10
         )
 
@@ -2063,7 +2077,7 @@ class OfficialTampaBayAdapter(OfficialTrackAdapter):
 
 class OfficialOaklawnAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_OaklawnPark"
-    def __init__(self, config=None): super().__init__("Oaklawn Park", "https://www.oaklawn.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Oaklawn Park", "https://www.oaklawn.com/racing/", config=config)
 
 class OfficialSantaAnitaAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_SantaAnita"
@@ -2075,11 +2089,11 @@ class OfficialMonmouthAdapter(OfficialTrackAdapter):
 
 class OfficialWoodbineAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Woodbine"
-    def __init__(self, config=None): super().__init__("Woodbine", "https://woodbine.com/racing/entries-results/", config=config)
+    def __init__(self, config=None): super().__init__("Woodbine", "https://woodbine.com/horse-racing/", config=config)
 
 class OfficialMeadowlandsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TheMeadowlands"
-    def __init__(self, config=None): super().__init__("The Meadowlands", "https://playmeadowlands.com/racing/racing-info/", config=config)
+    def __init__(self, config=None): super().__init__("The Meadowlands", "https://playmeadowlands.com/", config=config)
 
 class OfficialYonkersAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_YonkersRaceway"
@@ -2091,15 +2105,15 @@ class OfficialJRAAdapter(OfficialTrackAdapter):
 
 class OfficialLaurelParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_LaurelPark"
-    def __init__(self, config=None): super().__init__("Laurel Park", "https://www.laurelpark.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Laurel Park", "https://www.laurelpark.com/", config=config)
 
 class OfficialPimlicoAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Pimlico"
-    def __init__(self, config=None): super().__init__("Pimlico", "https://www.pimlico.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Pimlico", "https://www.pimlico.com/", config=config)
 
 class OfficialFairGroundsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_FairGrounds"
-    def __init__(self, config=None): super().__init__("Fair Grounds", "https://www.fairgroundsracecourse.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Fair Grounds", "https://www.fairgroundsracecourse.com/", config=config)
 
 class OfficialParxRacingAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_ParxRacing"
@@ -2115,15 +2129,15 @@ class OfficialCharlesTownAdapter(OfficialTrackAdapter):
 
 class OfficialMountaineerAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Mountaineer"
-    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.mountaineer-casino.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.mountaineer-casino.com/racing/", config=config)
 
 class OfficialTurfParadiseAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TurfParadise"
-    def __init__(self, config=None): super().__init__("Turf Paradise", "https://www.turfparadise.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Turf Paradise", "https://www.turfparadise.com/racing/", config=config)
 
 class OfficialEmeraldDownsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_EmeraldDowns"
-    def __init__(self, config=None): super().__init__("Emerald Downs", "https://emeralddowns.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Emerald Downs", "https://emeralddowns.com/", config=config)
 
 class OfficialLoneStarParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_LoneStarPark"
@@ -2131,15 +2145,15 @@ class OfficialLoneStarParkAdapter(OfficialTrackAdapter):
 
 class OfficialSamHoustonAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_SamHouston"
-    def __init__(self, config=None): super().__init__("Sam Houston", "https://www.shrp.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Sam Houston", "https://www.shrp.com/", config=config)
 
 class OfficialRemingtonParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_RemingtonPark"
-    def __init__(self, config=None): super().__init__("Remington Park", "https://www.remingtonpark.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Remington Park", "https://www.remingtonpark.com/", config=config)
 
 class OfficialSunlandParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_SunlandPark"
-    def __init__(self, config=None): super().__init__("Sunland Park", "https://www.sunlandpark.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Sunland Park", "https://www.sunlandpark.com/", config=config)
 
 class OfficialZiaParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_ZiaPark"
@@ -2179,7 +2193,7 @@ class OfficialSciotoDownsAdapter(OfficialTrackAdapter):
 
 class OfficialFortErieAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_FortErie"
-    def __init__(self, config=None): super().__init__("Fort Erie", "https://www.forterieracing.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Fort Erie", "https://www.forterieracing.com/", config=config)
 
 class OfficialHastingsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Hastings"
@@ -2207,7 +2221,7 @@ class OfficialCorkAdapter(OfficialTrackAdapter):
 
 class OfficialDubaiAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Dubai"
-    def __init__(self, config=None): super().__init__("Dubai", "https://www.dubairacingclub.com", config=config)
+    def __init__(self, config=None): super().__init__("Dubai", "https://dubairacingclub.com/", config=config)
 
 class OfficialTheValleyAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TheValley"
@@ -3194,7 +3208,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, stealth_mode="camouflage", timeout=30)
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="camouflage", timeout=30, impersonate="chrome133")
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.sportinglife.com", referer="https://www.sportinglife.com/racing/racecards")
@@ -3415,7 +3429,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, stealth_mode="fast", timeout=30)
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=30, impersonate="chrome133")
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.skysports.com", referer="https://www.skysports.com/racing")
@@ -3941,7 +3955,7 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
         self.model_name = model_name
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX)
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, impersonate="chrome133")
 
     async def _fetch_data(self, date: str) -> Optional[StringIO]:
         dt = parse_date_string(date)
@@ -4005,7 +4019,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     def _configure_fetch_strategy(self) -> FetchStrategy:
         return FetchStrategy(
             primary_engine=BrowserEngine.CURL_CFFI,
-            timeout=45
+            timeout=45,
+            impersonate="chrome133"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -5082,7 +5097,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 composite -= 20
                 is_goldmine = False
 
-            race.metadata['composite_score'] = round(composite, 2)
             if composite >= 60:
                 race.metadata['qualification_grade'] = 'A+'
                 is_best_bet = True
@@ -5093,14 +5107,29 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['qualification_grade'] = 'B+'
             else:
                 race.metadata['qualification_grade'] = 'D'
-                race.metadata['composite_score'] = 0.0
+                composite = 0.0
                 is_goldmine = False
                 is_best_bet = False
+
+            race.metadata['composite_score'] = round(composite, 2)
 
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['1Gap2'] = round(gap12, 4)
             race.metadata['is_superfecta_key'] = is_superfecta_key
+            race.metadata['predicted_2nd_fav_odds'] = sec_fav_odds
+
+            # S5 — populate extra scoring signals (BUG-10)
+            race.metadata['market_depth'] = float(len(valid_r_with_odds))
+            race.metadata['condition_modifier'] = 1.0  # Default neutral
+            # Heuristic place probability: approx 1.1 / win_odds for non-fav
+            p_place = round(1.1 / max(1.1, sec_fav_odds), 4)
+            race.metadata['place_prob'] = p_place
+            # Basic EV: prob * return - 1
+            # Assuming place payout is approx win_odds/4 + 1
+            est_payout = (sec_fav_odds / 4.0) + 1.0
+            race.metadata['predicted_ev'] = round((p_place * est_payout) - 1.0, 4)
+
             race.qualification_score = 100.0
             qualified.append(race)
 
@@ -6665,27 +6694,31 @@ class FortunaDB:
     async def get_scored_race_ids(self, daypart_tag: str) -> Set[str]:
         def _get():
             conn = self._get_conn()
-            # daypart_tag format: 'Q3_260225'
-            # Extract date portion for report_date range filtering
-            parts = daypart_tag.split('_')
-            if len(parts) != 2:
-                return set()
-            daypart_enum, date_str = parts[0], parts[1]
-            # Quarter boundaries
-            try:
-                q_num = int(daypart_enum[1])  # Q3 -> 3
-            except (ValueError, IndexError):
-                return set()
-            start_hour = (q_num - 1) * 6
-            end_hour = q_num * 6
-            # Build STORAGE_FORMAT range bounds
-            q_start = f'{date_str}T{start_hour:02d}:00:00'
-            q_end = f'{date_str}T{end_hour:02d}:00:00'
+            # Primary: Check explicit daypart column
             cursor = conn.execute(
-                'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
-                (q_start, q_end)
+                'SELECT race_id FROM tips WHERE daypart = ?',
+                (daypart_tag,)
             )
-            return {row['race_id'] for row in cursor.fetchall()}
+            results = {row['race_id'] for row in cursor.fetchall()}
+
+            # Fallback: Check report_date range for legacy records (migration period)
+            if not results:
+                parts = daypart_tag.split('_')
+                if len(parts) == 2:
+                    daypart_enum, date_str = parts[0], parts[1]
+                    try:
+                        q_num = int(daypart_enum[1])
+                        start_hour = (q_num - 1) * 6
+                        q_start = f'{date_str}T{start_hour:02d}:00:00'
+                        q_end = f'{date_str}T{q_num * 6:02d}:00:00'
+                        cursor = conn.execute(
+                            'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
+                            (q_start, q_end)
+                        )
+                        results.update({row['race_id'] for row in cursor.fetchall()})
+                    except (ValueError, IndexError):
+                        pass
+            return results
         return await self._run_in_executor(_get)
 
     async def migrate_utc_to_eastern(self) -> None:
@@ -6861,12 +6894,14 @@ class FortunaDB:
                 else:
                     normalized_st = to_storage_format(now) if raw_st is None else str(raw_st)
 
-                # ── BUG-4c: Add daypart column ──────────────────────────
-                try:
-                    st_dt = datetime.strptime(normalized_st, STORAGE_FORMAT).replace(tzinfo=EASTERN)
-                    daypart_val = resolve_daypart_from_dt(st_dt).value
-                except Exception:
-                    daypart_val = None
+                # ── BUG-1 Fix: Use passed daypart tag if available
+                daypart_val = tip.get("daypart")
+                if not daypart_val:
+                    try:
+                        st_dt = datetime.strptime(normalized_st, STORAGE_FORMAT).replace(tzinfo=EASTERN)
+                        daypart_val = resolve_daypart_from_dt(st_dt).value
+                    except Exception:
+                        daypart_val = None
 
                 report_date = tip.get("report_date") or to_storage_format(now)
                 # Prepare elements for INSERT or UPDATE (27 elements)
@@ -7158,15 +7193,21 @@ class FortunaDB:
 
 class HotTipsTracker:
     """Logs reported opportunities to a SQLite database."""
-    def __init__(self, db_path: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
-        self.db = FortunaDB(db_path) if db_path else FortunaDB()
+    def __init__(self, db_path: Optional[Union[str, FortunaDB]] = None, config: Optional[Dict[str, Any]] = None):
+        if db_path and hasattr(db_path, '_get_conn'): # Duck typing for FortunaDB (handles mixed import versions)
+            self.db = db_path
+        elif isinstance(db_path, str):
+            self.db = FortunaDB(db_path)
+        else:
+            self.db = db_path if db_path else FortunaDB()
         self.config = config or {}
         self.logger = structlog.get_logger(self.__class__.__name__)
 
-    async def log_tips(self, races: List[Race]):
+    async def log_tips(self, races: List[Race], daypart_tag: Optional[str] = None):
         if not races:
             return
 
+        # Ensure daypart_tag is passed if available
         await self.db.initialize()
         now = datetime.now(EASTERN)
         report_date = to_storage_format(now)
@@ -7249,7 +7290,8 @@ class HotTipsTracker:
                 "is_best_bet": r.metadata.get('is_best_bet', False),
                 "is_superfecta_key":     r.metadata.get('is_superfecta_key', False),
                 "superfecta_key_number": r.metadata.get('superfecta_key_number'),
-                "superfecta_key_name":   r.metadata.get('superfecta_key_name')
+                "superfecta_key_name":   r.metadata.get('superfecta_key_name'),
+                "daypart":               daypart_tag
             }
             new_tips.append(tip_data)
 
@@ -7911,10 +7953,13 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
 
         intl_response = None
         for url in intl_urls:
-            resp = await self.make_request("GET", url, headers=self._get_headers())
-            if resp and resp.status == 200:
-                intl_response = resp
-                break
+            try:
+                resp = await self.make_request("GET", url, headers=self._get_headers(), raise_for_status=False)
+                if resp and get_resp_status(resp) == 200:
+                    intl_response = resp
+                    break
+            except Exception:
+                continue
 
         race_card_urls = []
         try:
@@ -8651,7 +8696,7 @@ async def run_score_now(
     # 11. Persist
     if qualified:
         tracker = HotTipsTracker(db, config)
-        await tracker.log_tips(qualified)
+        await tracker.log_tips(qualified, daypart_tag=daypart_tag)
         logger.info("Persisted qualified tips", count=len(qualified))
 
     # 12. Log scoring run
@@ -8713,7 +8758,11 @@ async def run_discovery(
     logger.info("Legacy analysis complete", total=len(races), qualified=len(qualified))
 
     tracker = HotTipsTracker(db, config or {})
-    await tracker.log_tips(qualified)
+    # Calculate daypart_tag for legacy discovery
+    dt = now or now_eastern()
+    daypart = resolve_daypart_from_dt(dt)
+    daypart_tag = f"{daypart}_{dt.strftime(DATE_FORMAT)}"
+    await tracker.log_tips(qualified, daypart_tag=daypart_tag)
 
     # 4. Post-run reporting (legacy fallback)
     try:
