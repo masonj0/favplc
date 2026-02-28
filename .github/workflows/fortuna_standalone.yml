@@ -168,7 +168,7 @@ jobs:
           cp fortuna.db "fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db"
           mv discovery_harvest.json "discovery_harvest_${{ needs.resolve-mode.outputs.daypart_tag }}.json" 2>/dev/null || echo '{}' > "discovery_harvest_${{ needs.resolve-mode.outputs.daypart_tag }}.json"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: discovery-${{ needs.resolve-mode.outputs.daypart_tag }}
@@ -230,7 +230,7 @@ jobs:
         if: always()
         run: cp fortuna.db "fortuna_scoring_${{ github.run_number }}.db"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}
@@ -282,7 +282,7 @@ jobs:
           PYTHONPATH: .
         run: python3 fortuna_analytics.py --days "${{ inputs.days || '4' }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: audit-results
@@ -371,7 +371,7 @@ jobs:
 
       - name: Upload Final Reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: best-bet-reports-${{ github.run_number }}
           path: |
