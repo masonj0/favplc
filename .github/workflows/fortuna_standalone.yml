@@ -272,7 +272,7 @@ jobs:
           playwright install --with-deps chromium
 
       - name: Download Discovery Artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: discovery-${{ needs.resolve-mode.outputs.daypart_tag }}
 
@@ -307,7 +307,7 @@ jobs:
           key: deps-conclude-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
       - name: Install dependencies
         run: |
