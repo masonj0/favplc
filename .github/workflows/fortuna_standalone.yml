@@ -6,7 +6,7 @@ on:
     paths-ignore: ["**.md", ".github/workflows/build_monolith.yml", "docs/**"]
   schedule:
     - cron: "5 5,11,17,23 * * *"   # Quarter fetch - 5 min after UTC quarter boundaries
-    - cron: "*/15 0-5,10-23 * * *" # Scoring loop - every 15 min during racing hours
+    - cron: "*/15 * * * *"          # Scoring loop - every 15 min, ALL hours
   workflow_dispatch:
     inputs:
       daypart:
@@ -343,6 +343,7 @@ jobs:
           EOF
 
       - name: Score Approaching Races
+        if: needs.resolve-mode.outputs.mode != 'quarter_fetch'
         run: |
           # If we have raw races (from discovery or audit artifact), we can score now
           RAW_RACES=""
