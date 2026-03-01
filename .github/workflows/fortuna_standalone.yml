@@ -6,7 +6,7 @@ on:
     paths-ignore: ["**.md", ".github/workflows/build_monolith.yml", "docs/**"]
   schedule:
     - cron: "5 5,11,17,23 * * *"   # Quarter fetch - 5 min after UTC quarter boundaries
-    - cron: "*/15 0-5,10-23 * * *" # Scoring loop - every 15 min during racing hours
+    - cron: "*/15 * * * *"          # Scoring loop - every 15 min, ALL hours
   workflow_dispatch:
     inputs:
       daypart:
@@ -37,10 +37,6 @@ on:
         default: ''
         type: choice
         options: ['', solid, lousy]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   resolve-mode:
@@ -90,20 +86,31 @@ jobs:
           elif [ "$FORCE" = "true" ]; then
             echo "mode=quarter_fetch" >> "$GITHUB_OUTPUT"
           else
-            MINUTE=$(TZ=America/New_York date +%-M)
-            HOUR=$(TZ=America/New_York date +%-H)
-            # Quarter boundary = first 20 minutes of hours 0, 6, 12, 18 (Eastern Standard)
-            # or 1, 7, 13, 19 (Eastern Daylight).
-            if (( (HOUR % 6 == 0) || (HOUR % 6 == 1) )) && (( MINUTE < 20 )); then
+            # FIX-04: Determine mode from the cron schedule that triggered us, not clock math
+            CRON_TRIGGER="${{ github.event.schedule || '' }}"
+            if [ "$CRON_TRIGGER" = "5 5,11,17,23 * * *" ]; then
               echo "mode=quarter_fetch" >> "$GITHUB_OUTPUT"
-            else
+            elif [ -n "$CRON_TRIGGER" ]; then
               echo "mode=scoring_loop" >> "$GITHUB_OUTPUT"
+            else
+              # Manual dispatch or push event — use clock as fallback
+              HOUR=$(TZ=America/New_York date +%-H)
+              MINUTE=$(TZ=America/New_York date +%-M)
+              QUARTER_HOUR=$((HOUR % 6))
+              if (( QUARTER_HOUR <= 1 )) && (( MINUTE < 25 )); then
+                echo "mode=quarter_fetch" >> "$GITHUB_OUTPUT"
+              else
+                echo "mode=scoring_loop" >> "$GITHUB_OUTPUT"
+              fi
             fi
           fi
 
   quarter-fetch:
     needs: resolve-mode
     if: needs.resolve-mode.outputs.mode == 'quarter_fetch'
+    concurrency:
+      group: fortuna-fetch-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -181,6 +188,9 @@ jobs:
   scoring-loop:
     needs: resolve-mode
     if: needs.resolve-mode.outputs.mode == 'scoring_loop'
+    concurrency:
+      group: fortuna-scoring-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-22.04
     timeout-minutes: 8
     steps:
@@ -243,6 +253,9 @@ jobs:
   audit:
     needs: [resolve-mode, quarter-fetch]
     if: always() && needs.resolve-mode.outputs.mode == 'quarter_fetch'
+    concurrency:
+      group: fortuna-audit-${{ github.ref }}
+      cancel-in-progress: true
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
@@ -294,6 +307,9 @@ jobs:
   conclude:
     needs: [resolve-mode, quarter-fetch, scoring-loop, audit]
     if: always()
+    concurrency:
+      group: fortuna-conclude-${{ github.ref }}
+      cancel-in-progress: false
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
@@ -316,13 +332,54 @@ jobs:
 
       - name: Consolidate Database
         run: |
-          # Use the most recent/relevant DB
+          set -e
+          # Priority: audit > scoring > discovery
+          PRIMARY_DB=""
+          SECONDARY_DB=""
+          SCORING_DB="scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}/fortuna_scoring_${{ github.run_number }}.db"
+          DISCOVERY_DB="discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db"
+
           if [ -f audit-results/fortuna.db ]; then
-            cp audit-results/fortuna.db fortuna.db
-          elif [ -f scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}/fortuna_scoring_${{ github.run_number }}.db ]; then
-            cp scoring-${{ needs.resolve-mode.outputs.daypart_tag }}-${{ github.run_number }}/fortuna_scoring_${{ github.run_number }}.db fortuna.db
-          elif [ -f discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db ]; then
-            cp discovery-${{ needs.resolve-mode.outputs.daypart_tag }}/fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db fortuna.db
+            PRIMARY_DB="audit-results/fortuna.db"
+            [ -f "$SCORING_DB" ] && SECONDARY_DB="$SCORING_DB"
+          elif [ -f "$SCORING_DB" ]; then
+            PRIMARY_DB="$SCORING_DB"
+            [ -f "$DISCOVERY_DB" ] && SECONDARY_DB="$DISCOVERY_DB"
+          elif [ -f "$DISCOVERY_DB" ]; then
+            PRIMARY_DB="$DISCOVERY_DB"
+          fi
+
+          if [ -n "$PRIMARY_DB" ]; then
+            cp "$PRIMARY_DB" fortuna.db
+          fi
+
+          # Merge secondary DB tips that primary may not have
+          if [ -n "$SECONDARY_DB" ] && [ -f "$SECONDARY_DB" ]; then
+            python3 -c "
+          import sqlite3, sys
+          try:
+              src = sqlite3.connect('$SECONDARY_DB')
+              dst = sqlite3.connect('fortuna.db')
+              src.row_factory = sqlite3.Row
+              rows = src.execute('SELECT * FROM tips').fetchall()
+              if not rows: sys.exit(0)
+              cols = [d[0] for d in src.execute('SELECT * FROM tips LIMIT 1').description]
+              placeholders = ','.join(['?'] * len(cols))
+              col_names = ','.join(cols)
+              merged = 0
+              for row in rows:
+                  try:
+                      dst.execute(f'INSERT OR IGNORE INTO tips ({col_names}) VALUES ({placeholders})', tuple(row))
+                      merged += 1
+                  except Exception:
+                      pass
+              dst.commit()
+              print(f'Merged {merged} rows from secondary DB')
+              src.close()
+              dst.close()
+          except Exception as e:
+              print(f'DB merge warning: {e}', file=sys.stderr)
+          " || echo '::warning::Secondary DB merge failed, continuing with primary only'
           fi
 
       - name: Generate Workflow Metadata
@@ -342,7 +399,14 @@ jobs:
           }
           EOF
 
+      - name: Restore Latest Snapshot for Scoring
+        uses: actions/cache/restore@v4
+        with:
+          path: snapshots/
+          key: fortuna-snapshot-${{ needs.resolve-mode.outputs.daypart_tag }}
+
       - name: Score Approaching Races
+        if: always()
         run: |
           # If we have raw races (from discovery or audit artifact), we can score now
           RAW_RACES=""

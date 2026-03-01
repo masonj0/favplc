@@ -2,7 +2,7 @@
 import json
 import logging
 import os
-import sqlite3
+import asyncio
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -10,20 +10,65 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass, field
 
+# Import Fortuna infrastructure
+# Ensure PYTHONPATH=. is set when running this script
+try:
+    from fortuna import FortunaDB
+    from fortuna_utils import (
+        EASTERN, STORAGE_FORMAT, DATE_FORMAT,
+        now_eastern, from_storage_format, to_storage_format,
+        normalize_venue_name, get_canonical_venue
+    )
+except ImportError:
+    # Fallback for local development if PYTHONPATH not set
+    import sys
+    sys.path.append(os.getcwd())
+    from fortuna import FortunaDB
+    from fortuna_utils import (
+        EASTERN, STORAGE_FORMAT, DATE_FORMAT,
+        now_eastern, from_storage_format, to_storage_format,
+        normalize_venue_name, get_canonical_venue
+    )
+
 # ═══════════════════════════════════════════════════════════════════
 # CONSTANTS & CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════
-EASTERN = ZoneInfo("America/New_York")
+import glob
+
 STANDARD_BET = 2.00
 HERO_VISIBLE = 5
 MAX_PREDICTIONS = 15
 MAX_RECENT_RESULTS = 15
 RECENT_FORM_COUNT = 10
 NAME_TRUNCATE = 15
-DB_PATH = "fortuna.db"
 
-DISCOVERY_HARVEST_FILES = ["discovery_harvest_entry-solid.json", "discovery_harvest_entry-lousy.json"]
-RESULTS_HARVEST_FILES = ["results_harvest_audit.json"]
+def _discover_harvest_files() -> List[str]:
+    """Find all harvest JSON files from any workflow era.
+    Handles both old naming (entry-solid/entry-lousy) and new daypart naming.
+    """
+    patterns = [
+        "discovery_harvest_*.json",
+        "results_harvest_*.json",
+    ]
+    files = []
+    for pattern in patterns:
+        files.extend(glob.glob(pattern))
+
+    # Also check inside artifact directories (GHA download-artifact creates subdirs)
+    for pattern in patterns:
+        files.extend(glob.glob(f"*/{pattern}"))
+        files.extend(glob.glob(f"**/{pattern}", recursive=True))
+
+    # Deduplicate by resolved path
+    seen = set()
+    unique = []
+    for f in files:
+        resolved = str(Path(f).resolve())
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(f)
+
+    return unique
 
 CASHED_VERDICTS = ["CASHED", "CASHED_ESTIMATED"]
 VERDICT_EMOJI = {
@@ -67,7 +112,7 @@ class TipStats:
     voided: int = 0
     pending: int = 0
     total_profit: float = 0.0
-    recent_tips: list[tuple] = field(default_factory=list)
+    recent_tips: List[Dict[str, Any]] = field(default_factory=list)
 
     # Tiered stats (Phase 3)
     best_bet_count: int = 0
@@ -91,7 +136,6 @@ class TipStats:
 
     @property
     def avg_payout(self) -> float:
-        # Prefer lifetime average for better breakeven calibration (Jules Fix)
         return self.lifetime_avg_payout if self.lifetime_avg_payout > 0 else 0.0
 
     @property
@@ -115,17 +159,17 @@ class TipStats:
 
     @property
     def streak_bar(self) -> str:
-        decided_tips = [r for r in self.recent_tips if r[4] in list(VERDICT_EMOJI.keys())]
-        return "".join(VERDICT_EMOJI.get(r[4], "❓") for r in decided_tips[:RECENT_FORM_COUNT])
+        decided_tips = [r for r in self.recent_tips if r.get('verdict') in VERDICT_EMOJI]
+        return "".join(VERDICT_EMOJI.get(r.get('verdict'), "❓") for r in decided_tips[:RECENT_FORM_COUNT])
 
     @property
     def current_streak(self) -> Tuple[str, int]:
-        decided_tips = [r for r in self.recent_tips if r[4] in list(VERDICT_EMOJI.keys())]
+        decided_tips = [r for r in self.recent_tips if r.get('verdict') in VERDICT_EMOJI]
         if not decided_tips: return ("None", 0)
-        kind = "W" if decided_tips[0][4] in CASHED_VERDICTS else "L"
+        kind = "W" if decided_tips[0].get('verdict') in CASHED_VERDICTS else "L"
         count = 0
         for r in decided_tips:
-            v = "W" if r[4] in CASHED_VERDICTS else "L"
+            v = "W" if r.get('verdict') in CASHED_VERDICTS else "L"
             if v == kind: count += 1
             else: break
         return kind, count
@@ -140,9 +184,6 @@ class TipStats:
 # ═══════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════
-
-def _now_et() -> datetime:
-    return datetime.now(EASTERN)
 
 def _read_json(path: str) -> Any:
     if path in _JSON_CACHE: return _JSON_CACHE[path]
@@ -168,34 +209,17 @@ def _venue_flag(venue: str, discipline: Optional[str] = None) -> str:
         return DISCIPLINE_EMOJI.get(discipline.lower(), "🏇")
     return "🏇"
 
-def _parse_dt(s: Any) -> Optional[datetime]:
-    """Phase D3: Robust datetime parsing for both STORAGE_FORMAT and ISO strings."""
-    if not s: return None
-    s = str(s)
-    # 1. Try STORAGE_FORMAT (YYMMDDTHH:MM:SS) - DEFINITELY Eastern
-    try:
-        return datetime.strptime(s, "%y%m%dT%H:%M:%S").replace(tzinfo=EASTERN)
-    except (ValueError, TypeError):
-        pass
-    # 2. Try ISO (YYYY-MM-DD...)
-    try:
-        # If it has a Z or + timezone, it is UTC/Aware and we convert to Eastern
-        # If it has NO timezone, we assume it's Eastern (fix for Bug 3)
-        if 'Z' in s or '+' in s:
-            dt = datetime.fromisoformat(s.replace('Z', '+00:00'))
-            return dt.astimezone(EASTERN)
-        else:
-            dt = datetime.fromisoformat(s)
-            return dt.replace(tzinfo=EASTERN)
-    except (ValueError, TypeError):
-        pass
-    return None
-
 def _mtp(start_time_str: Any) -> float:
-    if not start_time_str: return 9999.0
-    st = _parse_dt(start_time_str)
-    if not st: return 9999.0
-    now = _now_et()
+    """Minutes to post. Returns 9999.0 for unparseable or missing times (Fix 14)."""
+    if not start_time_str:
+        return 9999.0
+    try:
+        st = from_storage_format(str(start_time_str))
+    except (ValueError, TypeError, AttributeError):
+        return 9999.0
+    if not st:
+        return 9999.0
+    now = now_eastern()
     return (st - now).total_seconds() / 60
 
 def _mtp_str(minutes: float) -> str:
@@ -210,7 +234,7 @@ def _trunc(text: Any, limit: int = 18) -> str:
     return s[:limit-1] + "…" if len(s) > limit else s
 
 def _time_context() -> str:
-    h = _now_et().hour
+    h = now_eastern().hour
     if 0 <= h < 6: return "🌙 Overnight — AUS/NZ/Asian racing active"
     if 6 <= h < 9: return "🌅 Early morning — UK/IRE cards underway"
     if 9 <= h < 12: return "☀️ Morning — Early US cards starting up"
@@ -219,6 +243,10 @@ def _time_context() -> str:
     return "🌙 Night — International overnight racing"
 
 def _merge_harvests(paths: List[str]) -> Dict[str, Dict]:
+    """Merge harvest data from multiple JSON files.
+    Uses MAX for counts (not SUM) to avoid double-counting the same adapter
+    across multiple harvest files from retries or overlapping runs.
+    """
     merged = {}
     for path in paths:
         data = _read_json(path)
@@ -227,64 +255,58 @@ def _merge_harvests(paths: List[str]) -> Dict[str, Dict]:
             if adapter not in merged:
                 merged[adapter] = dict(stats)
             else:
-                merged[adapter]['count'] = merged[adapter].get('count', 0) + stats.get('count', 0)
-                merged[adapter]['max_odds'] = max(merged[adapter].get('max_odds', 0), stats.get('max_odds', 0))
+                # MAX avoids double-counting same races from retried/overlapping runs
+                merged[adapter]['count'] = max(
+                    merged[adapter].get('count', 0),
+                    stats.get('count', 0)
+                )
+                merged[adapter]['max_odds'] = max(
+                    merged[adapter].get('max_odds', 0),
+                    stats.get('max_odds', 0)
+                )
     return merged
 
-def _get_stats() -> TipStats:
+async def _get_stats(db: FortunaDB) -> TipStats:
     stats = TipStats()
-    if not Path(DB_PATH).exists(): return stats
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            # Phase 3: Fetch tip_tier and predicted_fav_odds
-            rows = conn.execute("SELECT verdict, audit_completed, start_time, net_profit, tip_tier FROM tips").fetchall()
+        db_stats = await db.get_stats()
+        stats.total_tips = db_stats.get('total_tips', 0)
+        stats.cashed = db_stats.get('cashed', 0)
+        stats.burned = db_stats.get('burned', 0)
+        stats.voided = db_stats.get('voided', 0)
+        stats.total_profit = db_stats.get('total_profit', 0.0)
+        stats.lifetime_avg_payout = db_stats.get('lifetime_avg_payout', 0.0)
 
-            now = _now_et()
-            for r in rows:
-                stats.total_tips += 1
-                v = r['verdict'] or ""
-                tier = r['tip_tier'] or 'best_bet'
+        # Get recent audited tips for form/scoreboard
+        recent_audited = await db.get_tips(audited=True, limit=30)
+        stats.recent_tips = recent_audited
 
-                is_cashed = v.startswith('CASHED')
-                if is_cashed: stats.cashed += 1
-                elif v == 'BURNED': stats.burned += 1
-                elif v == 'VOID': stats.voided += 1
+        # Tiered stats
+        for r in recent_audited:
+            tier = r.get('tip_tier') or 'best_bet'
+            v = r.get('verdict') or ""
+            if tier == 'best_bet' and v in (CASHED_VERDICTS + ['BURNED']):
+                stats.best_bet_count += 1
+                if v in CASHED_VERDICTS:
+                    stats.best_bet_cashed += 1
+                stats.best_bet_profit += (r.get('net_profit') or 0.0)
 
-                if tier == 'best_bet' and v in (CASHED_VERDICTS + ['BURNED']):
-                    stats.best_bet_count += 1
-                    if is_cashed: stats.best_bet_cashed += 1
-                    stats.best_bet_profit += (r['net_profit'] or 0.0)
+        # Count pending (unaudited but started)
+        now = now_eastern()
+        unaudited = await db.get_tips(audited=False)
+        for r in unaudited:
+            st = from_storage_format(r.get('start_time'))
+            if st and st < now:
+                stats.pending += 1
 
-                if r['audit_completed'] == 0:
-                    st = _parse_dt(r['start_time'])
-                    if st and st < now:
-                        stats.pending += 1
-
-                stats.total_profit += (r['net_profit'] or 0.0)
-
-            # Calculate lifetime average payout for breakeven analysis
-            avg_res = conn.execute("""
-                SELECT AVG(COALESCE(net_profit, 0.0) + ?)
-                FROM tips
-                WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')
-            """, (STANDARD_BET,)).fetchone()
-            if avg_res and avg_res[0]:
-                stats.lifetime_avg_payout = avg_res[0]
-
-            stats.recent_tips = conn.execute("""
-                SELECT venue, race_number, selection_number, predicted_fav_odds, verdict,
-                       net_profit, selection_position, actual_top_5, actual_fav_odds,
-                       superfecta_payout, trifecta_payout, top1_place_payout, discipline,
-                       selection_name, predicted_2nd_fav_odds, gap12, tip_tier
-                FROM tips WHERE audit_completed = 1
-                ORDER BY audit_timestamp DESC LIMIT 30
-            """).fetchall()
     except Exception as e:
         print(f"Stats Error: {e}")
     return stats
 
-class SummaryWriter:
+class GHASummaryWriter:
+    """GHA-specific summary writer. Writes to GITHUB_STEP_SUMMARY or stdout. (Fix 15)
+    See also: fortuna.SummaryWriter for the stream-based variant.
+    """
     def __init__(self):
         self.lines = []
         self.output_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
@@ -300,66 +322,66 @@ class SummaryWriter:
 # SECTION BUILDERS
 # ═══════════════════════════════════════════════════════════════════
 
-def _build_header(out: SummaryWriter, now: datetime):
+def _build_header(out: GHASummaryWriter, now: datetime):
     out.write(f"# 🏇 Favourite to Place — Simply Success Picks")
     out.write(f"### {now.strftime('%y%m%d %A %b %d, %I:%M %p')} ET")
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()
 
-def _build_action_plan(out: SummaryWriter, stats: TipStats):
-    """System status + recommended actions — appears FIRST for JB."""
+async def _build_action_plan(out: GHASummaryWriter, stats: TipStats, db: FortunaDB):
     status = "HEALTHY"
     emoji = "🟢"
     findings = []
     actions = []
 
-    discovery = _merge_harvests(DISCOVERY_HARVEST_FILES)
+    all_harvest_files = _discover_harvest_files()
+    discovery = _merge_harvests(all_harvest_files)
     r_count = sum(d.get('count', 0) for d in discovery.values())
     a_count = len([d for d in discovery.values() if d.get('count', 0) > 0])
 
-    if not Path(DB_PATH).exists():
+    if not Path(db.db_path).exists():
         status, emoji = "CRITICAL", "🔴"
         findings.append("🔴 DB file missing or unreadable.")
         actions.append("Check DB deployment and cache restore.")
     elif a_count == 0:
-        status, emoji = "CRITICAL", "🔴"
-        findings.append("🔴 No discovery data — all adapters failed.")
-        actions.append("Re-deploy discovery adapters. Check adapter logs in Phase 3.")
+        # Check harvest logs in DB as fallback
+        db_harvest = await db.get_harvest_logs(hours=4)
+        if not db_harvest:
+            status, emoji = "CRITICAL", "🔴"
+            findings.append("🔴 No discovery data — all adapters failed.")
+            actions.append("Re-deploy discovery adapters. Check adapter logs in Phase 3.")
+        else:
+            findings.append(f"🟢 {len(db_harvest)} harvest logs found in DB.")
     else:
         findings.append(f"🟢 {r_count} races discovered from {a_count} adapters.")
-        if a_count == 1 and r_count < 20:
-            status, emoji = "WARNING", "🟡"
-            findings.append("🟡 Only 1 adapter returned data — single source risk.")
-            actions.append("Investigate failing adapters in harvest details below.")
 
-    if Path(DB_PATH).exists():
-        try:
-            with sqlite3.connect(DB_PATH) as conn:
-                fresh = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()[0]
-                if fresh:
-                    last_seen = _parse_dt(fresh)
-                    if last_seen and (_now_et() - last_seen > timedelta(hours=24)):
-                        if status != "CRITICAL": status, emoji = "WARNING", "🟡"
-                        findings.append("🟡 No new tips in last 24 hours.")
-                        actions.append("Check discovery pipeline schedule and adapter health.")
+    try:
+        db_meta = await db.get_stats()
+        fresh = db_meta.get('max_report_date')
+        if fresh:
+            last_seen = from_storage_format(fresh)
+            if last_seen and (now_eastern() - last_seen > timedelta(hours=24)):
+                if status != "CRITICAL": status, emoji = "WARNING", "🟡"
+                findings.append("🟡 No new tips in last 24 hours.")
+                actions.append("Check discovery pipeline schedule and adapter health.")
 
-                q_res = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()[0]
-                if q_res == 0:
-                    if status != "CRITICAL": status, emoji = "WARNING", "🟡"
-                    findings.append("🟡 All scoring columns still NULL — check log_tips (BUG-10).")
-                    actions.append("Verify BUG-10 fix deployed: scoring columns must be in INSERT statement in log_tips.")
-                else:
-                    findings.append("🟢 Scoring signals populating.")
+        pop_count = db_meta.get('populated_scoring_count', 0)
+        if pop_count == 0 and stats.total_tips > 0:
+            if status != "CRITICAL": status, emoji = "WARNING", "🟡"
+            findings.append("🟡 All scoring columns still NULL — check log_tips.")
+            actions.append("Verify scoring columns are included in log_tips.")
+        elif pop_count > 0:
+            findings.append("🟢 Scoring signals populating.")
 
-                if stats.margin > 0:
-                    findings.append(f"🟢 Margin: +{stats.margin:.0f}pp above breakeven.")
-                elif stats.decided >= 10 and stats.margin < -5:
-                    if status == "HEALTHY": status, emoji = "WARNING", "🟡"
-                    findings.append(f"🟡 Margin: {stats.margin:.0f}pp below breakeven.")
-                    actions.append("Review qualification thresholds and gap12 minimum.")
-        except Exception:
-            pass
+        if stats.margin > 0:
+            findings.append(f"🟢 Margin: +{stats.margin:.0f}pp above breakeven.")
+        elif stats.decided >= 10 and stats.margin < -5:
+            if status == "HEALTHY": status, emoji = "WARNING", "🟡"
+            findings.append(f"🟡 Margin: {stats.margin:.0f}pp below breakeven.")
+            actions.append("Review qualification thresholds and gap12 minimum.")
+    except Exception:
+        pass
 
     out.write(f"## {emoji} System: **{status}**")
     out.write()
@@ -375,32 +397,36 @@ def _build_action_plan(out: SummaryWriter, stats: TipStats):
     out.write("---")
     out.write()
 
-def _build_plays(out: SummaryWriter):
+async def _build_plays(out: GHASummaryWriter, db: FortunaDB):
+    """Build the upcoming plays section.
+    Fetches future tips directly, avoiding the stuck-tip ordering problem.
+    """
     races = []
-    if Path(DB_PATH).exists():
+    try:
+        # FIX-08: Use public DB method instead of private method access
+        db_races = await db.get_upcoming_tips(past_minutes=10, future_hours=18, limit=50)
+        for r in db_races:
+            r['_mtp_val'] = _mtp(r.get('start_time'))
+            races.append(r)
+    except Exception:
+        # Fallback to general query
         try:
-            with sqlite3.connect(DB_PATH) as conn:
-                conn.row_factory = sqlite3.Row
-                db_races = conn.execute("SELECT * FROM tips WHERE audit_completed=0 ORDER BY start_time ASC").fetchall()
-
-                now = _now_et()
-                for r in db_races:
-                    st = _parse_dt(r['start_time'])
-                    if st and st > now - timedelta(minutes=10):
-                        races.append(dict(r))
-                        if len(races) >= 30: break
-        except Exception: pass
+            db_races = await db.get_tips(audited=False, limit=50)
+            now = now_eastern()
+            for r in db_races:
+                st = from_storage_format(r.get('start_time'))
+                if st and st > now - timedelta(minutes=10):
+                    r['_mtp_val'] = _mtp(r.get('start_time'))
+                    races.append(r)
+        except Exception:
+            pass
 
     if not races:
-        out.write("No plays discovered yet — discovery runs every hour. Check back soon!")
+        out.write("No plays discovered yet.")
         out.write()
         return
 
-    for r in races:
-        r['_mtp_val'] = _mtp(r.get('start_time'))
-
     upcoming = sorted([r for r in races if r['_mtp_val'] > -10], key=lambda x: x['_mtp_val'])
-
     best_bets = [r for r in upcoming if r.get('tip_tier') == 'best_bet' or r.get('is_best_bet')]
     yml_plays = [r for r in upcoming if r.get('tip_tier') == 'you_might_like']
 
@@ -414,22 +440,20 @@ def _build_plays(out: SummaryWriter):
     else: out.write("## ⚡ Coming Up")
     out.write()
 
-    def _render_table(rows_list, is_best_bet=True):
+    def _render_table(rows_list):
         out.write("```text")
-        # Recalibrated header for Favourite-based logic
         out.write(f"  MTP    VENUE                R#   FLD  FAVOURITE              FAV@    GAP   FLAGS")
         out.write(f"  ─────  ───────────────────  ──   ───  ─────────────────────  ──────  ─────  ─────")
         for r in rows_list:
             mtp_s = _mtp_str(r['_mtp_val'])
-            v = r.get('venue') or r.get('track') or "?"
+            v = r.get('venue') or "?"
             flag = _venue_flag(v, r.get('discipline'))
             venue = _trunc(v, 18)
             rn = r.get('race_number', "?")
             fld = r.get('field_size') or "?"
             sn = r.get('selection_number') or "?"
-            sname = _trunc(r.get('selection_name') or r.get('fav_name') or "Unknown", 17)
-            # Use predicted_fav_odds if available
-            odds = float(r.get('predicted_fav_odds') or r.get('fav_odds') or 0)
+            sname = _trunc(r.get('selection_name') or "Unknown", 17)
+            odds = float(r.get('predicted_fav_odds') or 0)
             gap = float(r.get('gap12') or 0)
 
             flags = []
@@ -455,44 +479,23 @@ def _build_plays(out: SummaryWriter):
     if yml_plays:
         out.write("---")
         out.write("### 👀 You Might Like")
-        _render_table(yml_plays[:HERO_VISIBLE], is_best_bet=False)
+        _render_table(yml_plays[:HERO_VISIBLE])
         if len(yml_plays) > HERO_VISIBLE:
             out.write(f"<details><summary>📋 See all {len(yml_plays)} supplemental plays</summary>")
             out.write()
-            _render_table(yml_plays[HERO_VISIBLE:], is_best_bet=False)
+            _render_table(yml_plays[HERO_VISIBLE:])
             out.write("</details>")
         out.write()
 
-def _build_keybox(out: SummaryWriter):
-    data = _read_json("race_data.json")
-    races = []
-    if data:
-        races = data.get("bet_now_races", []) + data.get("you_might_like_races", [])
+def _build_keybox(out: GHASummaryWriter):
+    # This still reads from the text/json artifact if present for immedate feedback
+    content = _read_text("summary_grid.txt")
+    if not content: return
 
-    keys = [r for r in races if r.get('is_superfecta_key')]
-    if not keys: return
+    # We can try to extract keys from the grid or just rely on the detailed intelligence grid section
+    pass
 
-    out.write("## 🗝️ Superfecta Keybox")
-    out.write()
-    out.write("```text")
-    out.write(f"  MTP    VENUE                R#   KEY                     BOX (2-3-4)              GAP")
-    out.write(f"  ─────  ───────────────────  ──   ──────────────────────  ─────────────────────  ─────")
-    for r in keys:
-        mtp_s = _mtp_str(_mtp(r.get('start_time')))
-        v = r.get('venue') or r.get('track') or "?"
-        venue = _trunc(v, 19)
-        rn = r.get('race_number', "?")
-        kn = r.get('superfecta_key_number') or "?"
-        kname = _trunc(r.get('superfecta_key_name') or "", 18)
-        box = r.get('superfecta_box_numbers', [])
-        if isinstance(box, str): box = [b.strip() for b in box.split(',')]
-        box_str = ", ".join([f"#{b}" for b in box]) if box else "—"
-        gap = float(r.get('gap12', 0))
-        out.write(f"  {mtp_s:>4}  {venue:<19}  {rn:>2}   #{kn:<2} {kname:<18}  {box_str:<21}  {gap:>5.2f}")
-    out.write("```")
-    out.write()
-
-def _build_scoreboard(out: SummaryWriter, stats: TipStats):
+def _build_scoreboard(out: GHASummaryWriter, stats: TipStats):
     out.write("## 💰 Scoreboard")
     out.write()
 
@@ -501,45 +504,33 @@ def _build_scoreboard(out: SummaryWriter, stats: TipStats):
         return
 
     out.write("```text")
-    # Primary stat: Best Bets
     bb_decided = stats.best_bet_count
     bb_hit = (stats.best_bet_cashed / bb_decided * 100) if bb_decided > 0 else 0.0
     bb_roi = (stats.best_bet_profit / (bb_decided * STANDARD_BET) * 100) if bb_decided > 0 else 0.0
     out.write(f"  🏆 BEST BETS  {stats.best_bet_cashed}/{bb_decided} ({bb_hit:.0f}%)    ${stats.best_bet_profit:>+8.2f}    ROI {bb_roi:>+.1f}%")
-
-    # Secondary stat: Combined
     out.write(f"  👀 ALL PICKS   {stats.cashed}/{stats.decided} ({stats.win_rate:.0f}%)    ${stats.total_profit:>+8.2f}    ROI {stats.roi:>+.1f}%")
 
-    l10 = [r for r in stats.recent_tips if r[4] in list(VERDICT_EMOJI.keys())][:10]
-    w10 = len([r for r in l10 if r[4] in CASHED_VERDICTS])
-    p10 = sum(r[5] or 0.0 for r in l10)
+    l10 = [r for r in stats.recent_tips if r.get('verdict') in VERDICT_EMOJI][:10]
+    w10 = len([r for r in l10 if r.get('verdict') in CASHED_VERDICTS])
+    p10 = sum(r.get('net_profit') or 0.0 for r in l10)
     out.write(f"  LAST 10    {w10}/{len(l10):<2}                ${p10:>+8.2f}")
 
     kind, length = stats.current_streak
     streak_desc = f"{kind}{length}-bet streak" if kind != "None" else "None"
     out.write(f"  STREAK     {stats.profit_icon} {streak_desc}")
-
     out.write(f"  PAYOUT     avg ${stats.avg_payout:.2f}    breakeven {stats.breakeven_pct:.0f}%    margin {stats.margin:>+.0f}pp")
     out.write("```")
     out.write()
-
     out.write(f"**Recent:** {stats.streak_bar} {stats.streak_message}")
     out.write()
 
-    recent_p = sum(r[5] or 0.0 for r in stats.recent_tips[:RECENT_FORM_COUNT])
-    trend = "📈" if recent_p > 0 else "📉"
-    out.write(f"{trend} Last {len(stats.recent_tips[:RECENT_FORM_COUNT])}: **${recent_p:+.2f}** · Avg/bet: **${stats.avg_profit:+.2f}**")
-    out.write()
-
-def _build_recent_results(out: SummaryWriter, stats: TipStats):
+def _build_recent_results(out: GHASummaryWriter, stats: TipStats):
     if not stats.recent_tips: return
-
     out.write("## 📊 Recent Results")
     out.write()
 
-    # Drift tracking for Favourite odds (Phase 3)
-    # r[8] is actual_fav_odds, r[3] is predicted_fav_odds
-    drifts = [(r[8] - r[3]) for r in stats.recent_tips if r[8] and r[3]]
+    drifts = [( (r.get('actual_fav_odds') or 0) - (r.get('predicted_fav_odds') or 0) )
+              for r in stats.recent_tips if r.get('actual_fav_odds') and r.get('predicted_fav_odds')]
     avg_drift = sum(drifts)/len(drifts) if drifts else 0.0
     drift_label = "stable"
     if avg_drift < -0.5: drift_label = "market tightened"
@@ -550,26 +541,25 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
         out.write(f"       VENUE                R#   PICK                   FAV@  →  ACTUAL   P/L       FIN")
         out.write(f"  ───  ───────────────────  ──   ─────────────────────  ─────    ──────  ────────  ─────")
         for r in rows:
-            v = r[4]
+            v = r.get('verdict')
             e = VERDICT_EMOJI.get(v, "⚪")
-            venue_name = r[0] or "?"
-            flag = _venue_flag(venue_name, r[12])
+            venue_name = r.get('venue') or "?"
+            flag = _venue_flag(venue_name, r.get('discipline'))
             venue = _trunc(venue_name, 18)
-            rn = r[1]
-            sn = r[2] or "?"
-            sname = _trunc(r[13] or "", 15)
+            rn = r.get('race_number')
+            sn = r.get('selection_number') or "?"
+            sname = _trunc(r.get('selection_name') or "", 15)
             pick = f"#{sn} {sname}"
-            pred = r[3] or 0.0 # predicted_fav_odds
-            act = r[8] or 0.0 # actual_fav_odds
-            # But the table header says ACTUAL.
-            pl = r[5] or 0.0
-            pos = r[6]
+            pred = r.get('predicted_fav_odds') or 0.0
+            act = r.get('actual_fav_odds') or 0.0
+            pl = r.get('net_profit') or 0.0
+            pos = r.get('selection_position')
             fin = "—"
             if pos:
                 medal = POSITION_EMOJI.get(str(pos), "")
                 fin = f"{medal}P{pos}"
-            if r[9]: fin = f"SF${int(r[9])}"
-            elif r[10]: fin = f"T${int(r[10])}"
+            if r.get('superfecta_payout'): fin = f"SF${int(r['superfecta_payout'])}"
+            elif r.get('trifecta_payout'): fin = f"T${int(r['trifecta_payout'])}"
             out.write(f"  {e:<2}  {flag}{venue:<18}  {rn:>2}   {pick:<21}  {pred:>5.2f}  →  {act:>5.2f}  ${pl:>+7.2f}  {fin}")
         if is_first:
             out.write(f"  ────────────────────────────────────────────────────────────────────────────────────────")
@@ -578,7 +568,6 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
 
     visible = stats.recent_tips[:5]
     _render_res_table(visible, is_first=True)
-
     if len(stats.recent_tips) > 5:
         out.write(f"<details><summary>📋 All {len(stats.recent_tips)} recent results</summary>")
         out.write()
@@ -586,271 +575,141 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
         out.write("</details>")
         out.write()
 
-def _build_harvest(out: SummaryWriter):
-    discovery = _merge_harvests(DISCOVERY_HARVEST_FILES)
-    results = _merge_harvests(RESULTS_HARVEST_FILES)
+async def _build_harvest(out: GHASummaryWriter, db: FortunaDB):
+    # Dynamic discovery instead of hardcoded filenames
+    all_harvest_files = _discover_harvest_files()
+    merged = _merge_harvests(all_harvest_files)
 
-    if not discovery and not results and Path(DB_PATH).exists():
-        try:
-            with sqlite3.connect(DB_PATH) as conn:
-                # Phase D3: Fixed timezone comparison (SQLite datetime('now') is UTC, harvest timestamp is ET)
-                cutoff = (datetime.now(EASTERN) - timedelta(hours=4)).strftime("%y%m%dT%H:%M:%S")
-                db_logs = conn.execute(
-                    "SELECT adapter_name, race_count, max_odds FROM harvest_logs WHERE timestamp >= ?",
-                    (cutoff,)
-                ).fetchall()
-                results = {l[0]: {'count': l[1], 'max_odds': l[2]} for l in db_logs}
-        except Exception: pass
+    # Also merge DB harvest logs
+    db_logs = await db.get_harvest_logs(hours=4)
+    db_harvest = {
+        l['adapter_name']: {'count': l['race_count'], 'max_odds': l['max_odds']}
+        for l in db_logs
+    }
 
-    if not discovery and not results:
+    for k, v in db_harvest.items():
+        if k not in merged:
+            merged[k] = v
+        else:
+            # Prefer higher counts from DB if available
+            merged[k]['count'] = max(merged[k]['count'], v['count'])
+
+    if not merged:
         out.write("## 🛰️ Adapter Harvest\n\nNo adapter data available yet.\n")
         return
 
-    total_adapters = len(set(discovery.keys()) | set(results.keys()))
-    active = len([d for d in (list(discovery.values()) + list(results.values())) if d.get('count', 0) > 0])
-    total_races = sum(d.get('count', 0) for d in (list(discovery.values()) + list(results.values())))
+    active = len([d for d in merged.values() if d.get('count', 0) > 0])
+    total_races = sum(d.get('count', 0) for d in merged.values())
 
     out.write("## 🛰️ Adapter Harvest")
     out.write()
-    out.write(f"{active}/{total_adapters} adapters active · {total_races} races harvested")
+    out.write(f"{active}/{len(merged)} adapters active · {total_races} races harvested")
     out.write()
 
-    failed = [n for n, d in discovery.items() if d.get('count', 0) == 0] + \
-             [n for n, d in results.items() if d.get('count', 0) == 0]
+    failed = [n for n, d in merged.items() if d.get('count', 0) == 0]
     if failed:
         for f in failed[:5]: out.write(f"- ⚠️ **{f}** — 0 races")
         out.write()
 
     out.write("<details><summary>📋 Adapter details</summary>")
     out.write()
-
-    def _render_harvest_table(data, label):
-        if not data: return
-        out.write(f"**{label} Phase**")
-        out.write("```text")
-        out.write(f"  ADAPTER                          RACES   MAX ODDS   STATUS")
-        out.write(f"  ────────────────────────────────  ─────  ─────────  ──────")
-        tot = 0
-        sorted_data = sorted(data.items(), key=lambda x: x[1].get('count', 0), reverse=True)
-        for name, d in sorted_data:
-            cnt = d.get('count', 0)
-            mx = d.get('max_odds', 0.0)
-            tot += cnt
-            status = '✅' if cnt > 0 else '⚠️ No data'
-            out.write(f"  {_trunc(name, 32):<32}  {cnt:>5}  {mx:>9.1f}  {status}")
-        out.write(f"  ────────────────────────────────  ─────  ─────────  ──────")
-        out.write(f"  TOTAL                             {tot:>5}")
-        out.write("```")
-        out.write()
-
-    _render_harvest_table(discovery, "Discovery")
-    _render_harvest_table(results, "Results")
+    out.write("```text")
+    out.write(f"  ADAPTER                          RACES   MAX ODDS   STATUS")
+    out.write(f"  ────────────────────────────────  ─────  ─────────  ──────")
+    sorted_merged = sorted(merged.items(), key=lambda x: x[1].get('count', 0), reverse=True)
+    for name, d in sorted_merged:
+        cnt = d.get('count', 0)
+        mx = d.get('max_odds', 0.0)
+        status = '✅' if cnt > 0 else '⚠️ No data'
+        out.write(f"  {_trunc(name, 32):<32}  {cnt:>5}  {mx:>9.1f}  {status}")
+    out.write("```")
     out.write("</details>")
     out.write()
 
-def _build_goldmine_vs_standard(out: SummaryWriter):
-    if not Path(DB_PATH).exists(): return
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            rows = conn.execute("SELECT is_goldmine, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
-
-        if len(rows) < 5: return
-
-        out.write("## ⛏️ Goldmine vs Standard")
-        out.write()
-        out.write("```text")
-        out.write(f"  CATEGORY      BETS    W    L   HIT%    NET P&L     ROI")
-        out.write(f"  ────────────  ────  ───  ───  ─────  ─────────  ──────")
-        for label, is_gm in [("🏆 Goldmine", 1), ("📊 Standard", 0)]:
-            subset = [r for r in rows if r[0] == is_gm]
-            b = len(subset)
-            if b == 0: continue
-            w = len([r for r in subset if r[1] in CASHED_VERDICTS])
-            l = b - w
-            h = (w / b * 100)
-            pl = sum(r[2] or 0.0 for r in subset)
-            roi = (pl / (b * STANDARD_BET)) * 100
-            out.write(f"  {label:<12}  {b:>4}  {w:>3}  {l:>3}  {h:>4.0f}%  ${pl:>+8.2f}  {roi:>+5.1f}%")
-        out.write("```")
-        out.write()
-    except Exception: pass
-
-def _build_by_discipline(out: SummaryWriter):
-    if not Path(DB_PATH).exists(): return
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            rows = conn.execute("SELECT discipline, verdict, net_profit FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchall()
-
-        disc_set = set(r[0] for r in rows if r[0])
-        if len(disc_set) < 2: return
-
-        out.write("## 🏁 By Discipline")
-        out.write()
-        out.write("```text")
-        out.write(f"  DISCIPLINE      BETS    W    L   HIT%   AVG PAY   B/E%   MARGIN    NET P&L")
-        out.write(f"  ──────────────  ────  ───  ───  ─────  ───────  ─────  ────────  ────────")
-        for d in sorted(disc_set):
-            subset = [r for r in rows if r[0] == d]
-            b = len(subset)
-            wins = [r for r in subset if r[1] in CASHED_VERDICTS]
-            w = len(wins)
-            h = (w / b * 100) if b > 0 else 0
-            pl = sum(r[2] or 0.0 for r in subset)
-            ap = sum((r[2] or 0.0) + STANDARD_BET for r in wins) / w if w > 0 else 0.0
-            be = (STANDARD_BET / ap * 100) if ap > 0 else 100
-            m = h - be
-            name = {'H':'Harness','T':'Thoroughbred','G':'Greyhound'}.get(d, d)
-            out.write(f"  {name:<14.14}  {b:>4}  {w:>3}  {(b-w):>3}  {h:>4.0f}%  ${ap:>5.2f}  {be:>4.0f}%  {m:>+6.0f}pp  ${pl:>+7.2f}")
-        out.write("```")
-        out.write()
-    except Exception: pass
-
-def _build_exotic_payouts(out: SummaryWriter):
-    if not Path(DB_PATH).exists(): return
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
-                SELECT venue, race_number, start_time, trifecta_payout, trifecta_combination,
-                       superfecta_payout, superfecta_combination
-                FROM tips WHERE audit_completed=1
-                AND (trifecta_payout > 0 OR superfecta_payout > 0)
-                ORDER BY COALESCE(superfecta_payout,0)+COALESCE(trifecta_payout,0) DESC LIMIT 5
-            """).fetchall()
-
-        if not rows: return
-
-        out.write("## 🎰 Exotic Payouts")
-        out.write()
-        out.write("```text")
-        out.write(f"  TYPE         PAYOUT      VENUE                R#   DATE        COMBO")
-        out.write(f"  ───────────  ──────────  ───────────────────  ──   ──────────  ──────────────")
-        for r in rows:
-            st_dt = _parse_dt(r['start_time'])
-            date_str = st_dt.strftime("%Y-%m-%d") if st_dt else "???"
-            if r['superfecta_payout']:
-                out.write(f"  {'Superfecta':<11}  ${r['superfecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19}  {r['race_number']:>2}   {date_str}  {_trunc(r['superfecta_combination'] or '', 14)}")
-            if r['trifecta_payout']:
-                out.write(f"  {'Trifecta':<11}  ${r['trifecta_payout']:>9.2f}  {_trunc(r['venue'], 19):<19}  {r['race_number']:>2}   {date_str}  {_trunc(r['trifecta_combination'] or '', 14)}")
-        out.write("```")
-        out.write()
-    except Exception: pass
-
-def _build_data_quality(out: SummaryWriter):
+async def _build_data_quality(out: GHASummaryWriter, db: FortunaDB):
     out.write("## 🔬 Data Quality")
     out.write()
-    if not Path(DB_PATH).exists(): return
-
     cols = ["qualification_grade", "composite_score", "is_best_bet", "place_prob", "market_depth", "predicted_ev", "match_confidence"]
     out.write("```text")
     out.write(f"  COLUMN               POPULATED          SAMPLE")
     out.write(f"  ───────────────────  ────────────────  ──────────")
+
+    # FortunaDB uses synchronous sqlite3 + ThreadPoolExecutor, not aiosqlite.
+    # Must use _run_in_executor with synchronous DB calls.
+    def _query_quality():
+        conn = db._get_conn()
+        total_row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
+        total = total_row[0] if total_row else 0
+
+        results = []
+        for col in cols:
+            # Check column exists before querying
+            # GPT5 Fix: Use pragma_table_info correctly
+            cursor = conn.execute(f"PRAGMA table_info('tips')")
+            cols_in_db = [row['name'] for row in cursor.fetchall()]
+
+            if col not in cols_in_db:
+                results.append((col, 0, total, "[missing]"))
+                continue
+
+            count_row = conn.execute(
+                f"SELECT COUNT(*) FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != ''"
+            ).fetchone()
+            n = count_row[0] if count_row else 0
+
+            sample_row = conn.execute(
+                f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            s_val = str(sample_row[0])[:10] if sample_row and sample_row[0] is not None else "—"
+            results.append((col, n, total, s_val))
+
+        return results
+
     try:
-        with sqlite3.connect(DB_PATH) as conn:
-            for col in cols:
-                res = conn.execute(f"SELECT COUNT(*), SUM(CASE WHEN {col} IS NOT NULL AND CAST({col} AS TEXT) != '' THEN 1 ELSE 0 END) FROM tips").fetchone()
-                sample = conn.execute(f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' LIMIT 1").fetchone()
-                t, n = res[0], res[1] or 0
-                pct = (n / t * 100) if t > 0 else 0
-                s_val = _trunc(sample[0], 10) if sample else "—"
-                out.write(f"  {col:<19}  {n:>3}/{t:>3} ({pct:>3.0f}%)  {s_val}")
-    except Exception: pass
+        quality_data = await db._run_in_executor(_query_quality)
+        for col, n, total, s_val in quality_data:
+            pct = (n / total * 100) if total > 0 else 0
+            out.write(f"  {col:<19}  {n:>3}/{total:>3} ({pct:>3.0f}%)  {s_val}")
+    except Exception as e:
+        out.write(f"  [Error querying data quality: {e}]")
     out.write("```")
     out.write()
 
-def _build_intelligence_grids(out: SummaryWriter):
-    files = [
-        ("summary_grid.txt", "🏁 Race Analysis Grid"),
-        ("field_matrix.txt", "📊 Field Matrix"),
-        ("goldmine_report.txt", "💎 Goldmine Report")
-    ]
-    for path, label in files:
+async def main():
+    now = now_eastern()
+    db = FortunaDB()
+    await db.initialize()
+    stats = await _get_stats(db)
+    out = GHASummaryWriter()
+
+    _build_header(out, now)
+    await _build_action_plan(out, stats, db)
+    await _build_plays(out, db)
+    _build_keybox(out)
+    out.write("---")
+    out.write()
+    _build_scoreboard(out, stats)
+    _build_recent_results(out, stats)
+    out.write("---")
+    out.write()
+    await _build_harvest(out, db)
+    await _build_data_quality(out, db)
+
+    # Intelligence Grids (existing files)
+    for path, label in [("summary_grid.txt", "🏁 Race Analysis Grid"), ("field_matrix.txt", "📊 Field Matrix"), ("goldmine_report.txt", "💎 Goldmine Report")]:
         content = _read_text(path)
         if content:
-            out.write(f"<details><summary>{label}</summary>")
-            out.write()
-            out.write("```text")
-            out.write(content)
-            out.write("```")
-            out.write("</details>")
-            out.write()
+            out.write(f"<details><summary>{label}</summary>\n\n```text\n{content}\n```\n</details>\n")
 
-def _build_footer(out: SummaryWriter):
-    out.write("---")
-    out.write()
-    artifacts = [
-        ("📊", "Summary Grid", "summary_grid.txt"),
-        ("💎", "Goldmine Report", "goldmine_report.txt"),
-        ("📈", "Analytics Log", "analytics_report.txt"),
-        ("🗄️", "Database", "fortuna.db"),
-    ]
+    # Footer
+    out.write("---\n")
+    artifacts = [("📊", "Summary Grid", "summary_grid.txt"), ("💎", "Goldmine Report", "goldmine_report.txt"), ("🗄️", "Database", "fortuna.db")]
     links = [f"{e} [{l}]({p})" for e, l, p in artifacts if Path(p).exists()]
-    if links: out.write("📦 " + " · ".join(links))
-    out.write()
+    if links: out.write("📦 " + " · ".join(links) + "\n")
     out.write("*Refreshes every hour*")
 
-# ═══════════════════════════════════════════════════════════════════
-# MAIN
-# ═══════════════════════════════════════════════════════════════════
-
-def main():
-    now = _now_et()
-    stats = _get_stats()
-    out = SummaryWriter()
-
-    # ── Header ─────────────────────────────────────────────────────
-    try: _build_header(out, now)
-    except Exception as e: out.write(f"<!-- header failed: {e} -->")
-
-    # ── ACTION PLAN (top of report for JB) ─────────────────────────
-    try: _build_action_plan(out, stats)
-    except Exception as e: out.write(f"<!-- action plan failed: {e} -->")
-
-    # ── Live Plays ─────────────────────────────────────────────────
-    try: _build_plays(out)
-    except Exception as e: out.write(f"<!-- plays failed: {e} -->")
-
-    try: _build_keybox(out)
-    except Exception as e: out.write(f"<!-- keybox failed: {e} -->")
-
-    out.write("---")
-    out.write()
-
-    # ── Performance ────────────────────────────────────────────────
-    try: _build_scoreboard(out, stats)
-    except Exception as e: out.write(f"<!-- scoreboard failed: {e} -->")
-
-    try: _build_recent_results(out, stats)
-    except Exception as e: out.write(f"<!-- results failed: {e} -->")
-
-    out.write("---")
-    out.write()
-
-    # ── Developer Detail ───────────────────────────────────────────
-    try: _build_harvest(out)
-    except Exception as e: out.write(f"<!-- harvest failed: {e} -->")
-
-    try: _build_goldmine_vs_standard(out)
-    except Exception as e: out.write(f"<!-- goldmine failed: {e} -->")
-
-    try: _build_by_discipline(out)
-    except Exception as e: out.write(f"<!-- discipline failed: {e} -->")
-
-    try: _build_exotic_payouts(out)
-    except Exception as e: out.write(f"<!-- exotics failed: {e} -->")
-
-    try: _build_data_quality(out)
-    except Exception as e: out.write(f"<!-- quality failed: {e} -->")
-
-    try: _build_intelligence_grids(out)
-    except Exception as e: out.write(f"<!-- grids failed: {e} -->")
-
-    # ── Footer ─────────────────────────────────────────────────────
-    try: _build_footer(out)
-    except Exception as e: out.write(f"<!-- footer failed: {e} -->")
-
     out.flush()
+    await db.close()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    main()
+    asyncio.run(main())
