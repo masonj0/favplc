@@ -9,6 +9,7 @@ def test_scoring_signal_population():
     # Create a race with minimal data that might cause scoring to be skipped or fail
     # Restoration Note: S0-S8 pipeline requires 4 runners with odds
     # BUT min_field_size gate requires 5 runners for Thoroughbred
+    # AND SEC_FAV_FLOOR is 4.50
     race = Race(
         id="test_race_1",
         venue="Test Track",
@@ -16,7 +17,7 @@ def test_scoring_signal_population():
         start_time=datetime.now(EASTERN),
         runners=[
             Runner(number=1, name="Runner 1", win_odds=2.0),
-            Runner(number=2, name="Runner 2", win_odds=4.0),
+            Runner(number=2, name="Runner 2", win_odds=5.0),
             Runner(number=3, name="Runner 3", win_odds=6.0),
             Runner(number=4, name="Runner 4", win_odds=8.0),
             Runner(number=5, name="Runner 5", win_odds=10.0)
@@ -51,10 +52,10 @@ def test_scoring_signal_population_with_exception():
         start_time=datetime.now(EASTERN),
         runners=[
             Runner(number=1, name="Runner 1", win_odds=2.0),
-            Runner(number=2, name="Runner 2", win_odds=3.0),
-            Runner(number=3, name="Runner 3", win_odds=4.0),
-            Runner(number=4, name="Runner 4", win_odds=5.0),
-            Runner(number=5, name="Runner 5", win_odds=6.0)
+            Runner(number=2, name="Runner 2", win_odds=5.0),
+            Runner(number=3, name="Runner 3", win_odds=6.0),
+            Runner(number=4, name="Runner 4", win_odds=8.0),
+            Runner(number=5, name="Runner 5", win_odds=10.0)
         ],
         source="Test"
     )
