@@ -397,14 +397,16 @@ class AuditorEngine:
         if unverified is None:
             unverified = await self.get_unverified_tips()
 
+        # Sample debug logs for the first few tips
         for tip in unverified[:10]:
             tip_key = self._tip_canonical_key(tip)
-            self.logger.debug(
-                "Tip key vs results",
-                tip_venue=tip.get("venue"),
-                tip_key=tip_key,
-                matched=tip_key in results_map if tip_key else False,
-            )
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    "Tip key vs results",
+                    tip_venue=tip.get("venue"),
+                    tip_key=tip_key,
+                    matched=tip_key in results_map if tip_key else False,
+                )
 
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
@@ -419,6 +421,10 @@ class AuditorEngine:
                 continue
 
             try:
+                # Wrap log calls in a level check for high-volume audit performance (GPT5 Fix)
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug("Attempting match", race_id=race_id, key=tip_key)
+
                 # Item 8: Algorithm optimization
                 result, confidence = self._match_tip_to_result(
                     tip_key, results_map, race_id, secondary_index=secondary_index
@@ -436,6 +442,9 @@ class AuditorEngine:
                 if 'match_confidence' not in outcome:
                     outcome['match_confidence'] = confidence
                 # ─────────────────────────────────────────────────────────────
+                # FIX-05: Ensure audit_timestamp is always set for batch persistence
+                if 'audit_timestamp' not in outcome:
+                    outcome['audit_timestamp'] = to_storage_format(now_eastern())
                 outcomes_to_batch.append((race_id, outcome))
                 audited.append({**tip, **outcome, "audit_completed": True})
 
@@ -786,11 +795,26 @@ class AuditorEngine:
         if sel is None:
             return Verdict.VOID, 0.0
 
-        # Phase 3: Selection return estimate fallback (AUD-2)
-        # Use predicted_fav_odds if final odds are missing from result
-        fav_fallback = fortuna.DEFAULT_ODDS_FALLBACK
+        # Determine place fraction based on field size
+        field_size = len(result.active_runners)
+        places_paid = get_places_paid(field_size, is_handicap=result.is_handicap)
+        # UK each-way fractions: 1/4 for 8+ runners, 1/3 for 5-7, 1/5 for handicaps with 16+
+        if field_size >= 16 and result.is_handicap:
+            place_fraction = 4.0  # 1/4 odds (but 4 places paid)
+        elif field_size >= 8:
+            place_fraction = 4.0  # 1/4 odds
+        else:
+            place_fraction = 3.0  # 1/3 odds (5-7 runners)
+
+        # Prefer predicted_fav_odds (v2) over predicted_2nd_fav_odds (v1)
         if tip:
-            fav_fallback = tip.get('predicted_fav_odds') or tip.get('predicted_2nd_fav_odds') or fav_fallback
+            fallback_odds = (
+                tip.get('predicted_fav_odds')
+                or tip.get('predicted_2nd_fav_odds')
+                or fortuna.DEFAULT_ODDS_FALLBACK
+            )
+        else:
+            fallback_odds = fortuna.DEFAULT_ODDS_FALLBACK
 
         if sel.position_numeric is None:
             # Fallback (Item 4): If position is missing but we have payouts, they placed!
@@ -798,12 +822,13 @@ class AuditorEngine:
                 if sel.place_payout and sel.place_payout > 0.01:
                     return Verdict.CASHED, sel.place_payout - STANDARD_BET
                 # We know they placed because they won or have a win payout
-                return Verdict.CASHED_ESTIMATED, round((STANDARD_BET * max(1.1, 1.0 + ((sel.final_win_odds or fav_fallback) - 1.0) / 5.0)) - STANDARD_BET, 2)
+                odds = sel.final_win_odds if (sel.final_win_odds and sel.final_win_odds > 0) else fallback_odds
+                odds = max(1.1, float(odds))
+                estimated = STANDARD_BET * (1.0 + (odds - 1.0) / place_fraction)
+                return Verdict.CASHED_ESTIMATED, round(estimated - STANDARD_BET, 2)
 
             # Missing position often means parsing gap, not a loss
             return Verdict.VOID, 0.0
-
-        places_paid = get_places_paid(len(result.active_runners), is_handicap=result.is_handicap)
 
         if sel.position_numeric > places_paid:
             return Verdict.BURNED, -STANDARD_BET
@@ -812,14 +837,14 @@ class AuditorEngine:
         if sel.place_payout and sel.place_payout > 0.01:
             return Verdict.CASHED, sel.place_payout - STANDARD_BET
 
-        # Heuristic estimate: ~1/5 of (win odds - 1) for place return
-        odds = sel.final_win_odds if (sel.final_win_odds and sel.final_win_odds > 0) else fav_fallback
+        # Heuristic estimate using correct place fraction
+        odds = sel.final_win_odds if (sel.final_win_odds and sel.final_win_odds > 0) else fallback_odds
         odds = max(1.1, float(odds))
         if not (sel.final_win_odds and sel.final_win_odds > 0):
             structlog.get_logger("AuditorEngine").debug(
-                "odds_defaulted", runner=sel.name, fallback=fav_fallback
+                "odds_defaulted", runner=sel.name, fallback=fallback_odds
             )
-        estimated_place_return = STANDARD_BET * max(1.1, 1.0 + (odds - 1.0) / 5.0)
+        estimated_place_return = STANDARD_BET * (1.0 + (float(odds) - 1.0) / place_fraction)
         return Verdict.CASHED_ESTIMATED, round(estimated_place_return - STANDARD_BET, 2)
 
     @staticmethod
@@ -4178,11 +4203,8 @@ async def _harvest_results(
                 # Keep the higher quality version
                 if _race_quality(race) > _race_quality(seen_races[key]):
                     seen_races[key] = race
-                    # Note: this might slightly under-count for the previous adapter
-                    # and over-count for this one in harvest_summary, but the
-                    # final all_races list will be optimal.
-                    deduped_for_this_adapter.append(race)
             else:
+                # Only count races that haven't been seen yet to avoid harvest summary inflation
                 seen_races[key] = race
                 deduped_for_this_adapter.append(race)
 
@@ -4234,13 +4256,22 @@ async def _write_gha_summary(
 
         for tip in pending_tips:
             try:
+                # Use from_storage_format which handles both STORAGE_FORMAT and ISO fallback
+                try:
+                    st = from_storage_format(tip["start_time"])
+                except Exception:
+                    try:
+                        st = datetime.fromisoformat(
+                            tip["start_time"].replace("Z", "+00:00")
+                        )
+                    except (ValueError, TypeError):
+                        continue  # Skip tips with unparseable start_time
+
                 race = fortuna.Race(
                     id=tip["race_id"],
                     venue=tip["venue"],
                     race_number=tip["race_number"],
-                    start_time=datetime.fromisoformat(
-                        tip["start_time"].replace("Z", "+00:00"),
-                    ),
+                    start_time=st,
                     runners=[],
                     source="Database",
                 )
