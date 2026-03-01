@@ -210,9 +210,15 @@ def _venue_flag(venue: str, discipline: Optional[str] = None) -> str:
     return "🏇"
 
 def _mtp(start_time_str: Any) -> float:
-    if not start_time_str: return 9999.0
-    st = from_storage_format(start_time_str)
-    if not st: return 9999.0
+    """Minutes to post. Returns 9999.0 for unparseable or missing times (Fix 14)."""
+    if not start_time_str:
+        return 9999.0
+    try:
+        st = from_storage_format(str(start_time_str))
+    except (ValueError, TypeError, AttributeError):
+        return 9999.0
+    if not st:
+        return 9999.0
     now = now_eastern()
     return (st - now).total_seconds() / 60
 
@@ -297,7 +303,10 @@ async def _get_stats(db: FortunaDB) -> TipStats:
         print(f"Stats Error: {e}")
     return stats
 
-class SummaryWriter:
+class GHASummaryWriter:
+    """GHA-specific summary writer. Writes to GITHUB_STEP_SUMMARY or stdout. (Fix 15)
+    See also: fortuna.SummaryWriter for the stream-based variant.
+    """
     def __init__(self):
         self.lines = []
         self.output_path = os.environ.get("GITHUB_STEP_SUMMARY", "/dev/stdout")
@@ -313,14 +322,14 @@ class SummaryWriter:
 # SECTION BUILDERS
 # ═══════════════════════════════════════════════════════════════════
 
-def _build_header(out: SummaryWriter, now: datetime):
+def _build_header(out: GHASummaryWriter, now: datetime):
     out.write(f"# 🏇 Favourite to Place — Simply Success Picks")
     out.write(f"### {now.strftime('%y%m%d %A %b %d, %I:%M %p')} ET")
     out.write()
     out.write(f"*{_time_context()}*")
     out.write()
 
-async def _build_action_plan(out: SummaryWriter, stats: TipStats, db: FortunaDB):
+async def _build_action_plan(out: GHASummaryWriter, stats: TipStats, db: FortunaDB):
     status = "HEALTHY"
     emoji = "🟢"
     findings = []
@@ -388,37 +397,19 @@ async def _build_action_plan(out: SummaryWriter, stats: TipStats, db: FortunaDB)
     out.write("---")
     out.write()
 
-async def _build_plays(out: SummaryWriter, db: FortunaDB):
+async def _build_plays(out: GHASummaryWriter, db: FortunaDB):
     """Build the upcoming plays section.
     Fetches future tips directly, avoiding the stuck-tip ordering problem.
     """
     races = []
     try:
-        now = now_eastern()
-        # FIX-09: Query specifically for future/imminent races instead of
-        # relying on ORDER BY id DESC which returns old stuck tips first.
-        cutoff_past = to_storage_format(now - timedelta(minutes=10))
-        cutoff_future = to_storage_format(now + timedelta(hours=18))
-
-        def _get_upcoming():
-            conn = db._get_conn()
-            cursor = conn.execute(
-                """SELECT * FROM tips
-                   WHERE audit_completed = 0
-                   AND start_time > ?
-                   AND start_time < ?
-                   ORDER BY start_time ASC
-                   LIMIT 50""",
-                (cutoff_past, cutoff_future)
-            )
-            return [dict(row) for row in cursor.fetchall()]
-
-        db_races = await db._run_in_executor(_get_upcoming)
+        # FIX-08: Use public DB method instead of private method access
+        db_races = await db.get_upcoming_tips(past_minutes=10, future_hours=18, limit=50)
         for r in db_races:
             r['_mtp_val'] = _mtp(r.get('start_time'))
             races.append(r)
     except Exception:
-        # Fallback to original approach if custom query fails
+        # Fallback to general query
         try:
             db_races = await db.get_tips(audited=False, limit=50)
             now = now_eastern()
@@ -496,7 +487,7 @@ async def _build_plays(out: SummaryWriter, db: FortunaDB):
             out.write("</details>")
         out.write()
 
-def _build_keybox(out: SummaryWriter):
+def _build_keybox(out: GHASummaryWriter):
     # This still reads from the text/json artifact if present for immedate feedback
     content = _read_text("summary_grid.txt")
     if not content: return
@@ -504,7 +495,7 @@ def _build_keybox(out: SummaryWriter):
     # We can try to extract keys from the grid or just rely on the detailed intelligence grid section
     pass
 
-def _build_scoreboard(out: SummaryWriter, stats: TipStats):
+def _build_scoreboard(out: GHASummaryWriter, stats: TipStats):
     out.write("## 💰 Scoreboard")
     out.write()
 
@@ -533,7 +524,7 @@ def _build_scoreboard(out: SummaryWriter, stats: TipStats):
     out.write(f"**Recent:** {stats.streak_bar} {stats.streak_message}")
     out.write()
 
-def _build_recent_results(out: SummaryWriter, stats: TipStats):
+def _build_recent_results(out: GHASummaryWriter, stats: TipStats):
     if not stats.recent_tips: return
     out.write("## 📊 Recent Results")
     out.write()
@@ -584,7 +575,7 @@ def _build_recent_results(out: SummaryWriter, stats: TipStats):
         out.write("</details>")
         out.write()
 
-async def _build_harvest(out: SummaryWriter, db: FortunaDB):
+async def _build_harvest(out: GHASummaryWriter, db: FortunaDB):
     # Dynamic discovery instead of hardcoded filenames
     all_harvest_files = _discover_harvest_files()
     merged = _merge_harvests(all_harvest_files)
@@ -635,7 +626,7 @@ async def _build_harvest(out: SummaryWriter, db: FortunaDB):
     out.write("</details>")
     out.write()
 
-async def _build_data_quality(out: SummaryWriter, db: FortunaDB):
+async def _build_data_quality(out: GHASummaryWriter, db: FortunaDB):
     out.write("## 🔬 Data Quality")
     out.write()
     cols = ["qualification_grade", "composite_score", "is_best_bet", "place_prob", "market_depth", "predicted_ev", "match_confidence"]
@@ -689,7 +680,7 @@ async def main():
     db = FortunaDB()
     await db.initialize()
     stats = await _get_stats(db)
-    out = SummaryWriter()
+    out = GHASummaryWriter()
 
     _build_header(out, now)
     await _build_action_plan(out, stats, db)

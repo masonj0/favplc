@@ -891,10 +891,11 @@ async def refresh_odds_for_races(
     logger = structlog.get_logger("refresh_odds")
     date_str = now_eastern().strftime(DATE_FORMAT)
 
-    # Build lookup for matching: (canonical_venue, race_number) -> Race
+    # Build lookup for matching: (canonical_venue, race_number, date) -> Race
     race_lookup: Dict[tuple, Race] = {}
     for race in scorable_races:
-        key = (get_canonical_venue(race.venue), race.race_number)
+        date_component = race.start_time.strftime(DATE_FORMAT) if isinstance(race.start_time, datetime) else ''
+        key = (get_canonical_venue(race.venue), race.race_number, date_component)
         race_lookup[key] = race
 
     # Fetch from HTTPX-only adapters
@@ -907,7 +908,8 @@ async def refresh_odds_for_races(
         try:
             fresh_races = await adapter.get_races(date_str)
             for fresh_race in fresh_races:
-                key = (get_canonical_venue(fresh_race.venue), fresh_race.race_number)
+                fresh_date = fresh_race.start_time.strftime(DATE_FORMAT) if isinstance(fresh_race.start_time, datetime) else ''
+                key = (get_canonical_venue(fresh_race.venue), fresh_race.race_number, fresh_date)
                 target = race_lookup.get(key)
                 if not target:
                     continue
@@ -942,16 +944,6 @@ async def refresh_odds_for_races(
         runners_updated=fresh_count,
         races_targeted=len(scorable_races))
     return scorable_races
-    if "harness" in dl:
-        disc_suffix = "_h"
-    elif "greyhound" in dl:
-        disc_suffix = "_g"
-    elif "quarter" in dl:
-        disc_suffix = "_q"
-    else:
-        disc_suffix = "_t"
-
-    return f"{prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}"
 
 
 # --- VALIDATORS ---
@@ -5342,8 +5334,13 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         return {
             "criteria": {
                 "mode": "simply_success",
-                "goldmine_threshold": 4.5,
-                "gap_min": 0.50
+                "non_chalk_min": NON_CHALK_MIN,
+                "sec_fav_floor": SEC_FAV_FLOOR,
+                "gap_abs_min": GAP_ABS_MIN,
+                "goldmine_fav_min": GOLDMINE_FAV_MIN,
+                "goldmine_sec_fav_min": GOLDMINE_SEC_FAV_MIN,
+                "goldmine_gap_min": GOLDMINE_GAP_MIN,
+                "superfecta_gap_min": SUPERFECTA_GAP_MIN,
             },
             "races": qualified
         }
@@ -6429,7 +6426,8 @@ def format_artifact_links() -> str:
 from contextlib import contextmanager
 
 class SummaryWriter:
-    """A simple wrapper for GHA Step Summary writes with auto-flush (Consolidated)."""
+    """Stream-based summary writer for file/stdout output. (Fix 15)
+    See also: GHASummaryWriter in generate_gha_summary.py for GHA Job Summary output."""
     def __init__(self, stream: TextIO) -> None:
         self._s = stream
     def write(self, text: str = "") -> None:
@@ -6642,9 +6640,12 @@ class FortunaDB:
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
 
-                # Cleanup potential duplicates before creating unique index
+                # FIX-01: Dedup migration: run ONCE via schema versioning, not on every init
                 try:
-                    self.logger.info("Cleaning up duplicate race_ids before indexing")
+                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                except sqlite3.IntegrityError:
+                    # Index creation failed due to existing duplicates — migrate once
+                    self.logger.info("Duplicate race_ids detected, running one-time cleanup")
                     conn.execute("""
                         DELETE FROM tips
                         WHERE id NOT IN (
@@ -6653,12 +6654,10 @@ class FortunaDB:
                             GROUP BY race_id
                         )
                     """)
-                    self.logger.info("Duplicates removed, creating unique index")
                     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                    self.logger.info("One-time dedup complete, unique index created")
                 except Exception as e:
-                    self.logger.error("Failed to cleanup or create unique index", error=str(e))
-                    # If index exists but table has duplicates, we might get IntegrityError
-                    # Just log it and continue - better than crashing the whole app
+                    self.logger.error("Failed to create unique index", error=str(e))
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
                 columns = [column[1] for column in cursor.fetchall()]
@@ -7058,13 +7057,17 @@ class FortunaDB:
 
             # ── BUG-3 FIX: Cross-race clone detection ────────────────────
             seen_selections = set()
-            today_str = now.strftime("%y%m%d")
+            # FIX-02: Use date-range query instead of fragile LIKE pattern
+            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_of_day = start_of_day + timedelta(days=1)
+            sod_str = to_storage_format(start_of_day)
+            eod_str = to_storage_format(end_of_day)
             existing_selections = set()
             try:
                 for row in conn.execute(
                     "SELECT venue, race_number, selection_name FROM tips "
-                    "WHERE start_time LIKE ? AND selection_name IS NOT NULL",
-                    (f"{today_str}%",)
+                    "WHERE start_time >= ? AND start_time < ? AND selection_name IS NOT NULL",
+                    (sod_str, eod_str)
                 ).fetchall():
                     v_db = get_canonical_venue(str(row["venue"] or "")).upper()
                     r_db = row["race_number"]
@@ -7192,6 +7195,29 @@ class FortunaDB:
                 self.logger.info("Hot tips processed", inserted=len(to_insert), updated=len(to_update), clones_skipped=skipped_clones)
 
         await self._run_in_executor(_log)
+
+    async def get_upcoming_tips(self, past_minutes: int = 10, future_hours: int = 18, limit: int = 50) -> List[Dict[str, Any]]:
+        """Returns unaudited tips with start_time in the upcoming window (Fix 08)."""
+        if not self._initialized:
+            await self.initialize()
+
+        def _query():
+            conn = self._get_conn()
+            now = now_eastern()
+            cutoff_past = to_storage_format(now - timedelta(minutes=past_minutes))
+            cutoff_future = to_storage_format(now + timedelta(hours=future_hours))
+            cursor = conn.execute(
+                """SELECT * FROM tips
+                   WHERE audit_completed = 0
+                   AND start_time > ?
+                   AND start_time < ?
+                   ORDER BY start_time ASC
+                   LIMIT ?""",
+                (cutoff_past, cutoff_future, limit)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+        return await self._run_in_executor(_query)
 
     async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
         """Returns tips that haven't been audited yet but have likely finished."""
@@ -7608,12 +7634,17 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
-            # Cap the batch size to avoid performance degradation (GPT5 Improvement)
-            if len(new_tips) > 100:
-                self.logger.info("Capping large tips batch", original_count=len(new_tips), capped_at=100)
-                new_tips = new_tips[:100]
+            # FIX-13: Process all tips in batches instead of truncating
+            BATCH_SIZE = 100
+            if len(new_tips) > BATCH_SIZE:
+                self.logger.info("Processing tips in batches", total=len(new_tips), batch_size=BATCH_SIZE)
 
-            await self.db.log_tips(new_tips)
+            for i in range(0, len(new_tips), BATCH_SIZE):
+                batch = new_tips[i:i + BATCH_SIZE]
+                await self.db.log_tips(batch)
+                if i + BATCH_SIZE < len(new_tips):
+                    self.logger.debug("Batch persisted", batch_num=i // BATCH_SIZE + 1, size=len(batch))
+
             self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
             self.logger.error("Failed to log hot tips", error=str(e))
@@ -8942,7 +8973,8 @@ async def run_quarter_fetch(
             except Exception: pass
 
         d_str = st.strftime('%y%m%d') if hasattr(st, 'strftime') else "Unknown"
-        key = f"{canonical_venue}|{race.race_number}|{d_str}|{race.discipline}"
+        t_str = st.strftime('%H%M') if hasattr(st, 'strftime') else "0000"
+        key = f"{canonical_venue}|{race.race_number}|{d_str}|{t_str}|{race.discipline}"
 
         if key not in race_map:
             race_map[key] = race
