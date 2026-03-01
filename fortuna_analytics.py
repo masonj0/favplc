@@ -643,9 +643,13 @@ class AuditorEngine:
         if not all([venue, race_number, start_raw]):
             return None
         try:
-            st = datetime.fromisoformat(
-                str(start_raw).replace("Z", "+00:00"),
-            )
+            # Use from_storage_format which handles both STORAGE_FORMAT and ISO fallback (Fix 01)
+            try:
+                st = from_storage_format(str(start_raw))
+            except Exception:
+                st = datetime.fromisoformat(
+                    str(start_raw).replace("Z", "+00:00"),
+                )
             return (
                 f"{fortuna.get_canonical_venue(venue)}"
                 f"|{race_number}"

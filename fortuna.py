@@ -7108,7 +7108,8 @@ class FortunaDB:
                         normalized_st = raw_st
                     except ValueError:
                         try:
-                            dt = datetime.fromisoformat(raw_st.replace("Z", "+00:00"))
+                            # Use from_storage_format fallback (Fix 01)
+                            dt = from_storage_format(str(raw_st))
                             normalized_st = to_storage_format(ensure_eastern(dt))
                         except (ValueError, TypeError):
                             normalized_st = raw_st

@@ -653,10 +653,11 @@ async def _build_data_quality(out: SummaryWriter, db: FortunaDB):
         results = []
         for col in cols:
             # Check column exists before querying
-            col_exists = conn.execute(
-                f"SELECT 1 FROM pragma_table_info('tips') WHERE name=?", (col,)
-            ).fetchone()
-            if not col_exists:
+            # GPT5 Fix: Use pragma_table_info correctly
+            cursor = conn.execute(f"PRAGMA table_info('tips')")
+            cols_in_db = [row['name'] for row in cursor.fetchall()]
+
+            if col not in cols_in_db:
                 results.append((col, 0, total, "[missing]"))
                 continue
 
