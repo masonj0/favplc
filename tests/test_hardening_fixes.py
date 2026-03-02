@@ -15,15 +15,17 @@ async def test_initialize_dedup_runs_once(tmp_path):
     # Pre-create the schema correctly but without the index to test the IntegrityError path
     await db.initialize()
 
-    # Drop index and insert duplicates
+    # Drop index and insert duplicates, and downgrade schema version to test migration
     with sqlite3.connect(str(db_file)) as conn:
         conn.execute("DROP INDEX idx_race_id")
         conn.execute("INSERT INTO tips (race_id, venue, race_number, start_time, report_date, is_goldmine) VALUES ('r1', 'V', 1, 'T', 'D', 0)")
         # This one will be a duplicate
         conn.execute("INSERT INTO tips (race_id, venue, race_number, start_time, report_date, is_goldmine) VALUES ('r1', 'V', 1, 'T', 'D', 0)")
+        conn.execute("DELETE FROM schema_version WHERE version = 8")
 
-    # Re-initialize should trigger one-time cleanup
-    await db.initialize()
+    # Re-initialize fresh instance should trigger one-time cleanup
+    db2 = FortunaDB(str(db_file))
+    await db2.initialize()
 
     with sqlite3.connect(str(db_file)) as conn:
         count = conn.execute("SELECT COUNT(*) FROM tips WHERE race_id='r1'").fetchone()[0]

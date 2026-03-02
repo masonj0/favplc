@@ -925,7 +925,7 @@ async def refresh_odds_for_races(
                             matched = existing_runner
                             break
                     if matched:
-                        matched.odds.clear()
+                        # DO NOT CLEAR: merge to preserve multi-source depth (GPT5 Fix)
                         matched.odds.update(new_runner.odds)
                         if new_runner.win_odds is not None:
                             matched.win_odds = new_runner.win_odds
@@ -1460,48 +1460,6 @@ class CircuitBreaker:
                 self.state = "half-open"
                 return True
         return self.state == "half-open"
-
-
-@dataclass
-class RateLimiter:
-    requests_per_second: float = 10.0
-    _tokens: float = field(default=10.0, init=False)
-    _last_update: float = field(default_factory=time.time, init=False)
-    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
-    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
-
-    def __post_init__(self):
-        self._tokens = self.requests_per_second
-
-    def _get_lock(self) -> asyncio.Lock:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.Lock()
-
-        if loop not in self._locks:
-            with self._lock_sentinel:
-                if loop not in self._locks:
-                    self._locks[loop] = asyncio.Lock()
-        return self._locks[loop]
-
-    async def acquire(self) -> None:
-        lock = self._get_lock()
-
-        for _ in range(1000): # Iteration limit to prevent potential hangs
-            wait_time = 0
-            async with lock:
-                now = time.time()
-                elapsed = now - self._last_update
-                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
-                self._last_update = now
-                if self._tokens >= 1:
-                    self._tokens -= 1
-                    return
-                wait_time = (1 - self._tokens) / self.requests_per_second
-
-            if wait_time >= 0:
-                await asyncio.sleep(max(wait_time, 0.001))
 
 
 class AdapterMetrics:
@@ -5257,7 +5215,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             elif total_active <= 10:      composite += 4.0   # 9-10
             elif total_active <= 12:      pass               # 11-12
             elif total_active > 12:       composite -= 5.0   # 13+
-            else:                         composite -= 10.0  # < 5
 
             # Favourite odds quality (Place-value sweet spot)
             if 2.00 <= fav_odds <= 4.00:  composite += 5.0   # ideal Place range
@@ -6556,6 +6513,16 @@ class FortunaDB:
         """Creates the database schema if it doesn't exist."""
         if self._initialized: return
 
+        # Pre-fetch current version to avoid NameError in _init (GPT5 Fix)
+        def _get_version():
+            try:
+                cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
+                row = cursor.fetchone()
+                return row[0] if row and row[0] is not None else 0
+            except Exception:
+                return 0
+        current_version = await self._run_in_executor(_get_version)
+
         def _init():
             conn = self._get_conn()
             with conn:
@@ -6641,23 +6608,24 @@ class FortunaDB:
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
 
                 # FIX-01: Dedup migration: run ONCE via schema versioning, not on every init
-                try:
-                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
-                except sqlite3.IntegrityError:
-                    # Index creation failed due to existing duplicates — migrate once
-                    self.logger.info("Duplicate race_ids detected, running one-time cleanup")
-                    conn.execute("""
-                        DELETE FROM tips
-                        WHERE id NOT IN (
-                            SELECT MAX(id)
-                            FROM tips
-                            GROUP BY race_id
-                        )
-                    """)
-                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
-                    self.logger.info("One-time dedup complete, unique index created")
-                except Exception as e:
-                    self.logger.error("Failed to create unique index", error=str(e))
+                if current_version < 8:
+                    try:
+                        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                    except sqlite3.IntegrityError:
+                        # Index creation failed due to existing duplicates — migrate once
+                        self.logger.info("Duplicate race_ids detected, running one-time cleanup")
+                        conn.execute("""
+                            DELETE FROM tips
+                            WHERE id NOT IN (
+                                SELECT MAX(id)
+                                FROM tips
+                                GROUP BY race_id
+                            )
+                        """)
+                        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                        self.logger.info("One-time dedup complete, unique index created")
+                    except Exception as e:
+                        self.logger.error("Failed to create unique index", error=str(e))
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
                 columns = [column[1] for column in cursor.fetchall()]
@@ -6745,12 +6713,6 @@ class FortunaDB:
         await self._run_in_executor(_init)
 
         # Track and execute migrations based on schema version
-        def _get_version():
-            cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
-            row = cursor.fetchone()
-            return row[0] if row and row[0] is not None else 0
-
-        current_version = await self._run_in_executor(_get_version)
 
         if current_version < 2:
             await self.migrate_utc_to_eastern()
@@ -6864,8 +6826,20 @@ class FortunaDB:
             await self._run_in_executor(_migrate_v7)
             self.logger.info("Schema migrated to version 7 — race_ids re-keyed")
 
+        if current_version < 8:
+            def _migrate_v8():
+                # v8 handles the unique index migration if not already handled in _init
+                with self._get_conn() as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_version "
+                        "(version, applied_at) VALUES (8, ?)",
+                        (to_storage_format(datetime.now(EASTERN)),)
+                    )
+            await self._run_in_executor(_migrate_v8)
+            self.logger.info("Schema migrated to version 8 — unique index confirmed")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 7))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 8))
 
     async def is_quarter_fetched(self, quarter_id: str) -> bool:
         def _check():
