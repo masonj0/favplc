@@ -37,7 +37,7 @@ def test_scoring_signal_population():
     # Check that signals currently implemented are present
     assert "qualification_grade" in meta
     assert "composite_score" in meta
-    assert "1Gap2" in meta
+    assert "gap_abs" in meta
 
     assert meta["qualification_grade"] in ['A+', 'A', 'B+', 'B', 'C', 'D']
     assert meta["composite_score"] >= 0.0

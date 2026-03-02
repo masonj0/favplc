@@ -21,7 +21,7 @@ async def test_initialize_dedup_runs_once(tmp_path):
         conn.execute("INSERT INTO tips (race_id, venue, race_number, start_time, report_date, is_goldmine) VALUES ('r1', 'V', 1, 'T', 'D', 0)")
         # This one will be a duplicate
         conn.execute("INSERT INTO tips (race_id, venue, race_number, start_time, report_date, is_goldmine) VALUES ('r1', 'V', 1, 'T', 'D', 0)")
-        conn.execute("DELETE FROM schema_version WHERE version = 8")
+        conn.execute("DELETE FROM schema_version WHERE version >= 8")
 
     # Re-initialize fresh instance should trigger one-time cleanup
     db2 = FortunaDB(str(db_file))
@@ -49,7 +49,7 @@ async def test_clone_detection_format_independent(tmp_path):
         "start_time": to_storage_format(now),
         "report_date": to_storage_format(now),
         "is_goldmine": False,
-        "1Gap2": 1.0,
+        "gap_abs": 1.0,
         "predicted_fav_odds": 2.0,
         "predicted_2nd_fav_odds": 3.0,
         "is_best_bet": True

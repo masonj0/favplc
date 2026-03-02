@@ -355,30 +355,18 @@ jobs:
 
           # Merge secondary DB tips that primary may not have
           if [ -n "$SECONDARY_DB" ] && [ -f "$SECONDARY_DB" ]; then
-            python3 -c "
-          import sqlite3, sys
-          try:
-              src = sqlite3.connect('$SECONDARY_DB')
-              dst = sqlite3.connect('fortuna.db')
-              src.row_factory = sqlite3.Row
-              rows = src.execute('SELECT * FROM tips').fetchall()
-              if not rows: sys.exit(0)
-              cols = [d[0] for d in src.execute('SELECT * FROM tips LIMIT 1').description]
-              placeholders = ','.join(['?'] * len(cols))
-              col_names = ','.join(cols)
-              merged = 0
-              for row in rows:
-                  try:
-                      dst.execute(f'INSERT OR IGNORE INTO tips ({col_names}) VALUES ({placeholders})', tuple(row))
-                      merged += 1
-                  except Exception:
-                      pass
-              dst.commit()
-              print(f'Merged {merged} rows from secondary DB')
-              src.close()
-              dst.close()
-          except Exception as e:
-              print(f'DB merge warning: {e}', file=sys.stderr)
+            PYTHONPATH=. python3 -c "
+          import asyncio, sys
+          from fortuna import FortunaDB
+          async def run_merge():
+              try:
+                  db = FortunaDB('fortuna.db')
+                  await db.initialize()
+                  merged = await db.merge_databases('$SECONDARY_DB')
+                  print(f'Merged {merged} rows from secondary DB')
+              except Exception as e:
+                  print(f'DB merge warning: {e}', file=sys.stderr)
+          asyncio.run(run_merge())
           " || echo '::warning::Secondary DB merge failed, continuing with primary only'
           fi
 

@@ -379,7 +379,7 @@ async def _build_action_plan(out: GHASummaryWriter, stats: TipStats, db: Fortuna
         elif stats.decided >= 10 and stats.margin < -5:
             if status == "HEALTHY": status, emoji = "WARNING", "🟡"
             findings.append(f"🟡 Margin: {stats.margin:.0f}pp below breakeven.")
-            actions.append("Review qualification thresholds and gap12 minimum.")
+            actions.append("Review qualification thresholds and gap_abs minimum.")
     except Exception:
         pass
 
@@ -454,7 +454,7 @@ async def _build_plays(out: GHASummaryWriter, db: FortunaDB):
             sn = r.get('selection_number') or "?"
             sname = _trunc(r.get('selection_name') or "Unknown", 17)
             odds = float(r.get('predicted_fav_odds') or 0)
-            gap = float(r.get('gap12') or 0)
+            gap = float(r.get('gap_abs') or 0)
 
             flags = []
             if r.get('is_goldmine'): flags.append("GOLD")
@@ -634,39 +634,8 @@ async def _build_data_quality(out: GHASummaryWriter, db: FortunaDB):
     out.write(f"  COLUMN               POPULATED          SAMPLE")
     out.write(f"  ───────────────────  ────────────────  ──────────")
 
-    # FortunaDB uses synchronous sqlite3 + ThreadPoolExecutor, not aiosqlite.
-    # Must use _run_in_executor with synchronous DB calls.
-    def _query_quality():
-        conn = db._get_conn()
-        total_row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
-        total = total_row[0] if total_row else 0
-
-        results = []
-        for col in cols:
-            # Check column exists before querying
-            # GPT5 Fix: Use pragma_table_info correctly
-            cursor = conn.execute(f"PRAGMA table_info('tips')")
-            cols_in_db = [row['name'] for row in cursor.fetchall()]
-
-            if col not in cols_in_db:
-                results.append((col, 0, total, "[missing]"))
-                continue
-
-            count_row = conn.execute(
-                f"SELECT COUNT(*) FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != ''"
-            ).fetchone()
-            n = count_row[0] if count_row else 0
-
-            sample_row = conn.execute(
-                f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            s_val = str(sample_row[0])[:10] if sample_row and sample_row[0] is not None else "—"
-            results.append((col, n, total, s_val))
-
-        return results
-
     try:
-        quality_data = await db._run_in_executor(_query_quality)
+        quality_data = await db.get_column_population(cols)
         for col, n, total, s_val in quality_data:
             pct = (n / total * 100) if total > 0 else 0
             out.write(f"  {col:<19}  {n:>3}/{total:>3} ({pct:>3.0f}%)  {s_val}")

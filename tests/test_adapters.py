@@ -167,12 +167,12 @@ async def test_racing_and_sports_json_v2():
         assert race.runners[0].win_odds == 5.0
 
 @pytest.mark.asyncio
-async def test_simply_success_analyzer_1Gap2():
+async def test_simply_success_analyzer_gap_abs():
     from fortuna import SimplySuccessAnalyzer
 
     analyzer = SimplySuccessAnalyzer()
 
-    # 2.0 and 5.0 -> 1Gap2 should be 3.0
+    # 2.0 and 5.0 -> gap_abs should be 3.0
     # Must use odds dict because _get_best_win_odds uses it
     fav_odds = {"source1": OddsData(win=2.0, source="source1")}
     sec_odds = {"source1": OddsData(win=5.0, source="source1")}
@@ -196,7 +196,7 @@ async def test_simply_success_analyzer_1Gap2():
     qualified = result["races"]
     assert len(qualified) == 1
     # Absolute gap: (5.0 - 2.0) = 3.0
-    assert qualified[0].metadata["1Gap2"] == 3.0
+    assert qualified[0].metadata["gap_abs"] == 3.0
     assert qualified[0].metadata["is_goldmine"] is True
 
 @pytest.mark.asyncio
@@ -214,7 +214,7 @@ async def test_hot_tips_tracker(tmp_path):
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[],
-        metadata={"is_goldmine": True, "1Gap2": 1.5, "predicted_2nd_fav_odds": 4.5, "is_best_bet": True},
+        metadata={"is_goldmine": True, "gap_abs": 1.5, "predicted_2nd_fav_odds": 4.5, "is_best_bet": True},
         top_five_numbers="1, 2, 3"
     )
 
@@ -228,7 +228,7 @@ async def test_hot_tips_tracker(tmp_path):
             assert row is not None
             assert row["venue"] == "Track A"
             assert row["is_goldmine"] == 1
-            assert float(row["gap12"]) == 1.5
+            assert float(row["gap_abs"]) == 1.5
 
 @pytest.mark.asyncio
 async def test_runner_number_sanitization():

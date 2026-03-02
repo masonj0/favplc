@@ -67,6 +67,8 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    TypedDict,
+    Literal,
 )
 
 import httpx
@@ -706,6 +708,36 @@ async def fetch_json(url: str, *, client: httpx.AsyncClient, adapter_name: str, 
     return response.json()
 
 
+class ScoringMetadata(TypedDict, total=False):
+    """Strongly typed scoring metadata (IMP-CR-02)."""
+    composite_score: float
+    qualification_grade: str  # A+, A, B+, D, B+ (Override)
+    is_goldmine: bool
+    is_best_bet: bool
+    is_superfecta_key: bool
+    tip_tier: Literal['best_bet', 'you_might_like']
+    selection_number: Optional[int]
+    selection_name: str
+    predicted_fav_odds: float
+    predicted_2nd_fav_odds: float
+    gap_abs: float  # rename from 'gap12'
+    place_prob: float
+    predicted_ev: float
+    market_depth: float
+    condition_modifier: float
+    superfecta_key_number: Optional[int]
+    superfecta_key_name: Optional[str]
+    superfecta_box_numbers: Optional[List[str]]
+
+def build_track_categories(races: List[Any]) -> Dict[str, str]:
+    """Shared utility to build track categories from a list of races (IMP-CR-03)."""
+    races_by_track = defaultdict(list)
+    for r in races:
+        v = get_field(r, 'venue')
+        track = normalize_venue_name(v)
+        races_by_track[track].append(r)
+    return {track: get_track_category(tr) for track, tr in races_by_track.items()}
+
 def get_field(obj: Any, field_name: str, default: Any = None) -> Any:
     """Helper to get a field from either an object or a dictionary."""
     if isinstance(obj, dict):
@@ -791,6 +823,22 @@ def get_scorable_races(
     return scorable
 
 
+class FortunaJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder to handle Fortuna-specific types (BUG-CR-07)."""
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, datetime):
+            return to_storage_format(obj)
+        if isinstance(obj, set):
+            return sorted(list(obj))
+        # Handle Pydantic models if they somehow slip into the leaf nodes
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        if hasattr(obj, "dict"):
+            return obj.dict()
+        return super().default(obj)
+
 def save_quarter_snapshot(
     daypart_tag: str,
     races: List[Race],
@@ -819,7 +867,7 @@ def save_quarter_snapshot(
         race_dicts.append(rd)
 
     with open(tmp_path, "w") as f:
-        json.dump(race_dicts, f, default=str)
+        json.dump(race_dicts, f, cls=FortunaJSONEncoder)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, filepath)
@@ -1165,8 +1213,7 @@ class SmartFetcher:
             BrowserEngine.HTTPX: 0.5
         }
         self.last_engine: str = "unknown"
-        self._sessions: Dict[BrowserEngine, Any] = {}
-        self._curl_sessions: Dict[str, Any] = {}
+        self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
         self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
@@ -1187,14 +1234,14 @@ class SmartFetcher:
                     await self._sessions[engine].__aenter__()
             return self._sessions[engine]
 
-    async def _get_curl_session(self, impersonate: str = "chrome133") -> Any:
-        """Returns a persistent curl_cffi session for the given impersonation (Fix 07)."""
+    async def _get_curl_session(self) -> Any:
+        """Returns a persistent curl_cffi session (Fix 07 / BUG-CR-06)."""
         async with self._session_lock:
-            if impersonate not in self._curl_sessions:
+            if "_curl" not in self._sessions:
                 if not curl_requests:
                     raise ImportError("curl_cffi is not available")
-                self._curl_sessions[impersonate] = curl_requests.AsyncSession()
-            return self._curl_sessions[impersonate]
+                self._sessions["_curl"] = curl_requests.AsyncSession()
+            return self._sessions["_curl"]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
@@ -1229,7 +1276,16 @@ class SmartFetcher:
             try:
                 response = await self._fetch_with_engine(engine, url, method=method, **kwargs)
 
-                # Check for bot detection in response body (GPT5 Fix)
+                # Check for bot detection in response body and status code (GPT5 Fix / BUG-CR-05)
+                if response and hasattr(response, "status_code"):
+                    sc = response.status_code
+                    if sc == 429:
+                        self.logger.warning("rate_limited", engine=engine.value, url=url)
+                        raise FetchError("Rate limited (429)", response=response, category=ErrorCategory.RATE_LIMIT)
+                    if sc in (403, 503):
+                        self.logger.warning("http_block_status", engine=engine.value, status=sc, url=url)
+                        raise FetchError(f"HTTP {sc}", response=response, category=ErrorCategory.BOT_DETECTION)
+
                 if response and hasattr(response, "text") and response.text:
                     body_lower = response.text.lower()
                     for kw in self.BOT_DETECTION_KEYWORDS:
@@ -1318,10 +1374,9 @@ class SmartFetcher:
             }
             
             last_err = None
+            session = await self._get_curl_session()
             for imp_version in impersonate_chain:
                 try:
-                    # FIX-07: Use persistent session like CAMOUFOX/PLAYWRIGHT
-                    session = await self._get_curl_session(imp_version)
                     resp = await session.request(
                         method,
                         url,
@@ -1421,14 +1476,18 @@ class SmartFetcher:
     async def close(self) -> None:
         """
         Shared resources are managed by GlobalResourceManager.
-        Persistent scrapling and curl_cffi sessions are cleaned up here (Fix 12/07).
+        Persistent scrapling and curl_cffi sessions are cleaned up here (Fix 12/07 / BUG-CR-01).
         """
         async with self._session_lock:
-            for engine, session in self._sessions.items():
+            for key, session in self._sessions.items():
                 try:
-                    await session.__aexit__(None, None, None)
+                    if key == "_curl":
+                        await session.close()
+                    else:
+                        await session.__aexit__(None, None, None)
                 except Exception as e:
-                    self.logger.warning(f"failed_closing_persistent_session", engine=engine.value, error=str(e))
+                    name = key.value if hasattr(key, "value") else str(key)
+                    self.logger.warning(f"failed_closing_persistent_session", engine=name, error=str(e))
             self._sessions.clear()
 
             for imp, session in self._curl_sessions.items():
@@ -5002,7 +5061,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
         final_score = (field_score * FIELD_SIZE_SCORE_WEIGHT) + (odds_score * ODDS_SCORE_WEIGHT)
         # To be safe:
         score = round(final_score * 100, 2)
-        race.qualification_score = score
+        # BUG-CR-09: Removed redundant assignment to race.qualification_score
         return score
 
 
@@ -5072,7 +5131,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
     Core qualification engine for Fortuna.
     Implements the 'Simply Success' playbook strategy:
     - Target favourite (optimal risk/reward for Place betting)
-    - Require significant odds gap (gap12)
+    - Require significant odds gap (gap_abs)
     - Detect 'Goldmines' where favourite has dominant value
     """
 
@@ -5145,6 +5204,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     valid_r_with_odds.append((r, odds))
 
             if len(valid_r_with_odds) < 2:
+                # USER-REQ-01: Blanket override for 4-5 runner races without odds to "You Might Like"
+                if 4 <= total_active <= 5:
+                    self.logger.info("Applying override for small field without odds", venue=race.venue, size=total_active)
+                    race.metadata['qualification_grade'] = 'B+ (Override)'
+                    race.metadata['composite_score'] = 45.0
+                    race.metadata['tip_tier'] = 'you_might_like'
+                    race.metadata['is_best_bet'] = False
+                    race.metadata['is_goldmine'] = False
+                    race.metadata['gap_abs'] = 0.0
+                    qualified.append(race)
                 continue
 
             seen_nums = set()
@@ -5178,9 +5247,9 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             if len(valid_r_with_odds) >= 3 and len(set(o for r, o in valid_r_with_odds[:3])) == 1:
                 continue
 
-            # Duplicate Content Detection
+            # Duplicate Content Detection (BUG-CR-03: Use canonical venue)
             active_content = [(r.name, str(r.win_odds)) for r in race.runners if not r.scratched]
-            content_fp = (race.venue, frozenset(active_content))
+            content_fp = (canonical_venue, frozenset(active_content))
             if content_fp in fingerprints:
                 continue
             fingerprints[content_fp] = 1
@@ -5210,11 +5279,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # Gap contribution (capped at 8 points of gap)
             composite += min(gap_abs, 8.0) * 2.5
 
-            # Field size tiers (ISSUE-13 FIX: Order matters to avoid shadowing)
-            if 5 <= total_active <= 8:    composite += 8.0   # sweet spot
+            # Field size tiers (BUG-CR-02: Fixed shadowing and unreachable code)
+            if total_active < 5:          composite -= 10.0  # sub-minimum
+            elif total_active <= 8:       composite += 8.0   # 5-8 sweet spot
             elif total_active <= 10:      composite += 4.0   # 9-10
-            elif total_active <= 12:      pass               # 11-12
-            elif total_active > 12:       composite -= 5.0   # 13+
+            elif total_active <= 12:      pass               # 11-12 neutral
+            else:                         composite -= 5.0   # 13+
 
             # Favourite odds quality (Place-value sweet spot)
             if 2.00 <= fav_odds <= 4.00:  composite += 5.0   # ideal Place range
@@ -5259,12 +5329,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['superfecta_key_name'] = fav.name
                 race.metadata['superfecta_box_numbers'] = [str(r[0].number) for r in valid_r_with_odds[1:4]]
 
-            # Final metadata storage
+            # Final metadata storage (IMP-CR-02: Use gap_abs)
             race.metadata['composite_score'] = round(composite, 2)
             race.metadata['is_goldmine'] = is_goldmine
             race.metadata['is_best_bet'] = is_best_bet
             race.metadata['tip_tier'] = tip_tier
-            race.metadata['1Gap2'] = round(gap_abs, 4) # Column NAME stays '1Gap2' but VALUE is absolute gap
+            race.metadata['gap_abs'] = round(gap_abs, 4)
             race.metadata['is_superfecta_key'] = is_superfecta_key
             race.metadata['predicted_2nd_fav_odds'] = sec_fav_odds
 
@@ -5536,16 +5606,9 @@ def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) 
     """Generate the GOLDMINE RACES appendix, filtered to Superfecta races."""
     lines = ["", "", "GOLDMINE RACES", "--------------"]
 
-    # Pre-calculate track categories
-    track_categories = {}
+    # Pre-calculate track categories (IMP-CR-03)
     source_races_for_cat = all_races if all_races is not None else races
-    races_by_track = defaultdict(list)
-    for r in source_races_for_cat:
-        v = get_field(r, 'venue')
-        track = normalize_venue_name(v)
-        races_by_track[track].append(r)
-    for track, tr_races in races_by_track.items():
-        track_categories[track] = get_track_category(tr_races)
+    track_categories = build_track_categories(source_races_for_cat)
 
     def is_superfecta_effective(r):
         if get_field(r, 'metadata', {}).get('is_superfecta_key'):
@@ -5605,16 +5668,9 @@ def generate_goldmines(races: List[Any], all_races: Optional[List[Any]] = None) 
 
 def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = None) -> str:
     """Generate a detailed report for Goldmine races."""
-    # 1. Reuse category logic
-    track_categories = {}
+    # 1. Reuse category logic (IMP-CR-03)
     source_races_for_cat = all_races if all_races is not None else races
-    races_by_track = defaultdict(list)
-    for r in source_races_for_cat:
-        v = get_field(r, 'venue')
-        track = normalize_venue_name(v)
-        races_by_track[track].append(r)
-    for track, tr_races in races_by_track.items():
-        track_categories[track] = get_track_category(tr_races)
+    track_categories = build_track_categories(source_races_for_cat)
 
     def is_superfecta_available(r):
         available_bets = get_field(r, 'available_bets', [])
@@ -5718,9 +5774,9 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             if hasattr(r, 'top_five_numbers'):
                 r.top_five_numbers = top_5_nums
 
-            gap12 = get_field(r, 'metadata', {}).get('1Gap2', 0.0)
+            gap_abs = get_field(r, 'metadata', {}).get('gap_abs', 0.0)
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
-            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | 1Gap2: {gap12:.2f}")
+            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | gap_abs: {gap_abs:.2f}")
             # Superfecta Keybox annotation
             if get_field(r, 'metadata', {}).get('is_superfecta_key'):
                 key_num  = get_field(r, 'metadata', {}).get('superfecta_key_number', '?')
@@ -5922,7 +5978,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         key_name = r.metadata.get('superfecta_key_name', 'Unknown')
         box_nums = r.metadata.get('superfecta_box_numbers', [])
         box_str  = " / ".join(f"#{n}" for n in box_nums) if box_nums else "?"
-        gap12    = r.metadata.get('1Gap2', 0.0)
+        gap_abs    = r.metadata.get('gap_abs', 0.0)
         keybox_rows.append(f"""
             <tr>
                 <td>{st_str}</td>
@@ -5930,7 +5986,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{key_num} {key_name}</td>
                 <td>{box_str}</td>
-                <td>{gap12:.2f}</td>
+                <td>{gap_abs:.2f}</td>
             </tr>
         """)
 
@@ -5940,13 +5996,13 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             <h2>🗝️ Superfecta Keybox Plays</h2>
             <p style="color:#94a3b8;font-size:13px;">
                 Key the favourite in 1st. Box the next 3 runners in 2nd–3rd–4th.
-                Triggered when 1Gap2 &gt; 0.75.
+                Triggered when gap_abs &gt; 0.75.
             </p>
             <table>
                 <thead>
                     <tr>
                         <th>Time</th><th>Venue</th><th>Race</th>
-                        <th>Key (1st)</th><th>Box (2-3-4)</th><th>1Gap2</th>
+                        <th>Key (1st)</th><th>Box (2-3-4)</th><th>gap_abs</th>
                     </tr>
                 </thead>
                 <tbody>{''.join(keybox_rows)}</tbody>
@@ -6092,17 +6148,9 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     now = datetime.now(EASTERN)
     cutoff = now + timedelta(hours=18)
 
-    # 1. Pre-calculate track categories
-    track_categories = {}
+    # 1. Pre-calculate track categories (IMP-CR-03)
     source_races = all_races if all_races is not None else races
-    races_by_track = defaultdict(list)
-    for r in source_races:
-        venue = get_field(r, 'venue')
-        track = normalize_venue_name(venue)
-        races_by_track[track].append(r)
-
-    for track, tr_races in races_by_track.items():
-        track_categories[track] = get_track_category(tr_races)
+    track_categories = build_track_categories(source_races)
 
     table_races = []
     seen = set()
@@ -6129,7 +6177,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
         runners = get_field(race, 'runners', [])
         field_size = len([run for run in runners if not get_field(run, 'scratched', False)])
         top5 = getattr(race, 'top_five_numbers', 'N/A')
-        gap12 = get_field(race, 'metadata', {}).get('1Gap2', 0.0)
+        gap_abs = get_field(race, 'metadata', {}).get('gap_abs', 0.0)
         is_gold = get_field(race, 'metadata', {}).get('is_goldmine', False)
 
         table_races.append({
@@ -6139,7 +6187,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
             'num': num,
             'field': field_size,
             'top5': top5,
-            'gap': gap12,
+            'gap': gap_abs,
             'gold': '[G]' if is_gold else '',
             'key': '[K]' if get_field(race, 'metadata', {}).get('is_superfecta_key') else ''
         })
@@ -6258,7 +6306,7 @@ def format_predictions_section(qualified_races: List[Race]) -> str:
         odds = metadata.get('predicted_2nd_fav_odds')
         odds_str = f"{odds:>6.2f}" if odds else '   N/A'
 
-        gap = metadata.get('1Gap2', 0.0)
+        gap = metadata.get('gap_abs', 0.0)
         gap_str = f"{gap:>5.2f}"
 
         gold = 'GOLD' if metadata.get('is_goldmine') else ' —  '
@@ -6509,6 +6557,28 @@ class FortunaDB:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, func, *args)
 
+    async def get_column_population(self, columns: List[str]) -> List[Tuple[str, int, int, Optional[str]]]:
+        """Public API to query column usage stats (IMP-CR-05)."""
+        def _query():
+            conn = self._get_conn()
+            total_row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
+            total = total_row[0] if total_row else 0
+            db_cols = {row[1] for row in conn.execute("PRAGMA table_info('tips')").fetchall()}
+            results = []
+            for col in columns:
+                if col not in db_cols:
+                    results.append((col, 0, total, None))
+                    continue
+                # Population count
+                n_row = conn.execute(f"SELECT COUNT(*) FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != ''").fetchone()
+                n = n_row[0] if n_row else 0
+                # Recent sample
+                sample_row = conn.execute(f"SELECT {col} FROM tips WHERE {col} IS NOT NULL AND CAST({col} AS TEXT) != '' ORDER BY id DESC LIMIT 1").fetchone()
+                sample = str(sample_row[0])[:10] if sample_row and sample_row[0] is not None else None
+                results.append((col, n, total, sample))
+            return results
+        return await self._run_in_executor(_query)
+
     async def initialize(self):
         """Creates the database schema if it doesn't exist."""
         if self._initialized: return
@@ -6524,6 +6594,11 @@ class FortunaDB:
         current_version = await self._run_in_executor(_get_version)
 
         def _init():
+            # Force close and reopen to ensure fresh state for migrations (GPT5 Fix)
+            with self._conn_lock:
+                if self._conn:
+                    self._conn.close()
+                    self._conn = None
             conn = self._get_conn()
             with conn:
                 conn.execute("""
@@ -6553,7 +6628,7 @@ class FortunaDB:
                         report_date TEXT NOT NULL,
                         is_goldmine INTEGER NOT NULL,
                         source TEXT,
-                        gap12 TEXT,
+                        gap_abs TEXT,
                         top_five TEXT,
                         selection_number INTEGER,
                         selection_name TEXT,
@@ -6626,89 +6701,35 @@ class FortunaDB:
                         self.logger.info("One-time dedup complete, unique index created")
                     except Exception as e:
                         self.logger.error("Failed to create unique index", error=str(e))
-                # Add missing columns for existing databases
-                cursor = conn.execute("PRAGMA table_info(tips)")
-                columns = [column[1] for column in cursor.fetchall()]
-                if "source" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN source TEXT")
-                if "gap12" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN gap12 TEXT")
-                if "daypart" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN daypart TEXT")
-                if "top_five" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN top_five TEXT")
-                if "selection_number" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN selection_number INTEGER")
-                if "verdict" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN verdict TEXT")
-                if "net_profit" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN net_profit REAL")
-                if "selection_position" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN selection_position INTEGER")
-                if "actual_top_5" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN actual_top_5 TEXT")
-                if "trifecta_payout" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_payout REAL")
-                if "trifecta_combination" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN trifecta_combination TEXT")
-                if "audit_timestamp" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN audit_timestamp TEXT")
-                if "superfecta_payout" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_payout REAL")
-                if "superfecta_combination" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_combination TEXT")
-                if "top1_place_payout" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN top1_place_payout REAL")
-                if "top2_place_payout" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN top2_place_payout REAL")
-                if "discipline" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN discipline TEXT")
-                if "predicted_2nd_fav_odds" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN predicted_2nd_fav_odds REAL")
-                if "actual_2nd_fav_odds" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN actual_2nd_fav_odds REAL")
-                if "selection_name" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN selection_name TEXT")
-                if "field_size" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN field_size INTEGER")
-                if "market_depth" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN market_depth REAL")
-                if "place_prob" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN place_prob REAL")
-                if "predicted_ev" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN predicted_ev REAL")
-                if "race_type" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN race_type TEXT")
-                if "condition_modifier" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN condition_modifier REAL")
-                if "qualification_grade" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN qualification_grade TEXT")
-                if "composite_score" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN composite_score REAL")
-                if "match_confidence" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN match_confidence TEXT")
-                if "is_handicap" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN is_handicap INTEGER")
-                if "is_best_bet" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN is_best_bet INTEGER")
-                if "is_superfecta_key" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN is_superfecta_key INTEGER DEFAULT 0")
-                if "superfecta_key_number" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_number INTEGER")
-                if "superfecta_key_name" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN superfecta_key_name TEXT")
-                if "predicted_fav_odds" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN predicted_fav_odds REAL")
-                if "tip_tier" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN tip_tier TEXT")
-                if "actual_fav_odds" not in columns:
-                    conn.execute("ALTER TABLE tips ADD COLUMN actual_fav_odds REAL")
+                # Declarative column migration (IMP-CR-01)
+                EXPECTED_COLUMNS = {
+                    "source": "TEXT", "gap_abs": "REAL", "daypart": "TEXT", "top_five": "TEXT",
+                    "selection_number": "INTEGER", "selection_name": "TEXT",
+                    "audit_completed": "INTEGER DEFAULT 0", "verdict": "TEXT", "net_profit": "REAL",
+                    "selection_position": "INTEGER", "actual_top_5": "TEXT", "actual_2nd_fav_odds": "REAL",
+                    "trifecta_payout": "REAL", "trifecta_combination": "TEXT",
+                    "superfecta_payout": "REAL", "superfecta_combination": "TEXT",
+                    "top1_place_payout": "REAL", "top2_place_payout": "REAL",
+                    "predicted_2nd_fav_odds": "REAL", "audit_timestamp": "TEXT",
+                    "field_size": "INTEGER", "market_depth": "REAL", "place_prob": "REAL",
+                    "predicted_ev": "REAL", "race_type": "TEXT", "condition_modifier": "REAL",
+                    "qualification_grade": "TEXT", "composite_score": "REAL", "match_confidence": "TEXT",
+                    "is_handicap": "INTEGER", "is_best_bet": "INTEGER",
+                    "is_superfecta_key": "INTEGER DEFAULT 0", "superfecta_key_number": "INTEGER",
+                    "superfecta_key_name": "TEXT", "predicted_fav_odds": "REAL",
+                    "tip_tier": "TEXT", "actual_fav_odds": "REAL", "discipline": "TEXT"
+                }
+                existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(tips)").fetchall()}
+                for col, dtype in EXPECTED_COLUMNS.items():
+                    if col not in existing_cols:
+                        conn.execute(f"ALTER TABLE tips ADD COLUMN {col} {dtype}")
 
-                # Composite index for audit performance
+                # Composite index for audit performance (BUG-CR-10: Added idx_daypart)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_start_time ON tips (start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_daypart ON tips (daypart)")
 
         await self._run_in_executor(_init)
 
@@ -6838,8 +6859,24 @@ class FortunaDB:
             await self._run_in_executor(_migrate_v8)
             self.logger.info("Schema migrated to version 8 — unique index confirmed")
 
+        if current_version < 9:
+            def _migrate_v9():
+                # v9: Data migration from gap12 to gap_abs (IMP-CR-02)
+                with self._get_conn() as conn:
+                    # Check if old column exists before migrating
+                    existing = {row[1] for row in conn.execute("PRAGMA table_info(tips)").fetchall()}
+                    if "gap12" in existing:
+                        conn.execute("UPDATE tips SET gap_abs = gap12 WHERE gap_abs IS NULL OR gap_abs = 0.0")
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_version "
+                        "(version, applied_at) VALUES (9, ?)",
+                        (to_storage_format(datetime.now(EASTERN)),)
+                    )
+            await self._run_in_executor(_migrate_v9)
+            self.logger.info("Schema migrated to version 9 — gap_abs data backfilled")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 8))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 9))
 
     async def is_quarter_fetched(self, quarter_id: str) -> bool:
         def _check():
@@ -6879,6 +6916,36 @@ class FortunaDB:
                     (now, tips_count, quarter_id)
                 )
         return await self._run_in_executor(_log)
+
+    async def merge_databases(self, other_path: str) -> int:
+        """Consolidates data from another database file (BUG-CR-11)."""
+        def _merge():
+            if not os.path.exists(other_path): return 0
+
+            target_conn = self._get_conn()
+            source_conn = sqlite3.connect(other_path)
+
+            # Use intersection of columns to be safe against schema drift
+            t_cols = {row[1] for row in target_conn.execute("PRAGMA table_info(tips)").fetchall()}
+            s_cols = {row[1] for row in source_conn.execute("PRAGMA table_info(tips)").fetchall()}
+            shared = sorted(t_cols & s_cols)
+
+            col_str = ", ".join(shared)
+            placeholders = ", ".join(["?"] * len(shared))
+
+            rows = source_conn.execute(f"SELECT {col_str} FROM tips").fetchall()
+            merged = 0
+            with target_conn:
+                for row in rows:
+                    try:
+                        target_conn.execute(f"INSERT OR IGNORE INTO tips ({col_str}) VALUES ({placeholders})", tuple(row))
+                        merged += 1
+                    except Exception: pass
+
+            source_conn.close()
+            return merged
+
+        return await self._run_in_executor(_merge)
 
     async def get_scored_race_ids(self, daypart_tag: str) -> Set[str]:
         def _get():
@@ -7109,7 +7176,7 @@ class FortunaDB:
                     tip.get("discipline"), normalized_st, report_date,
                     1 if tip.get("is_goldmine") else 0,
                     tip.get("source"),
-                    str(tip.get("1Gap2", 0.0)),
+                    str(tip.get("gap_abs", 0.0)),
                     tip.get("top_five"), tip.get("selection_number"), tip.get("selection_name"),
                     float(tip.get("predicted_2nd_fav_odds")) if tip.get("predicted_2nd_fav_odds") is not None else None,
                     tip.get("field_size"),
@@ -7145,7 +7212,7 @@ class FortunaDB:
                         conn.executemany("""
                             INSERT INTO tips (
                                 race_id, venue, race_number, discipline, start_time, report_date,
-                                is_goldmine, source, gap12, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
+                                is_goldmine, source, gap_abs, top_five, selection_number, selection_name, predicted_2nd_fav_odds,
                                 field_size, market_depth, place_prob, predicted_ev, race_type,
                                 condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet,
                                 is_superfecta_key, superfecta_key_number, superfecta_key_name, daypart,
@@ -7157,7 +7224,7 @@ class FortunaDB:
                         conn.executemany("""
                             UPDATE tips SET
                                 venue=?, race_number=?, discipline=?, start_time=?, report_date=?,
-                                is_goldmine=?, source=?, gap12=?, top_five=?, selection_number=?, selection_name=?,
+                                is_goldmine=?, source=?, gap_abs=?, top_five=?, selection_number=?, selection_name=?,
                                 predicted_2nd_fav_odds=?, field_size=?, market_depth=?, place_prob=?,
                                 predicted_ev=?, race_type=?, condition_modifier=?, qualification_grade=?,
                                 composite_score=?, is_handicap=?, is_best_bet=?,
@@ -7456,7 +7523,7 @@ class FortunaDB:
                             conn.execute("""
                                 INSERT OR IGNORE INTO tips (
                                     race_id, venue, race_number, start_time, report_date,
-                                    is_goldmine, gap12, top_five, selection_number,
+                                    is_goldmine, gap_abs, top_five, selection_number,
                                     audit_completed, verdict, net_profit, selection_position,
                                     actual_top_5, actual_2nd_fav_odds, trifecta_payout,
                                     trifecta_combination, superfecta_payout,
@@ -7466,7 +7533,7 @@ class FortunaDB:
                             """, (
                                 entry.get("race_id"), entry.get("venue"), entry.get("race_number"),
                                 entry.get("start_time"), entry.get("report_date"),
-                                1 if entry.get("is_goldmine") else 0, str(entry.get("1Gap2", 0.0)),
+                                1 if entry.get("is_goldmine") else 0, str(entry.get("gap_abs", 0.0)),
                                 entry.get("top_five"), entry.get("selection_number"),
                                 1 if entry.get("audit_completed") else 0, entry.get("verdict"),
                                 entry.get("net_profit"), entry.get("selection_position"),
@@ -7564,15 +7631,16 @@ class HotTipsTracker:
 
             # Timing gate removed (Phase B7). Caller (run_score_now) has already filtered to 0 < MTP <= 15.
 
-            # BUG-12: Secondary soft-key dedup guard
-            soft_key = f"{get_canonical_venue(r.venue)}|{r.race_number}|{st.strftime('%y%m%d')}"
+            # BUG-12: Secondary soft-key dedup guard (BUG-CR-04: Include discipline)
+            disc_char = (r.discipline or 'T')[:1].upper()
+            soft_key = f"{get_canonical_venue(r.venue)}|{r.race_number}|{st.strftime('%y%m%d')}|{disc_char}"
             if soft_key in already_handled_soft_keys:
                 self.logger.debug("Skipping duplicate play (soft key match)", soft_key=soft_key)
                 continue
             already_handled_soft_keys.add(soft_key)
 
             is_goldmine = r.metadata.get('is_goldmine', False)
-            gap12 = r.metadata.get('1Gap2', 0.0)
+            gap_abs = r.metadata.get('gap_abs', 0.0)
 
             tip_data = {
                 "report_date": report_date,
@@ -7582,7 +7650,7 @@ class HotTipsTracker:
                 "start_time": to_storage_format(r.start_time) if isinstance(r.start_time, datetime) else str(r.start_time),
                 "is_goldmine": is_goldmine,
                 "source": r.source or "Unknown",
-                "1Gap2": gap12,
+                "gap_abs": gap_abs,
                 "discipline": r.discipline,
                 "top_five": r.top_five_numbers,
                 "selection_number": r.metadata.get('selection_number'),
@@ -7659,7 +7727,7 @@ class RaceSummary:
     favorite_odds: Optional[float] = None
     favorite_name: Optional[str] = None
     top_five_numbers: Optional[str] = None
-    gap12: float = 0.0
+    gap_abs: float = 0.0
     is_goldmine: bool = False
     is_best_bet: bool = False
     is_superfecta_key: bool = False
@@ -7684,7 +7752,7 @@ class RaceSummary:
             "favorite_odds": self.favorite_odds,
             "favorite_name": self.favorite_name,
             "top_five_numbers": self.top_five_numbers,
-            "gap12": self.gap12,
+            "gap_abs": self.gap_abs,
             "is_goldmine": self.is_goldmine,
             "is_best_bet": self.is_best_bet,
             "is_superfecta_key": self.is_superfecta_key,
@@ -8947,8 +9015,8 @@ async def run_quarter_fetch(
             except Exception: pass
 
         d_str = st.strftime('%y%m%d') if hasattr(st, 'strftime') else "Unknown"
-        t_str = st.strftime('%H%M') if hasattr(st, 'strftime') else "0000"
-        key = f"{canonical_venue}|{race.race_number}|{d_str}|{t_str}|{race.discipline}"
+        # IMP-CR-04: Drop time from dedup key to handle slight start time variations
+        key = f"{canonical_venue}|{race.race_number}|{d_str}|{race.discipline}"
 
         if key not in race_map:
             race_map[key] = race
