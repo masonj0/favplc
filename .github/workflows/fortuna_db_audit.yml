@@ -449,7 +449,32 @@ jobs:
 
               # ── 2H: Drift Impact ──────────────────────────────────────────
               emit("### 2H: Drift Impact on Performance\n```text")
-              if has_col('predicted_2nd_fav_odds') and has_col('actual_2nd_fav_odds'):
+              if has_col('actual_fav_odds') and has_col('predicted_fav_odds'):
+                  emit(f"  {'DRIFT TYPE':<15} {'BETS':>5} {'HIT%':>7} {'ROI'}")
+                  emit(f"  {'─'*15} {'─'*5} {'─'*7} {'─'*6}")
+                  for label, cond in [
+                      ("Tightened",
+                       "COALESCE(actual_fav_odds, actual_2nd_fav_odds) < COALESCE(predicted_fav_odds, predicted_2nd_fav_odds)"),
+                      ("Stable",
+                       "COALESCE(actual_fav_odds, actual_2nd_fav_odds) = COALESCE(predicted_fav_odds, predicted_2nd_fav_odds)"),
+                      ("Softened",
+                       "COALESCE(actual_fav_odds, actual_2nd_fav_odds) > COALESCE(predicted_fav_odds, predicted_2nd_fav_odds)"),
+                  ]:
+                      r = conn.execute(f"""
+                          SELECT COUNT(*) as n,
+                              SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w,
+                              SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l,
+                              SUM(net_profit) as pnl
+                          FROM tips
+                          WHERE audit_completed=1
+                              AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')
+                              AND ({cond})
+                      """).fetchone()
+                      dec = (r['w'] or 0) + (r['l'] or 0)
+                      if dec == 0: continue
+                      emit(f"  {label:<15} {dec:>5} {r['w']/dec*100:>6.1f}% {(r['pnl'] or 0)/(dec*2)*100:>+5.1f}%")
+              elif has_col('actual_2nd_fav_odds') and has_col('predicted_2nd_fav_odds'):
+                  # Legacy fallback for pre-v2 data
                   emit(f"  {'DRIFT TYPE':<15} {'BETS':>5} {'HIT%':>7} {'ROI'}")
                   emit(f"  {'─'*15} {'─'*5} {'─'*7} {'─'*6}")
                   for label, cond in [("Tightened", "actual_2nd_fav_odds < predicted_2nd_fav_odds"), ("Stable", "actual_2nd_fav_odds = predicted_2nd_fav_odds"), ("Softened", "actual_2nd_fav_odds > predicted_2nd_fav_odds")]:

@@ -891,10 +891,11 @@ async def refresh_odds_for_races(
     logger = structlog.get_logger("refresh_odds")
     date_str = now_eastern().strftime(DATE_FORMAT)
 
-    # Build lookup for matching: (canonical_venue, race_number) -> Race
+    # Build lookup for matching: (canonical_venue, race_number, date) -> Race
     race_lookup: Dict[tuple, Race] = {}
     for race in scorable_races:
-        key = (get_canonical_venue(race.venue), race.race_number)
+        date_component = race.start_time.strftime(DATE_FORMAT) if isinstance(race.start_time, datetime) else ''
+        key = (get_canonical_venue(race.venue), race.race_number, date_component)
         race_lookup[key] = race
 
     # Fetch from HTTPX-only adapters
@@ -907,7 +908,8 @@ async def refresh_odds_for_races(
         try:
             fresh_races = await adapter.get_races(date_str)
             for fresh_race in fresh_races:
-                key = (get_canonical_venue(fresh_race.venue), fresh_race.race_number)
+                fresh_date = fresh_race.start_time.strftime(DATE_FORMAT) if isinstance(fresh_race.start_time, datetime) else ''
+                key = (get_canonical_venue(fresh_race.venue), fresh_race.race_number, fresh_date)
                 target = race_lookup.get(key)
                 if not target:
                     continue
@@ -923,7 +925,7 @@ async def refresh_odds_for_races(
                             matched = existing_runner
                             break
                     if matched:
-                        matched.odds.clear()
+                        # DO NOT CLEAR: merge to preserve multi-source depth (GPT5 Fix)
                         matched.odds.update(new_runner.odds)
                         if new_runner.win_odds is not None:
                             matched.win_odds = new_runner.win_odds
@@ -942,16 +944,6 @@ async def refresh_odds_for_races(
         runners_updated=fresh_count,
         races_targeted=len(scorable_races))
     return scorable_races
-    if "harness" in dl:
-        disc_suffix = "_h"
-    elif "greyhound" in dl:
-        disc_suffix = "_g"
-    elif "quarter" in dl:
-        disc_suffix = "_q"
-    else:
-        disc_suffix = "_t"
-
-    return f"{prefix}_{venue_slug}_{date_str}_{time_str}_R{race_number}{disc_suffix}"
 
 
 # --- VALIDATORS ---
@@ -1174,6 +1166,7 @@ class SmartFetcher:
         }
         self.last_engine: str = "unknown"
         self._sessions: Dict[BrowserEngine, Any] = {}
+        self._curl_sessions: Dict[str, Any] = {}
         self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
@@ -1193,6 +1186,15 @@ class SmartFetcher:
                     self._sessions[engine] = AsyncDynamicSession(headless=True)
                     await self._sessions[engine].__aenter__()
             return self._sessions[engine]
+
+    async def _get_curl_session(self, impersonate: str = "chrome133") -> Any:
+        """Returns a persistent curl_cffi session for the given impersonation (Fix 07)."""
+        async with self._session_lock:
+            if impersonate not in self._curl_sessions:
+                if not curl_requests:
+                    raise ImportError("curl_cffi is not available")
+                self._curl_sessions[impersonate] = curl_requests.AsyncSession()
+            return self._curl_sessions[impersonate]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
@@ -1318,20 +1320,24 @@ class SmartFetcher:
             last_err = None
             for imp_version in impersonate_chain:
                 try:
-                    async with curl_requests.AsyncSession() as s:
-                        resp = await s.request(
-                            method,
-                            url,
-                            timeout=timeout,
-                            headers=headers,
-                            impersonate=imp_version,
-                            **clean_kwargs
-                        )
-                        return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
+                    # FIX-07: Use persistent session like CAMOUFOX/PLAYWRIGHT
+                    session = await self._get_curl_session(imp_version)
+                    resp = await session.request(
+                        method,
+                        url,
+                        timeout=timeout,
+                        headers=headers,
+                        impersonate=imp_version,
+                        **clean_kwargs
+                    )
+                    return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
                 except Exception as e:
                     err_lower = str(e).lower()
                     if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
                         self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
+                        # Discard the session for this impersonation version
+                        async with self._session_lock:
+                            self._curl_sessions.pop(imp_version, None)
                         last_err = e
                         continue
                     raise
@@ -1415,7 +1421,7 @@ class SmartFetcher:
     async def close(self) -> None:
         """
         Shared resources are managed by GlobalResourceManager.
-        Persistent scrapling sessions are cleaned up here (Fix 12).
+        Persistent scrapling and curl_cffi sessions are cleaned up here (Fix 12/07).
         """
         async with self._session_lock:
             for engine, session in self._sessions.items():
@@ -1424,6 +1430,13 @@ class SmartFetcher:
                 except Exception as e:
                     self.logger.warning(f"failed_closing_persistent_session", engine=engine.value, error=str(e))
             self._sessions.clear()
+
+            for imp, session in self._curl_sessions.items():
+                try:
+                    await session.close()
+                except Exception as e:
+                    self.logger.warning(f"failed_closing_persistent_curl_session", impersonate=imp, error=str(e))
+            self._curl_sessions.clear()
 
 
 @dataclass
@@ -1447,48 +1460,6 @@ class CircuitBreaker:
                 self.state = "half-open"
                 return True
         return self.state == "half-open"
-
-
-@dataclass
-class RateLimiter:
-    requests_per_second: float = 10.0
-    _tokens: float = field(default=10.0, init=False)
-    _last_update: float = field(default_factory=time.time, init=False)
-    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
-    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
-
-    def __post_init__(self):
-        self._tokens = self.requests_per_second
-
-    def _get_lock(self) -> asyncio.Lock:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.Lock()
-
-        if loop not in self._locks:
-            with self._lock_sentinel:
-                if loop not in self._locks:
-                    self._locks[loop] = asyncio.Lock()
-        return self._locks[loop]
-
-    async def acquire(self) -> None:
-        lock = self._get_lock()
-
-        for _ in range(1000): # Iteration limit to prevent potential hangs
-            wait_time = 0
-            async with lock:
-                now = time.time()
-                elapsed = now - self._last_update
-                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
-                self._last_update = now
-                if self._tokens >= 1:
-                    self._tokens -= 1
-                    return
-                wait_time = (1 - self._tokens) / self.requests_per_second
-
-            if wait_time >= 0:
-                await asyncio.sleep(max(wait_time, 0.001))
 
 
 class AdapterMetrics:
@@ -1766,9 +1737,21 @@ class BaseAdapterV3(ABC):
                             break
 
             if suspicious:
-                self.logger.warning("suspicious_runner_numbers", venue=r.venue, field_size=field_size)
+                self.logger.warning(
+                    "suspicious_runner_numbers",
+                    venue=r.venue,
+                    field_size=field_size,
+                    original_numbers=[run.number for run in r.runners[:5]],
+                )
                 for i, run in enumerate(r.runners):
-                    run.number = i + 1
+                    # Preserve original number in metadata for audit debugging
+                    run.metadata['original_number'] = run.number
+                    # Only reindex active (non-scratched) runners
+                    if not run.scratched:
+                        run.number = i + 1
+                    else:
+                        # Scratched runners keep their original number (won't affect scoring)
+                        pass
 
             for runner in r.runners:
                 if not runner.scratched:
@@ -2396,60 +2379,91 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         return self._get_browser_headers(host="www.racingandsports.com.au")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        dt = parse_date_string(date)
-        date_iso = dt.strftime("%Y-%m-%d")
-        url = f"/racing-index?date={date_iso}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
-        if not resp or not resp.text:
+        # Use the structured JSON endpoint for stability (Council of Superbrains Directive)
+        url = "https://www.racingandsports.com.au/todays-racing-json-v2"
+        # Note: This endpoint is dynamic; if it doesn't support date params, we fall back to today.
+        try:
+            resp = await self.make_request("GET", url, headers=self._get_headers())
+            if not resp or not resp.text:
+                return None
+
+            data = resp.json()
+            return {"json_data": data, "date": date}
+        except Exception as e:
+            self.logger.error("failed_fetching_ras_json", error=str(e))
             return None
-
-        self._save_debug_snapshot(resp.text, f"ras_index_{date}")
-        parser = HTMLParser(resp.text)
-        metadata = []
-
-        # RAS uses tables for different regions (Australia, UK, etc.)
-        for table in parser.css("table.table-index"):
-            for row in table.css("tbody tr"):
-                venue_cell = row.css_first("td.venue-name")
-                if not venue_cell: continue
-                venue_name = node_text(venue_cell)
-
-                for link in row.css("td a.race-link"):
-                    race_url = link.attributes.get("href", "")
-                    if not race_url: continue
-                    if not race_url.startswith("http"):
-                        race_url = self.BASE_URL + race_url
-
-                    r_num_match = re.search(r"R(\d+)", node_text(link))
-                    r_num = int(r_num_match.group(1)) if r_num_match else 0
-
-                    metadata.append({
-                        "url": race_url,
-                        "venue": venue_name,
-                        "race_number": r_num
-                    })
-
-        if not metadata:
-            self.metrics.record_parse_warning()
-            return None
-
-        # Limit for sanity
-        pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers())
-        return {"pages": pages, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
-        if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = parse_date_string(raw_data["date"]).date()
-        except Exception: return []
+        if not raw_data or not raw_data.get("json_data"): return []
+        data = raw_data["json_data"]
+        try:
+            race_date = parse_date_string(raw_data["date"]).date()
+        except Exception:
+            race_date = now_eastern().date()
 
-        races: List[Race] = []
-        for item in raw_data["pages"]:
-            html_content = item.get("html")
-            if not html_content: continue
-            try:
-                race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("venue"), item.get("race_number"))
-                if race: races.append(race)
-            except Exception: pass
+        races = []
+        # RAS JSON v2 structure: data['meetings'] -> list of meetings
+        meetings = data.get('meetings', [])
+        for m in meetings:
+            venue_raw = m.get('venueName') or m.get('venue')
+            if not venue_raw: continue
+            venue = normalize_venue_name(venue_raw)
+
+            # Filter by region if set in config
+            target_region = self.config.get('region')
+            country = m.get('country', '').upper()
+            if target_region == 'USA' and country not in ['US', 'USA', 'CAN']: continue
+            if target_region == 'INT' and country in ['US', 'USA', 'CAN']: continue
+
+            for r_idx, r in enumerate(m.get('races', []), 1):
+                try:
+                    race_num = int(r.get('raceNumber') or r_idx)
+
+                    # Start time
+                    time_str = r.get('raceTime') # e.g. "12:30"
+                    if time_str:
+                        # Assuming meetings are local time, but for discovery we'll treat as ET
+                        # and let normalization handle it if needed.
+                        start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
+                    else:
+                        start_time = datetime.combine(race_date, datetime.min.time())
+
+                    runners = []
+                    # In some versions of this JSON, runners are under 'runners' key
+                    for run_data in r.get('runners', []):
+                        name = run_data.get('horseName') or run_data.get('name')
+                        if not name: continue
+
+                        num = int(run_data.get('tabNo') or run_data.get('number') or 0)
+
+                        # Odds
+                        win_odds = parse_odds_to_decimal(run_data.get('winOdds') or run_data.get('fixedOdds'))
+
+                        odds_data = {}
+                        if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                            odds_data[self.SOURCE_NAME] = ov
+
+                        runners.append(Runner(
+                            name=name,
+                            number=num,
+                            odds=odds_data,
+                            win_odds=win_odds,
+                            odds_source="extracted" if win_odds else None
+                        ))
+
+                    if not runners: continue
+
+                    races.append(Race(
+                        id=generate_race_id("ras", venue, start_time, race_num),
+                        venue=venue,
+                        race_number=race_num,
+                        start_time=ensure_eastern(start_time),
+                        runners=runners,
+                        source=self.SOURCE_NAME,
+                        discipline=detect_discipline(str(r))
+                    ))
+                except Exception:
+                    continue
         return races
 
     def _parse_single_race(self, html_content: str, url: str, race_date: date, venue: str, race_num: int) -> Optional[Race]:
@@ -2726,34 +2740,40 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
+
+        # We fetch for both UK/IRE and International to ensure global coverage
+        regions = ["uk-ire", "international"]
+        all_movers = []
+
+        for region in regions:
+            ajax_url = f"/ajax/marketmovers/tabs/{region}/{date_iso}"
+            try:
+                resp = await self.make_request("GET", ajax_url, headers=self._get_headers())
+                if resp and resp.text:
+                    parser = HTMLParser(resp.text)
+                    # AJAX returns HTML with mover rows
+                    for row in parser.css(".market-mover-row"):
+                        all_movers.append(row.html)
+            except Exception as e:
+                self.logger.error("failed_fetching_atr_movers", region=region, error=str(e))
+
+        if all_movers:
+            return {"mover_rows": all_movers, "date": date}
+
+        # Fallback to standard index scraping if movers endpoint is dry
         index_url = f"/racecards/{date_iso}"
-        intl_url = f"/racecards/international/{date_iso}"
-
         resp = await self.make_request("GET", index_url, headers=self._get_headers())
-        intl_resp = await self.make_request("GET", intl_url, headers=self._get_headers())
-
         metadata = []
         if resp and resp.text:
-            self._save_debug_snapshot(resp.text, f"atr_index_{date}")
             parser = HTMLParser(resp.text)
             metadata.extend(self._extract_race_metadata(parser, date))
 
-        elif resp:
-            self.logger.warning("Unexpected status", status=resp.status, url=index_url)
-
-        if intl_resp and intl_resp.text:
-            self._save_debug_snapshot(intl_resp.text, f"atr_intl_index_{date}")
-            intl_parser = HTMLParser(intl_resp.text)
-            metadata.extend(self._extract_race_metadata(intl_parser, date))
-        elif intl_resp:
-            self.logger.warning("Unexpected status", status=intl_resp.status, url=intl_url)
-
         if not metadata:
-            self.logger.warning("No metadata found", context="ATR Index Parsing", date=date)
-            self.metrics.record_parse_warning()
             return None
+
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
 
@@ -2832,18 +2852,84 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return meta
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
-        if not raw_data or not raw_data.get("pages"): return []
-        try: race_date = parse_date_string(raw_data["date"]).date()
+        if not raw_data: return []
+        date_str = raw_data.get("date")
+        try: race_date = parse_date_string(date_str).date()
         except Exception: return []
+
+        races_map = {}
+
+        # 1. Process movers (High-quality AJAX data)
+        if "mover_rows" in raw_data:
+            for row_html in raw_data["mover_rows"]:
+                parser = HTMLParser(row_html)
+                # Mover row contains: Race details, Horse, and Price
+                # Format varies, but often has a link to the racecard
+                link = parser.css_first("a[href*='/racecard/']")
+                if not link: continue
+
+                url = link.attributes.get("href", "")
+                venue_node = parser.css_first(".track-name") or parser.css_first(".track")
+                venue = normalize_venue_name(node_text(venue_node)) if venue_node else "Unknown"
+
+                # Deduplicate by URL (unique race)
+                if url not in races_map:
+                    # Create a skeleton race
+                    races_map[url] = {
+                        "venue": venue,
+                        "url": url,
+                        "runners": {}
+                    }
+
+                # Extract runner from this mover row
+                name_node = parser.css_first(".horse-name") or parser.css_first(".name")
+                name = clean_text(node_text(name_node))
+                if not name: continue
+
+                odds_node = parser.css_first(".price") or parser.css_first(".odds")
+                win_odds = parse_odds_to_decimal(node_text(odds_node))
+
+                if win_odds:
+                    races_map[url]["runners"][name] = win_odds
+
+        # 2. Process standard pages if provided
         races: List[Race] = []
-        for item in raw_data["pages"]:
-            html_content = item.get("html")
-            if not html_content: continue
-            try:
-                race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("race_number"))
-                if race: races.append(race)
-            except Exception:
-                self.metrics.record_parse_error()
+        if "pages" in raw_data:
+            for item in raw_data["pages"]:
+                html_content = item.get("html")
+                if not html_content: continue
+                try:
+                    race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("race_number"))
+                    if race: races.append(race)
+                except Exception: continue
+
+        # 3. Convert skeletal mover races to objects (only if not already parsed from pages)
+        for url, r_data in races_map.items():
+            # Check if this race was already parsed (comparing normalized venue and race number)
+            # Actually simplest to just build them and let master deduplication handle it.
+            runners = []
+            for name, odds in r_data["runners"].items():
+                od = {}
+                if ov := create_odds_data(self.SOURCE_NAME, odds):
+                    od[self.SOURCE_NAME] = ov
+                runners.append(Runner(name=name, odds=od, win_odds=odds))
+
+            if runners:
+                # Guess race number and time from URL
+                # e.g. /racecard/ludlow/18-February-2026/1330
+                time_match = re.search(r"/(\d{4})$", url)
+                time_str = time_match.group(1) if time_match else "1200"
+                start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H%M").time())
+
+                races.append(Race(
+                    id=generate_race_id("atr", r_data["venue"], start_time, 1),
+                    venue=r_data["venue"],
+                    race_number=1,
+                    start_time=ensure_eastern(start_time),
+                    runners=runners,
+                    source=self.SOURCE_NAME
+                ))
+
         return races
 
     def _parse_single_race(self, html_content: str, url_path: str, race_date: date, race_number_fallback: Optional[int]) -> Optional[Race]:
@@ -4781,7 +4867,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
 
         # Apply global timing cutoff (45m ago, 120m future)
         if now is None:
-            now = datetime.now(EASTERN)
+            now = now_eastern()
         past_cutoff = now - timedelta(minutes=45)
         future_cutoff = now + timedelta(minutes=120)
         st = race.start_time
@@ -4958,6 +5044,18 @@ DISCIPLINE_THRESHOLDS: Final[Dict[str, Dict[str, float]]] = {
     },
 }
 
+# Regional exclusion list for scoring (Council of Superbrains Directive)
+INVALID_REGION_PREFIXES: Final[Tuple[str, ...]] = ('fr', 'jp', 'hk', 'uae')
+BLOCKED_VENUES: Final[Set[str]] = {
+    'fontainebleau', 'cagnessurmer', 'longchamp', 'chantilly', 'deauville',
+    'parislongchamp', 'saintcloud', 'compiegne', 'vichy', 'clairefontaine',
+    'marseilleborely', 'toulouse', 'lyon', 'strasbourg', 'amiens',
+    'tokyo', 'nakayama', 'hanshin', 'kyoto', 'kokura', 'niigata', 'sapporo', 'fukushima', 'chukyo',
+    'shatin', 'happyvalley', 'meydan', 'abudhabi', 'jebelali',
+    'milan', 'sanrossore', 'capannelle',
+}
+
+
 def get_discipline_threshold(discipline: str, key: str) -> float:
     """Helper to retrieve threshold based on normalized discipline name."""
     d = (discipline or "Thoroughbred").title()
@@ -4987,30 +5085,21 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         if now is None:
             now = now_eastern()
 
-        TRUSTWORTHY_RATIO_MIN = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
-        NON_CHALK_MIN = self.config.get('analysis', {}).get('non_chalk_min', 0.90)
-        SEC_FAV_FLOOR = self.config.get('analysis', {}).get('second_fav_floor', 4.50)
-        GAP_ABS_MIN = self.config.get('analysis', {}).get('gap_abs_min', 0.75)
+        analysis_cfg = self.config.get('analysis', {})
+        TRUSTWORTHY_RATIO_MIN = analysis_cfg.get("simply_success_trust_min", 0.25)
+        NON_CHALK_MIN = analysis_cfg.get('non_chalk_min', 0.90)
+        SEC_FAV_FLOOR = analysis_cfg.get('second_fav_floor', 4.50)
+        GAP_ABS_MIN = analysis_cfg.get('gap_abs_min', 0.75)
 
         # Goldmine configuration
-        GOLDMINE_FAV_MIN = self.config.get('analysis', {}).get('goldmine_fav_min', 1.10)
-        GOLDMINE_SEC_FAV_MIN = self.config.get('analysis', {}).get('goldmine_sec_fav_min', 4.50)
-        GOLDMINE_GAP_MIN = self.config.get('analysis', {}).get('goldmine_gap_min', 2.00)
-        GOLDMINE_FIELD_MIN = self.config.get('analysis', {}).get('goldmine_field_min', 5)
-        GOLDMINE_FIELD_MAX = self.config.get('analysis', {}).get('goldmine_field_max', 10)
+        GOLDMINE_FAV_MIN = analysis_cfg.get('goldmine_fav_min', 1.10)
+        GOLDMINE_SEC_FAV_MIN = analysis_cfg.get('goldmine_sec_fav_min', 4.50)
+        GOLDMINE_GAP_MIN = analysis_cfg.get('goldmine_gap_min', 2.00)
+        GOLDMINE_FIELD_MIN = analysis_cfg.get('goldmine_field_min', 5)
+        GOLDMINE_FIELD_MAX = analysis_cfg.get('goldmine_field_max', 10)
 
         # Superfecta configuration
-        SUPERFECTA_GAP_MIN = self.config.get('analysis', {}).get('superfecta_gap_min', 4.00)
-
-        INVALID_REGION_PREFIXES = ('fr', 'jp', 'hk', 'uae')
-        BLOCKED_VENUES = {
-            'fontainebleau', 'cagnessurmer', 'longchamp', 'chantilly', 'deauville',
-            'parislongchamp', 'saintcloud', 'compiegne', 'vichy', 'clairefontaine',
-            'marseilleborely', 'toulouse', 'lyon', 'strasbourg', 'amiens',
-            'tokyo', 'nakayama', 'hanshin', 'kyoto', 'kokura', 'niigata', 'sapporo', 'fukushima', 'chukyo',
-            'shatin', 'happyvalley', 'meydan', 'abudhabi', 'jebelali',
-            'milan', 'sanrossore', 'capannelle',
-        }
+        SUPERFECTA_GAP_MIN = analysis_cfg.get('superfecta_gap_min', 4.00)
 
         fingerprints = {}
 
@@ -5126,7 +5215,6 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             elif total_active <= 10:      composite += 4.0   # 9-10
             elif total_active <= 12:      pass               # 11-12
             elif total_active > 12:       composite -= 5.0   # 13+
-            else:                         composite -= 10.0  # < 5
 
             # Favourite odds quality (Place-value sweet spot)
             if 2.00 <= fav_odds <= 4.00:  composite += 5.0   # ideal Place range
@@ -5191,10 +5279,11 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 p_place = round(min(0.95, 2.5 / max(1.0, fav_odds)), 4)  # 3 places
             race.metadata['place_prob'] = p_place
 
-            # Place payout estimate
+            # Place payout estimate — UK each-way: (win_odds - 1) / divisor + 1
+            # The divisor applies to the WIN PROFIT (odds minus 1), not total odds
             place_divisor = 4.0 if total_active >= 8 else 3.0
-            est_payout = (fav_odds / place_divisor) + 1.0
-            race.metadata['predicted_ev'] = round((p_place * est_payout) - 1.0, 4)
+            est_place_return = ((fav_odds - 1.0) / place_divisor) + 1.0
+            race.metadata['predicted_ev'] = round((p_place * est_place_return) - 1.0, 4)
 
             race.qualification_score = round(composite, 2)
             qualified.append(race)
@@ -5202,8 +5291,13 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         return {
             "criteria": {
                 "mode": "simply_success",
-                "goldmine_threshold": 4.5,
-                "gap_min": 0.50
+                "non_chalk_min": NON_CHALK_MIN,
+                "sec_fav_floor": SEC_FAV_FLOOR,
+                "gap_abs_min": GAP_ABS_MIN,
+                "goldmine_fav_min": GOLDMINE_FAV_MIN,
+                "goldmine_sec_fav_min": GOLDMINE_SEC_FAV_MIN,
+                "goldmine_gap_min": GOLDMINE_GAP_MIN,
+                "superfecta_gap_min": SUPERFECTA_GAP_MIN,
             },
             "races": qualified
         }
@@ -6054,7 +6148,7 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
     table_races.sort(key=lambda x: x['mtp'])
 
     if not table_races:
-        return "No upcoming races in the next 4 hours."
+        return "No upcoming races in the next 18 hours."
 
     lines = [
         "| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | | |",
@@ -6289,7 +6383,8 @@ def format_artifact_links() -> str:
 from contextlib import contextmanager
 
 class SummaryWriter:
-    """A simple wrapper for GHA Step Summary writes with auto-flush (Consolidated)."""
+    """Stream-based summary writer for file/stdout output. (Fix 15)
+    See also: GHASummaryWriter in generate_gha_summary.py for GHA Job Summary output."""
     def __init__(self, stream: TextIO) -> None:
         self._s = stream
     def write(self, text: str = "") -> None:
@@ -6418,6 +6513,16 @@ class FortunaDB:
         """Creates the database schema if it doesn't exist."""
         if self._initialized: return
 
+        # Pre-fetch current version to avoid NameError in _init (GPT5 Fix)
+        def _get_version():
+            try:
+                cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
+                row = cursor.fetchone()
+                return row[0] if row and row[0] is not None else 0
+            except Exception:
+                return 0
+        current_version = await self._run_in_executor(_get_version)
+
         def _init():
             conn = self._get_conn()
             with conn:
@@ -6502,23 +6607,25 @@ class FortunaDB:
                 # Composite index for deduplication - changed to race_id only for better deduplication
                 conn.execute("DROP INDEX IF EXISTS idx_race_report")
 
-                # Cleanup potential duplicates before creating unique index
-                try:
-                    self.logger.info("Cleaning up duplicate race_ids before indexing")
-                    conn.execute("""
-                        DELETE FROM tips
-                        WHERE id NOT IN (
-                            SELECT MAX(id)
-                            FROM tips
-                            GROUP BY race_id
-                        )
-                    """)
-                    self.logger.info("Duplicates removed, creating unique index")
-                    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
-                except Exception as e:
-                    self.logger.error("Failed to cleanup or create unique index", error=str(e))
-                    # If index exists but table has duplicates, we might get IntegrityError
-                    # Just log it and continue - better than crashing the whole app
+                # FIX-01: Dedup migration: run ONCE via schema versioning, not on every init
+                if current_version < 8:
+                    try:
+                        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                    except sqlite3.IntegrityError:
+                        # Index creation failed due to existing duplicates — migrate once
+                        self.logger.info("Duplicate race_ids detected, running one-time cleanup")
+                        conn.execute("""
+                            DELETE FROM tips
+                            WHERE id NOT IN (
+                                SELECT MAX(id)
+                                FROM tips
+                                GROUP BY race_id
+                            )
+                        """)
+                        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_race_id ON tips (race_id)")
+                        self.logger.info("One-time dedup complete, unique index created")
+                    except Exception as e:
+                        self.logger.error("Failed to create unique index", error=str(e))
                 # Add missing columns for existing databases
                 cursor = conn.execute("PRAGMA table_info(tips)")
                 columns = [column[1] for column in cursor.fetchall()]
@@ -6599,18 +6706,13 @@ class FortunaDB:
 
                 # Composite index for audit performance
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_time ON tips (audit_completed, start_time)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_start_time ON tips (start_time)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_venue ON tips (venue)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_discipline ON tips (discipline)")
 
         await self._run_in_executor(_init)
 
         # Track and execute migrations based on schema version
-        def _get_version():
-            cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
-            row = cursor.fetchone()
-            return row[0] if row and row[0] is not None else 0
-
-        current_version = await self._run_in_executor(_get_version)
 
         if current_version < 2:
             await self.migrate_utc_to_eastern()
@@ -6724,8 +6826,20 @@ class FortunaDB:
             await self._run_in_executor(_migrate_v7)
             self.logger.info("Schema migrated to version 7 — race_ids re-keyed")
 
+        if current_version < 8:
+            def _migrate_v8():
+                # v8 handles the unique index migration if not already handled in _init
+                with self._get_conn() as conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO schema_version "
+                        "(version, applied_at) VALUES (8, ?)",
+                        (to_storage_format(datetime.now(EASTERN)),)
+                    )
+            await self._run_in_executor(_migrate_v8)
+            self.logger.info("Schema migrated to version 8 — unique index confirmed")
+
         self._initialized = True
-        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 7))
+        self.logger.info("Database initialized", path=self.db_path, schema_version=max(current_version, 8))
 
     async def is_quarter_fetched(self, quarter_id: str) -> bool:
         def _check():
@@ -6917,18 +7031,23 @@ class FortunaDB:
 
             # ── BUG-3 FIX: Cross-race clone detection ────────────────────
             seen_selections = set()
-            today_str = now.strftime("%y%m%d")
+            # FIX-02: Use date-range query instead of fragile LIKE pattern
+            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_of_day = start_of_day + timedelta(days=1)
+            sod_str = to_storage_format(start_of_day)
+            eod_str = to_storage_format(end_of_day)
             existing_selections = set()
             try:
                 for row in conn.execute(
-                    "SELECT venue, selection_name FROM tips "
-                    "WHERE start_time LIKE ? AND selection_name IS NOT NULL",
-                    (f"{today_str}%",)
+                    "SELECT venue, race_number, selection_name FROM tips "
+                    "WHERE start_time >= ? AND start_time < ? AND selection_name IS NOT NULL",
+                    (sod_str, eod_str)
                 ).fetchall():
                     v_db = get_canonical_venue(str(row["venue"] or "")).upper()
+                    r_db = row["race_number"]
                     s_db = str(row["selection_name"] or "").strip().upper()
                     if v_db and s_db:
-                        existing_selections.add((v_db, s_db))
+                        existing_selections.add((v_db, r_db, s_db))
             except Exception:
                 pass
 
@@ -6943,14 +7062,15 @@ class FortunaDB:
                 # ── BUG-3 FIX: Clone detection ──────────────────────────
                 sel_name = str(tip.get("selection_name") or "").strip()
                 venue = str(tip.get("venue") or "").strip()
+                race_num = tip.get("race_number")
                 norm_v = get_canonical_venue(venue).upper()
                 if sel_name and norm_v:
-                    clone_key = (norm_v, sel_name.upper())
+                    clone_key = (norm_v, race_num, sel_name.upper())
                     if clone_key in seen_selections or clone_key in existing_selections:
                         self.logger.warning("clone_selection_blocked",
                             race_id=rid, venue=venue,
                             selection=sel_name,
-                            msg="Same horse already tipped at this venue today")
+                            msg="Same horse already tipped at this venue/race today")
                         skipped_clones += 1
                         continue
                     seen_selections.add(clone_key)
@@ -6965,7 +7085,8 @@ class FortunaDB:
                         normalized_st = raw_st
                     except ValueError:
                         try:
-                            dt = datetime.fromisoformat(raw_st.replace("Z", "+00:00"))
+                            # Use from_storage_format fallback (Fix 01)
+                            dt = from_storage_format(str(raw_st))
                             normalized_st = to_storage_format(ensure_eastern(dt))
                         except (ValueError, TypeError):
                             normalized_st = raw_st
@@ -7049,6 +7170,29 @@ class FortunaDB:
 
         await self._run_in_executor(_log)
 
+    async def get_upcoming_tips(self, past_minutes: int = 10, future_hours: int = 18, limit: int = 50) -> List[Dict[str, Any]]:
+        """Returns unaudited tips with start_time in the upcoming window (Fix 08)."""
+        if not self._initialized:
+            await self.initialize()
+
+        def _query():
+            conn = self._get_conn()
+            now = now_eastern()
+            cutoff_past = to_storage_format(now - timedelta(minutes=past_minutes))
+            cutoff_future = to_storage_format(now + timedelta(hours=future_hours))
+            cursor = conn.execute(
+                """SELECT * FROM tips
+                   WHERE audit_completed = 0
+                   AND start_time > ?
+                   AND start_time < ?
+                   ORDER BY start_time ASC
+                   LIMIT ?""",
+                (cutoff_past, cutoff_future, limit)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+        return await self._run_in_executor(_query)
+
     async def get_unverified_tips(self, lookback_hours: int = 48) -> List[Dict[str, Any]]:
         """Returns tips that haven't been audited yet but have likely finished."""
         if not self._initialized: await self.initialize()
@@ -7119,7 +7263,7 @@ class FortunaDB:
                     outcome.get("superfecta_combination"),
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
-                    to_storage_format(datetime.now(EASTERN)),
+                    to_storage_format(now_eastern()),
                     outcome.get("match_confidence", "none"),
                     outcome.get("field_size"),
                     outcome.get("actual_fav_odds"),
@@ -7168,7 +7312,7 @@ class FortunaDB:
                         outcome.get("superfecta_combination"),
                         outcome.get("top1_place_payout"),
                         outcome.get("top2_place_payout"),
-                        outcome.get("audit_timestamp"),
+                        outcome.get("audit_timestamp") or to_storage_format(now_eastern()),
                         outcome.get("match_confidence", "none"),
                         outcome.get("field_size"),
                         outcome.get("actual_fav_odds"),
@@ -7204,6 +7348,81 @@ class FortunaDB:
                 (limit,)
             )
             return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def get_tips(self, audited: Optional[bool] = None, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Returns tips from the database with optional filtering and limiting."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            query = "SELECT * FROM tips"
+            params = []
+            if audited is not None:
+                query += " WHERE audit_completed = ?"
+                params.append(1 if audited else 0)
+
+            # Sort audited by audit_timestamp, unaudited by start_time
+            if audited is True:
+                query += " ORDER BY audit_timestamp DESC"
+            else:
+                query += " ORDER BY start_time ASC"
+
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            cursor = self._get_conn().execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def get_harvest_logs(self, limit: int = 200, hours: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Returns recent harvest logs."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            if hours:
+                cutoff = to_storage_format(datetime.now(EASTERN) - timedelta(hours=hours))
+                cursor = self._get_conn().execute(
+                    "SELECT * FROM harvest_logs WHERE timestamp >= ? ORDER BY id DESC LIMIT ?", (cutoff, limit)
+                )
+            else:
+                cursor = self._get_conn().execute(
+                    "SELECT * FROM harvest_logs ORDER BY id DESC LIMIT ?", (limit,)
+                )
+            return [dict(row) for row in cursor.fetchall()]
+        return await self._run_in_executor(_get)
+
+    async def get_stats(self) -> Dict[str, Any]:
+        """Returns aggregate statistics for reporting."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            conn = self._get_conn()
+            stats = {}
+            row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
+            stats['total_tips'] = row[0] if row else 0
+
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
+            stats['cashed'] = row[0] if row else 0
+
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict = 'BURNED'").fetchone()
+            stats['burned'] = row[0] if row else 0
+
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict = 'VOID'").fetchone()
+            stats['voided'] = row[0] if row else 0
+
+            row = conn.execute("SELECT SUM(net_profit) FROM tips WHERE audit_completed = 1").fetchone()
+            stats['total_profit'] = row[0] if row else 0.0
+
+            row = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()
+            stats['max_report_date'] = row[0] if row else None
+
+            # For BUG-10 verification
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
+            stats['populated_scoring_count'] = row[0] if row else 0
+
+            # Lifetime avg payout (used for breakeven)
+            row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
+            stats['lifetime_avg_payout'] = row[0] if row else 0.0
+
+            return stats
         return await self._run_in_executor(_get)
 
     async def clear_all_tips(self):
@@ -7295,7 +7514,7 @@ class HotTipsTracker:
 
         # Ensure daypart_tag is passed if available
         await self.db.initialize()
-        now = datetime.now(EASTERN)
+        now = now_eastern()
         report_date = to_storage_format(now)
         new_tips = []
         already_handled_soft_keys = set()
@@ -7389,12 +7608,17 @@ class HotTipsTracker:
             new_tips.append(tip_data)
 
         try:
-            # Cap the batch size to avoid performance degradation (GPT5 Improvement)
-            if len(new_tips) > 100:
-                self.logger.info("Capping large tips batch", original_count=len(new_tips), capped_at=100)
-                new_tips = new_tips[:100]
+            # FIX-13: Process all tips in batches instead of truncating
+            BATCH_SIZE = 100
+            if len(new_tips) > BATCH_SIZE:
+                self.logger.info("Processing tips in batches", total=len(new_tips), batch_size=BATCH_SIZE)
 
-            await self.db.log_tips(new_tips)
+            for i in range(0, len(new_tips), BATCH_SIZE):
+                batch = new_tips[i:i + BATCH_SIZE]
+                await self.db.log_tips(batch)
+                if i + BATCH_SIZE < len(new_tips):
+                    self.logger.debug("Batch persisted", batch_num=i // BATCH_SIZE + 1, size=len(batch))
+
             self.logger.info("Hot tips processed", count=len(new_tips))
         except Exception as e:
             self.logger.error("Failed to log hot tips", error=str(e))
@@ -8601,9 +8825,15 @@ async def run_quarter_fetch(
     except (ValueError, IndexError):
         daypart = resolve_daypart()
 
-    # Determine region from daypart
-    # We use 'GLOBAL' as a safe default for logging
-    region = "GLOBAL"
+    # Determine region from daypart (Phase A2 fix: mapping to GLOBAL for mixed Q3/Q4)
+    if daypart in (DayPart.Q3, DayPart.Q4):
+        region = "GLOBAL"
+    elif daypart == DayPart.Q1:
+        region = "INT"
+    elif daypart == DayPart.Q2:
+        region = "INT"
+    else:
+        region = "GLOBAL"
 
     # Get adapter names for this daypart
     if not adapter_filter:
@@ -8717,7 +8947,8 @@ async def run_quarter_fetch(
             except Exception: pass
 
         d_str = st.strftime('%y%m%d') if hasattr(st, 'strftime') else "Unknown"
-        key = f"{canonical_venue}|{race.race_number}|{d_str}|{race.discipline}"
+        t_str = st.strftime('%H%M') if hasattr(st, 'strftime') else "0000"
+        key = f"{canonical_venue}|{race.race_number}|{d_str}|{t_str}|{race.discipline}"
 
         if key not in race_map:
             race_map[key] = race
@@ -8803,7 +9034,7 @@ async def run_score_now(
     # 9. Score
     analyzer = SimplySuccessAnalyzer(config)
     analysis_result = analyzer.qualify_races(scorable)
-    qualified = analysis_result.get("qualified_races", [])
+    qualified = analysis_result.get("races", [])
 
     # 11. Persist
     if qualified:
