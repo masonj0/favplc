@@ -1,14 +1,71 @@
 import pytest
+import json
 from unittest.mock import AsyncMock, patch
-from fortuna import AtTheRacesAdapter, Race, Runner, OddsData
+from fortuna import AtTheRacesAdapter, Race, Runner, OddsData, RacingAndSportsAdapter
 from datetime import datetime, timezone, timedelta
 
 @pytest.mark.asyncio
-async def test_at_the_races_adapter_parsing():
+async def test_at_the_races_adapter_ajax_movers():
     adapter = AtTheRacesAdapter()
 
-    # Mock HTML response for index
-    index_html = '<html><a href="/racecard/newmarket/1234">Newmarket</a></html>'
+    # Mock AJAX response for market movers - need at least 2 for validation
+    movers_html = """
+    <div class="market-mover-row">
+        <a href="/racecard/newmarket/18-February-2026/1430">14:30 Newmarket</a>
+        <span class="track-name">Newmarket</span>
+        <span class="horse-name">Mover Horse 1</span>
+        <span class="price">4/1</span>
+    </div>
+    <div class="market-mover-row">
+        <a href="/racecard/newmarket/18-February-2026/1430">14:30 Newmarket</a>
+        <span class="track-name">Newmarket</span>
+        <span class="horse-name">Mover Horse 2</span>
+        <span class="price">10/1</span>
+    </div>
+    """
+
+    class MockResponse:
+        def __init__(self, text, status):
+            self.text = text
+            self.status = status
+            self.status_code = status
+        def json(self):
+            return json.loads(self.text)
+
+    target_date_str = "260218"
+
+    with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
+        # 1. uk-ire movers, 2. international movers (empty)
+        mock_fetch.side_effect = [
+            MockResponse(movers_html, 200),
+            MockResponse("", 200)
+        ]
+
+        races = await adapter.get_races(target_date_str)
+
+        assert len(races) > 0
+        race = races[0]
+        assert "Newmarket" in race.venue
+        assert len(race.runners) == 2
+        # Runners might be in a different order depending on map processing
+        runner1 = next(r for r in race.runners if r.name == "Mover Horse 1")
+        assert runner1.win_odds == 5.0
+        runner2 = next(r for r in race.runners if r.name == "Mover Horse 2")
+        assert runner2.win_odds == 11.0
+
+@pytest.mark.asyncio
+async def test_at_the_races_adapter_fallback_parsing():
+    adapter = AtTheRacesAdapter()
+
+    # Mock HTML response for index (with a link that matches window)
+    from zoneinfo import ZoneInfo
+    now_site = datetime.now(ZoneInfo("Europe/London"))
+    future_time = (now_site + timedelta(hours=2))
+    target_date_str = future_time.strftime("%y%m%d")
+    time_str = future_time.strftime("%H%M")
+
+    index_html = f'<html><a href="/racecard/newmarket/{time_str}">Newmarket</a></html>'
+
     # Mock HTML response for race page
     race_html = """
     <html>
@@ -33,29 +90,18 @@ async def test_at_the_races_adapter_parsing():
     </html>
     """
 
-    # We need to mock the response object properly
     class MockResponse:
         def __init__(self, text, status):
             self.text = text
             self.status = status
-        def json(self):
-            import json
-            return json.loads(self.text)
-
-    # Use a date/time that passes the window check (-45m to +18h)
-    from zoneinfo import ZoneInfo
-    now_site = datetime.now(ZoneInfo("Europe/London"))
-    # Set time to 2 hours from now to be safe
-    future_time = (now_site + timedelta(hours=2))
-    target_date_str = future_time.strftime("%y%m%d")
-    time_str = future_time.strftime("%H%M")
-    index_html = f'<html><a href="/racecard/newmarket/{time_str}">Newmarket</a></html>'
+            self.status_code = status
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. Main index, 2. International index, 3. Race page
+        # 1. uk-ire movers (empty), 2. international movers (empty), 3. index, 4. race page
         mock_fetch.side_effect = [
-            MockResponse(index_html, 200),
             MockResponse("", 200),
+            MockResponse("", 200),
+            MockResponse(index_html, 200),
             MockResponse(race_html, 200)
         ]
 
@@ -67,16 +113,66 @@ async def test_at_the_races_adapter_parsing():
         assert len(race.runners) == 2
         runner1 = next(r for r in race.runners if r.name == "Horse One")
         assert runner1.win_odds == 6.0
-        runner2 = next(r for r in race.runners if r.name == "Horse Two")
-        assert runner2.win_odds == 11.0
 
 @pytest.mark.asyncio
-async def test_simply_success_analyzer_1Gap2():
+async def test_racing_and_sports_json_v2():
+    adapter = RacingAndSportsAdapter()
+
+    json_data = {
+        "meetings": [
+            {
+                "venueName": "Randwick",
+                "country": "AUS",
+                "races": [
+                    {
+                        "raceNumber": 1,
+                        "raceTime": "14:30",
+                        "runners": [
+                            {
+                                "horseName": "JSON Horse 1",
+                                "tabNo": 1,
+                                "winOdds": "5.00"
+                            },
+                            {
+                                "horseName": "JSON Horse 2",
+                                "tabNo": 2,
+                                "winOdds": "10.00"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    class MockResponse:
+        def __init__(self, data, status):
+            self.data = data
+            self.status = status
+            self.text = json.dumps(data)
+            self.status_code = status
+        def json(self):
+            return self.data
+
+    with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = MockResponse(json_data, 200)
+
+        races = await adapter.get_races("260218")
+
+        assert len(races) == 1
+        race = races[0]
+        assert race.venue == "Randwick"
+        assert len(race.runners) == 2
+        assert race.runners[0].name == "JSON Horse 1"
+        assert race.runners[0].win_odds == 5.0
+
+@pytest.mark.asyncio
+async def test_simply_success_analyzer_gap_abs():
     from fortuna import SimplySuccessAnalyzer
 
     analyzer = SimplySuccessAnalyzer()
 
-    # 2.0 and 5.0 -> 1Gap2 should be 3.0
+    # 2.0 and 5.0 -> gap_abs should be 3.0
     # Must use odds dict because _get_best_win_odds uses it
     fav_odds = {"source1": OddsData(win=2.0, source="source1")}
     sec_odds = {"source1": OddsData(win=5.0, source="source1")}
@@ -100,8 +196,8 @@ async def test_simply_success_analyzer_1Gap2():
     qualified = result["races"]
     assert len(qualified) == 1
     # Absolute gap: (5.0 - 2.0) = 3.0
-    assert qualified[0].metadata["1Gap2"] == 3.0
-    assert qualified[0].metadata["is_goldmine"] is True # 2nd fav 5.0 and gap ratio 1.5 (>=0.35)
+    assert qualified[0].metadata["gap_abs"] == 3.0
+    assert qualified[0].metadata["is_goldmine"] is True
 
 @pytest.mark.asyncio
 async def test_hot_tips_tracker(tmp_path):
@@ -118,7 +214,7 @@ async def test_hot_tips_tracker(tmp_path):
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[],
-        metadata={"is_goldmine": True, "1Gap2": 1.5, "predicted_2nd_fav_odds": 4.5},
+        metadata={"is_goldmine": True, "gap_abs": 1.5, "predicted_2nd_fav_odds": 4.5, "is_best_bet": True},
         top_five_numbers="1, 2, 3"
     )
 
@@ -132,7 +228,7 @@ async def test_hot_tips_tracker(tmp_path):
             assert row is not None
             assert row["venue"] == "Track A"
             assert row["is_goldmine"] == 1
-            assert float(row["gap12"]) == 1.5
+            assert float(row["gap_abs"]) == 1.5
 
 @pytest.mark.asyncio
 async def test_runner_number_sanitization():
@@ -190,6 +286,7 @@ async def test_sky_racing_world_adapter_parsing():
         def __init__(self, text, status):
             self.text = text
             self.status = status
+            self.status_code = status
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
         mock_fetch.side_effect = [

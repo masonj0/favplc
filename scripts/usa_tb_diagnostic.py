@@ -703,7 +703,7 @@ def q12_data_quality():
         return
 
     scoring_cols = [
-        'gap12', 'market_depth', 'place_prob',
+        'gap_abs', 'market_depth', 'place_prob',
         'predicted_ev', 'race_type', 'condition_modifier',
         'qualification_grade', 'composite_score',
         'is_goldmine', 'is_best_bet',
@@ -735,7 +735,7 @@ def q12_data_quality():
         if pct < 20 and total > 5:
             quality_issues.append(f"Scoring signal `{col}` is mostly NULL ({pct:.1f}%)")
 
-        if sig_pct < 0.1 and total > 10 and col in ('gap12', 'market_depth', 'place_prob'):
+        if sig_pct < 0.1 and total > 10 and col in ('gap_abs', 'market_depth', 'place_prob'):
             quality_issues.append(f"Scoring signal `{col}` has NO active variance (all defaults)")
 
     emit("")

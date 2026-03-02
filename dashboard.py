@@ -104,10 +104,10 @@ class FortunaDashboard:
                 style = "green"
                 icon = "✓"
 
-            # Get confidence and gap12
+            # Get confidence and gap_abs
             meta = getattr(race, 'metadata', {})
             confidence = meta.get("confidence", 0.7)
-            gap12 = meta.get("1Gap2", 0.0)
+            gap_abs = meta.get("gap_abs", 0.0)
 
             # Render confidence bar
             conf_bars = int(confidence * 10)
@@ -125,7 +125,7 @@ class FortunaDashboard:
                 f"R{race_num}",
                 f"#{sel_num} {sel_name[:8]}",
                 f"{odds:.2f}",
-                f"{gap12:.2f}",
+                f"{gap_abs:.2f}",
                 conf_text,
                 style=style
             )
@@ -273,7 +273,7 @@ def print_dashboard(goldmine_races: List, stats: dict = None):
 
         st = db._get_start_time(race)
         time_str = st.strftime("%I:%M %p") if st else "Unknown"
-        gap12 = getattr(race, 'metadata', {}).get('1Gap2', 0.0)
+        gap_abs = getattr(race, 'metadata', {}).get('gap_abs', 0.0)
 
         table.add_row(
             getattr(race, 'venue', 'Unknown'),
@@ -281,7 +281,7 @@ def print_dashboard(goldmine_races: List, stats: dict = None):
             time_str,
             f"#{getattr(selection, 'number', '?')} {getattr(selection, 'name', 'Unknown')}",
             f"{getattr(selection, 'win_odds', 0.0):.2f}",
-            f"{gap12:.2f}"
+            f"{gap_abs:.2f}"
         )
 
     console.print(table)

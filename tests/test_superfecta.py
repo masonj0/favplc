@@ -5,7 +5,7 @@ from fortuna import SimplySuccessAnalyzer, Race, Runner, EASTERN
 
 def test_superfecta_key_trigger():
     # Setup a race that should trigger superfecta key
-    # gap12 >= 1.0 and runners >= 5 (for Thoroughbred)
+    # gap_abs >= 1.0 and runners >= 5 (for Thoroughbred)
     runners = [
         Runner(number=1, name="Fav", win_odds=1.5),
         Runner(number=2, name="Sec", win_odds=3.0), # (3.0-1.5)/1.5 = 1.0 >= 1.0
