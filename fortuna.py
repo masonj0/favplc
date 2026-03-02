@@ -1390,6 +1390,9 @@ class SmartFetcher:
                     err_lower = str(e).lower()
                     if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
                         self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
+                        # Discard the session for this impersonation version
+                        async with self._session_lock:
+                            self._curl_sessions.pop(imp_version, None)
                         last_err = e
                         continue
                     raise
@@ -1486,6 +1489,13 @@ class SmartFetcher:
                     name = key.value if hasattr(key, "value") else str(key)
                     self.logger.warning(f"failed_closing_persistent_session", engine=name, error=str(e))
             self._sessions.clear()
+
+            for imp, session in self._curl_sessions.items():
+                try:
+                    await session.close()
+                except Exception as e:
+                    self.logger.warning(f"failed_closing_persistent_curl_session", impersonate=imp, error=str(e))
+            self._curl_sessions.clear()
 
 
 @dataclass
