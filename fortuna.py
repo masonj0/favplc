@@ -1214,6 +1214,7 @@ class SmartFetcher:
         }
         self.last_engine: str = "unknown"
         self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
+        self._curl_sessions: Dict[str, Any] = {}
         self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
