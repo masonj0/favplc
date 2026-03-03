@@ -1349,7 +1349,7 @@ class SmartFetcher:
                 if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
             }
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
-            return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
+            return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), dict(resp.headers))
         
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
@@ -1385,7 +1385,7 @@ class SmartFetcher:
                         impersonate=imp_version,
                         **clean_kwargs
                     )
-                    return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
+                    return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, dict(resp.headers))
                 except Exception as e:
                     err_lower = str(e).lower()
                     if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
@@ -1426,7 +1426,7 @@ class SmartFetcher:
             s = await self._get_persistent_session(engine)
             resp = await s.fetch(url, method=method, **scrapling_kwargs)
             content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            return UnifiedResponse(content, resp.status, resp.status, resp.url, dict(resp.headers))
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             # Direct Playwright usage for cases where scrapling/camoufox fail
@@ -1451,7 +1451,7 @@ class SmartFetcher:
                 headers = resp_obj.headers if resp_obj else {}
 
                 await browser.close()
-                return UnifiedResponse(content, status, status, url, headers)
+                return UnifiedResponse(content, status, status, url, dict(headers))
 
         elif engine == BrowserEngine.PLAYWRIGHT:
             # BUG-1 Fix: Use persistent session to avoid launch overhead
@@ -1460,7 +1460,7 @@ class SmartFetcher:
             # Scrapling responses have a .text object that sometimes returns length 0
             # We ensure it's a string from .body or .html_content
             content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            return UnifiedResponse(content, resp.status, resp.status, resp.url, dict(resp.headers))
         else:
             # Fallback to simple fetcher
             async with AsyncFetcher() as fetcher:
@@ -1470,7 +1470,7 @@ class SmartFetcher:
                     resp = await fetcher.post(url, **kwargs)
 
                 content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+                return UnifiedResponse(content, resp.status, resp.status, resp.url, dict(resp.headers))
 
 
     async def close(self) -> None:
@@ -1718,7 +1718,18 @@ class BaseAdapterV3(ABC):
     @abstractmethod
     def _configure_fetch_strategy(self) -> FetchStrategy: pass
     @abstractmethod
-    async def _fetch_data(self, date: str) -> Optional[Any]: pass
+    async def _fetch_data(self, date: str) -> Optional[Any]:
+        """Fetch raw data for a given date.
+
+        Return contract:
+            - Return a non-None value (list, dict, str, etc.) for success, even if empty.
+              An empty list [] means 'no races on this date' — will NOT be retried.
+            - Return None for transient/retryable failures (timeout, empty response body,
+              ambiguous server error). Will be retried up to 2 more times with 2s backoff.
+            - Raise an exception for permanent failures (auth error, malformed URL,
+              configuration error). Will be retried up to 2 more times, then re-raised.
+        """
+        pass
     @abstractmethod
     def _parse_races(self, raw_data: Any) -> List[Race]: pass
 
@@ -1741,18 +1752,31 @@ class BaseAdapterV3(ABC):
             if not await self.circuit_breaker.allow_request(): return []
 
             raw = None
-            # GPT5 Fix: Implement retries with strict status validation
+            # FIX-17: Semantic retry — distinguish 'no data' (stop) from 'transient failure' (retry with backoff)
             for attempt in range(3):
                 try:
                     await self.rate_limiter.acquire()
                     raw = await self._fetch_data(date)
-                    if raw:
+                    # None = transient failure (retry). [] or {} = valid empty response (stop).
+                    if raw is not None:
                         break
+                    # Only sleep if we are going to retry (not on the last attempt)
+                    if attempt < 2:
+                        self.logger.debug(
+                            "fetch_returned_none_retrying",
+                            attempt=attempt + 1,
+                            adapter=self.source_name,
+                        )
+                        await asyncio.sleep(2)
                 except Exception as e:
                     if attempt == 2:
                         raise
-                    self.logger.warning("Fetch attempt failed, retrying", attempt=attempt+1, error=str(e))
-                    await asyncio.sleep(1)
+                    self.logger.warning(
+                        "Fetch attempt failed, retrying",
+                        attempt=attempt + 1,
+                        error=str(e),
+                    )
+                    await asyncio.sleep(2)
 
             if not raw:
                 await self.circuit_breaker.record_failure()
@@ -6586,9 +6610,9 @@ class FortunaDB:
         # Pre-fetch current version to avoid NameError in _init (GPT5 Fix)
         def _get_version():
             try:
-                cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
+                cursor = self._get_conn().execute("SELECT MAX(COALESCE(version, 0)) FROM schema_version")
                 row = cursor.fetchone()
-                return row[0] if row and row[0] is not None else 0
+                return int(row[0]) if (row and row[0] is not None) else 0
             except Exception:
                 return 0
         current_version = await self._run_in_executor(_get_version)
@@ -6963,10 +6987,14 @@ class FortunaDB:
                 if len(parts) == 2:
                     daypart_enum, date_str = parts[0], parts[1]
                     try:
+                        # FIX-19: 24:00:00 is not a universally valid time — use 23:59:59 for Q4
                         q_num = int(daypart_enum[1])
                         start_hour = (q_num - 1) * 6
                         q_start = f'{date_str}T{start_hour:02d}:00:00'
-                        q_end = f'{date_str}T{q_num * 6:02d}:00:00'
+                        if q_num >= 4:
+                            q_end = f'{date_str}T23:59:59'
+                        else:
+                            q_end = f'{date_str}T{q_num * 6:02d}:00:00'
                         cursor = conn.execute(
                             'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
                             (q_start, q_end)
@@ -7142,23 +7170,39 @@ class FortunaDB:
                         continue
                     seen_selections.add(clone_key)
 
-                # ── BUG-2c FIX: Normalize start_time ────────────────────
+                # FIX-16: Exhaustive datetime normalization with data-integrity firewall
                 raw_st = tip.get("start_time")
                 if isinstance(raw_st, datetime):
                     normalized_st = to_storage_format(ensure_eastern(raw_st))
                 elif isinstance(raw_st, str):
                     try:
+                        # Tier 1: Already in STORAGE_FORMAT — validate and pass through
                         datetime.strptime(raw_st, STORAGE_FORMAT)
                         normalized_st = raw_st
                     except ValueError:
                         try:
-                            # Use from_storage_format fallback (Fix 01)
-                            dt = from_storage_format(str(raw_st))
+                            # Tier 2: ISO 8601 (handles 'Z' suffix, timezone offsets, 'T' separator)
+                            dt = datetime.fromisoformat(raw_st.replace('Z', '+00:00'))
                             normalized_st = to_storage_format(ensure_eastern(dt))
                         except (ValueError, TypeError):
-                            normalized_st = raw_st
+                            try:
+                                # Tier 3: from_storage_format may handle legacy/variant formats
+                                dt = from_storage_format(str(raw_st))
+                                normalized_st = to_storage_format(ensure_eastern(dt))
+                            except (ValueError, TypeError, AttributeError):
+                                # FIREWALL: Never store an unparseable string.
+                                # Use current time so the row is still queryable by date-range.
+                                # The warning log preserves the original value for debugging.
+                                self.logger.warning(
+                                    "unparseable_start_time_replaced",
+                                    raw_value=repr(raw_st),
+                                    race_id=rid,
+                                    msg="Stored as current time to prevent format pollution"
+                                )
+                                normalized_st = to_storage_format(now)
                 else:
-                    normalized_st = to_storage_format(now) if raw_st is None else str(raw_st)
+                    # raw_st is None or a non-string/non-datetime type
+                    normalized_st = to_storage_format(now)
 
                 # ── BUG-1 Fix: Use passed daypart tag if available
                 daypart_val = tip.get("daypart")
@@ -7463,31 +7507,36 @@ class FortunaDB:
         def _get():
             conn = self._get_conn()
             stats = {}
+
+            # FIX-18: Guard all aggregate SQL results against NULL returns
             row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
-            stats['total_tips'] = row[0] if row else 0
+            stats['total_tips'] = int(row[0]) if (row and row[0] is not None) else 0
 
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
-            stats['cashed'] = row[0] if row else 0
+            stats['cashed'] = int(row[0]) if (row and row[0] is not None) else 0
 
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict = 'BURNED'").fetchone()
-            stats['burned'] = row[0] if row else 0
+            stats['burned'] = int(row[0]) if (row and row[0] is not None) else 0
 
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict = 'VOID'").fetchone()
-            stats['voided'] = row[0] if row else 0
+            stats['voided'] = int(row[0]) if (row and row[0] is not None) else 0
 
-            row = conn.execute("SELECT SUM(net_profit) FROM tips WHERE audit_completed = 1").fetchone()
-            stats['total_profit'] = row[0] if row else 0.0
+            row = conn.execute("SELECT SUM(COALESCE(net_profit, 0.0)) FROM tips WHERE audit_completed = 1").fetchone()
+            stats['total_profit'] = float(row[0]) if (row and row[0] is not None) else 0.0
 
             row = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()
-            stats['max_report_date'] = row[0] if row else None
+            stats['max_report_date'] = row[0] if (row and row[0] is not None) else None
 
             # For BUG-10 verification
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
-            stats['populated_scoring_count'] = row[0] if row else 0
+            stats['populated_scoring_count'] = int(row[0]) if (row and row[0] is not None) else 0
 
             # Lifetime avg payout (used for breakeven)
-            row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
-            stats['lifetime_avg_payout'] = row[0] if row else 0.0
+            # NOTE: 2.0 = STANDARD_BET, defined in scripts/generate_gha_summary.py
+            row = conn.execute(
+                "SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')"
+            ).fetchone()
+            stats['lifetime_avg_payout'] = float(row[0]) if (row and row[0] is not None) else 0.0
 
             return stats
         return await self._run_in_executor(_get)

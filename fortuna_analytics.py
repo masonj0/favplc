@@ -1169,16 +1169,26 @@ class PageFetchingResultsAdapter(
             for lnk in links
         ))
 
-        # FIX_12: Add page fetch limit to prevent runaway fetches and SIGTERM
-        MAX_PAGES = 50
+        # FIX-21: Increase limit and prioritize tip-relevant venues when truncating
+        MAX_PAGES = 150
         if len(absolute) > MAX_PAGES:
             self.logger.warning(
-                "Truncating runaway result fetches",
+                "Truncating result page fetches",
                 source=self.SOURCE_NAME,
                 original=len(absolute),
-                limit=MAX_PAGES
+                limit=MAX_PAGES,
             )
-            absolute = absolute[:MAX_PAGES]
+            # When truncation is needed, fetch tip-relevant venues first
+            if self._target_venues:
+                def _venue_priority(url: str) -> int:
+                    url_lower = url.lower()
+                    for tv in self._target_venues:
+                        if tv.lower() in url_lower:
+                            return 0  # High priority — matches a venue with unaudited tips
+                    return 1  # Lower priority
+                absolute = sorted(absolute, key=_venue_priority)[:MAX_PAGES]
+            else:
+                absolute = absolute[:MAX_PAGES]
 
         self.logger.info(
             "Fetching result pages",
