@@ -400,13 +400,13 @@ class AuditorEngine:
         # Sample debug logs for the first few tips
         for tip in unverified[:10]:
             tip_key = self._tip_canonical_key(tip)
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Tip key vs results",
-                    tip_venue=tip.get("venue"),
-                    tip_key=tip_key,
-                    matched=tip_key in results_map if tip_key else False,
-                )
+            # Use a safe debug log call; structlog filters based on level automatically
+            self.logger.debug(
+                "Tip key vs results",
+                tip_venue=tip.get("venue"),
+                tip_key=tip_key,
+                matched=tip_key in results_map if tip_key else False,
+            )
 
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
@@ -1169,16 +1169,26 @@ class PageFetchingResultsAdapter(
             for lnk in links
         ))
 
-        # FIX_12: Add page fetch limit to prevent runaway fetches and SIGTERM
-        MAX_PAGES = 50
+        # FIX-21: Increase limit and prioritize tip-relevant venues when truncating
+        MAX_PAGES = 150
         if len(absolute) > MAX_PAGES:
             self.logger.warning(
-                "Truncating runaway result fetches",
+                "Truncating result page fetches",
                 source=self.SOURCE_NAME,
                 original=len(absolute),
-                limit=MAX_PAGES
+                limit=MAX_PAGES,
             )
-            absolute = absolute[:MAX_PAGES]
+            # When truncation is needed, fetch tip-relevant venues first
+            if self._target_venues:
+                def _venue_priority(url: str) -> int:
+                    url_lower = url.lower()
+                    for tv in self._target_venues:
+                        if tv.lower() in url_lower:
+                            return 0  # High priority — matches a venue with unaudited tips
+                    return 1  # Lower priority
+                absolute = sorted(absolute, key=_venue_priority)[:MAX_PAGES]
+            else:
+                absolute = absolute[:MAX_PAGES]
 
         self.logger.info(
             "Fetching result pages",
