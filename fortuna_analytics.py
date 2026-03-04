@@ -400,13 +400,12 @@ class AuditorEngine:
         # Sample debug logs for the first few tips
         for tip in unverified[:10]:
             tip_key = self._tip_canonical_key(tip)
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Tip key vs results",
-                    tip_venue=tip.get("venue"),
-                    tip_key=tip_key,
-                    matched=tip_key in results_map if tip_key else False,
-                )
+            self.logger.debug(
+                "Tip key vs results",
+                tip_venue=tip.get("venue"),
+                tip_key=tip_key,
+                matched=tip_key in results_map if tip_key else False,
+            )
 
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
@@ -422,8 +421,7 @@ class AuditorEngine:
 
             try:
                 # Wrap log calls in a level check for high-volume audit performance (GPT5 Fix)
-                if self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("Attempting match", race_id=race_id, key=tip_key)
+                self.logger.debug("Attempting match", race_id=race_id, key=tip_key)
 
                 # Item 8: Algorithm optimization
                 result, confidence = self._match_tip_to_result(
@@ -2717,7 +2715,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     BASE_URL = "https://greyhounds.attheraces.com"
     HOST = "greyhounds.attheraces.com"
     IMPERSONATE = "chrome133"
-    TIMEOUT = 45
+    TIMEOUT = 300
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         # GPT5 Fix: Use CURL_CFFI for better reachability, retain Playwright as fallback
