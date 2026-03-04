@@ -58,18 +58,21 @@ print(f'Results:  {len(fortuna_analytics.get_results_adapter_classes())} results
 
 ## Phase 1: Discovery
 
-### 1a. Run discovery (Monitor Mode)
+### 1a. Run discovery
 
 ```bash
 export PYTHONPATH=.
-# Run in monitor mode to generate race_data.json and analysis reports
-timeout 600 python3 fortuna.py --monitor --once 2>&1 | tee discovery_output.log | tail -20
+# Run standard discovery or quarter-fetch/score-now combo
+# Option A: Standard (legacy)
+# timeout 600 python3 fortuna.py --region GLOBAL 2>&1 | tee discovery_output.log | tail -20
+# Option B: Two-tier (preferred for precision)
+timeout 300 python3 fortuna.py --quarter-fetch && python3 fortuna.py --score-now 2>&1 | tee discovery_output.log | tail -20
 EXIT_CODE=$?
 ```
 
 **Decision:**
 - Exit code 0 → proceed to validation
-- Exit code 124 (timeout) → report "Discovery timed out after 10 minutes"
+- Exit code 124 (timeout) → report "Discovery timed out"
 - Any other exit code → report last 30 lines of `discovery_output.log`
 
 ### 1b. Validate outputs
@@ -323,14 +326,36 @@ print('=== END DATABASE STATUS ===')
 
 ---
 
+## Phase 3.5: Diagnostic Summaries
+
+### 3.5a Generate GHA Summary
+
+```bash
+export PYTHONPATH=.
+# This script uses FortunaDB and FortunaJSONEncoder to produce a structured summary
+python3 scripts/generate_gha_summary.py
+# Capture the output if not running in GHA (where it goes to $GITHUB_STEP_SUMMARY)
+```
+
+### 3.5b (Optional) Run USA Thoroughbred Pipeline Diagnostic
+
+```bash
+export PYTHONPATH=.
+# Deep probe of Equibase/RP reachability and stuck tip analysis
+timeout 300 python3 scripts/usa_tb_diagnostic.py || echo "Diagnostic timed out"
+```
+
+---
+
 ## Phase 4: Report to User
 
-Compile ALL captured output from Phases 1–3 into a single message.
+Compile ALL captured output from Phases 1–3.5 into a single message.
 
 **Use `read_file` to get:**
 1. `summary_grid.txt` (first 50 lines)
 2. `goldmine_report.txt` (first 40 lines)
 3. `analytics_report.txt` (first 40 lines, if exists)
+4. `summary.md` (or captured output from `generate_gha_summary.py`)
 
 **Format the message as:**
 
@@ -356,6 +381,9 @@ Compile ALL captured output from Phases 1–3 into a single message.
 
 ### Database Status
 [Phase 3 output]
+
+### Bonus: Diagnostic Summary
+[Phase 3.5 output / GHA summary snippet]
 
 ### Issues Encountered
 [list any errors from any phase, or "None"]
