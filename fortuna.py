@@ -1214,6 +1214,7 @@ class SmartFetcher:
         }
         self.last_engine: str = "unknown"
         self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
+        self._curl_sessions: Dict[str, Any] = {} # GPT5 Fix: Initialize session tracking (Fix AttributeError)
         self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
@@ -1390,9 +1391,9 @@ class SmartFetcher:
                     err_lower = str(e).lower()
                     if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
                         self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
-                        # Discard the session for this impersonation version
+                        # Discard the poisoned session from the main cache (GPT5 Fix)
                         async with self._session_lock:
-                            self._curl_sessions.pop(imp_version, None)
+                            self._sessions.pop('_curl', None)
                         last_err = e
                         continue
                     raise
@@ -2110,7 +2111,7 @@ class OfficialGulfstreamAdapter(OfficialTrackAdapter):
 
 class OfficialTampaBayAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TampaBayDowns"
-    def __init__(self, config=None): super().__init__("Tampa Bay Downs", "https://www.tampabaydowns.com/racing/entries-results/entries", config=config)
+    def __init__(self, config=None): super().__init__("Tampa Bay Downs", "https://www.tampabaydowns.com/betting/entries/", config=config)
 
 class OfficialOaklawnAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_OaklawnPark"
@@ -2168,7 +2169,7 @@ class OfficialCharlesTownAdapter(OfficialTrackAdapter):
 
 class OfficialMountaineerAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Mountaineer"
-    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.mountaineer-casino.com/racing/", config=config)
+    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.cnty.com/mountaineer/racing/", config=config)
 
 class OfficialTurfParadiseAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TurfParadise"
@@ -2209,7 +2210,7 @@ class OfficialThistledownAdapter(OfficialTrackAdapter):
 
 class OfficialMahoningValleyAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_MahoningValley"
-    def __init__(self, config=None): super().__init__("Mahoning Valley", "https://www.hollywood-mahoning-valley.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Mahoning Valley", "https://www.hollywoodmahoningvalley.com/racing/entries", config=config)
 
 class OfficialBelterraParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_BelterraPark"
@@ -2228,7 +2229,7 @@ class OfficialHoosierParkAdapter(OfficialTrackAdapter):
 class OfficialNorthfieldParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_NorthfieldPark"
     DISCIPLINE = "Harness"
-    def __init__(self, config=None): super().__init__("Northfield Park", "https://www.mgmnorthfieldpark.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Northfield Park", "https://mgmnorthfieldpark.mgmresorts.com/en/racing/entries.html", config=config)
 
 class OfficialSciotoDownsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_SciotoDowns"
@@ -4172,15 +4173,19 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
     def _get_headers(self) -> Dict[str, str]:
         # Using the base domain as host to avoid internal API 403s (Fix 3)
+        # Content-Type aligned with Results adapter for reliable POST (GPT5 Fix)
         h = self._get_browser_headers(host="api.nyrabets.com")
         h["Origin"] = "https://www.nyrabets.com"
         h["Referer"] = "https://www.nyrabets.com/"
         h["X-Requested-With"] = "XMLHttpRequest"
+        h["Content-Type"] = "application/x-www-form-urlencoded"
         return h
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # 1. Get Cards (Meetings)
-        nyra_date = f"{date_str}T00:00:00.000"
+        # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
+        dt = parse_date_string(date_str)
+        nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
         }
@@ -4598,11 +4603,14 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         async def fetch_disc(disc, region="USA"):
             suffix = "" if region == "USA" else "?region=INT"
             # Try date-specific URL first, fallback to todays-races
-            # TwinSpires uses YYMMDD for races URL
+            # Modern TwinSpires backend requires 8-digit years (YYYYMMDD) for API stability
+            dt = parse_date_string(date)
+            date8 = dt.strftime("%Y%m%d")
+
             if date == datetime.now(EASTERN).strftime(DATE_FORMAT):
                 url = f"{self.BASE_URL}/bet/todays-races/{disc}{suffix}"
             else:
-                url = f"{self.BASE_URL}/bet/races/{date}/{disc}{suffix}"
+                url = f"{self.BASE_URL}/bet/races/{date8}/{disc}{suffix}"
             try:
                 resp = await self.make_request("GET", url, network_idle=True, wait_selector='div[class*="race"], [class*="RaceCard"], [class*="track"]')
                 if resp and resp.status == 200:
@@ -6966,9 +6974,10 @@ class FortunaDB:
                         q_num = int(daypart_enum[1])
                         start_hour = (q_num - 1) * 6
                         q_start = f'{date_str}T{start_hour:02d}:00:00'
-                        q_end = f'{date_str}T{q_num * 6:02d}:00:00'
+                        # FIX-19: Use 23:59:59 as the upper boundary for Q4 queries
+                        q_end = f'{date_str}T{min(23, q_num * 6):02d}:59:59' if q_num == 4 else f'{date_str}T{q_num * 6:02d}:00:00'
                         cursor = conn.execute(
-                            'SELECT race_id FROM tips WHERE report_date >= ? AND report_date < ?',
+                            'SELECT race_id FROM tips WHERE report_date >= ? AND report_date <= ?',
                             (q_start, q_end)
                         )
                         results.update({row['race_id'] for row in cursor.fetchall()})
