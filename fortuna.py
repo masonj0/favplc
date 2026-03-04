@@ -6976,8 +6976,10 @@ class FortunaDB:
                         q_start = f'{date_str}T{start_hour:02d}:00:00'
                         # FIX-19: Use 23:59:59 as the upper boundary for Q4 queries
                         q_end = f'{date_str}T{min(23, q_num * 6):02d}:59:59' if q_num == 4 else f'{date_str}T{q_num * 6:02d}:00:00'
+                        # Use < for upper bound to maintain half-open interval (Fix code review feedback)
+                        q_op = '<=' if q_num == 4 else '<'
                         cursor = conn.execute(
-                            'SELECT race_id FROM tips WHERE report_date >= ? AND report_date <= ?',
+                            f'SELECT race_id FROM tips WHERE report_date >= ? AND report_date {q_op} ?',
                             (q_start, q_end)
                         )
                         results.update({row['race_id'] for row in cursor.fetchall()})
