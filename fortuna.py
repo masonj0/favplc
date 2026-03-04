@@ -1214,6 +1214,7 @@ class SmartFetcher:
         }
         self.last_engine: str = "unknown"
         self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
+        self._curl_sessions: Dict[str, Any] = {} # GPT5 Fix: Initialize session tracking (Fix AttributeError)
         self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
@@ -1390,9 +1391,9 @@ class SmartFetcher:
                     err_lower = str(e).lower()
                     if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
                         self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
-                        # Discard the session for this impersonation version
+                        # Discard the poisoned session from the main cache (GPT5 Fix)
                         async with self._session_lock:
-                            self._curl_sessions.pop(imp_version, None)
+                            self._sessions.pop('_curl', None)
                         last_err = e
                         continue
                     raise
