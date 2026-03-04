@@ -146,8 +146,9 @@ usa_results_classes = [c for c in all_results_classes
 
 # ── DB setup ────────────────────────────────────────────────────────
 db_path = "fortuna.db"
-if not os.path.exists(db_path):
-    sqlite3.connect(db_path).close()
+# GPT5 Fix: Always initialize DB via FortunaDB to ensure schema is up-to-date
+asyncio.run(fortuna.FortunaDB(db_path).initialize())
+
 conn = sqlite3.connect(db_path)
 conn.row_factory = sqlite3.Row
 
@@ -398,8 +399,11 @@ def q5_racing_post():
 
     try:
         from curl_cffi import requests as cffi_req
-        rp_url = f"https://www.racingpost.com/results/{usa_test_date}"
-        rp_resp = cffi_req.get(rp_url, impersonate="chrome120",
+        # Racing Post requires YYYY-MM-DD for index results
+        rp_dt = fortuna.parse_date_string(usa_test_date)
+        rp_iso = rp_dt.strftime("%Y-%m-%d")
+        rp_url = f"https://www.racingpost.com/results/{rp_iso}"
+        rp_resp = cffi_req.get(rp_url, impersonate="chrome133",
             timeout=35, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/133",
                 "Accept": "text/html,*/*;q=0.8",

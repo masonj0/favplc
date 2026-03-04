@@ -1169,8 +1169,8 @@ class PageFetchingResultsAdapter(
             for lnk in links
         ))
 
-        # FIX_12: Add page fetch limit to prevent runaway fetches and SIGTERM
-        MAX_PAGES = 50
+        # FIX_21: Increase fetch limit and prioritize target venues (GPT5 Fix)
+        MAX_PAGES = 150
         if len(absolute) > MAX_PAGES:
             self.logger.warning(
                 "Truncating runaway result fetches",
@@ -1178,6 +1178,16 @@ class PageFetchingResultsAdapter(
                 original=len(absolute),
                 limit=MAX_PAGES
             )
+
+            # Prioritization: pull target venues to the front before slicing
+            if self._target_venues:
+                def priority_key(url):
+                    u_low = url.lower().replace("-", "").replace("_", "")
+                    for v in self._target_venues:
+                        if v and v in u_low: return 0
+                    return 1
+                absolute.sort(key=priority_key)
+
             absolute = absolute[:MAX_PAGES]
 
         self.logger.info(
@@ -2404,11 +2414,12 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # BUG-1 Fix: Use PLAYWRIGHT to handle React-based structure and reduce crash risk
+        # GPT5 Fix: Use CURL_CFFI for better reachability, retain Playwright as fallback
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
             stealth_mode="camouflage",
+            impersonate="chrome133",
             timeout=self.TIMEOUT,
         )
 
@@ -2709,10 +2720,12 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 45
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # GPT5 Fix: Use CURL_CFFI for better reachability, retain Playwright as fallback
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.PLAYWRIGHT,
+            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=True,
             stealth_mode="camouflage",
+            impersonate="chrome133",
             timeout=self.TIMEOUT,
             network_idle=True,
         )
