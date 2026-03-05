@@ -7358,7 +7358,7 @@ class FortunaDB:
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
                     to_storage_format(now_eastern()),
-                        outcome.get("match_confidence") or "none",
+                    outcome.get("match_confidence") or "none",
                     outcome.get("field_size"),
                     outcome.get("actual_fav_odds"),
                     race_id
@@ -8984,7 +8984,8 @@ async def run_quarter_fetch(
 
         try:
             # GEMINI_3: Increase per-adapter timeout in run_quarter_fetch to 180s
-            fetch_timeout = 180.0
+            # Increased to 300s to match hardened adapter timeouts (GPT5 Fix)
+            fetch_timeout = 300.0
             if use_playwright_sem:
                 async with playwright_semaphore:
                     races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)
