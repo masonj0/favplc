@@ -28,7 +28,7 @@ from fortuna_utils import (
     DISCIPLINE_KEYWORDS, clean_text, node_text, get_canonical_venue,
     normalize_venue_name, parse_odds_to_decimal, SmartOddsExtractor,
     is_placeholder_odds, is_valid_odds, now_eastern, to_eastern,
-    get_places_paid, parse_date_string, from_storage_format
+    get_places_paid, parse_date_string, from_storage_format, to_storage_format
 )
 import fortuna
 
@@ -400,13 +400,12 @@ class AuditorEngine:
         # Sample debug logs for the first few tips
         for tip in unverified[:10]:
             tip_key = self._tip_canonical_key(tip)
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Tip key vs results",
-                    tip_venue=tip.get("venue"),
-                    tip_key=tip_key,
-                    matched=tip_key in results_map if tip_key else False,
-                )
+            self.logger.debug(
+                "Tip key vs results",
+                tip_venue=tip.get("venue"),
+                tip_key=tip_key,
+                matched=tip_key in results_map if tip_key else False,
+            )
 
         audited: List[Dict[str, Any]] = []
         outcomes_to_batch: List[Tuple[str, Dict[str, Any]]] = []
@@ -422,8 +421,7 @@ class AuditorEngine:
 
             try:
                 # Wrap log calls in a level check for high-volume audit performance (GPT5 Fix)
-                if self.logger.isEnabledFor(logging.DEBUG):
-                    self.logger.debug("Attempting match", race_id=race_id, key=tip_key)
+                self.logger.debug("Attempting match", race_id=race_id, key=tip_key)
 
                 # Item 8: Algorithm optimization
                 result, confidence = self._match_tip_to_result(
@@ -2717,7 +2715,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     BASE_URL = "https://greyhounds.attheraces.com"
     HOST = "greyhounds.attheraces.com"
     IMPERSONATE = "chrome133"
-    TIMEOUT = 45
+    TIMEOUT = 300
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         # GPT5 Fix: Use CURL_CFFI for better reachability, retain Playwright as fallback
@@ -4178,7 +4176,8 @@ async def _harvest_results(
         async with sem:
             try:
                 # PIPE-4 Fix: Add per-adapter timeout to prevent runaway audits
-                races = await asyncio.wait_for(adapter.get_races(date_str), timeout=180.0)
+                # Increased to 300s to match hardened adapter timeouts (GPT5 Fix)
+                races = await asyncio.wait_for(adapter.get_races(date_str), timeout=300.0)
                 _analytics_logger.debug(
                     "Fetched results",
                     adapter=adapter.source_name,
@@ -4186,6 +4185,14 @@ async def _harvest_results(
                     count=len(races),
                 )
                 return adapter.source_name, races
+            except asyncio.TimeoutError:
+                _analytics_logger.warning(
+                    "adapter_timeout",
+                    adapter=adapter.source_name,
+                    date=date_str,
+                    timeout=300.0
+                )
+                return adapter.source_name, []
             except Exception:
                 _analytics_logger.warning(
                     "Adapter fetch failed",

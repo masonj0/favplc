@@ -1071,6 +1071,7 @@ class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
     _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
+    _playwright_semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
     _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
     _host_limiters: ClassVar[Dict[str, RateLimiter]] = {}
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
@@ -1143,6 +1144,20 @@ class GlobalResourceManager:
         return cls._semaphores[loop]
 
     @classmethod
+    def get_playwright_semaphore(cls) -> asyncio.Semaphore:
+        """Returns a shared playwright semaphore for the current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Semaphore(3)
+
+        if loop not in cls._playwright_semaphores:
+            with cls._lock_initialized:
+                if loop not in cls._playwright_semaphores:
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(3)
+        return cls._playwright_semaphores[loop]
+
+    @classmethod
     async def cleanup(cls):
         """Closes all clients for all event loops."""
         clients_to_close = []
@@ -1150,6 +1165,7 @@ class GlobalResourceManager:
             clients_to_close = list(cls._clients.values())
             cls._clients.clear()
             cls._semaphores.clear()
+            cls._playwright_semaphores.clear()
             cls._locks.clear()
 
         for client in clients_to_close:
@@ -7342,7 +7358,7 @@ class FortunaDB:
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
                     to_storage_format(now_eastern()),
-                    outcome.get("match_confidence", "none"),
+                    outcome.get("match_confidence") or "none",
                     outcome.get("field_size"),
                     outcome.get("actual_fav_odds"),
                     race_id
@@ -7391,7 +7407,7 @@ class FortunaDB:
                         outcome.get("top1_place_payout"),
                         outcome.get("top2_place_payout"),
                         outcome.get("audit_timestamp") or to_storage_format(now_eastern()),
-                        outcome.get("match_confidence", "none"),
+                        outcome.get("match_confidence") or "none",
                         outcome.get("field_size"),
                         outcome.get("actual_fav_odds"),
                         race_id
@@ -7487,18 +7503,18 @@ class FortunaDB:
             stats['voided'] = row[0] if row else 0
 
             row = conn.execute("SELECT SUM(net_profit) FROM tips WHERE audit_completed = 1").fetchone()
-            stats['total_profit'] = row[0] if row else 0.0
+            stats['total_profit'] = row[0] if row and row[0] is not None else 0.0
 
             row = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()
-            stats['max_report_date'] = row[0] if row else None
+            stats['max_report_date'] = row[0] if row and row[0] is not None else None
 
             # For BUG-10 verification
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
-            stats['populated_scoring_count'] = row[0] if row else 0
+            stats['populated_scoring_count'] = row[0] if row and row[0] is not None else 0
 
             # Lifetime avg payout (used for breakeven)
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
-            stats['lifetime_avg_payout'] = row[0] if row else 0.0
+            stats['lifetime_avg_payout'] = row[0] if row and row[0] is not None else 0.0
 
             return stats
         return await self._run_in_executor(_get)
@@ -8957,7 +8973,7 @@ async def run_quarter_fetch(
     date_str = daypart_tag.split("_")[1] # 260225
 
     # Add semaphore for browser-heavy adapters to prevent resource thrashing
-    playwright_semaphore = asyncio.Semaphore(3)
+    playwright_semaphore = GlobalResourceManager.get_playwright_semaphore()
 
     async def fetch_one(a, d_str):
         # Determine if this adapter uses Playwright
@@ -8968,7 +8984,8 @@ async def run_quarter_fetch(
 
         try:
             # GEMINI_3: Increase per-adapter timeout in run_quarter_fetch to 180s
-            fetch_timeout = 180.0
+            # Increased to 300s to match hardened adapter timeouts (GPT5 Fix)
+            fetch_timeout = 300.0
             if use_playwright_sem:
                 async with playwright_semaphore:
                     races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)

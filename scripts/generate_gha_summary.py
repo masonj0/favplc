@@ -136,7 +136,9 @@ class TipStats:
 
     @property
     def avg_payout(self) -> float:
-        return self.lifetime_avg_payout if self.lifetime_avg_payout > 0 else 0.0
+        lap = self.lifetime_avg_payout
+        if lap is None: return 0.0
+        return lap if lap > 0 else 0.0
 
     @property
     def breakeven_pct(self) -> float:
