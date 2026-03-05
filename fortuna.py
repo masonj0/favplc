@@ -7503,18 +7503,18 @@ class FortunaDB:
             stats['voided'] = row[0] if row else 0
 
             row = conn.execute("SELECT SUM(net_profit) FROM tips WHERE audit_completed = 1").fetchone()
-            stats['total_profit'] = row[0] if row else 0.0
+            stats['total_profit'] = row[0] if row and row[0] is not None else 0.0
 
             row = conn.execute("SELECT MAX(report_date) FROM tips").fetchone()
-            stats['max_report_date'] = row[0] if row else None
+            stats['max_report_date'] = row[0] if row and row[0] is not None else None
 
             # For BUG-10 verification
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
-            stats['populated_scoring_count'] = row[0] if row else 0
+            stats['populated_scoring_count'] = row[0] if row and row[0] is not None else 0
 
             # Lifetime avg payout (used for breakeven)
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
-            stats['lifetime_avg_payout'] = row[0] if row else 0.0
+            stats['lifetime_avg_payout'] = row[0] if row and row[0] is not None else 0.0
 
             return stats
         return await self._run_in_executor(_get)
