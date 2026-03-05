@@ -132,11 +132,11 @@ class TipStats:
         return (self.total_profit / self.decided) if self.decided > 0 else 0.0
 
     # Lifetime average values set by _get_stats
-    lifetime_avg_payout: float = 0.0
+    lifetime_avg_payout: Optional[float] = 0.0
 
     @property
     def avg_payout(self) -> float:
-        return self.lifetime_avg_payout if self.lifetime_avg_payout > 0 else 0.0
+        return self.lifetime_avg_payout if (self.lifetime_avg_payout or 0) > 0 else 0.0
 
     @property
     def breakeven_pct(self) -> float:
