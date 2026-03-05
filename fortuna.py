@@ -1071,6 +1071,7 @@ class GlobalResourceManager:
     """Manages shared resources like HTTP clients and semaphores."""
     _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
     _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
+    _playwright_semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
     _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
     _host_limiters: ClassVar[Dict[str, RateLimiter]] = {}
     _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
@@ -1143,6 +1144,20 @@ class GlobalResourceManager:
         return cls._semaphores[loop]
 
     @classmethod
+    def get_playwright_semaphore(cls) -> asyncio.Semaphore:
+        """Returns a shared playwright semaphore for the current event loop."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.Semaphore(3)
+
+        if loop not in cls._playwright_semaphores:
+            with cls._lock_initialized:
+                if loop not in cls._playwright_semaphores:
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(3)
+        return cls._playwright_semaphores[loop]
+
+    @classmethod
     async def cleanup(cls):
         """Closes all clients for all event loops."""
         clients_to_close = []
@@ -1150,6 +1165,7 @@ class GlobalResourceManager:
             clients_to_close = list(cls._clients.values())
             cls._clients.clear()
             cls._semaphores.clear()
+            cls._playwright_semaphores.clear()
             cls._locks.clear()
 
         for client in clients_to_close:
@@ -7342,7 +7358,7 @@ class FortunaDB:
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
                     to_storage_format(now_eastern()),
-                    outcome.get("match_confidence", "none"),
+                        outcome.get("match_confidence") or "none",
                     outcome.get("field_size"),
                     outcome.get("actual_fav_odds"),
                     race_id
@@ -7391,7 +7407,7 @@ class FortunaDB:
                         outcome.get("top1_place_payout"),
                         outcome.get("top2_place_payout"),
                         outcome.get("audit_timestamp") or to_storage_format(now_eastern()),
-                        outcome.get("match_confidence", "none"),
+                        outcome.get("match_confidence") or "none",
                         outcome.get("field_size"),
                         outcome.get("actual_fav_odds"),
                         race_id
@@ -8957,7 +8973,7 @@ async def run_quarter_fetch(
     date_str = daypart_tag.split("_")[1] # 260225
 
     # Add semaphore for browser-heavy adapters to prevent resource thrashing
-    playwright_semaphore = asyncio.Semaphore(3)
+    playwright_semaphore = GlobalResourceManager.get_playwright_semaphore()
 
     async def fetch_one(a, d_str):
         # Determine if this adapter uses Playwright
