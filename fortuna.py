@@ -7358,7 +7358,7 @@ class FortunaDB:
                     outcome.get("top1_place_payout"),
                     outcome.get("top2_place_payout"),
                     to_storage_format(now_eastern()),
-                    outcome.get("match_confidence") or "none",
+                        outcome.get("match_confidence") or "none",
                     outcome.get("field_size"),
                     outcome.get("actual_fav_odds"),
                     race_id
