@@ -1491,6 +1491,17 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
         }
 
     async def _fetch_data(self, date_str: str) -> Optional[Any]:
+        # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
+        try:
+            await self.smart_fetcher.fetch(
+                "https://www.nyrabets.com/",
+                method="GET",
+                headers=self._get_headers()
+            )
+            await asyncio.sleep(1.5)  # Allow cookies to settle
+        except Exception as e:
+            self.logger.debug("NYRABets bootstrap failed, attempting API anyway", error=str(e))
+
         # 1. Get Cards for the date
         dt = parse_date_string(date_str)
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
@@ -1590,7 +1601,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     """Equibase summary charts — primary US thoroughbred results source."""
 
     SOURCE_NAME = "EquibaseResults"
-    DECOMMISSIONED = True
+    # FIX-25: Revived to replace failing DRFResults
     BASE_URL = "https://www.equibase.com"
     HOST = "www.equibase.com"
     IMPERSONATE = "chrome133"
@@ -1602,9 +1613,12 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     _MIN_CONTENT_LENGTH: Final[int] = 2000
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
+        # FIX-25: Use Camoufox to bypass Imperva bot protection
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
-            timeout=45
+            primary_engine=fortuna.BrowserEngine.CAMOUFOX,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=60
         )
 
     def _get_headers(self) -> dict:
@@ -2282,7 +2296,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
     # Racing Post numeric track IDs corresponding to North American venues.
     # Added to handle new URL format /results/{id}/{slug}/{date}.
     _USA_TRACK_IDS: Final[frozenset[int]] = frozenset({
-        393, # Gulfstream Park
+        272, # Gulfstream Park
         315, # Santa Anita
         37,  # Churchill Downs
         462, # Tampa Bay Downs
@@ -2295,6 +2309,30 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         491, # Keeneland
         490, # Laurel Park
         182, # Pimlico
+        476, # Woodbine
+        881, # Charles Town
+        456, # Mahoning Valley
+        1001,# Remington Park
+        487, # Sam Houston
+        588, # Lone Star Park
+        464, # Monmouth Park
+        100, # Parx Racing
+        181, # Penn National
+        287, # Fair Grounds
+        471, # Golden Gate Fields
+        377, # Mountaineer
+        373, # Thistledown
+        383, # Belterra Park
+        537, # Zia Park
+        1101,# Sunland Park
+        384, # Finger Lakes
+        472, # Hawthorne
+        1079,# Indiana Grand
+        475, # Turf Paradise
+        466, # Emerald Downs
+        453, # Delta Downs
+        473, # Evangeline Downs
+        1002,# Sam Houston
     })
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
@@ -2412,9 +2450,9 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # GPT5 Fix: Use CURL_CFFI for better reachability, retain Playwright as fallback
+        # FIX-22: Upgrade to Camoufox to bypass Cloudflare Turnstile
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            primary_engine=fortuna.BrowserEngine.CAMOUFOX,
             enable_js=True,
             stealth_mode="camouflage",
             impersonate="chrome133",
@@ -2718,9 +2756,9 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     TIMEOUT = 300
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
-        # GPT5 Fix: Use CURL_CFFI for better reachability, retain Playwright as fallback
+        # FIX-22: Upgrade to Camoufox to bypass Cloudflare Turnstile
         return fortuna.FetchStrategy(
-            primary_engine=fortuna.BrowserEngine.CURL_CFFI,
+            primary_engine=fortuna.BrowserEngine.CAMOUFOX,
             enable_js=True,
             stealth_mode="camouflage",
             impersonate="chrome133",
