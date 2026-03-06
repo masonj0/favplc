@@ -4198,6 +4198,17 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return h
 
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
+        # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
+        try:
+            await self.smart_fetcher.fetch(
+                "https://www.nyrabets.com/",
+                method="GET",
+                headers=self._get_headers()
+            )
+            await asyncio.sleep(1.5)  # Allow cookies to settle
+        except Exception as e:
+            self.logger.debug("NYRABets bootstrap failed, attempting API anyway", error=str(e))
+
         # 1. Get Cards (Meetings)
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
@@ -4591,9 +4602,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # TwinSpires is heavily JS-dependent; Playwright is essential
+        # FIX-23: Upgrade to Camoufox for advanced JS/Bot evasion
         return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
+            primary_engine=BrowserEngine.CAMOUFOX,
             enable_js=True,
             stealth_mode="camouflage",
             timeout=90,
