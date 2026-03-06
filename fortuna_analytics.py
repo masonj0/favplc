@@ -2282,7 +2282,7 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
     # Racing Post numeric track IDs corresponding to North American venues.
     # Added to handle new URL format /results/{id}/{slug}/{date}.
     _USA_TRACK_IDS: Final[frozenset[int]] = frozenset({
-        393, # Gulfstream Park
+        272, # Gulfstream Park
         315, # Santa Anita
         37,  # Churchill Downs
         462, # Tampa Bay Downs
@@ -2295,6 +2295,30 @@ class RacingPostUSAResultsAdapter(RacingPostResultsAdapter):
         491, # Keeneland
         490, # Laurel Park
         182, # Pimlico
+        476, # Woodbine
+        881, # Charles Town
+        456, # Mahoning Valley
+        1001,# Remington Park
+        487, # Sam Houston
+        588, # Lone Star Park
+        464, # Monmouth Park
+        100, # Parx Racing
+        181, # Penn National
+        287, # Fair Grounds
+        471, # Golden Gate Fields
+        377, # Mountaineer
+        373, # Thistledown
+        383, # Belterra Park
+        537, # Zia Park
+        1101,# Sunland Park
+        384, # Finger Lakes
+        472, # Hawthorne
+        1079,# Indiana Grand
+        475, # Turf Paradise
+        466, # Emerald Downs
+        453, # Delta Downs
+        473, # Evangeline Downs
+        1002,# Sam Houston
     })
 
     async def _discover_result_links(self, date_str: str) -> Set[str]:
