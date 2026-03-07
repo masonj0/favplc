@@ -1,0 +1,15 @@
+2026-03-07 15:39:03 [warning  ] config key analysis.trustworthy_ratio_min is deprecated; use analysis.simply_success_trust_min
+
+════════════════════════════════════════════════════════════
+══════════ 🐎 FORTUNA FAUCET INTELLIGENCE - v3.0.0 ══════════
+════════════════════════════════════════════════════════════
+ 📍 Region: GLOBAL | 🔍 Status: READY
+ 📊 Database: 0 tips | ✅ 0 audited | 💎 0 goldmines
+ 🛡️  Odds Hygiene: >70% trust ratio required
+ 📁 Latest Reports: HTML
+════════════════════════════════════════════════════════════
+
+2026-03-07 15:39:03 [info     ] Using default region           region=GLOBAL
+2026-03-07 15:39:03 [info     ] Database initialized           path=fortuna.db schema_version=9
+2026-03-07 15:39:03 [info     ] quarter_snapshot_loaded        daypart_tag=Q2_260307 race_count=0
+2026-03-07 15:39:03 [info     ] Snapshot exists but contains 0 races daypart_tag=Q2_260307
