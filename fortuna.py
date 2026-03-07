@@ -7517,6 +7517,25 @@ class FortunaDB:
             return [dict(row) for row in cursor.fetchall()]
         return await self._run_in_executor(_get)
 
+    async def get_harvest_metrics(self, hours: int = 24) -> Dict[str, Dict[str, Any]]:
+        """Calculates harvest metrics (avg count, trust ratio) per adapter."""
+        if not self._initialized: await self.initialize()
+        def _get():
+            conn = self._get_conn()
+            cutoff = to_storage_format(datetime.now(EASTERN) - timedelta(hours=hours))
+
+            cursor = conn.execute("""
+                SELECT adapter_name,
+                       AVG(race_count) as avg_count,
+                       MAX(max_odds) as peak_odds
+                FROM harvest_logs
+                WHERE timestamp >= ?
+                GROUP BY adapter_name
+            """, (cutoff,))
+
+            return {row[0]: {"avg_count": row[1], "peak_odds": row[2]} for row in cursor.fetchall()}
+        return await self._run_in_executor(_get)
+
     async def get_stats(self) -> Dict[str, Any]:
         """Returns aggregate statistics for reporting."""
         if not self._initialized: await self.initialize()
@@ -7549,15 +7568,46 @@ class FortunaDB:
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
             stats['populated_scoring_count'] = row[0] if row and row[0] is not None else 0
 
-            # Get best bet builders (counts of A/A+ tips per source)
+            # Get deep builder analytics (Picks, Wins, Profit per source)
+            # source can be comma-separated list of names
             cursor = conn.execute("""
-                SELECT source, COUNT(*) as count
+                SELECT source, verdict, net_profit, is_best_bet, qualification_grade
                 FROM tips
-                WHERE is_best_bet = 1 OR qualification_grade IN ('A', 'A+')
-                GROUP BY source
-                ORDER BY count DESC
             """)
-            stats['best_bet_builders'] = {row[0]: row[1] for row in cursor.fetchall()}
+
+            builder_stats = {}
+            for s_str, verdict, profit, is_bb, grade in cursor.fetchall():
+                if not s_str: continue
+                # Split and clean sources
+                names = [n.strip() for n in s_str.split(",")]
+                is_high_qual = bool(is_bb) or (grade in ('A', 'A+'))
+
+                for name in names:
+                    if name not in builder_stats:
+                        builder_stats[name] = {
+                            "total": 0, "cashed": 0, "burned": 0, "profit": 0.0,
+                            "bb_total": 0, "bb_cashed": 0, "bb_profit": 0.0
+                        }
+                    b = builder_stats[name]
+                    b["total"] += 1
+                    if is_high_qual:
+                        b["bb_total"] += 1
+
+                    if verdict in ('CASHED', 'CASHED_ESTIMATED'):
+                        b["cashed"] += 1
+                        b["profit"] += (profit or 0.0)
+                        if is_high_qual:
+                            b["bb_cashed"] += 1
+                            b["bb_profit"] += (profit or 0.0)
+                    elif verdict == 'BURNED':
+                        b["burned"] += 1
+                        b["profit"] += (profit or 0.0)
+                        if is_high_qual:
+                            b["bb_profit"] += (profit or 0.0)
+
+            stats['builder_analytics'] = builder_stats
+            # Legacy bridge for GHA summary
+            stats['best_bet_builders'] = {k: v['bb_total'] for k, v in builder_stats.items() if v['bb_total'] > 0}
 
             # Lifetime avg payout (used for breakeven)
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()

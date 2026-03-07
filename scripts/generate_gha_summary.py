@@ -120,6 +120,7 @@ class TipStats:
     best_bet_count: int = 0
     best_bet_cashed: int = 0
     best_bet_profit: float = 0.0
+    builder_analytics: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     best_bet_builders: Dict[str, int] = field(default_factory=dict)
 
     @property
@@ -281,6 +282,7 @@ async def _get_stats(db: FortunaDB) -> TipStats:
         stats.voided = db_stats.get('voided', 0)
         stats.total_profit = db_stats.get('total_profit', 0.0)
         stats.lifetime_avg_payout = db_stats.get('lifetime_avg_payout', 0.0)
+        stats.builder_analytics = db_stats.get('builder_analytics', {})
         stats.best_bet_builders = db_stats.get('best_bet_builders', {})
 
         # Get recent audited tips for form/scoreboard
@@ -600,6 +602,9 @@ async def _build_harvest(out: GHASummaryWriter, db: FortunaDB, stats: TipStats):
     all_harvest_files = _discover_harvest_files()
     merged = _merge_harvests(all_harvest_files)
 
+    # Load 24h historical metrics for depth
+    hist_metrics = await db.get_harvest_metrics(hours=24)
+
     # Also merge DB harvest logs
     db_logs = await db.get_harvest_logs(hours=4)
     db_harvest = {
@@ -622,16 +627,32 @@ async def _build_harvest(out: GHASummaryWriter, db: FortunaDB, stats: TipStats):
     discovery = {k: v for k, v in merged.items() if "Result" not in k and "Tote" not in k}
     results = {k: v for k, v in merged.items() if "Result" in k or "Tote" in k}
 
-    # 🏆 Best-Bet Builders Microscope (New Section)
-    if stats.best_bet_builders:
-        out.write("## 🏆 Best-Bet Builders")
-        out.write("Top adapters contributing to our A/A+ qualified picks:")
+    # 🏆 Best-Bet Builder Analytics (Enhanced Microscope)
+    if stats.builder_analytics:
+        out.write("## 🏆 Best-Bet Builder Analytics")
+        out.write("Performance microscope on adapters generating our qualified picks:")
         out.write()
         out.write("```text")
-        out.write(f"  ADAPTER                          BEST-BETS")
-        out.write(f"  ────────────────────────────────  ─────────")
-        for name, count in stats.best_bet_builders.items():
-            out.write(f"  {_trunc(name, 32):<32}  {count:>9}")
+        out.write(f"  ADAPTER                          BEST-BETS   WIN-RATE   NET-PROFIT     ROI")
+        out.write(f"  ────────────────────────────────  ─────────  ────────   ──────────  ──────")
+
+        # Sort by BB total descending
+        sorted_builders = sorted(
+            stats.builder_analytics.items(),
+            key=lambda x: (x[1].get('bb_total', 0), x[1].get('bb_profit', 0.0)),
+            reverse=True
+        )
+
+        for name, b in sorted_builders:
+            if b.get('bb_total', 0) == 0: continue
+
+            count = b['bb_total']
+            wins = b['bb_cashed']
+            profit = b['bb_profit']
+            wr = (wins / count * 100) if count > 0 else 0
+            roi = (profit / (count * STANDARD_BET) * 100) if count > 0 else 0
+
+            out.write(f"  {_trunc(name, 32):<32}  {count:>9}  {wr:>7.0f}%  ${profit:>9.2f}  {roi:>+5.0f}%")
         out.write("```")
         out.write()
 
@@ -663,14 +684,18 @@ async def _build_harvest(out: GHASummaryWriter, db: FortunaDB, stats: TipStats):
     out.write("<details><summary>📋 All Adapter Details</summary>")
     out.write()
     out.write("```text")
-    out.write(f"  ADAPTER                          RACES   MAX ODDS   STATUS")
-    out.write(f"  ────────────────────────────────  ─────  ─────────  ──────")
+    out.write(f"  ADAPTER                          RACES   MAX ODDS   24H-AVG   STATUS")
+    out.write(f"  ────────────────────────────────  ─────  ─────────  ────────  ──────")
     sorted_merged = sorted(merged.items(), key=lambda x: x[1].get('count', 0), reverse=True)
     for name, d in sorted_merged:
         cnt = d.get('count', 0)
         mx = d.get('max_odds', 0.0)
+
+        hist = hist_metrics.get(name, {})
+        avg = hist.get("avg_count", 0.0)
+
         status = '✅' if cnt > 0 else '⚠️ No data'
-        out.write(f"  {_trunc(name, 32):<32}  {cnt:>5}  {mx:>9.1f}  {status}")
+        out.write(f"  {_trunc(name, 32):<32}  {cnt:>5}  {mx:>9.1f}  {avg:>8.1f}  {status}")
     out.write("```")
     out.write("</details>")
     out.write()
