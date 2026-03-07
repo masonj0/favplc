@@ -654,6 +654,8 @@ class Runner(FortunaBaseModel):
         name = re.sub(r"[^a-zA-Z0-9\s\-\'\\\"]", "", name)
         # Collapse multiple spaces
         name = re.sub(r"\s+", " ", name)
+        # Remove explicit "Favorite" or "2nd Favorite" prefixes if they leaked from scraper labels
+        name = re.sub(r"^(?:1st|2nd)?\s*Fav(?:orite)?\s*", "", name, flags=re.I)
         return name.strip() or "Unknown"
 
 
@@ -1272,6 +1274,17 @@ class SmartFetcher:
 
         # Check if engines are available before sorting
         available_engines = [e for e in self._engine_health.keys()]
+
+        # Domain-specific engine prioritization (GPT5 Fix)
+        # Some domains are better handled by specific engines
+        if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com"]):
+            # For these domains, prioritize Playwright or Camoufox if available
+            self.logger.debug("Prioritizing browser engines for protected domain", url=url)
+            if BrowserEngine.PLAYWRIGHT in available_engines:
+                self._engine_health[BrowserEngine.PLAYWRIGHT] = 1.0
+            if BrowserEngine.CAMOUFOX in available_engines:
+                self._engine_health[BrowserEngine.CAMOUFOX] = 0.95
+
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
             available_engines.remove(BrowserEngine.CURL_CFFI)
         if not ASYNC_SESSIONS_AVAILABLE:
@@ -1379,8 +1392,8 @@ class SmartFetcher:
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
 
             # BUG-14: Impersonation fallback chain to handle unsupported versions
-            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome133"
-            impersonate_chain = [requested_impersonate, "chrome133", "chrome128", "chrome124", "chrome120"]
+            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome124"
+            impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
             
@@ -2093,22 +2106,24 @@ class OfficialTrackAdapter(BaseAdapterV3):
         super().__init__(source_name=source, base_url=url, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Use HTTPX with JS disabled to maximize performance (JB/Council Strategy)
-        # SmartFetcher handles fallback to other engines automatically
+        # Official tracks often have bot protection; using CURL_CFFI for better success
         return FetchStrategy(
-            primary_engine=BrowserEngine.HTTPX,
-            timeout=10
+            primary_engine=BrowserEngine.CURL_CFFI,
+            impersonate="chrome124",
+            timeout=20
         )
 
     async def _fetch_data(self, date: str) -> Optional[str]:
         # Perform a GET to check status
         try:
-            # We use make_request which now retries and raises on non-200.
-            # BaseAdapterV3.get_races handles the multi-engine fallback if configured.
-            resp = await self.make_request("GET", "")
+            # GPT5 Fix: Pass official_url directly to avoid trailing slash on .html URLs
+            # and explicitly use impersonation to bypass bot challenges
+            resp = await self.make_request("GET", self.official_url, impersonate="chrome124")
             if resp and get_resp_status(resp) == 200:
                 return "ALIVE"
         except Exception as e:
+            if hasattr(e, "response") and e.response:
+                self.last_response_status = get_resp_status(e.response)
             self.logger.debug("Health check request failed", error=str(e))
         return None
 
