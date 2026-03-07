@@ -654,6 +654,8 @@ class Runner(FortunaBaseModel):
         name = re.sub(r"[^a-zA-Z0-9\s\-\'\\\"]", "", name)
         # Collapse multiple spaces
         name = re.sub(r"\s+", " ", name)
+        # Remove explicit "Favorite" or "2nd Favorite" prefixes if they leaked from scraper labels
+        name = re.sub(r"^(?:1st|2nd)?\s*Fav(?:orite)?\s*", "", name, flags=re.I)
         return name.strip() or "Unknown"
 
 
@@ -1272,6 +1274,17 @@ class SmartFetcher:
 
         # Check if engines are available before sorting
         available_engines = [e for e in self._engine_health.keys()]
+
+        # Domain-specific engine prioritization (GPT5 Fix)
+        # Some domains are better handled by specific engines
+        if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com", "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com"]):
+            # For these domains, prioritize Playwright or Camoufox if available
+            self.logger.debug("Prioritizing browser engines for protected domain", url=url)
+            if BrowserEngine.PLAYWRIGHT in available_engines:
+                self._engine_health[BrowserEngine.PLAYWRIGHT] = 1.0
+            if BrowserEngine.CAMOUFOX in available_engines:
+                self._engine_health[BrowserEngine.CAMOUFOX] = 0.95
+
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
             available_engines.remove(BrowserEngine.CURL_CFFI)
         if not ASYNC_SESSIONS_AVAILABLE:
@@ -1379,8 +1392,8 @@ class SmartFetcher:
             headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
 
             # BUG-14: Impersonation fallback chain to handle unsupported versions
-            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome133"
-            impersonate_chain = [requested_impersonate, "chrome133", "chrome128", "chrome124", "chrome120"]
+            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome124"
+            impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
             
@@ -2093,22 +2106,29 @@ class OfficialTrackAdapter(BaseAdapterV3):
         super().__init__(source_name=source, base_url=url, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Use HTTPX with JS disabled to maximize performance (JB/Council Strategy)
-        # SmartFetcher handles fallback to other engines automatically
+        # Official tracks often have bot protection; prioritizing Playwright for maximum success rate
         return FetchStrategy(
-            primary_engine=BrowserEngine.HTTPX,
-            timeout=10
+            primary_engine=BrowserEngine.PLAYWRIGHT,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=20,
+            network_idle=True
         )
 
     async def _fetch_data(self, date: str) -> Optional[str]:
         # Perform a GET to check status
         try:
-            # We use make_request which now retries and raises on non-200.
-            # BaseAdapterV3.get_races handles the multi-engine fallback if configured.
-            resp = await self.make_request("GET", "")
+            # GPT5 Fix: Defensive check to strip trailing slash if URL ends in .html or .php
+            url_to_fetch = self.official_url
+            if any(url_to_fetch.lower().endswith(ext) for ext in [".html", ".htm", ".php", ".aspx"]):
+                url_to_fetch = url_to_fetch.rstrip("/")
+
+            resp = await self.make_request("GET", url_to_fetch)
             if resp and get_resp_status(resp) == 200:
                 return "ALIVE"
         except Exception as e:
+            if hasattr(e, "response") and e.response:
+                self.last_response_status = get_resp_status(e.response)
             self.logger.debug("Health check request failed", error=str(e))
         return None
 
@@ -2185,7 +2205,7 @@ class OfficialCharlesTownAdapter(OfficialTrackAdapter):
 
 class OfficialMountaineerAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Mountaineer"
-    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.cnty.com/mountaineer/racing/", config=config)
+    def __init__(self, config=None): super().__init__("Mountaineer", "https://www.cnty.com/mountaineer/racing/entries-results/", config=config)
 
 class OfficialTurfParadiseAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_TurfParadise"
@@ -2226,7 +2246,7 @@ class OfficialThistledownAdapter(OfficialTrackAdapter):
 
 class OfficialMahoningValleyAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_MahoningValley"
-    def __init__(self, config=None): super().__init__("Mahoning Valley", "https://www.hollywoodmahoningvalley.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Mahoning Valley", "https://www.hollywoodmahoningvalley.com/racing/entries-results/", config=config)
 
 class OfficialBelterraParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_BelterraPark"
@@ -2235,7 +2255,7 @@ class OfficialBelterraParkAdapter(OfficialTrackAdapter):
 class OfficialSaratogaHarnessAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_SaratogaHarness"
     DISCIPLINE = "Harness"
-    def __init__(self, config=None): super().__init__("Saratoga Harness", "https://saratogacasino.com/racing/entries/", config=config)
+    def __init__(self, config=None): super().__init__("Saratoga Harness", "https://saratogacasino.com/racing/", config=config)
 
 class OfficialHoosierParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_HoosierPark"
@@ -2245,7 +2265,7 @@ class OfficialHoosierParkAdapter(OfficialTrackAdapter):
 class OfficialNorthfieldParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_NorthfieldPark"
     DISCIPLINE = "Harness"
-    def __init__(self, config=None): super().__init__("Northfield Park", "https://mgmnorthfieldpark.mgmresorts.com/en/racing/entries.html", config=config)
+    def __init__(self, config=None): super().__init__("Northfield Park", "https://mgmnorthfieldpark.mgmresorts.com/en/racing.html", config=config)
 
 class OfficialSciotoDownsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_SciotoDowns"
@@ -2258,7 +2278,7 @@ class OfficialFortErieAdapter(OfficialTrackAdapter):
 
 class OfficialHastingsAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Hastings"
-    def __init__(self, config=None): super().__init__("Hastings Racecourse", "https://www.hastingsracecourse.com/racing/entries", config=config)
+    def __init__(self, config=None): super().__init__("Hastings Racecourse", "https://www.hastingsracecourse.com/racing/", config=config)
 
 class OfficialAscotAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_Ascot"
@@ -2610,7 +2630,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         return self._get_browser_headers(host="www.skyracingworld.com")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome133")
+        kwargs.setdefault("impersonate", "chrome124")
         return await super().make_request(method, url, **kwargs)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
@@ -2763,12 +2783,13 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         disc = detect_discipline(html_content)
 
         # S5 — extract race type (independent review item)
+        # GPT5 Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
         header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
         if header_node:
             header_text = node_text(header_node)
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
             if "HANDICAP" in header_text.upper():
                 is_handicap = True
@@ -2797,7 +2818,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        kwargs.setdefault("impersonate", "chrome133")
+        kwargs.setdefault("impersonate", "chrome124")
         return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
@@ -3103,9 +3124,10 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         if dist_match: distance = dist_match.group(1).strip()
 
         # S5 — extract race type (independent review item)
+        # GPT5 Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
         if "HANDICAP" in header_text.upper():
             is_handicap = True
@@ -3184,7 +3206,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45, impersonate="chrome133")
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45, impersonate="chrome124")
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="greyhounds.attheraces.com", referer="https://greyhounds.attheraces.com/racecards")
@@ -3372,7 +3394,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="camouflage", timeout=30, impersonate="chrome133")
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="camouflage", timeout=30, impersonate="chrome124")
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.sportinglife.com", referer="https://www.sportinglife.com/racing/racecards")
@@ -3522,10 +3544,10 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if not runners: return None
 
         # S5 — extract race type (independent review item)
-        race_type = summary.get("race_title") or summary.get("race_name") or ""
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', race_type, re.I)
-        if rt_match: race_type = rt_match.group(1)
-        else: race_type = None
+        # GPT5 Fix: Broaden race type detection to improve scoring population
+        race_type_raw = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', race_type_raw, re.I)
+        race_type = rt_match.group(1) if rt_match else ("Handicap" if is_handicap else None)
 
         is_handicap = summary.get("has_handicap")
         return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, is_handicap=is_handicap, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
@@ -3576,7 +3598,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         race_type = None
         ht_node = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
         if ht_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(ht_node), re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', node_text(ht_node), re.I)
             if rt_match: race_type = rt_match.group(1)
 
         dn = parser.css_first('span[class*="RacecardHeader__Distance"]') or parser.css_first(".race-distance")
@@ -3593,7 +3615,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=30, impersonate="chrome133")
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=30, impersonate="chrome124")
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.skysports.com", referer="https://www.skysports.com/racing")
@@ -3770,7 +3792,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             # S5 — extract race type (independent review item)
             race_type = None
             if h:
-                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', node_text(h), re.I)
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', node_text(h), re.I)
                 if rt_match: race_type = rt_match.group(1)
 
             races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, race_type=race_type, source=self.source_name, available_bets=ab))
@@ -3844,7 +3866,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
         # Use CURL_CFFI for robust HTTPS and connection handling
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45, impersonate="chrome133")
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45, impersonate="chrome124")
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
@@ -4119,7 +4141,7 @@ class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
         self.model_name = model_name
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, impersonate="chrome133")
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, impersonate="chrome124")
 
     async def _fetch_data(self, date: str) -> Optional[StringIO]:
         dt = parse_date_string(date)
@@ -4184,7 +4206,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         return FetchStrategy(
             primary_engine=BrowserEngine.CURL_CFFI,
             timeout=45,
-            impersonate="chrome133"
+            impersonate="chrome124"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -4348,8 +4370,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome133 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
-        kwargs.setdefault("impersonate", "chrome133")
+        # Force chrome124 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
+        kwargs.setdefault("impersonate", "chrome124")
         # Let SmartFetcher/curl_cffi handle headers mostly, but provide minimal essentials if not already set
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.equibase.com/"
@@ -4374,7 +4396,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         resp = None
         for url in index_urls:
             # Try multiple impersonations to bypass block
-            for imp in ["chrome133", "chrome128", "safari17_0"]:
+            for imp in ["chrome124", "chrome128", "safari17_0"]:
                 try:
                     resp = await self.make_request("GET", url, impersonate=imp)
                     if resp and resp.status == 200 and resp.text and len(resp.text) > 1000 and "Pardon Our Interruption" not in resp.text:
@@ -4512,7 +4534,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 # S5 — extract race type (independent review item)
                 race_type = None
                 header_text = node_text(p.css_first("div.race-information")) or html_content[:2000]
-                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
@@ -4612,8 +4634,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         )
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        # Force chrome133 for TwinSpires to bypass basic bot checks
-        kwargs.setdefault("impersonate", "chrome133")
+        # Force chrome124 for TwinSpires to bypass basic bot checks
+        kwargs.setdefault("impersonate", "chrome124")
         # Provide common browser-like headers for TwinSpires
         h = kwargs.get("headers", {})
         if "Referer" not in h: h["Referer"] = "https://www.google.com/"
@@ -7504,6 +7526,10 @@ class FortunaDB:
             row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
             stats['total_tips'] = row[0] if row else 0
 
+            # Count best bets (A/A+)
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE is_best_bet = 1 OR qualification_grade IN ('A', 'A+')").fetchone()
+            stats['total_best_bets'] = row[0] if row else 0
+
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
             stats['cashed'] = row[0] if row else 0
 
@@ -7522,6 +7548,16 @@ class FortunaDB:
             # For BUG-10 verification
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
             stats['populated_scoring_count'] = row[0] if row and row[0] is not None else 0
+
+            # Get best bet builders (counts of A/A+ tips per source)
+            cursor = conn.execute("""
+                SELECT source, COUNT(*) as count
+                FROM tips
+                WHERE is_best_bet = 1 OR qualification_grade IN ('A', 'A+')
+                GROUP BY source
+                ORDER BY count DESC
+            """)
+            stats['best_bet_builders'] = {row[0]: row[1] for row in cursor.fetchall()}
 
             # Lifetime avg payout (used for breakeven)
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
@@ -8523,13 +8559,14 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 race_time_str = node_text(race_time_node)
 
                 # S5 — extract race type (independent review item)
+                # GPT5 Fix: Broaden race type detection to improve scoring population
                 race_type = None
                 header_text = node_text(
                     parser.css_first('.rp-raceCourse__panel__race__info')
                     or parser.css_first('.RC-course__info')
                     or parser.css_first('.RC-courseHeader')
                 )
-                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
                 is_handicap = None
