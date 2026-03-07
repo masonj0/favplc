@@ -1278,7 +1278,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "DRFResults"
     BASE_URL = "https://www1.drf.com"
     HOST = "www1.drf.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
         # BUG-1 Fix: Use CURL_CFFI with impersonation to bypass login wall
@@ -1286,7 +1286,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             enable_js=False,
             timeout=45,
-            impersonate="chrome133"
+            impersonate="chrome124"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -1477,7 +1477,7 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
         return fortuna.FetchStrategy(
             primary_engine=fortuna.BrowserEngine.CURL_CFFI,
             timeout=45,
-            impersonate="chrome133"
+            impersonate="chrome124"
         )
 
     def _get_headers(self) -> Dict[str, str]:
@@ -1604,11 +1604,11 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     # FIX-25: Revived to replace failing DRFResults
     BASE_URL = "https://www.equibase.com"
     HOST = "www.equibase.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 60
 
     _IMPERSONATION_FALLBACKS: Final[tuple[str, ...]] = (
-        "chrome133", "chrome128", "safari17_0",
+        "chrome124", "chrome128", "safari17_0",
     )
     _MIN_CONTENT_LENGTH: Final[int] = 2000
 
@@ -1830,8 +1830,9 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         # S5 — extract race type (independent review item)
+        # GPT5 Fix: Broaden race type detection to improve scoring population
         race_type = None
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
         is_handicap = None
@@ -1915,7 +1916,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "RacingPostResults"
     BASE_URL = "https://www.racingpost.com"
     HOST = "www.racingpost.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 60
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -2019,12 +2020,13 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         # S5 — extract race type (independent review item)
+        # GPT5 Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
         header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
         if header_node:
             header_text = fortuna.node_text(header_node)
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
             if "HANDICAP" in header_text.upper():
                 is_handicap = True
@@ -2446,7 +2448,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         return fixed
     BASE_URL = "https://www.attheraces.com"
     HOST = "www.attheraces.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2455,7 +2457,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             primary_engine=fortuna.BrowserEngine.CAMOUFOX,
             enable_js=True,
             stealth_mode="camouflage",
-            impersonate="chrome133",
+            impersonate="chrome124",
             timeout=self.TIMEOUT,
         )
 
@@ -2572,10 +2574,11 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         # S5 — extract race type (independent review item)
+        # GPT5 Fix: Broaden race type detection to improve scoring population
         race_type = None
         header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
         if header_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', fortuna.node_text(header_node), re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', fortuna.node_text(header_node), re.I)
             if rt_match: race_type = rt_match.group(1)
 
         return ResultRace(
@@ -2752,7 +2755,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "AtTheRacesGreyhoundResults"
     BASE_URL = "https://greyhounds.attheraces.com"
     HOST = "greyhounds.attheraces.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 300
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -2761,7 +2764,7 @@ class AtTheRacesGreyhoundResultsAdapter(PageFetchingResultsAdapter):
             primary_engine=fortuna.BrowserEngine.CAMOUFOX,
             enable_js=True,
             stealth_mode="camouflage",
-            impersonate="chrome133",
+            impersonate="chrome124",
             timeout=self.TIMEOUT,
             network_idle=True,
         )
@@ -3063,7 +3066,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SportingLifeResults"
     BASE_URL = "https://www.sportinglife.com"
     HOST = "www.sportinglife.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 45
 
     # -- link discovery ----------------------------------------------------
@@ -3150,10 +3153,11 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         )
 
         # S5 — extract race type (independent review item)
+        # GPT5 Fix: Broaden race type detection to improve scoring population
         race_type = None
         # Try summary header or card info
         header_text = summary.get("race_title") or summary.get("race_name") or ""
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes)', header_text, re.I)
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
         is_handicap = summary.get("has_handicap")
@@ -3270,7 +3274,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "StandardbredCanadaResults"
     BASE_URL = "https://standardbredcanada.ca"
     HOST = "standardbredcanada.ca"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 45
 
     _TRACK_CODES: Final[tuple[str, ...]] = (
@@ -3668,7 +3672,7 @@ class TimeformResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "TimeformResults"
     BASE_URL = "https://www.timeform.com"
     HOST = "www.timeform.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 60
 
     def _configure_fetch_strategy(self) -> fortuna.FetchStrategy:
@@ -3776,7 +3780,7 @@ class SkySportsResultsAdapter(PageFetchingResultsAdapter):
     SOURCE_NAME = "SkySportsResults"
     BASE_URL = "https://www.skysports.com"
     HOST = "www.skysports.com"
-    IMPERSONATE = "chrome133"
+    IMPERSONATE = "chrome124"
     TIMEOUT = 45
 
     def _parse_races(self, raw_data: Any) -> List["ResultRace"]:

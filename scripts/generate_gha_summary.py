@@ -47,7 +47,9 @@ def _discover_harvest_files() -> List[str]:
     Handles both old naming (entry-solid/entry-lousy) and new daypart naming.
     """
     patterns = [
+        "discovery_harvest.json",
         "discovery_harvest_*.json",
+        "results_harvest.json",
         "results_harvest_*.json",
     ]
     files = []
@@ -118,6 +120,8 @@ class TipStats:
     best_bet_count: int = 0
     best_bet_cashed: int = 0
     best_bet_profit: float = 0.0
+    builder_analytics: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    best_bet_builders: Dict[str, int] = field(default_factory=dict)
 
     @property
     def decided(self) -> int:
@@ -278,6 +282,8 @@ async def _get_stats(db: FortunaDB) -> TipStats:
         stats.voided = db_stats.get('voided', 0)
         stats.total_profit = db_stats.get('total_profit', 0.0)
         stats.lifetime_avg_payout = db_stats.get('lifetime_avg_payout', 0.0)
+        stats.builder_analytics = db_stats.get('builder_analytics', {})
+        stats.best_bet_builders = db_stats.get('best_bet_builders', {})
 
         # Get recent audited tips for form/scoreboard
         recent_audited = await db.get_tips(audited=True, limit=30)
@@ -338,25 +344,39 @@ async def _build_action_plan(out: GHASummaryWriter, stats: TipStats, db: Fortuna
     actions = []
 
     all_harvest_files = _discover_harvest_files()
-    discovery = _merge_harvests(all_harvest_files)
-    r_count = sum(d.get('count', 0) for d in discovery.values())
-    a_count = len([d for d in discovery.values() if d.get('count', 0) > 0])
+    merged_harvest = _merge_harvests(all_harvest_files)
+
+    # Split for health check
+    entry_harvest = {k: v for k, v in merged_harvest.items() if "Result" not in k and "Tote" not in k}
+    result_harvest = {k: v for k, v in merged_harvest.items() if "Result" in k or "Tote" in k}
+
+    e_r_count = sum(d.get('count', 0) for d in entry_harvest.values())
+    e_a_count = len([d for d in entry_harvest.values() if d.get('count', 0) > 0])
+
+    r_r_count = sum(d.get('count', 0) for d in result_harvest.values())
+    r_a_count = len([d for d in result_harvest.values() if d.get('count', 0) > 0])
 
     if not Path(db.db_path).exists():
         status, emoji = "CRITICAL", "🔴"
         findings.append("🔴 DB file missing or unreadable.")
         actions.append("Check DB deployment and cache restore.")
-    elif a_count == 0:
+    elif e_a_count == 0:
         # Check harvest logs in DB as fallback
         db_harvest = await db.get_harvest_logs(hours=4)
-        if not db_harvest:
+        # Filter for entry adapters in DB logs
+        db_entries = [l for l in db_harvest if "Result" not in l['adapter_name'] and "Tote" not in l['adapter_name']]
+
+        if not db_entries:
             status, emoji = "CRITICAL", "🔴"
-            findings.append("🔴 No discovery data — all adapters failed.")
-            actions.append("Re-deploy discovery adapters. Check adapter logs in Phase 3.")
+            findings.append("🔴 No entry data — all discovery adapters failed.")
+            actions.append("Re-deploy discovery adapters. Check adapter logs.")
         else:
-            findings.append(f"🟢 {len(db_harvest)} harvest logs found in DB.")
+            findings.append(f"🟢 {len(db_entries)} discovery logs found in DB.")
     else:
-        findings.append(f"🟢 {r_count} races discovered from {a_count} adapters.")
+        findings.append(f"🟢 {e_r_count} races discovered from {e_a_count} discovery adapters.")
+
+    if r_a_count == 0 and e_a_count > 0:
+        findings.append("🟡 No result data harvested in this run.")
 
     try:
         db_meta = await db.get_stats()
@@ -577,10 +597,13 @@ def _build_recent_results(out: GHASummaryWriter, stats: TipStats):
         out.write("</details>")
         out.write()
 
-async def _build_harvest(out: GHASummaryWriter, db: FortunaDB):
+async def _build_harvest(out: GHASummaryWriter, db: FortunaDB, stats: TipStats):
     # Dynamic discovery instead of hardcoded filenames
     all_harvest_files = _discover_harvest_files()
     merged = _merge_harvests(all_harvest_files)
+
+    # Load 24h historical metrics for depth
+    hist_metrics = await db.get_harvest_metrics(hours=24)
 
     # Also merge DB harvest logs
     db_logs = await db.get_harvest_logs(hours=4)
@@ -600,30 +623,79 @@ async def _build_harvest(out: GHASummaryWriter, db: FortunaDB):
         out.write("## 🛰️ Adapter Harvest\n\nNo adapter data available yet.\n")
         return
 
-    active = len([d for d in merged.values() if d.get('count', 0) > 0])
-    total_races = sum(d.get('count', 0) for d in merged.values())
+    # Split between Discovery (Entry) and Results
+    discovery = {k: v for k, v in merged.items() if "Result" not in k and "Tote" not in k}
+    results = {k: v for k, v in merged.items() if "Result" in k or "Tote" in k}
 
-    out.write("## 🛰️ Adapter Harvest")
-    out.write()
-    out.write(f"{active}/{len(merged)} adapters active · {total_races} races harvested")
-    out.write()
+    # 🏆 Best-Bet Builder Analytics (Enhanced Microscope)
+    if stats.builder_analytics:
+        out.write("## 🏆 Best-Bet Builder Analytics")
+        out.write("Performance microscope on adapters generating our qualified picks:")
+        out.write()
+        out.write("```text")
+        out.write(f"  ADAPTER                          BEST-BETS   WIN-RATE   NET-PROFIT     ROI")
+        out.write(f"  ────────────────────────────────  ─────────  ────────   ──────────  ──────")
 
-    failed = [n for n, d in merged.items() if d.get('count', 0) == 0]
-    if failed:
-        for f in failed[:5]: out.write(f"- ⚠️ **{f}** — 0 races")
+        # Sort by BB total descending
+        sorted_builders = sorted(
+            stats.builder_analytics.items(),
+            key=lambda x: (x[1].get('bb_total', 0), x[1].get('bb_profit', 0.0)),
+            reverse=True
+        )
+
+        for name, b in sorted_builders:
+            if b.get('bb_total', 0) == 0: continue
+
+            count = b['bb_total']
+            wins = b['bb_cashed']
+            profit = b['bb_profit']
+            wr = (wins / count * 100) if count > 0 else 0
+            roi = (profit / (count * STANDARD_BET) * 100) if count > 0 else 0
+
+            out.write(f"  {_trunc(name, 32):<32}  {count:>9}  {wr:>7.0f}%  ${profit:>9.2f}  {roi:>+5.0f}%")
+        out.write("```")
         out.write()
 
-    out.write("<details><summary>📋 Adapter details</summary>")
+    # Entry Harvest
+    d_active = len([d for d in discovery.values() if d.get('count', 0) > 0])
+    d_total = sum(d.get('count', 0) for d in discovery.values())
+    out.write("## 🔎 Entry / Racecard Harvest")
+    out.write(f"{d_active}/{len(discovery)} discovery adapters active · {d_total} races discovered")
+    out.write()
+
+    d_failed = [n for n, d in discovery.items() if d.get('count', 0) == 0]
+    if d_failed:
+        out.write(f"⚠️ **Failing Discovery:** {', '.join(d_failed[:5])}")
+        out.write()
+
+    # Results Harvest
+    r_active = len([d for d in results.values() if d.get('count', 0) > 0])
+    r_total = sum(d.get('count', 0) for d in results.values())
+    out.write("## 📊 Results / Audit Harvest")
+    out.write(f"{r_active}/{len(results)} results adapters active · {r_total} results harvested")
+    out.write()
+
+    r_failed = [n for n, d in results.items() if d.get('count', 0) == 0]
+    if r_failed:
+        out.write(f"⚠️ **Failing Results:** {', '.join(r_failed[:3])}")
+        out.write()
+
+    # Unified Details (Collapsible)
+    out.write("<details><summary>📋 All Adapter Details</summary>")
     out.write()
     out.write("```text")
-    out.write(f"  ADAPTER                          RACES   MAX ODDS   STATUS")
-    out.write(f"  ────────────────────────────────  ─────  ─────────  ──────")
+    out.write(f"  ADAPTER                          RACES   MAX ODDS   24H-AVG   STATUS")
+    out.write(f"  ────────────────────────────────  ─────  ─────────  ────────  ──────")
     sorted_merged = sorted(merged.items(), key=lambda x: x[1].get('count', 0), reverse=True)
     for name, d in sorted_merged:
         cnt = d.get('count', 0)
         mx = d.get('max_odds', 0.0)
+
+        hist = hist_metrics.get(name, {})
+        avg = hist.get("avg_count", 0.0)
+
         status = '✅' if cnt > 0 else '⚠️ No data'
-        out.write(f"  {_trunc(name, 32):<32}  {cnt:>5}  {mx:>9.1f}  {status}")
+        out.write(f"  {_trunc(name, 32):<32}  {cnt:>5}  {mx:>9.1f}  {avg:>8.1f}  {status}")
     out.write("```")
     out.write("</details>")
     out.write()
@@ -663,7 +735,7 @@ async def main():
     _build_recent_results(out, stats)
     out.write("---")
     out.write()
-    await _build_harvest(out, db)
+    await _build_harvest(out, db, stats)
     await _build_data_quality(out, db)
 
     # Intelligence Grids (existing files)
