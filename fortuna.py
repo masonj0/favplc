@@ -7526,6 +7526,10 @@ class FortunaDB:
             row = conn.execute("SELECT COUNT(*) FROM tips").fetchone()
             stats['total_tips'] = row[0] if row else 0
 
+            # Count best bets (A/A+)
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE is_best_bet = 1 OR qualification_grade IN ('A', 'A+')").fetchone()
+            stats['total_best_bets'] = row[0] if row else 0
+
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE audit_completed = 1 AND verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
             stats['cashed'] = row[0] if row else 0
 
@@ -7544,6 +7548,16 @@ class FortunaDB:
             # For BUG-10 verification
             row = conn.execute("SELECT COUNT(*) FROM tips WHERE qualification_grade IS NOT NULL AND qualification_grade != ''").fetchone()
             stats['populated_scoring_count'] = row[0] if row and row[0] is not None else 0
+
+            # Get best bet builders (counts of A/A+ tips per source)
+            cursor = conn.execute("""
+                SELECT source, COUNT(*) as count
+                FROM tips
+                WHERE is_best_bet = 1 OR qualification_grade IN ('A', 'A+')
+                GROUP BY source
+                ORDER BY count DESC
+            """)
+            stats['best_bet_builders'] = {row[0]: row[1] for row in cursor.fetchall()}
 
             # Lifetime avg payout (used for breakeven)
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
