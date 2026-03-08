@@ -337,12 +337,12 @@ python3 scripts/generate_gha_summary.py
 # Capture the output if not running in GHA (where it goes to $GITHUB_STEP_SUMMARY)
 ```
 
-### 3.5b (Optional) Run USA Thoroughbred Pipeline Diagnostic
+### 3.5b (Optional) Run Global Racing Pipeline Diagnostic
 
 ```bash
 export PYTHONPATH=.
-# Deep probe of Equibase/RP reachability and stuck tip analysis
-timeout 300 python3 scripts/usa_tb_diagnostic.py || echo "Diagnostic timed out"
+# Deep probe of reachability and stuck tip analysis
+timeout 300 python3 scripts/global_diagnostic.py || echo "Diagnostic timed out"
 ```
 
 ---
