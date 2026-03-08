@@ -4672,11 +4672,12 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             return []
 
         # Fetch both USA and International for all disciplines
+        # Handle 'GLOBAL' region mapping (fetch both)
         tasks = []
         for d in ["thoroughbred", "harness", "greyhound"]:
-            if target_region in [None, "USA"]:
+            if target_region in [None, "USA", "GLOBAL"]:
                 tasks.append(fetch_disc(d, "USA"))
-            if target_region in [None, "INT"]:
+            if target_region in [None, "INT", "GLOBAL"]:
                 tasks.append(fetch_disc(d, "INT"))
         results = await asyncio.gather(*tasks)
         for r_list in results:
