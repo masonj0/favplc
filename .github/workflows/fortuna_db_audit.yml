@@ -3,10 +3,6 @@ name: "🔍 DB Auditor + Pipeline Health Monitor"
 on:
   schedule:
     - cron: '0 4,12,20 * * *'
-  workflow_run:
-    workflows: ["List of Best Bets"]
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       lookback_hours:
