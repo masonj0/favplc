@@ -39,6 +39,7 @@ Thumbs.db
 canary_result.json
 canary_output.log
 *_debug.html
+_diag_snapshots/
 debug-snapshots/
 debug_snapshots/
 adapter_stats.json
