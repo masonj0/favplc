@@ -783,6 +783,161 @@ def q13_diagnosis():
     for line in diagnosis: emit(line)
     emit("\n---")
 
+def q14_best_bet_microscope():
+    emit("## Q14: 🔬 Best-Bet Microscope & Runner Hygiene\n")
+    if not _evidence.get('db_has_tips'):
+        emit("ℹ️ No tips table — skipping.\n")
+        return
+
+    # 1. Scoring Distribution
+    emit("### Scoring Signal Distribution (A/A+ Qualifiers)")
+    emit("```")
+    emit(f"  {'QUALIFICATION':<15s} {'COUNT':<6s} {'AVG SCORE':<10s} {'AVG GAP':<10s}")
+    emit(f"  {'─'*15} {'─'*6} {'─'*10} {'─'*10}")
+    for row in conn.execute("""
+        SELECT qualification_grade, COUNT(*) as n, AVG(composite_score) as avg_s, AVG(gap_abs) as avg_g
+        FROM tips WHERE qualification_grade IN ('A+', 'A')
+        GROUP BY qualification_grade ORDER BY qualification_grade
+    """):
+        emit(f"  {str(row['qualification_grade']):<15s} {row['n']:<6d} {row['avg_s']:<10.2f} {row['avg_g']:<10.2f}")
+    emit("```\n")
+
+    # 2. Runner Name Hygiene (GPT5 Fix Verification)
+    emit("### Runner Hygiene — Leaked Scraper Labels")
+    leaked_labels = ["Favorite", "Fav", "2nd Fav", "Market Leader", "Scratched", "Runner"]
+    hygiene_issues = []
+    emit("```")
+    for label in leaked_labels:
+        rows = conn.execute(
+            "SELECT selection_name, venue, start_time FROM tips WHERE selection_name LIKE ?",
+            (f"%{label}%",)
+        ).fetchall()
+        if rows:
+            emit(f"  ❌ Found label '{label}' in {len(rows)} runner names.")
+            for r in rows[:3]:
+                emit(f"     - {r['selection_name']} @ {r['venue']}")
+            hygiene_issues.append(f"Leaked label '{label}' in {len(rows)} names")
+    if not hygiene_issues:
+        emit("  ✅ No leaked scraper labels found in selection names.")
+    emit("```\n")
+
+    # 3. Goldmine Anomaly Detection
+    emit("### Goldmine Anomaly Detection")
+    # Check for Goldmines with suspicious odds or zero gaps
+    emit("```")
+    anomalies = conn.execute("""
+        SELECT venue, race_number, selection_name, predicted_fav_odds, predicted_2nd_fav_odds, gap_abs
+        FROM tips WHERE is_goldmine = 1 AND (gap_abs < 1.0 OR predicted_fav_odds > predicted_2nd_fav_odds)
+    """).fetchall()
+    if anomalies:
+        emit(f"  ❌ Found {len(anomalies)} suspicious Goldmines (inverted odds or small gap).")
+        for a in anomalies[:5]:
+            emit(f"     - {a['venue']} R{a['race_number']}: {a['selection_name']} (Fav:{a['predicted_fav_odds']} Sec:{a['predicted_2nd_fav_odds']} Gap:{a['gap_abs']})")
+    else:
+        emit("  ✅ Goldmine logic appears consistent with odds/gap rules.")
+    emit("```\n")
+
+    # 4. Zero-Gap / Default-Odds Clusters
+    emit("### Zero-Gap / Default-Odds Clusters")
+    emit("```")
+    # Identify venues where we are getting odds but no gaps (likely predictor failure)
+    for row in conn.execute("""
+        SELECT venue, COUNT(*) as n
+        FROM tips WHERE predicted_fav_odds IS NOT NULL AND (gap_abs IS NULL OR gap_abs = 0.0)
+        AND start_time >= DATE('now', '-2 days')
+        GROUP BY venue HAVING n > 3 ORDER BY n DESC
+    """):
+        emit(f"  ⚠️ {row['venue']:28s} {row['n']:3d} races with odds but 0.0 gap (Check Predictor)")
+    emit("```\n")
+
+    # 5. Shadow Runners / Duplicate Favorites (Phase B1 Regression)
+    emit("### Shadow Runners & Duplicate Detection")
+    emit("```")
+    # Check for races where multiple tips exist for the same race ID (should be 1 tip per race)
+    # This detects failures in the audit-matching or deduplication logic
+    duplicates = conn.execute("""
+        SELECT race_id, COUNT(*) as n
+        FROM tips WHERE start_time >= DATE('now', '-7 days')
+        GROUP BY race_id HAVING n > 1
+    """).fetchall()
+    if duplicates:
+        emit(f"  ❌ Found {len(duplicates)} races with duplicate tips (Shadow Runners).")
+        for d in duplicates[:5]:
+            emit(f"     - {d['race_id']} ({d['n']} entries)")
+    else:
+        emit("  ✅ No duplicate tips detected per race ID in the last 7 days.")
+    emit("```\n")
+
+    # 6. Predictor Signal Variance (Phase J)
+    emit("### Predictor Signal Variance (Last 48h)")
+    emit("```")
+    # Check if place_prob or predicted_ev are always the same value (stuck predictor)
+    variance = conn.execute("""
+        SELECT COUNT(DISTINCT place_prob) as vp, COUNT(DISTINCT predicted_ev) as ve, COUNT(*) as total
+        FROM tips WHERE start_time >= DATE('now', '-2 days')
+    """).fetchone()
+    if variance and variance['total'] > 10:
+        if variance['vp'] <= 1:
+            emit(f"  ❌ ZERO VARIANCE in place_prob ({variance['vp']} unique values).")
+        else:
+            emit(f"  ✅ place_prob variance: {variance['vp']} unique values.")
+
+        if variance['ve'] <= 1:
+            emit(f"  ❌ ZERO VARIANCE in predicted_ev ({variance['ve']} unique values).")
+        else:
+            emit(f"  ✅ predicted_ev variance: {variance['ve']} unique values.")
+    elif variance and variance['total'] > 0:
+        emit(f"  ℹ️ Low sample size for variance check ({variance['total']} tips).")
+    else:
+        emit("  ℹ️ No tips in last 48h to check predictor variance.")
+    emit("```\n")
+
+    # 7. Grade Distribution Audit
+    emit("### Grade Distribution Audit (Last 7 days)")
+    emit("```")
+    grades = conn.execute("""
+        SELECT qualification_grade, COUNT(*) as n
+        FROM tips WHERE start_time >= DATE('now', '-7 days')
+        GROUP BY qualification_grade
+    """).fetchall()
+    if grades:
+        total = sum(g['n'] for g in grades)
+        for g in grades:
+            pct = (g['n'] / total) * 100
+            emit(f"  {str(g['qualification_grade']):<15s} {g['n']:>4d} ({pct:5.1f}%)")
+
+        aplus = next((g['n'] for g in grades if g['qualification_grade'] == 'A+'), 0)
+        if aplus / total > 0.5:
+            emit("  ⚠️ GRADE INFLATION: Over 50% of tips are A+.")
+    else:
+        emit("  ℹ️ No graded tips in last 7 days.")
+    emit("```\n")
+
+def q15_best_bet_builder_health():
+    emit("## Q15: 🛠️ Best-Bet Builder Health\n")
+    if not _evidence.get('db_has_tips'):
+        emit("ℹ️ No tips table — skipping.\n")
+        return
+
+    # Check if we have source-specific hit rates for best bets
+    emit("### Hit Rate by Primary Discovery Source (Best Bets Only)")
+    emit("```")
+    emit(f"  {'SOURCE':<25s} {'BEST-BETS':<10s} {'HIT-RATE':<10s}")
+    emit(f"  {'─'*25} {'─'*10} {'─'*10}")
+    for row in conn.execute("""
+        SELECT source, COUNT(*) as n,
+               ROUND(CAST(SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') THEN 1 ELSE 0 END), 0) * 100, 1) as hit
+        FROM tips WHERE is_best_bet = 1
+        GROUP BY source ORDER BY n DESC
+    """):
+        # Source might be a comma-separated list, take the first one
+        src = (row['source'] or "Unknown").split(",")[0]
+        emit(f"  {src:<25s} {row['n']:<10d} {row['hit'] or 0:.1f}%")
+    if not conn.execute("SELECT 1 FROM tips WHERE is_best_bet = 1 LIMIT 1").fetchone():
+        emit("  (no best bets found in database)")
+    emit("```\n")
+
 # ═══════════════════════════════════════════════════════════════════
 # MAIN LOOP
 # ═══════════════════════════════════════════════════════════════════
@@ -792,7 +947,8 @@ flush()
 
 for section in [q1_db_reality, q2_adapters, q3_network, q4_equibase, q5_racing_post,
                 q6_stuck_tips, q7_global_results, q8_usa_results, q9_discovery,
-                q10_playwright, q11_harvest, q12_data_quality, q13_diagnosis]:
+                q10_playwright, q11_harvest, q12_data_quality, q13_diagnosis,
+                q14_best_bet_microscope, q15_best_bet_builder_health]:
     if deadline_exceeded():
         emit(f"\n⚠️ Deadline exceeded before `{section.__name__}`.")
         break
