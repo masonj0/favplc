@@ -2797,13 +2797,20 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         runners = []
         # Try different selectors for runners
-        for row in parser.css(".runner_row") or parser.css(".mobile-runner"):
+        # Broadened selectors to catch dynamic/mobile-first layouts
+        runner_rows = parser.css(".runner_row") or parser.css(".mobile-runner") or parser.css("div[class*='runner']")
+        for row in runner_rows:
             try:
-                name_node = row.css_first(".horseName") or row.css_first("a[href*='/horse/']")
+                # Broaden name selectors
+                name_node = (
+                    row.css_first(".horseName")
+                    or row.css_first("a[href*='/horse/']")
+                    or row.css_first(".name")
+                )
                 if not name_node: continue
                 name = clean_text(node_text(name_node))
 
-                num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]")
+                num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]") or row.css_first(".number")
                 number = 0
                 if num_node:
                     if num_node.attributes.get("data-tab-no"):
@@ -2815,7 +2822,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                 scratched = "strikeout" in (row.attributes.get("class") or "").lower() or row.attributes.get("data-scratched") == "True"
 
                 win_odds = None
-                odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
+                # Broaden odds selectors
+                odds_node = row.css_first(".pa_odds") or row.css_first(".odds") or row.css_first(".win-odds")
                 win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
                 odds_source = "extracted" if win_odds is not None else None
 
