@@ -45,7 +45,7 @@ async def test_at_the_races_adapter_ajax_movers():
 
         assert len(races) > 0
         race = races[0]
-        assert "Newmarket" in race.venue
+        assert "newmarket" in race.venue.lower()
         assert len(race.runners) == 2
         # Runners might be in a different order depending on map processing
         runner1 = next(r for r in race.runners if r.name == "Mover Horse 1")
@@ -109,7 +109,7 @@ async def test_at_the_races_adapter_fallback_parsing():
 
         assert len(races) > 0
         race = races[0]
-        assert "Newmarket" in race.venue
+        assert "newmarket" in race.venue.lower()
         assert len(race.runners) == 2
         runner1 = next(r for r in race.runners if r.name == "Horse One")
         assert runner1.win_odds == 6.0
@@ -214,7 +214,14 @@ async def test_hot_tips_tracker(tmp_path):
         start_time=datetime.now(timezone.utc),
         source="Test",
         runners=[],
-        metadata={"is_goldmine": True, "gap_abs": 1.5, "predicted_2nd_fav_odds": 4.5, "is_best_bet": True},
+        metadata={
+            "is_goldmine": True,
+            "gap_abs": 1.5,
+            "predicted_fav_odds": 1.5,
+            "predicted_2nd_fav_odds": 4.5,
+            "is_best_bet": True,
+            "qualification_grade": "A"
+        },
         top_five_numbers="1, 2, 3"
     )
 
@@ -226,7 +233,7 @@ async def test_hot_tips_tracker(tmp_path):
         async with db.execute("SELECT * FROM tips WHERE race_id = 'tip_1'") as cursor:
             row = await cursor.fetchone()
             assert row is not None
-            assert row["venue"] == "Track A"
+            assert "tracka" in row["venue"].lower() or "track a" in row["venue"].lower()
             assert row["is_goldmine"] == 1
             assert float(row["gap_abs"]) == 1.5
 

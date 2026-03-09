@@ -1209,7 +1209,7 @@ class FetchStrategy(FortunaBaseModel):
     wait_until: Optional[str] = None
     network_idle: bool = False
     wait_for_selector: Optional[str] = None
-    impersonate: Optional[str] = None
+    impersonate: Optional[str] = "chrome124"  # BUG-D5: chrome133 not supported by curl_cffi
 
 
 class SmartFetcher:
@@ -1801,6 +1801,26 @@ class BaseAdapterV3(ABC):
 
     def _validate_and_parse_races(self, raw_data: Any) -> List[Race]:
         races = self._parse_races(raw_data)
+
+        # BUG-D1: Drop races with impossible race numbers before any other processing.
+        # Real meetings rarely exceed 15 races. Numbers like R19, R37 indicate
+        # the adapter scraped a card index or meeting-level counter, not the real race number.
+        MAX_RACE_NUM_TB = 15   # Thoroughbred / Harness
+        MAX_RACE_NUM_GH = 14   # Greyhound (some UK cards run 13-14)
+        filtered_races: List[Race] = []
+        for r in races:
+            disc_lower = (r.discipline or 'thoroughbred').lower()
+            limit = MAX_RACE_NUM_GH if 'greyhound' in disc_lower else MAX_RACE_NUM_TB
+            if r.race_number > limit:
+                self.logger.warning(
+                    'impossible_race_number_dropped',
+                    venue=r.venue, race_number=r.race_number, limit=limit,
+                    discipline=r.discipline, source=self.source_name,
+                )
+                continue
+            filtered_races.append(r)
+        races = filtered_races
+
         total_runners = 0
         trustworthy_runners = 0
 
@@ -1810,6 +1830,26 @@ class BaseAdapterV3(ABC):
             r.source = self.source_name # Phase 2: Ensure source is always set (PIPE-5 Fix)
 
         for r in races:
+            # BUG-D7: Infer race_type from venue name, race metadata, or available text.
+            if not r.race_type:
+                # Check metadata for any race_type hints
+                meta_text = ' '.join(str(v) for v in r.metadata.values() if isinstance(v, str))
+                combined_text = f"{r.venue} {meta_text}".upper()
+                rt_match = re.search(
+                    r'(MAIDEN|CLAIMING|ALLOWANCE|GRADED\s+STAKES|STAKES|HANDICAP|'
+                    r'NOVICE|GROUP\s+\d|GRADE\s+\d|LISTED|HURDLE|CHASE|BUMPER|'
+                    r'NATIONAL\s+HUNT|STEEPLECHASE)',
+                    combined_text, re.I
+                )
+                if rt_match:
+                    r.race_type = rt_match.group(1).title()
+
+            # Also infer is_handicap if not already set
+            if r.is_handicap is None:
+                rt_upper = (r.race_type or '').upper()
+                if any(kw in rt_upper for kw in ['HANDICAP', "H'CAP", 'HCAP']):
+                    r.is_handicap = True
+
             # Global heuristic for runner numbers (addressing "impossible" high numbers)
             active_runners = [run for run in r.runners if not run.scratched]
             field_size = len(active_runners)
@@ -2459,6 +2499,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     """
     SOURCE_NAME: ClassVar[str] = "RacingAndSports"
     BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
+    DECOMMISSIONED: ClassVar[bool] = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
@@ -4672,11 +4713,12 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
             return []
 
         # Fetch both USA and International for all disciplines
+        # Handle 'GLOBAL' region mapping (fetch both)
         tasks = []
         for d in ["thoroughbred", "harness", "greyhound"]:
-            if target_region in [None, "USA"]:
+            if target_region in [None, "USA", "GLOBAL"]:
                 tasks.append(fetch_disc(d, "USA"))
-            if target_region in [None, "INT"]:
+            if target_region in [None, "INT", "GLOBAL"]:
                 tasks.append(fetch_disc(d, "INT"))
         results = await asyncio.gather(*tasks)
         for r_list in results:
@@ -5397,7 +5439,18 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
 
             # S5 — populate extra scoring signals (BUG-10 / EV-1)
             race.metadata['market_depth'] = float(len(valid_r_with_odds))
-            race.metadata['condition_modifier'] = 1.0  # Default neutral
+
+            # IMP-D3: Compute actual condition modifier from available signals
+            cond_mod = 1.0
+            if race.is_handicap:
+                cond_mod += 0.10  # Handicaps historically better for place betting
+            if total_active <= 6:
+                cond_mod -= 0.10  # Small fields reduce place value (fewer places paid)
+            elif total_active >= 10:
+                cond_mod += 0.05  # Larger fields = more places paid
+            if gap_abs >= 3.0:
+                cond_mod += 0.05  # Strong separation = higher confidence
+            race.metadata['condition_modifier'] = round(cond_mod, 2)
 
             # Place probability (field-size-aware) — Favourite-based
             if total_active <= 7:
@@ -7713,6 +7766,60 @@ class HotTipsTracker:
         # Future cutoff relaxed to allow advance tips
         future_limit = now + timedelta(hours=24)
 
+        # BUG-D2: Detect and skip races where the adapter assigned the same
+        # start_time to every race at a venue (meeting-level timestamp leak).
+        # Group by (canonical_venue, date) and check for duplicate times.
+        venue_date_times: Dict[str, List[Tuple[Race, str]]] = defaultdict(list)
+        for r in races:
+            st = r.start_time
+            if isinstance(st, str):
+                try: st = from_storage_format(st.replace('Z', '+00:00'))
+                except Exception: continue
+            if not st: continue
+            vd_key = f"{get_canonical_venue(r.venue)}|{st.strftime(DATE_FORMAT)}"
+            time_key = st.strftime('%H%M')
+            venue_date_times[vd_key].append((r, time_key))
+
+        bad_venue_dates: Set[str] = set()
+        for vd_key, entries in venue_date_times.items():
+            if len(entries) < 3:
+                continue
+            time_counts = Counter(t for _, t in entries)
+            most_common_time, most_common_count = time_counts.most_common(1)[0]
+            # If 60%+ of races share the exact same time, it's a meeting-level timestamp
+            if most_common_count / len(entries) >= 0.6 and most_common_count >= 3:
+                bad_venue_dates.add(vd_key)
+                self.logger.warning(
+                    'meeting_level_timestamp_detected',
+                    venue_date=vd_key,
+                    shared_time=most_common_time,
+                    race_count=len(entries),
+                    msg='Skipping all races — start times are not per-race',
+                )
+
+        if bad_venue_dates:
+            original_count = len(races)
+            filtered_races = []
+            for r in races:
+                st = r.start_time
+                if isinstance(st, str):
+                    try: st = from_storage_format(st.replace('Z', '+00:00'))
+                    except Exception: st = None
+                if st:
+                    vd_key = f"{get_canonical_venue(r.venue)}|{st.strftime(DATE_FORMAT)}"
+                    if vd_key not in bad_venue_dates:
+                        filtered_races.append(r)
+                else:
+                    # Keep if we can't determine date (likely to be dropped later anyway)
+                    filtered_races.append(r)
+            races = filtered_races
+            self.logger.info(
+                'meeting_timestamp_filter_applied',
+                original=original_count,
+                remaining=len(races),
+                venues_dropped=len(bad_venue_dates),
+            )
+
         for r in races:
             # Only store "Best Bets" (Goldmine, BET NOW, or You Might Like)
             # These are marked in metadata by the analyzer.
@@ -7723,6 +7830,19 @@ class HotTipsTracker:
             tip_tier = r.metadata.get('tip_tier', 'best_bet')
 
             if not is_best_bet and not is_goldmine and not is_superfecta_key and tip_tier != 'you_might_like':
+                continue
+
+            # BUG-D3 & BUG-D4: Hardened guards for tip persistence
+            # 1. Reject tips from analyzers that produce unrecognized grades
+            VALID_GRADES = {'A+', 'A', 'B+', 'B+ (Override)', 'D'}
+            grade = r.metadata.get('qualification_grade')
+            if not grade or grade not in VALID_GRADES:
+                self.logger.debug('rejecting_unrecognized_or_missing_grade', race_id=r.id, grade=grade, venue=r.venue)
+                continue
+
+            # 2. Reject Goldmines that lack valid odds (Prevents bogus flagging)
+            if is_goldmine and r.metadata.get('predicted_fav_odds') is None:
+                self.logger.debug('rejecting_bogus_goldmine_missing_odds', race_id=r.id, venue=r.venue)
                 continue
 
             # Trustworthiness Airlock Safeguard (Council of Superbrains Directive)
@@ -8760,6 +8880,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostTote"
     BASE_URL = "https://www.racingpost.com"
+    DECOMMISSIONED: ClassVar[bool] = True
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)

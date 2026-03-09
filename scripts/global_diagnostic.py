@@ -42,17 +42,18 @@ BLOCK_SIGS = (
 results_date = os.environ.get("TEST_DATE", "").strip() or (
     today - timedelta(days=1)).strftime("%y%m%d")
 
-usa_date_env = os.environ.get("USA_DATE", "").strip()
-if usa_date_env:
-    usa_test_date = usa_date_env
+# Secondary test date (typically a high-volume day like Saturday)
+sec_date_env = os.environ.get("SEC_DATE", "").strip()
+if sec_date_env:
+    secondary_test_date = sec_date_env
 else:
     # BUG FIX: Ensure Saturday doesn't jump back 7 days if run on Saturday
     days_since_sat = (today.weekday() - 5) % 7
     last_sat = today - timedelta(days=days_since_sat)
-    usa_test_date = last_sat.strftime("%y%m%d")
+    secondary_test_date = last_sat.strftime("%y%m%d")
 
 EQB_BASE = "https://www.equibase.com"
-DATE_SHORT = datetime.strptime(usa_test_date, "%y%m%d").strftime("%m%d%y")
+DATE_SHORT = datetime.strptime(secondary_test_date, "%y%m%d").strftime("%m%d%y")
 
 # ── Global configuration ────────────────────────────────────────────
 ADAPTER_TIMEOUT = 60
@@ -140,9 +141,10 @@ def get_adapters(atype):
 # ── Pre-compute adapter lists ──────────────────────────────────────
 all_results_classes = fortuna_analytics.get_results_adapter_classes()
 discovery_classes   = get_adapters("discovery")
-usa_adapter_names   = set(getattr(fortuna, "USA_RESULTS_ADAPTERS", []))
-usa_results_classes = [c for c in all_results_classes
-                        if c.SOURCE_NAME in usa_adapter_names]
+# Use a subset of reliable adapters for secondary date sweep
+high_vol_adapter_names = {'SportingLifeResults', 'SkySportsResults', 'RacingPostResults', 'NYRABetsResults'}
+high_vol_results_classes = [c for c in all_results_classes
+                           if c.SOURCE_NAME in high_vol_adapter_names]
 
 # ── DB setup ────────────────────────────────────────────────────────
 db_path = "fortuna.db"
@@ -188,39 +190,39 @@ def q1_db_reality():
              f"{row['stuck']} | {row['hit'] or 0:.1f}% |")
     emit("")
 
-    # USA T per-venue
-    emit("### USA Thoroughbred venues")
+    # Per-venue breakdown
+    emit("### Global Venues (Top 50)")
     emit("```")
-    usa_t_total = usa_t_stuck = 0
+    global_total = global_stuck = 0
     for row in conn.execute("""
-        SELECT venue, COUNT(*) as n,
+        SELECT venue, discipline, COUNT(*) as n,
                SUM(CASE WHEN audit_completed=1 THEN 1 ELSE 0 END) as ok,
                SUM(CASE WHEN audit_completed=0 THEN 1 ELSE 0 END) as stuck,
                MIN(start_time) as first_seen,
                MAX(start_time) as last_seen
-        FROM tips WHERE discipline='T'
-        GROUP BY venue ORDER BY n DESC
+        FROM tips
+        GROUP BY venue, discipline ORDER BY n DESC LIMIT 50
     """):
-        usa_t_total += row['n']
-        usa_t_stuck += row['stuck']
+        global_total += row['n']
+        global_stuck += row['stuck']
         flag = "❌" if row['stuck'] > 0 and row['ok'] == 0 else (
                "⚠️" if row['stuck'] > row['ok'] else "✅")
-        emit(f"  {flag} {row['venue']:28s}  total={row['n']:3d}  "
+        d_short = row['discipline'] or '?'
+        emit(f"  {flag} {row['venue']:25s} [{d_short}] total={row['n']:3d}  "
              f"ok={row['ok']:3d}  stuck={row['stuck']:3d}  "
              f"{(row['first_seen'] or '')[:10]}→"
              f"{(row['last_seen'] or '')[:10]}")
     emit("```")
-    _evidence['usa_t_total'] = usa_t_total
-    _evidence['usa_t_stuck'] = usa_t_stuck
+    _evidence['global_total'] = global_total
+    _evidence['global_stuck'] = global_stuck
 
     # Last 7 days trend
-    emit("\n### Last 7 days: new T tips per day")
+    emit("\n### Last 7 days: new tips per day")
     emit("```")
     week_counts = []
     for row in conn.execute("""
         SELECT DATE(start_time) as d, COUNT(*) as n
-        FROM tips WHERE discipline='T'
-          AND start_time >= DATE('now','-7 days')
+        FROM tips WHERE start_time >= DATE('now','-7 days')
         GROUP BY d ORDER BY d
     """):
         week_counts.append(row['n'])
@@ -228,20 +230,20 @@ def q1_db_reality():
     if not week_counts:
         emit("  (none)")
     emit("```")
-    _evidence['usa_t_last_7d'] = sum(week_counts)
+    _evidence['global_last_7d'] = sum(week_counts)
 
-    # Time-of-day histogram for stuck T tips
-    emit("\n### 🇺🇸 Stuck T tips — time-of-day distribution (Eastern)")
+    # Time-of-day histogram for stuck tips
+    emit("\n### 🌍 Stuck tips — time-of-day distribution (Eastern)")
     emit("```")
-    usa_t_stuck_rows = conn.execute("""
-        SELECT venue, start_time, race_id, race_number
+    stuck_rows = conn.execute("""
+        SELECT venue, start_time, race_id, race_number, discipline
         FROM tips
-        WHERE audit_completed=0 AND discipline='T'
-        ORDER BY start_time
+        WHERE audit_completed=0
+        ORDER BY start_time LIMIT 30
     """).fetchall()
     hour_counts = {}
     stuck_prefixes = set()
-    for row in usa_t_stuck_rows:
+    for row in stuck_rows:
         prefix = row['race_id'].split('_')[0] if '_' in row['race_id'] else row['race_id']
         stuck_prefixes.add(prefix)
         try:
@@ -250,15 +252,15 @@ def q1_db_reality():
             st_et = st.astimezone(EASTERN)
             h = st_et.hour
             hour_counts[h] = hour_counts.get(h, 0) + 1
-            emit(f"  {row['venue']:28s} "
+            emit(f"  {row['venue']:28s} [{row['discipline'] or '?'}] "
                  f"{st_et.strftime('%y%m%d %H:%M ET'):<18s}  "
                  f"{row['race_id']}")
         except Exception:
             emit(f"  {row['venue']:28s} "
                  f"{str(row['start_time'])[:16]:<18s}  "
                  f"{row['race_id']}")
-    if not usa_t_stuck_rows:
-        emit("  (no stuck Thoroughbred tips)")
+    if not stuck_rows:
+        emit("  (no stuck tips)")
     emit("```")
     _evidence['stuck_prefixes'] = stuck_prefixes
 
@@ -287,7 +289,6 @@ def q2_adapters():
     for cls in all_results_classes:
         name = cls.SOURCE_NAME
         q = "SOLID" if name in solid else "LOUSY"
-        usa = " ◀ USA" if name in usa_adapter_names else ""
         base = getattr(cls, 'BASE_URL', '?')
         engine = '?'
         try:
@@ -295,25 +296,17 @@ def q2_adapters():
                 ).primary_engine).split('.')[-1]
         except Exception:
             pass
-        emit(f"  {name:40s} [{q:5s}]{usa}")
+        emit(f"  {name:40s} [{q:5s}]")
         emit(f"    {'':40s}  {base}  ({engine})")
     emit("```")
 
     emit("\n### Discovery adapters")
     emit("```")
-    usa_disc_count = 0
     for cls in discovery_classes:
         name = cls.SOURCE_NAME
         base = getattr(cls, 'BASE_URL', '?')
-        is_usa = any(k in name.lower() or k in base.lower()
-                    for k in ("equibase", "usa", "twinspires", "nyra"))
-        if is_usa:
-            usa_disc_count += 1
-        tag = " ◀ USA" if is_usa else ""
-        emit(f"  {name:40s}{tag}  {base}")
+        emit(f"  {name:40s}  {base}")
     emit("```\n")
-    _evidence['usa_discovery_adapters'] = usa_disc_count
-    _evidence['usa_results_adapters'] = len(usa_results_classes)
 
 def q3_network():
     emit("## Q3: Network Reachability\n")
@@ -394,16 +387,16 @@ def q4_equibase():
 def q5_racing_post():
     emit("## Q5: Racing Post Index — Slug Audit\n")
     _evidence['rp_slug_gaps'] = []
-    _evidence['rp_usa_links_count'] = 0
+    _evidence['rp_sec_links_count'] = 0
     _evidence['rp_all_links_count'] = 0
 
     try:
         from curl_cffi import requests as cffi_req
         # Racing Post requires YYYY-MM-DD for index results
-        rp_dt = fortuna.parse_date_string(usa_test_date)
+        rp_dt = fortuna.parse_date_string(secondary_test_date)
         rp_iso = rp_dt.strftime("%Y-%m-%d")
         rp_url = f"https://www.racingpost.com/results/{rp_iso}"
-        rp_resp = cffi_req.get(rp_url, impersonate="chrome133",
+        rp_resp = cffi_req.get(rp_url, impersonate="chrome124",
             timeout=35, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/133",
                 "Accept": "text/html,*/*;q=0.8",
@@ -421,7 +414,7 @@ def q5_racing_post():
             race_links = sorted(set(
                 (h if h.startswith("http") else _rp_base + h)
                 for h in _hrefs
-                if usa_test_date in h and len(h.split("/")) >= 4
+                if secondary_test_date in h and len(h.split("/")) >= 4
             ))
             _evidence['rp_all_links_count'] = len(race_links)
             emit(f"**Total dated links:** {len(race_links)}\n")
@@ -438,8 +431,8 @@ def q5_racing_post():
                 _known_bare = {s.replace("-", ""): s for s in _known}
 
                 usa_links = [u for u in race_links if _rp_usa_cls._is_usa_link(u)]
-                _evidence['rp_usa_links_count'] = len(usa_links)
-                emit(f"**Links passing `_is_usa_link()`:** {len(usa_links)}\n")
+                _evidence['rp_sec_links_count'] = len(usa_links)
+                emit(f"**USA/International links passing `_is_usa_link()`:** {len(usa_links)}\n")
 
                 gaps = [s for s in slugs_on_page if s and s not in _known and s.replace("-", "") not in _known_bare]
                 _evidence['rp_slug_gaps'] = gaps
@@ -464,13 +457,13 @@ def q6_stuck_tips():
         return
 
     # Key anatomy
-    emit("### Canonical keys for stuck T tips (first 20)")
+    emit("### Canonical keys for stuck tips (first 20)")
     emit("```")
     emit(f"  {'race_id':<45s}  {'tip_key':<42s}  {'canonical'}")
     emit(f"  {'─'*45}  {'─'*42}  {'─'*22}")
     for row in conn.execute("""
         SELECT race_id, venue, race_number, start_time, discipline
-        FROM tips WHERE audit_completed=0 AND discipline='T'
+        FROM tips WHERE audit_completed=0
         ORDER BY start_time LIMIT 20
     """):
         tip = dict(row)
@@ -486,7 +479,7 @@ def q6_stuck_tips():
         _slug_bare = {s.replace("-", ""): s for s in _slugs}
 
         stuck_venues = [row[0] for row in conn.execute(
-            "SELECT DISTINCT venue FROM tips WHERE audit_completed=0 AND discipline='T' ORDER BY venue"
+            "SELECT DISTINCT venue FROM tips WHERE audit_completed=0 ORDER BY venue"
         ).fetchall()]
 
         emit("### Stuck venue → slug match")
@@ -575,15 +568,15 @@ def q7_global_results():
     # IMPROVEMENT 9: Capture Q7 return value
     _evidence['res_all_found'] = asyncio.run(_run_sweep(all_results_classes, results_date, "all"))
 
-def q8_usa_results():
-    emit(f"## Q8: USA Results Adapters — Saturday ({usa_test_date})\n")
-    emit(f"Testing **{len(usa_results_classes)}** adapters: `{[c.SOURCE_NAME for c in usa_results_classes]}`\n")
+def q8_vol_results():
+    emit(f"## Q8: High-Volume Results Adapters — Saturday ({secondary_test_date})\n")
+    emit(f"Testing **{len(high_vol_results_classes)}** adapters: `{[c.SOURCE_NAME for c in high_vol_results_classes]}`\n")
     flush()
-    _evidence['res_usa_found'] = asyncio.run(_run_sweep(usa_results_classes, usa_test_date, "usa"))
+    _evidence['res_sec_found'] = asyncio.run(_run_sweep(high_vol_results_classes, secondary_test_date, "vol"))
 
 async def _test_discovery():
     sem = asyncio.Semaphore(3)
-    tb_total = 0
+    any_total = 0
 
     async def probe(cls):
         name = cls.SOURCE_NAME
@@ -591,13 +584,13 @@ async def _test_discovery():
         try:
             adapter = cls()
             races = await asyncio.wait_for(adapter.get_races(results_date), timeout=ADAPTER_TIMEOUT)
-            tb = [r for r in (races or []) if (getattr(r, 'discipline', '') or '').upper().startswith('T')]
-            vs = sorted(set(r.venue for r in tb)) if tb else []
-            return name, len(races or []), len(tb), vs
+            count = len(races or [])
+            vs = sorted(set(r.venue for r in races)) if races else []
+            return name, count, vs
         except asyncio.TimeoutError:
-            return name, -1, 0, []
+            return name, -1, []
         except Exception as e:
-            return name, -2, 0, [str(e)[:60]]
+            return name, -2, [str(e)[:60]]
         finally:
             # BUG FIX 4: Close discovery adapter
             if adapter:
@@ -609,25 +602,25 @@ async def _test_discovery():
 
     tasks = [asyncio.create_task(bounded(c)) for c in discovery_classes]
     for coro in asyncio.as_completed(tasks):
-        name, total, tb, info = await coro
-        tb_total += max(tb, 0)
+        name, total, info = await coro
+        any_total += max(total, 0)
         if total == -1: emit(f"- ⏱️ `{name}`: TIMED OUT")
         elif total == -2: emit(f"- ❌ `{name}`: {info[0] if info else '?'}")
-        elif tb == 0: emit(f"- ⚠️ `{name}`: {total} total, **0 thoroughbred**")
-        else: emit(f"- ✅ `{name}`: {total} total, **{tb} thoroughbred** — {', '.join(info[:6])}")
+        elif total == 0: emit(f"- ⚠️ `{name}`: **0 races**")
+        else: emit(f"- ✅ `{name}`: **{total} races** — {', '.join(info[:6])}")
         flush()
 
     try: await fortuna.GlobalResourceManager.cleanup()
     except Exception: pass
-    return tb_total
+    return any_total
 
 def q9_discovery():
     emit("## Q9: Discovery Pipeline Test\n")
     if not discovery_classes:
         emit("❌ No discovery adapters registered.\n")
-        _evidence['disc_tb_found'] = 0
+        _evidence['disc_any_found'] = 0
     else:
-        _evidence['disc_tb_found'] = asyncio.run(_test_discovery())
+        _evidence['disc_any_found'] = asyncio.run(_test_discovery())
     emit("")
 
 def q10_playwright():
@@ -635,7 +628,7 @@ def q10_playwright():
     async def _ping():
         from playwright.async_api import async_playwright
         urls = [
-            f"https://www.racingpost.com/results/{usa_test_date}",
+            f"https://www.racingpost.com/results/{secondary_test_date}",
             f"{EQB_BASE}/static/chart/summary/index.html",
             "https://www.nyrabets.com/results",
         ]
@@ -672,8 +665,7 @@ def q11_harvest():
         if p.exists():
             try:
                 data = json.loads(p.read_text())
-                usa = {k: v for k, v in data.items() if any(s in k.lower() for s in ('equibase','usa','nyra'))}
-                if usa: emit(f"### `{fname}` — USA entries\n```json\n{json.dumps(usa, indent=2)}\n```\n")
+                if data: emit(f"### `{fname}`\n```json\n{json.dumps(data, indent=2)}\n```\n")
             except Exception: pass
 
     # DB Logs
@@ -686,14 +678,15 @@ def q11_harvest():
             emit(f"  {'✅' if rc>0 else '❌'} {str(row['timestamp'])[:19]}  {row['region'] or '?':6s}  {row['adapter_name']:35s} races={rc:3d}")
         emit("```\n")
 
-        emit("### 30-day USA harvest success rates")
+        emit("### 30-day Harvest success rates (Top 30)")
         emit("```")
         # BUG FIX 3: Don't overwrite rate, use a dict
         _evidence['harvest_success_rates'] = {}
         for row in conn.execute("""
             SELECT adapter_name, COUNT(*) as attempts, SUM(CASE WHEN race_count>0 THEN 1 ELSE 0 END) as ok
-            FROM harvest_logs WHERE (adapter_name LIKE '%Equibase%' OR adapter_name LIKE '%USA%' OR adapter_name LIKE '%NYRA%' OR region='USA')
-            AND timestamp >= DATE('now','-30 days') GROUP BY adapter_name ORDER BY attempts DESC
+            FROM harvest_logs
+            WHERE timestamp >= DATE('now','-30 days')
+            GROUP BY adapter_name ORDER BY attempts DESC LIMIT 30
         """):
             rate = (row['ok']/row['attempts']*100) if row['attempts'] else 0
             emit(f"  {'✅' if rate>50 else '❌'} {row['adapter_name']:35s}  {row['ok']}/{row['attempts']} ({rate:.0f}%)")
@@ -750,21 +743,27 @@ def q13_diagnosis():
     diagnosis = []
     severity = "INFO"
 
-    disc_tb = _evidence.get('disc_tb_found', 0)
-    t_7d = _evidence.get('usa_t_last_7d', 0)
+    disc_any = _evidence.get('disc_any_found', 0)
+    g_7d = _evidence.get('global_last_7d', 0)
 
-    if disc_tb == 0 and t_7d == 0:
+    if disc_any == 0 and g_7d == 0:
         severity = "CRITICAL"
-        diagnosis.append("🔴 **CRITICAL: Zero USA T races from discovery AND zero new tips in 7 days.**")
-    elif disc_tb > 0:
-        diagnosis.append(f"🟢 Discovery found **{disc_tb}** T race(s).")
+        diagnosis.append("🔴 **CRITICAL: Zero races from discovery AND zero new tips in 7 days.**")
+    elif disc_any > 0:
+        diagnosis.append(f"🟢 Discovery found **{disc_any}** race(s).")
 
-    res_usa = _evidence.get('res_usa_found', 0)
-    if res_usa == 0:
+    res_all = _evidence.get('res_all_found', 0)
+    if res_all == 0:
         if severity != "CRITICAL": severity = "HIGH"
-        diagnosis.append("🟠 **No USA results adapter returned data** on the Saturday test date.")
+        diagnosis.append("🟠 **No results adapters returned data** on the general test date.")
     else:
-        diagnosis.append(f"🟢 USA results adapters returned **{res_usa}** race(s) on Saturday.")
+        diagnosis.append(f"🟢 Results adapters returned **{res_all}** race(s) globally.")
+
+    res_sec = _evidence.get('res_sec_found', 0)
+    if res_sec == 0:
+        diagnosis.append(f"🟠 **No high-volume results adapters returned data** on the secondary test date ({secondary_test_date}).")
+    else:
+        diagnosis.append(f"🟢 High-volume results adapters returned **{res_sec}** race(s) on the secondary test date.")
 
     # Slug gaps
     gaps = _evidence.get('rp_slug_gaps', [])
@@ -783,16 +782,172 @@ def q13_diagnosis():
     for line in diagnosis: emit(line)
     emit("\n---")
 
+def q14_best_bet_microscope():
+    emit("## Q14: 🔬 Best-Bet Microscope & Runner Hygiene\n")
+    if not _evidence.get('db_has_tips'):
+        emit("ℹ️ No tips table — skipping.\n")
+        return
+
+    # 1. Scoring Distribution
+    emit("### Scoring Signal Distribution (A/A+ Qualifiers)")
+    emit("```")
+    emit(f"  {'QUALIFICATION':<15s} {'COUNT':<6s} {'AVG SCORE':<10s} {'AVG GAP':<10s}")
+    emit(f"  {'─'*15} {'─'*6} {'─'*10} {'─'*10}")
+    for row in conn.execute("""
+        SELECT qualification_grade, COUNT(*) as n, AVG(composite_score) as avg_s, AVG(gap_abs) as avg_g
+        FROM tips WHERE qualification_grade IN ('A+', 'A')
+        GROUP BY qualification_grade ORDER BY qualification_grade
+    """):
+        emit(f"  {str(row['qualification_grade']):<15s} {row['n']:<6d} {row['avg_s']:<10.2f} {row['avg_g']:<10.2f}")
+    emit("```\n")
+
+    # 2. Runner Name Hygiene (GPT5 Fix Verification)
+    emit("### Runner Hygiene — Leaked Scraper Labels")
+    leaked_labels = ["Favorite", "Fav", "2nd Fav", "Market Leader", "Scratched", "Runner"]
+    hygiene_issues = []
+    emit("```")
+    for label in leaked_labels:
+        rows = conn.execute(
+            "SELECT selection_name, venue, start_time FROM tips WHERE selection_name LIKE ?",
+            (f"%{label}%",)
+        ).fetchall()
+        if rows:
+            emit(f"  ❌ Found label '{label}' in {len(rows)} runner names.")
+            for r in rows[:3]:
+                emit(f"     - {r['selection_name']} @ {r['venue']}")
+            hygiene_issues.append(f"Leaked label '{label}' in {len(rows)} names")
+    if not hygiene_issues:
+        emit("  ✅ No leaked scraper labels found in selection names.")
+    emit("```\n")
+
+    # 3. Goldmine Anomaly Detection
+    emit("### Goldmine Anomaly Detection")
+    # Check for Goldmines with suspicious odds or zero gaps
+    emit("```")
+    anomalies = conn.execute("""
+        SELECT venue, race_number, selection_name, predicted_fav_odds, predicted_2nd_fav_odds, gap_abs
+        FROM tips WHERE is_goldmine = 1 AND (gap_abs < 1.0 OR predicted_fav_odds > predicted_2nd_fav_odds)
+    """).fetchall()
+    if anomalies:
+        emit(f"  ❌ Found {len(anomalies)} suspicious Goldmines (inverted odds or small gap).")
+        for a in anomalies[:5]:
+            emit(f"     - {a['venue']} R{a['race_number']}: {a['selection_name']} (Fav:{a['predicted_fav_odds']} Sec:{a['predicted_2nd_fav_odds']} Gap:{a['gap_abs']})")
+    else:
+        emit("  ✅ Goldmine logic appears consistent with odds/gap rules.")
+    emit("```\n")
+
+    # 4. Zero-Gap / Default-Odds Clusters
+    emit("### Zero-Gap / Default-Odds Clusters")
+    emit("```")
+    # Identify venues where we are getting odds but no gaps (likely predictor failure)
+    for row in conn.execute("""
+        SELECT venue, COUNT(*) as n
+        FROM tips WHERE predicted_fav_odds IS NOT NULL AND (gap_abs IS NULL OR gap_abs = 0.0)
+        AND start_time >= DATE('now', '-2 days')
+        GROUP BY venue HAVING n > 3 ORDER BY n DESC
+    """):
+        emit(f"  ⚠️ {row['venue']:28s} {row['n']:3d} races with odds but 0.0 gap (Check Predictor)")
+    emit("```\n")
+
+    # 5. Shadow Runners / Duplicate Favorites (Phase B1 Regression)
+    emit("### Shadow Runners & Duplicate Detection")
+    emit("```")
+    # Check for races where multiple tips exist for the same race ID (should be 1 tip per race)
+    # This detects failures in the audit-matching or deduplication logic
+    duplicates = conn.execute("""
+        SELECT race_id, COUNT(*) as n
+        FROM tips WHERE start_time >= DATE('now', '-7 days')
+        GROUP BY race_id HAVING n > 1
+    """).fetchall()
+    if duplicates:
+        emit(f"  ❌ Found {len(duplicates)} races with duplicate tips (Shadow Runners).")
+        for d in duplicates[:5]:
+            emit(f"     - {d['race_id']} ({d['n']} entries)")
+    else:
+        emit("  ✅ No duplicate tips detected per race ID in the last 7 days.")
+    emit("```\n")
+
+    # 6. Predictor Signal Variance (Phase J)
+    emit("### Predictor Signal Variance (Last 48h)")
+    emit("```")
+    # Check if place_prob or predicted_ev are always the same value (stuck predictor)
+    variance = conn.execute("""
+        SELECT COUNT(DISTINCT place_prob) as vp, COUNT(DISTINCT predicted_ev) as ve, COUNT(*) as total
+        FROM tips WHERE start_time >= DATE('now', '-2 days')
+    """).fetchone()
+    if variance and variance['total'] > 10:
+        if variance['vp'] <= 1:
+            emit(f"  ❌ ZERO VARIANCE in place_prob ({variance['vp']} unique values).")
+        else:
+            emit(f"  ✅ place_prob variance: {variance['vp']} unique values.")
+
+        if variance['ve'] <= 1:
+            emit(f"  ❌ ZERO VARIANCE in predicted_ev ({variance['ve']} unique values).")
+        else:
+            emit(f"  ✅ predicted_ev variance: {variance['ve']} unique values.")
+    elif variance and variance['total'] > 0:
+        emit(f"  ℹ️ Low sample size for variance check ({variance['total']} tips).")
+    else:
+        emit("  ℹ️ No tips in last 48h to check predictor variance.")
+    emit("```\n")
+
+    # 7. Grade Distribution Audit
+    emit("### Grade Distribution Audit (Last 7 days)")
+    emit("```")
+    grades = conn.execute("""
+        SELECT qualification_grade, COUNT(*) as n
+        FROM tips WHERE start_time >= DATE('now', '-7 days')
+        GROUP BY qualification_grade
+    """).fetchall()
+    if grades:
+        total = sum(g['n'] for g in grades)
+        for g in grades:
+            pct = (g['n'] / total) * 100
+            emit(f"  {str(g['qualification_grade']):<15s} {g['n']:>4d} ({pct:5.1f}%)")
+
+        aplus = next((g['n'] for g in grades if g['qualification_grade'] == 'A+'), 0)
+        if aplus / total > 0.5:
+            emit("  ⚠️ GRADE INFLATION: Over 50% of tips are A+.")
+    else:
+        emit("  ℹ️ No graded tips in last 7 days.")
+    emit("```\n")
+
+def q15_best_bet_builder_health():
+    emit("## Q15: 🛠️ Best-Bet Builder Health\n")
+    if not _evidence.get('db_has_tips'):
+        emit("ℹ️ No tips table — skipping.\n")
+        return
+
+    # Check if we have source-specific hit rates for best bets
+    emit("### Hit Rate by Primary Discovery Source (Best Bets Only)")
+    emit("```")
+    emit(f"  {'SOURCE':<25s} {'BEST-BETS':<10s} {'HIT-RATE':<10s}")
+    emit(f"  {'─'*25} {'─'*10} {'─'*10}")
+    for row in conn.execute("""
+        SELECT source, COUNT(*) as n,
+               ROUND(CAST(SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) AS REAL) /
+                     NULLIF(SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') THEN 1 ELSE 0 END), 0) * 100, 1) as hit
+        FROM tips WHERE is_best_bet = 1
+        GROUP BY source ORDER BY n DESC
+    """):
+        # Source might be a comma-separated list, take the first one
+        src = (row['source'] or "Unknown").split(",")[0]
+        emit(f"  {src:<25s} {row['n']:<10d} {row['hit'] or 0:.1f}%")
+    if not conn.execute("SELECT 1 FROM tips WHERE is_best_bet = 1 LIMIT 1").fetchone():
+        emit("  (no best bets found in database)")
+    emit("```\n")
+
 # ═══════════════════════════════════════════════════════════════════
 # MAIN LOOP
 # ═══════════════════════════════════════════════════════════════════
-emit("# 🏇 Fortuna Diagnostic v4 — USA Thoroughbred Pipeline\n")
-emit(f"> General date: **{results_date}** · USA date: **{usa_test_date}** · Generated: {today.strftime('%y%m%d %H:%M ET')}\n")
+emit("# 🏇 Fortuna Global Diagnostic — All Countries & Disciplines\n")
+emit(f"> General date: **{results_date}** · Saturday date: **{secondary_test_date}** · Generated: {today.strftime('%y%m%d %H:%M ET')}\n")
 flush()
 
 for section in [q1_db_reality, q2_adapters, q3_network, q4_equibase, q5_racing_post,
-                q6_stuck_tips, q7_global_results, q8_usa_results, q9_discovery,
-                q10_playwright, q11_harvest, q12_data_quality, q13_diagnosis]:
+                q6_stuck_tips, q7_global_results, q8_vol_results, q9_discovery,
+                q10_playwright, q11_harvest, q12_data_quality, q13_diagnosis,
+                q14_best_bet_microscope, q15_best_bet_builder_health]:
     if deadline_exceeded():
         emit(f"\n⚠️ Deadline exceeded before `{section.__name__}`.")
         break
