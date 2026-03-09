@@ -1678,7 +1678,7 @@ class DebugMixin:
 
 
 class RacePageFetcherMixin:
-    async def _fetch_race_pages_concurrent(self, metadata: List[Dict[str, Any]], headers: Dict[str, str], semaphore_limit: int = 5, delay_range: tuple[float, float] = (0.5, 1.5)) -> List[Dict[str, Any]]:
+    async def _fetch_race_pages_concurrent(self, metadata: List[Dict[str, Any]], headers: Dict[str, str], semaphore_limit: int = 5, delay_range: tuple[float, float] = (0.5, 1.5), **kwargs: Any) -> List[Dict[str, Any]]:
         local_sem = asyncio.Semaphore(semaphore_limit)
         async def fetch_single(item):
             url = item.get("url")
@@ -1693,7 +1693,7 @@ class RacePageFetcherMixin:
                         # make_request handles global_sem internally
                         resp = None
                         for attempt in range(2): # 1 retry
-                            resp = await self.make_request("GET", url, headers=headers)
+                            resp = await self.make_request("GET", url, headers=headers, **kwargs)
                             # Lowered threshold to 100 to avoid unnecessary retries for small valid data files
                             if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 100:
                                 break
@@ -2679,7 +2679,18 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
         index_url = f"/form-guide/thoroughbred/{date_iso}"
-        resp = await self.make_request("GET", index_url, headers=self._get_headers())
+        # Success Strategy: Try both dated and generic index (Fix redirects)
+        index_urls = [index_url, "/racing/racecards"]
+        resp = None
+        for u in index_urls:
+            try:
+                resp = await self.make_request("GET", u, headers=self._get_headers())
+                if resp and resp.text:
+                    if date_iso in resp.text or "/racing/racecards/" + date_iso in resp.text:
+                        break
+            except Exception:
+                continue
+
         if not resp or not resp.text:
             if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
             return None
@@ -2786,13 +2797,20 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         runners = []
         # Try different selectors for runners
-        for row in parser.css(".runner_row") or parser.css(".mobile-runner"):
+        # Broadened selectors to catch dynamic/mobile-first layouts
+        runner_rows = parser.css(".runner_row") or parser.css(".mobile-runner") or parser.css("div[class*='runner']")
+        for row in runner_rows:
             try:
-                name_node = row.css_first(".horseName") or row.css_first("a[href*='/horse/']")
+                # Broaden name selectors
+                name_node = (
+                    row.css_first(".horseName")
+                    or row.css_first("a[href*='/horse/']")
+                    or row.css_first(".name")
+                )
                 if not name_node: continue
                 name = clean_text(node_text(name_node))
 
-                num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]")
+                num_node = row.css_first(".tdContent b") or row.css_first("[data-tab-no]") or row.css_first(".number")
                 number = 0
                 if num_node:
                     if num_node.attributes.get("data-tab-no"):
@@ -2804,7 +2822,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
                 scratched = "strikeout" in (row.attributes.get("class") or "").lower() or row.attributes.get("data-scratched") == "True"
 
                 win_odds = None
-                odds_node = row.css_first(".pa_odds") or row.css_first(".odds")
+                # Broaden odds selectors
+                odds_node = row.css_first(".pa_odds") or row.css_first(".odds") or row.css_first(".win-odds")
                 win_odds = parse_odds_to_decimal(clean_text(node_text(odds_node))) if odds_node else None
                 odds_source = "extracted" if win_odds is not None else None
 
@@ -2878,6 +2897,13 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Success Strategy: Bootstrap session if using browser
+        strategy = self.smart_fetcher.strategy
+        if strategy.primary_engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
+            try:
+                await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="domcontentloaded", timeout=15)
+            except Exception: pass
+
         # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
@@ -4275,6 +4301,17 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         # 1. Get Cards (Meetings)
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
+
+        # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
+        try:
+            await self.smart_fetcher.fetch(
+                "https://www.nyrabets.com/",
+                method="GET",
+                headers=self._get_headers()
+            )
+            await asyncio.sleep(1.5)  # Allow cookies to settle
+        except Exception as e:
+            self.logger.debug("NYRABets bootstrap failed", error=str(e))
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
