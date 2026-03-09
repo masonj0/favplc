@@ -1162,6 +1162,9 @@ class PageFetchingResultsAdapter(
     async def _fetch_link_pages(
         self, links: Set[str], date_str: str,
     ) -> Optional[Dict[str, Any]]:
+        # FIX-SC: Aggressive redirect following for Standardbred Canada
+        allow_redirects = True if self.SOURCE_NAME == "StandardbredCanadaResults" else None
+
         absolute = list(dict.fromkeys(
             lnk if lnk.startswith("http") else f"{self.BASE_URL}{lnk}"
             for lnk in links
@@ -1197,7 +1200,7 @@ class PageFetchingResultsAdapter(
         clean_absolute = [u.strip() for u in absolute if u and u.strip()]
         metadata = [{"url": u, "race_number": 0} for u in clean_absolute]
         pages = await self._fetch_race_pages_concurrent(
-            metadata, self._get_headers(),
+            metadata, self._get_headers(), allow_redirects=allow_redirects
         )
         return {"pages": pages, "date": date_str}
 
@@ -3311,8 +3314,10 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
     async def _discover_result_links(self, date_str: str) -> Set[str]:
         dt = parse_date_string(date_str)
         date_short = dt.strftime("%m%d")
+        # FIX-SC: Standardbred Canada often redirects .dat files to entries tabs if not properly handled.
+        # We ensure follow_redirects is enabled (via SmartFetcher) and return absolute URLs.
         return {
-            f"/racing/results/data/r{date_short}{track}.dat"
+            f"https://standardbredcanada.ca/racing/results/data/r{date_short}{track}.dat"
             for track in self._TRACK_CODES
         }
 
