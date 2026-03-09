@@ -396,7 +396,7 @@ def q5_racing_post():
         rp_dt = fortuna.parse_date_string(secondary_test_date)
         rp_iso = rp_dt.strftime("%Y-%m-%d")
         rp_url = f"https://www.racingpost.com/results/{rp_iso}"
-        rp_resp = cffi_req.get(rp_url, impersonate="chrome133",
+        rp_resp = cffi_req.get(rp_url, impersonate="chrome124",
             timeout=35, headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/133",
                 "Accept": "text/html,*/*;q=0.8",
