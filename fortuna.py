@@ -385,7 +385,7 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # Multi-continental adapters move to the GLOBAL parallel fetch job.
 # AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {
-    # "Equibase", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
+    "Equibase",
     "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
@@ -400,7 +400,7 @@ USA_DISCOVERY_ADAPTERS: Final[set] = {
     "Official_SciotoDowns", "Official_FortErie", "Official_Hastings"
 }
 INT_DISCOVERY_ADAPTERS: Final[set] = {
-    "TAB", "BetfairDataScientist", # "HKJC", "JRA", # Decommissioned (Blocked/0% success)
+    "TAB", "BetfairDataScientist", "HKJC", "JRA",
     "Official_JRAJapan",
     "Official_Ascot", "Official_Cheltenham", "Official_Flemington"
 }
@@ -424,22 +424,22 @@ OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
-    # "RacingAndSports", "HKJC", "JRA" # Decommissioned (Blocked/0% success)
+    "RacingAndSports", "HKJC", "JRA"
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
-    # "EquibaseResults", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
+    "EquibaseResults",
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
-    # "DRFResults", # Decommissioned 2026-02 (0% success)
+    "DRFResults",
     "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
-    "RacingPostResults", # "RacingPostTote", # Decommissioned (Redundant/0% success)
+    "RacingPostResults", "RacingPostTote",
     "AtTheRacesResults",
     "AtTheRacesGreyhoundResults", "SportingLifeResults", "SkySportsResults",
-    # "RacingAndSportsResults", # Decommissioned (403 Forbidden)
+    "RacingAndSportsResults",
     "TimeformResults"
 }
 
@@ -2499,7 +2499,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     """
     SOURCE_NAME: ClassVar[str] = "RacingAndSports"
     BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
-    DECOMMISSIONED: ClassVar[bool] = True
+    DECOMMISSIONED: ClassVar[bool] = False
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
@@ -2524,7 +2524,11 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
             if not resp or not resp.text:
                 return None
 
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception:
+                import json
+                data = json.loads(resp.text)
             return {"json_data": data, "date": date}
         except Exception as e:
             self.logger.error("failed_fetching_ras_json", error=str(e))
@@ -2533,6 +2537,9 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("json_data"): return []
         data = raw_data["json_data"]
+        if isinstance(data, list):
+            # Sometimes RAS returns a raw list of meetings instead of a dict with 'meetings' key
+            data = {"meetings": data}
         try:
             race_date = parse_date_string(raw_data["date"]).date()
         except Exception:
@@ -3893,9 +3900,11 @@ class RacingPostB2BAdapter(BaseAdapterV3):
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
         races: List[Race] = []
+        target_countries = {"USA", "CAN", "AUS", "NZL", "GBR", "IRL", "ZAF"}
         for vd in raw_data["venues"]:
             if vd.get("isAbandoned"): continue
             vn, cc, rd = vd.get("name", "Unknown"), vd.get("countryCode", "USA"), vd.get("races", [])
+            if cc not in target_countries: continue
             for r in rd:
                 if r.get("raceStatusCode") == "ABD": continue
                 parsed = self._parse_single_race(r, vn, cc)
@@ -4345,16 +4354,17 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             if not resp or not resp.text: return None
             list_races_data = json.loads(resp.text)
             all_races = list_races_data.get("races", [])
-            # Filter US races for discovery efficiency as per memo focus
-            us_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") == "US"]
-            if not us_race_ids:
+            # Filter US/AU/NZ races for discovery efficiency (Fix: Include AUS/NZ for coverage)
+            target_countries = {"US", "AU", "NZ"}
+            target_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") in target_countries]
+            if not target_race_ids:
                 self.metrics.record_parse_warning()
                 return {"races": [], "details": {}}
 
             # 3. Get Details (Runners) - chunked
             details = {}
-            for i in range(0, len(us_race_ids), 50):
-                chunk = us_race_ids[i:i+50]
+            for i in range(0, len(target_race_ids), 50):
+                chunk = target_race_ids[i:i+50]
                 get_races_payload = {
                     "header": header, "cohort": "A--", "wageringCohort": "NBI", "raceIds": chunk, "wantContents": True
                 }
@@ -4430,7 +4440,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
-    DECOMMISSIONED = True
+    DECOMMISSIONED = False
     PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.equibase.com"
 
@@ -8917,7 +8927,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostTote"
     BASE_URL = "https://www.racingpost.com"
-    DECOMMISSIONED: ClassVar[bool] = True
+    DECOMMISSIONED: ClassVar[bool] = False
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
