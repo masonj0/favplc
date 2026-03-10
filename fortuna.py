@@ -386,7 +386,7 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {
     "Equibase",
-    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets", "FanDuelRacing",
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
     "Official_TheMeadowlands", "Official_YonkersRaceway", "Official_Woodbine",
@@ -424,7 +424,8 @@ OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
-    "RacingAndSports", "HKJC", "JRA"
+    "RacingAndSports", "HKJC", "JRA",
+    "TwinSpires", "NYRABets", "RacingPostB2B", "FanDuelRacing" # US sources for 24/7 global coverage
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
@@ -4997,6 +4998,122 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 # ----------------------------------------
 # ANALYZER LOGIC
 # ----------------------------------------
+# FanDuelRacingAdapter (TVG)
+# ----------------------------------------
+class FanDuelRacingAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for FanDuel Racing (formerly TVG).
+    High-fidelity source for US and International racecards.
+    """
+    SOURCE_NAME: ClassVar[str] = "FanDuelRacing"
+    BASE_URL: ClassVar[str] = "https://www.fanduel.com/racing"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CAMOUFOX,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=90,
+            network_idle=True
+        )
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Index for today's races
+        url = f"{self.BASE_URL}/race-schedule"
+        try:
+            resp = await self.make_request("GET", url, network_idle=True)
+            if not resp or not resp.text:
+                return None
+
+            self._save_debug_snapshot(resp.text, f"fanduel_schedule_{date}")
+            parser = HTMLParser(resp.text)
+            links = []
+            for link in parser.css('a[href*="/racing/track/"]'):
+                href = link.attributes.get("href")
+                if href and "/race/" in href:
+                    links.append({"url": href if href.startswith("http") else self.BASE_URL + href})
+
+            if not links:
+                return None
+
+            # Fetch a sample of pages to verify structure
+            pages = await self._fetch_race_pages_concurrent(links[:20], {}, semaphore_limit=3)
+            return {"pages": pages, "date": date}
+        except Exception as e:
+            self.logger.error("FanDuel fetch failed", error=str(e))
+            return None
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        races = []
+        target_date = parse_date_string(raw_data["date"]).date()
+
+        for item in raw_data["pages"]:
+            html = item.get("html")
+            if not html: continue
+            try:
+                parser = HTMLParser(html)
+                # Structure: Venue Name usually in h1 or specific class
+                venue_node = parser.css_first("h1") or parser.css_first('[class*="TrackName"]')
+                venue = normalize_venue_name(node_text(venue_node))
+
+                # Race number
+                rnum_node = parser.css_first('[class*="RaceNumber"]')
+                rnum = 1
+                if rnum_node:
+                    digits = "".join(filter(str.isdigit, node_text(rnum_node)))
+                    if digits: rnum = int(digits)
+
+                # Time
+                st = datetime.combine(target_date, datetime.now(EASTERN).time())
+                time_node = parser.css_first('[class*="PostTime"]')
+                if time_node:
+                    # Simple parse for now
+                    txt = node_text(time_node)
+                    time_match = re.search(r"(\d{1,2}:\d{2})\s*(AM|PM)?", txt, re.I)
+                    if time_match:
+                        try:
+                            tm = datetime.strptime(time_match.group(1), "%H:%M")
+                            if time_match.group(2) and time_match.group(2).upper() == "PM" and tm.hour < 12:
+                                tm = tm.replace(hour=tm.hour + 12)
+                            st = datetime.combine(target_date, tm.time())
+                        except Exception: pass
+
+                runners = []
+                for row in parser.css('[class*="RunnerRow"], [class*="EntryRow"]'):
+                    name_node = row.css_first('[class*="HorseName"]')
+                    if not name_node: continue
+                    name = clean_text(node_text(name_node))
+
+                    num_node = row.css_first('[class*="ProgramNumber"]')
+                    number = int("".join(filter(str.isdigit, node_text(num_node)))) if num_node else 0
+
+                    odds_node = row.css_first('[class*="Odds"]')
+                    win_odds = parse_odds_to_decimal(node_text(odds_node)) if odds_node else None
+
+                    odds_data = {}
+                    if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                        odds_data[self.SOURCE_NAME] = ov
+
+                    runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds))
+
+                if runners:
+                    races.append(Race(
+                        id=generate_race_id("fd", venue, st, rnum),
+                        venue=venue,
+                        race_number=rnum,
+                        start_time=ensure_eastern(st),
+                        runners=runners,
+                        source=self.SOURCE_NAME
+                    ))
+            except Exception: continue
+        return races
+
+
+# ----------------------------------------
 
 log = structlog.get_logger(__name__)
 
@@ -5250,13 +5367,12 @@ DISCIPLINE_THRESHOLDS: Final[Dict[str, Dict[str, float]]] = {
 }
 
 # Regional exclusion list for scoring (Council of Superbrains Directive)
-INVALID_REGION_PREFIXES: Final[Tuple[str, ...]] = ('fr', 'jp', 'hk', 'uae')
+INVALID_REGION_PREFIXES: Final[Tuple[str, ...]] = ('fr', 'uae')
 BLOCKED_VENUES: Final[Set[str]] = {
     'fontainebleau', 'cagnessurmer', 'longchamp', 'chantilly', 'deauville',
     'parislongchamp', 'saintcloud', 'compiegne', 'vichy', 'clairefontaine',
     'marseilleborely', 'toulouse', 'lyon', 'strasbourg', 'amiens',
-    'tokyo', 'nakayama', 'hanshin', 'kyoto', 'kokura', 'niigata', 'sapporo', 'fukushima', 'chukyo',
-    'shatin', 'happyvalley', 'meydan', 'abudhabi', 'jebelali',
+    'meydan', 'abudhabi', 'jebelali',
     'milan', 'sanrossore', 'capannelle',
 }
 
