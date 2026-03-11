@@ -1433,15 +1433,24 @@ class SmartFetcher:
         if not ASYNC_SESSIONS_AVAILABLE:
             raise ImportError("scrapling not available")
 
-        # Scrapling specific kwargs
-        SCRAPLING_KWARGS = ["network_idle", "wait_selector", "wait_until", "stealth_mode", "block_resources", "timeout"]
+        # 1. Broaden supported kwargs explicitly!
+        SCRAPLING_KWARGS = [
+            "network_idle", "wait_selector", "wait_until", "stealth_mode",
+            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params"
+        ]
+
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
 
-        # Propagate strategy values to scrapling if not explicitly overridden in kwargs
+        # Enforce essential mapping fallback for custom header names & HTTP formats.
+        if "headers" in kwargs and "headers" not in scrapling_kwargs:
+            scrapling_kwargs["headers"] = kwargs["headers"]
+
         if "timeout" not in scrapling_kwargs:
             timeout_val = kwargs.get("timeout", strategy.timeout)
-            # Scrapling/Playwright uses milliseconds for timeout
-            scrapling_kwargs["timeout"] = timeout_val * 1000
+            is_browser = engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT)
+            # Browsers process times typically in miliseconds inside underlying libs
+            scrapling_kwargs["timeout"] = timeout_val * 1000 if is_browser else timeout_val
+
         if "wait_until" not in scrapling_kwargs:
             scrapling_kwargs["wait_until"] = strategy.wait_until or strategy.page_load_strategy
         if "network_idle" not in scrapling_kwargs:
@@ -1450,14 +1459,49 @@ class SmartFetcher:
             scrapling_kwargs["stealth_mode"] = strategy.stealth_mode
         if "block_resources" not in scrapling_kwargs:
             scrapling_kwargs["block_resources"] = strategy.block_resources
-            
-        # For other engines, we use AsyncFetcher from scrapling
-        if engine == BrowserEngine.CAMOUFOX:
-            # BUG-1 Fix: Use persistent session to avoid launch overhead
+
+        # Helper method: Safely and completely unpack Adapters regardless of structure
+        def _get_unified_resp(r) -> UnifiedResponse:
+            st = getattr(r, "status", getattr(r, "status_code", 200))
+            url_str = str(getattr(r, "url", url))
+            hdrs = getattr(r, "headers", getattr(r, "response_headers", getattr(r, "extra_headers", {})))
+
+            # Smart html fallback block avoiding bytes => string mutation corruption (`b"<html>..."` literal representation string failures)
+            body = getattr(r, "html_content", getattr(r, "body", None))
+            if isinstance(body, (bytes, bytearray)):
+                encoding = getattr(r, "encoding", "utf-8") or "utf-8"
+                cont = body.decode(encoding, errors="replace")
+            elif isinstance(body, str) and body:
+                cont = body
+            else:
+                alt = getattr(r, "raw_html", getattr(r, "html", getattr(r, "text", "")))
+                if isinstance(alt, (bytes, bytearray)):
+                    cont = alt.decode("utf-8", errors="replace")
+                else:
+                    cont = str(alt)
+
+            # Map Unified responses effectively
+            return UnifiedResponse(cont, st, st, url_str, dict(hdrs))
+
+        if engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT):
             s = await self._get_persistent_session(engine)
-            resp = await s.fetch(url, method=method, **scrapling_kwargs)
-            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            if method.upper() == "POST":
+                # Ensure the POST configuration navigations execute
+                action = getattr(s, "post", s.fetch)
+                resp = await action(url, **scrapling_kwargs)
+            else:
+                # Direct fetching or mapping
+                action = getattr(s, "get", getattr(s, "fetch"))
+                try:
+                    resp = await action(url, **scrapling_kwargs)
+                except TypeError as te:
+                    # In instances older version underlying calls mandate missing standard default keywords safely back out
+                    if "method" in str(te) and getattr(s, "fetch", None) == action:
+                        resp = await action(url, method="GET", **scrapling_kwargs)
+                    else:
+                        raise te
+
+            return _get_unified_resp(resp)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             # Direct Playwright usage for cases where scrapling/camoufox fail
@@ -1484,24 +1528,19 @@ class SmartFetcher:
                 await browser.close()
                 return UnifiedResponse(content, status, status, url, headers)
 
-        elif engine == BrowserEngine.PLAYWRIGHT:
-            # BUG-1 Fix: Use persistent session to avoid launch overhead
-            s = await self._get_persistent_session(engine)
-            resp = await s.fetch(url, method=method, **scrapling_kwargs)
-            # Scrapling responses have a .text object that sometimes returns length 0
-            # We ensure it's a string from .body or .html_content
-            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
         else:
-            # Fallback to simple fetcher
+            # Fallback bare Fetcher block without the specific session configuration elements
             async with AsyncFetcher() as fetcher:
-                if method.upper() == "GET":
-                    resp = await fetcher.get(url, **kwargs)
-                else:
-                    resp = await fetcher.post(url, **kwargs)
+                allowed_http = {"timeout", "headers", "extra_headers", "proxy", "data", "json", "params"}
+                safe_fetch_kwargs = {k: v for k, v in scrapling_kwargs.items() if k in allowed_http}
 
-                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+                if method.upper() == "GET":
+                    resp = await fetcher.get(url, **safe_fetch_kwargs)
+                else:
+                    action = getattr(fetcher, "post", getattr(fetcher, "request"))
+                    resp = await action(url, **safe_fetch_kwargs)
+
+                return _get_unified_resp(resp)
 
 
     async def close(self) -> None:
