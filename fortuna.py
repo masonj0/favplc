@@ -385,8 +385,8 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # Multi-continental adapters move to the GLOBAL parallel fetch job.
 # AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {
-    # "Equibase", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
-    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
+    "Equibase",
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets", "FanDuelRacing",
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
     "Official_TheMeadowlands", "Official_YonkersRaceway", "Official_Woodbine",
@@ -400,7 +400,7 @@ USA_DISCOVERY_ADAPTERS: Final[set] = {
     "Official_SciotoDowns", "Official_FortErie", "Official_Hastings"
 }
 INT_DISCOVERY_ADAPTERS: Final[set] = {
-    "TAB", "BetfairDataScientist", # "HKJC", "JRA", # Decommissioned (Blocked/0% success)
+    "TAB", "BetfairDataScientist", "HKJC", "JRA",
     "Official_JRAJapan",
     "Official_Ascot", "Official_Cheltenham", "Official_Flemington"
 }
@@ -424,22 +424,23 @@ OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
-    # "RacingAndSports", "HKJC", "JRA" # Decommissioned (Blocked/0% success)
+    "RacingAndSports", "HKJC", "JRA",
+    "TwinSpires", "NYRABets", "RacingPostB2B", "FanDuelRacing" # US sources for 24/7 global coverage
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
-    # "EquibaseResults", # Decommissioned 2026-02: persistent bot blocking, 0% 30-day success
+    "EquibaseResults",
     "SportingLifeResults",
     "StandardbredCanadaResults",
     "RacingPostUSAResults",
-    # "DRFResults", # Decommissioned 2026-02 (0% success)
+    "DRFResults",
     "NYRABetsResults",
 }
 INT_RESULTS_ADAPTERS: Final[set] = {
-    "RacingPostResults", # "RacingPostTote", # Decommissioned (Redundant/0% success)
+    "RacingPostResults", "RacingPostTote",
     "AtTheRacesResults",
     "AtTheRacesGreyhoundResults", "SportingLifeResults", "SkySportsResults",
-    # "RacingAndSportsResults", # Decommissioned (403 Forbidden)
+    "RacingAndSportsResults",
     "TimeformResults"
 }
 
@@ -1432,15 +1433,24 @@ class SmartFetcher:
         if not ASYNC_SESSIONS_AVAILABLE:
             raise ImportError("scrapling not available")
 
-        # Scrapling specific kwargs
-        SCRAPLING_KWARGS = ["network_idle", "wait_selector", "wait_until", "stealth_mode", "block_resources", "timeout"]
+        # 1. Broaden supported kwargs explicitly!
+        SCRAPLING_KWARGS = [
+            "network_idle", "wait_selector", "wait_until", "stealth_mode",
+            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params"
+        ]
+
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
 
-        # Propagate strategy values to scrapling if not explicitly overridden in kwargs
+        # Enforce essential mapping fallback for custom header names & HTTP formats.
+        if "headers" in kwargs and "headers" not in scrapling_kwargs:
+            scrapling_kwargs["headers"] = kwargs["headers"]
+
         if "timeout" not in scrapling_kwargs:
             timeout_val = kwargs.get("timeout", strategy.timeout)
-            # Scrapling/Playwright uses milliseconds for timeout
-            scrapling_kwargs["timeout"] = timeout_val * 1000
+            is_browser = engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT)
+            # Browsers process times typically in miliseconds inside underlying libs
+            scrapling_kwargs["timeout"] = timeout_val * 1000 if is_browser else timeout_val
+
         if "wait_until" not in scrapling_kwargs:
             scrapling_kwargs["wait_until"] = strategy.wait_until or strategy.page_load_strategy
         if "network_idle" not in scrapling_kwargs:
@@ -1449,14 +1459,49 @@ class SmartFetcher:
             scrapling_kwargs["stealth_mode"] = strategy.stealth_mode
         if "block_resources" not in scrapling_kwargs:
             scrapling_kwargs["block_resources"] = strategy.block_resources
-            
-        # For other engines, we use AsyncFetcher from scrapling
-        if engine == BrowserEngine.CAMOUFOX:
-            # BUG-1 Fix: Use persistent session to avoid launch overhead
+
+        # Helper method: Safely and completely unpack Adapters regardless of structure
+        def _get_unified_resp(r) -> UnifiedResponse:
+            st = getattr(r, "status", getattr(r, "status_code", 200))
+            url_str = str(getattr(r, "url", url))
+            hdrs = getattr(r, "headers", getattr(r, "response_headers", getattr(r, "extra_headers", {})))
+
+            # Smart html fallback block avoiding bytes => string mutation corruption (`b"<html>..."` literal representation string failures)
+            body = getattr(r, "html_content", getattr(r, "body", None))
+            if isinstance(body, (bytes, bytearray)):
+                encoding = getattr(r, "encoding", "utf-8") or "utf-8"
+                cont = body.decode(encoding, errors="replace")
+            elif isinstance(body, str) and body:
+                cont = body
+            else:
+                alt = getattr(r, "raw_html", getattr(r, "html", getattr(r, "text", "")))
+                if isinstance(alt, (bytes, bytearray)):
+                    cont = alt.decode("utf-8", errors="replace")
+                else:
+                    cont = str(alt)
+
+            # Map Unified responses effectively
+            return UnifiedResponse(cont, st, st, url_str, dict(hdrs))
+
+        if engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT):
             s = await self._get_persistent_session(engine)
-            resp = await s.fetch(url, method=method, **scrapling_kwargs)
-            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+            if method.upper() == "POST":
+                # Ensure the POST configuration navigations execute
+                action = getattr(s, "post", s.fetch)
+                resp = await action(url, **scrapling_kwargs)
+            else:
+                # Direct fetching or mapping
+                action = getattr(s, "get", getattr(s, "fetch"))
+                try:
+                    resp = await action(url, **scrapling_kwargs)
+                except TypeError as te:
+                    # In instances older version underlying calls mandate missing standard default keywords safely back out
+                    if "method" in str(te) and getattr(s, "fetch", None) == action:
+                        resp = await action(url, method="GET", **scrapling_kwargs)
+                    else:
+                        raise te
+
+            return _get_unified_resp(resp)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             # Direct Playwright usage for cases where scrapling/camoufox fail
@@ -1483,24 +1528,19 @@ class SmartFetcher:
                 await browser.close()
                 return UnifiedResponse(content, status, status, url, headers)
 
-        elif engine == BrowserEngine.PLAYWRIGHT:
-            # BUG-1 Fix: Use persistent session to avoid launch overhead
-            s = await self._get_persistent_session(engine)
-            resp = await s.fetch(url, method=method, **scrapling_kwargs)
-            # Scrapling responses have a .text object that sometimes returns length 0
-            # We ensure it's a string from .body or .html_content
-            content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-            return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
         else:
-            # Fallback to simple fetcher
+            # Fallback bare Fetcher block without the specific session configuration elements
             async with AsyncFetcher() as fetcher:
-                if method.upper() == "GET":
-                    resp = await fetcher.get(url, **kwargs)
-                else:
-                    resp = await fetcher.post(url, **kwargs)
+                allowed_http = {"timeout", "headers", "extra_headers", "proxy", "data", "json", "params"}
+                safe_fetch_kwargs = {k: v for k, v in scrapling_kwargs.items() if k in allowed_http}
 
-                content = str(getattr(resp, 'body', getattr(resp, 'html_content', "")))
-                return UnifiedResponse(content, resp.status, resp.status, resp.url, resp.headers)
+                if method.upper() == "GET":
+                    resp = await fetcher.get(url, **safe_fetch_kwargs)
+                else:
+                    action = getattr(fetcher, "post", getattr(fetcher, "request"))
+                    resp = await action(url, **safe_fetch_kwargs)
+
+                return _get_unified_resp(resp)
 
 
     async def close(self) -> None:
@@ -2499,7 +2539,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     """
     SOURCE_NAME: ClassVar[str] = "RacingAndSports"
     BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
-    DECOMMISSIONED: ClassVar[bool] = True
+    DECOMMISSIONED: ClassVar[bool] = False
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
@@ -2524,7 +2564,11 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
             if not resp or not resp.text:
                 return None
 
-            data = resp.json()
+            try:
+                data = resp.json()
+            except Exception:
+                import json
+                data = json.loads(resp.text)
             return {"json_data": data, "date": date}
         except Exception as e:
             self.logger.error("failed_fetching_ras_json", error=str(e))
@@ -2533,6 +2577,9 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("json_data"): return []
         data = raw_data["json_data"]
+        if isinstance(data, list):
+            # Sometimes RAS returns a raw list of meetings instead of a dict with 'meetings' key
+            data = {"meetings": data}
         try:
             race_date = parse_date_string(raw_data["date"]).date()
         except Exception:
@@ -3893,9 +3940,11 @@ class RacingPostB2BAdapter(BaseAdapterV3):
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
         races: List[Race] = []
+        target_countries = {"USA", "CAN", "AUS", "NZL", "GBR", "IRL", "ZAF"}
         for vd in raw_data["venues"]:
             if vd.get("isAbandoned"): continue
             vn, cc, rd = vd.get("name", "Unknown"), vd.get("countryCode", "USA"), vd.get("races", [])
+            if cc not in target_countries: continue
             for r in rd:
                 if r.get("raceStatusCode") == "ABD": continue
                 parsed = self._parse_single_race(r, vn, cc)
@@ -4345,16 +4394,17 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             if not resp or not resp.text: return None
             list_races_data = json.loads(resp.text)
             all_races = list_races_data.get("races", [])
-            # Filter US races for discovery efficiency as per memo focus
-            us_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") == "US"]
-            if not us_race_ids:
+            # Filter US/AU/NZ races for discovery efficiency (Fix: Include AUS/NZ for coverage)
+            target_countries = {"US", "AU", "NZ"}
+            target_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") in target_countries]
+            if not target_race_ids:
                 self.metrics.record_parse_warning()
                 return {"races": [], "details": {}}
 
             # 3. Get Details (Runners) - chunked
             details = {}
-            for i in range(0, len(us_race_ids), 50):
-                chunk = us_race_ids[i:i+50]
+            for i in range(0, len(target_race_ids), 50):
+                chunk = target_race_ids[i:i+50]
                 get_races_payload = {
                     "header": header, "cohort": "A--", "wageringCohort": "NBI", "raceIds": chunk, "wantContents": True
                 }
@@ -4430,7 +4480,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
 class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "Equibase"
-    DECOMMISSIONED = True
+    DECOMMISSIONED = False
     PROVIDES_ODDS: ClassVar[bool] = False
     BASE_URL: ClassVar[str] = "https://www.equibase.com"
 
@@ -4987,6 +5037,122 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
 # ----------------------------------------
 # ANALYZER LOGIC
 # ----------------------------------------
+# FanDuelRacingAdapter (TVG)
+# ----------------------------------------
+class FanDuelRacingAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for FanDuel Racing (formerly TVG).
+    High-fidelity source for US and International racecards.
+    """
+    SOURCE_NAME: ClassVar[str] = "FanDuelRacing"
+    BASE_URL: ClassVar[str] = "https://www.fanduel.com/racing"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.CAMOUFOX,
+            enable_js=True,
+            stealth_mode="camouflage",
+            timeout=90,
+            network_idle=True
+        )
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Index for today's races
+        url = f"{self.BASE_URL}/race-schedule"
+        try:
+            resp = await self.make_request("GET", url, network_idle=True)
+            if not resp or not resp.text:
+                return None
+
+            self._save_debug_snapshot(resp.text, f"fanduel_schedule_{date}")
+            parser = HTMLParser(resp.text)
+            links = []
+            for link in parser.css('a[href*="/racing/track/"]'):
+                href = link.attributes.get("href")
+                if href and "/race/" in href:
+                    links.append({"url": href if href.startswith("http") else self.BASE_URL + href})
+
+            if not links:
+                return None
+
+            # Fetch a sample of pages to verify structure
+            pages = await self._fetch_race_pages_concurrent(links[:20], {}, semaphore_limit=3)
+            return {"pages": pages, "date": date}
+        except Exception as e:
+            self.logger.error("FanDuel fetch failed", error=str(e))
+            return None
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        races = []
+        target_date = parse_date_string(raw_data["date"]).date()
+
+        for item in raw_data["pages"]:
+            html = item.get("html")
+            if not html: continue
+            try:
+                parser = HTMLParser(html)
+                # Structure: Venue Name usually in h1 or specific class
+                venue_node = parser.css_first("h1") or parser.css_first('[class*="TrackName"]')
+                venue = normalize_venue_name(node_text(venue_node))
+
+                # Race number
+                rnum_node = parser.css_first('[class*="RaceNumber"]')
+                rnum = 1
+                if rnum_node:
+                    digits = "".join(filter(str.isdigit, node_text(rnum_node)))
+                    if digits: rnum = int(digits)
+
+                # Time
+                st = datetime.combine(target_date, datetime.now(EASTERN).time())
+                time_node = parser.css_first('[class*="PostTime"]')
+                if time_node:
+                    # Simple parse for now
+                    txt = node_text(time_node)
+                    time_match = re.search(r"(\d{1,2}:\d{2})\s*(AM|PM)?", txt, re.I)
+                    if time_match:
+                        try:
+                            tm = datetime.strptime(time_match.group(1), "%H:%M")
+                            if time_match.group(2) and time_match.group(2).upper() == "PM" and tm.hour < 12:
+                                tm = tm.replace(hour=tm.hour + 12)
+                            st = datetime.combine(target_date, tm.time())
+                        except Exception: pass
+
+                runners = []
+                for row in parser.css('[class*="RunnerRow"], [class*="EntryRow"]'):
+                    name_node = row.css_first('[class*="HorseName"]')
+                    if not name_node: continue
+                    name = clean_text(node_text(name_node))
+
+                    num_node = row.css_first('[class*="ProgramNumber"]')
+                    number = int("".join(filter(str.isdigit, node_text(num_node)))) if num_node else 0
+
+                    odds_node = row.css_first('[class*="Odds"]')
+                    win_odds = parse_odds_to_decimal(node_text(odds_node)) if odds_node else None
+
+                    odds_data = {}
+                    if ov := create_odds_data(self.SOURCE_NAME, win_odds):
+                        odds_data[self.SOURCE_NAME] = ov
+
+                    runners.append(Runner(name=name, number=number, odds=odds_data, win_odds=win_odds))
+
+                if runners:
+                    races.append(Race(
+                        id=generate_race_id("fd", venue, st, rnum),
+                        venue=venue,
+                        race_number=rnum,
+                        start_time=ensure_eastern(st),
+                        runners=runners,
+                        source=self.SOURCE_NAME
+                    ))
+            except Exception: continue
+        return races
+
+
+# ----------------------------------------
 
 log = structlog.get_logger(__name__)
 
@@ -5240,13 +5406,12 @@ DISCIPLINE_THRESHOLDS: Final[Dict[str, Dict[str, float]]] = {
 }
 
 # Regional exclusion list for scoring (Council of Superbrains Directive)
-INVALID_REGION_PREFIXES: Final[Tuple[str, ...]] = ('fr', 'jp', 'hk', 'uae')
+INVALID_REGION_PREFIXES: Final[Tuple[str, ...]] = ('fr', 'uae')
 BLOCKED_VENUES: Final[Set[str]] = {
     'fontainebleau', 'cagnessurmer', 'longchamp', 'chantilly', 'deauville',
     'parislongchamp', 'saintcloud', 'compiegne', 'vichy', 'clairefontaine',
     'marseilleborely', 'toulouse', 'lyon', 'strasbourg', 'amiens',
-    'tokyo', 'nakayama', 'hanshin', 'kyoto', 'kokura', 'niigata', 'sapporo', 'fukushima', 'chukyo',
-    'shatin', 'happyvalley', 'meydan', 'abudhabi', 'jebelali',
+    'meydan', 'abudhabi', 'jebelali',
     'milan', 'sanrossore', 'capannelle',
 }
 
@@ -8917,7 +9082,7 @@ class RacingPostToteAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     ADAPTER_TYPE = "results"
     SOURCE_NAME = "RacingPostTote"
     BASE_URL = "https://www.racingpost.com"
-    DECOMMISSIONED: ClassVar[bool] = True
+    DECOMMISSIONED: ClassVar[bool] = False
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
