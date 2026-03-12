@@ -47,8 +47,8 @@ async def main():
     races = []
     for r in unaudited:
         m = _mtp(r.get('start_time'))
-        # Only show races from 10 mins ago to 18 hours in future
-        if -10 <= m <= 1080:
+        # Broaden window: 60 mins ago to 24 hours in future (Fix for AU/NZ coverage)
+        if -60 <= m <= 1440:
             r['_mtp_val'] = m
             races.append(r)
 
@@ -58,9 +58,10 @@ async def main():
     with open(output_path, "a", encoding="utf-8") as f:
         f.write("# 🏇 Upcoming Races\n\n")
         f.write(f"Generated: {now_eastern().strftime('%y%m%d %H:%M:%S')} ET\n\n")
+        f.write(f"*Total unaudited tips in database: {len(unaudited)}*\n\n")
 
         if not races:
-            f.write("No upcoming races discovered yet.\n")
+            f.write("No upcoming races within the next 24 hours discovered yet.\n")
         else:
             f.write("| MTP | Venue | R# | 1st Fav | 2nd Fav | Grade |\n")
             f.write("|---|---|---|---|---|---|\n")

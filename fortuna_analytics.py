@@ -1278,7 +1278,7 @@ class DRFResultsAdapter(PageFetchingResultsAdapter):
     Adapter for DRF.com text charts (structured pipe-delimited data).
     Covers all USA Thoroughbred tracks with official pari-mutuel results.
     """
-    DECOMMISSIONED = True
+    DECOMMISSIONED = False
     SOURCE_NAME = "DRFResults"
     BASE_URL = "https://www1.drf.com"
     HOST = "www1.drf.com"
@@ -1604,7 +1604,7 @@ class NYRABetsResultsAdapter(PageFetchingResultsAdapter):
 class EquibaseResultsAdapter(PageFetchingResultsAdapter):
     """Equibase summary charts — primary US thoroughbred results source."""
 
-    DECOMMISSIONED = True
+    DECOMMISSIONED = False
     SOURCE_NAME = "EquibaseResults"
     # FIX-25: Revived to replace failing DRFResults
     BASE_URL = "https://www.equibase.com"
@@ -3548,7 +3548,7 @@ class StandardbredCanadaResultsAdapter(PageFetchingResultsAdapter):
 class RacingAndSportsResultsAdapter(PageFetchingResultsAdapter):
     """Racing & Sports results (AUS / NZ / International)."""
 
-    DECOMMISSIONED = True
+    DECOMMISSIONED = False
     SOURCE_NAME = "RacingAndSportsResults"
     BASE_URL = "https://www.racingandsports.com.au"
     HOST = "www.racingandsports.com.au"
