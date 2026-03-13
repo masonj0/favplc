@@ -15,7 +15,7 @@ if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
         playwright_path = os.path.expanduser("~\\AppData\\Local\\ms-playwright")
         has_playwright = os.path.exists(playwright_path)
 
-        # GPT5 Fix: Default to Selector loop if Playwright is missing to satisfy curl_cffi
+        # Hardening Fix: Default to Selector loop if Playwright is missing to satisfy curl_cffi
         if os.getenv("FORTUNA_USE_SELECTOR_EVENT_LOOP") == "1" or not has_playwright:
             asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         else:
@@ -215,7 +215,7 @@ def print_status_card(config: Dict[str, Any]):
         console = Console()
         print_func = console.print
     except ImportError:
-        # Fallback to structlog for telemetry (GPT5 Improvement)
+        # Fallback to structlog for telemetry (Capability Improvement)
         sl = structlog.get_logger()
         print_func = lambda msg: sl.info(msg)
 
@@ -267,7 +267,7 @@ def print_quick_help():
         console = Console()
         print_func = console.print
     except ImportError:
-        # Fallback to structlog for telemetry (GPT5 Improvement)
+        # Fallback to structlog for telemetry (Capability Improvement)
         sl = structlog.get_logger()
         print_func = lambda msg: sl.info(msg)
 
@@ -698,7 +698,7 @@ class Race(FortunaBaseModel):
 
 # --- UTILITIES ---
 async def fetch_json(url: str, *, client: httpx.AsyncClient, adapter_name: str, **kwargs) -> dict:
-    """Centralized helper for fetching JSON with strict status validation (GPT5 Fix)."""
+    """Centralized helper for fetching JSON with strict status validation (Hardening Fix)."""
     response = await client.get(url, **kwargs)
     try:
         response.raise_for_status()
@@ -976,7 +976,7 @@ async def refresh_odds_for_races(
                             matched = existing_runner
                             break
                     if matched:
-                        # DO NOT CLEAR: merge to preserve multi-source depth (GPT5 Fix)
+                        # DO NOT CLEAR: merge to preserve multi-source depth (Hardening Fix)
                         matched.odds.update(new_runner.odds)
                         if new_runner.win_odds is not None:
                             matched.win_odds = new_runner.win_odds
@@ -1233,7 +1233,7 @@ class SmartFetcher:
         }
         self.last_engine: str = "unknown"
         self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
-        self._curl_sessions: Dict[str, Any] = {} # GPT5 Fix: Initialize session tracking (Fix AttributeError)
+        self._curl_sessions: Dict[str, Any] = {} # Hardening Fix: Initialize session tracking (Fix AttributeError)
         self._session_lock = asyncio.Lock()
         if BROWSERFORGE_AVAILABLE:
             self.header_gen = HeaderGenerator()
@@ -1264,7 +1264,7 @@ class SmartFetcher:
             return self._sessions["_curl"]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
-        method = kwargs.pop("method", "GET").upper()
+        method = kwargs.get("method", "GET").upper()
         kwargs.pop("url", None)
 
         async with self._health_lock:
@@ -1276,7 +1276,7 @@ class SmartFetcher:
         # Check if engines are available before sorting
         available_engines = [e for e in self._engine_health.keys()]
 
-        # Domain-specific engine prioritization (GPT5 Fix)
+        # Domain-specific engine prioritization (Hardening Fix)
         # Some domains are better handled by specific engines
         if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com", "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com"]):
             # For these domains, prioritize Playwright or Camoufox if available
@@ -1305,9 +1305,12 @@ class SmartFetcher:
         last_error: Optional[Exception] = None
         for engine in engines:
             try:
-                response = await self._fetch_with_engine(engine, url, method=method, **kwargs)
+                # Hardening Fix: Create a shallow copy of kwargs to prevent multiple values for 'method' during recursion
+                fetch_kwargs = kwargs.copy()
+                fetch_kwargs["method"] = method
+                response = await self._fetch_with_engine(engine, url, **fetch_kwargs)
 
-                # Check for bot detection in response body and status code (GPT5 Fix / BUG-CR-05)
+                # Check for bot detection in response body and status code (Hardening Fix / BUG-CR-05)
                 if response and hasattr(response, "status_code"):
                     sc = response.status_code
                     if sc == 429:
@@ -1319,10 +1322,25 @@ class SmartFetcher:
 
                 if response and hasattr(response, "text") and response.text:
                     body_lower = response.text.lower()
+                    challenge_solved = False
                     for kw in self.BOT_DETECTION_KEYWORDS:
                         if kw in body_lower:
                             self.logger.warning("bot_challenge_detected", engine=engine.value, keyword=kw, url=url)
-                            raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
+                            # Hardening Fix: If using Playwright, wait and retry once to allow automated solving
+                            if engine == BrowserEngine.PLAYWRIGHT:
+                                self.logger.info("Waiting for automated challenge solution...", engine=engine.value)
+                                await asyncio.sleep(18)
+                                # Hardening Fix: Use copy for internal wait-retry too
+                                retry_kwargs = kwargs.copy()
+                                retry_kwargs["method"] = method
+                                response = await self._fetch_with_engine(engine, url, **retry_kwargs)
+                                if response and hasattr(response, "text") and kw not in response.text.lower():
+                                    self.logger.info("Challenge solved successfully!", engine=engine.value)
+                                    challenge_solved = True
+                                    break # Success in the kw loop
+
+                            if not challenge_solved:
+                                raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 async with self._health_lock:
                     self._engine_health[engine] = min(1.0, self._engine_health[engine] + 0.1)
@@ -1339,7 +1357,8 @@ class SmartFetcher:
         raise last_error or FetchError("All fetch engines failed")
 
     
-    async def _fetch_with_engine(self, engine: BrowserEngine, url: str, method: str, **kwargs: Any) -> Any:
+    async def _fetch_with_engine(self, engine: BrowserEngine, url: str, **kwargs: Any) -> Any:
+        method = kwargs.pop("method", "GET").upper()
         # Generate browserforge headers if available
         if BROWSERFORGE_AVAILABLE:
             try:
@@ -1421,7 +1440,7 @@ class SmartFetcher:
                     err_lower = str(e).lower()
                     if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
                         self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
-                        # Discard the poisoned session from the main cache (GPT5 Fix)
+                        # Discard the poisoned session from the main cache (Hardening Fix)
                         async with self._session_lock:
                             self._sessions.pop('_curl', None)
                         last_err = e
@@ -1811,7 +1830,7 @@ class BaseAdapterV3(ABC):
             if not await self.circuit_breaker.allow_request(): return []
 
             raw = None
-            # GPT5 Fix: Implement retries with strict status validation
+            # Hardening Fix: Implement retries with strict status validation
             for attempt in range(3):
                 try:
                     await self.rate_limiter.acquire()
@@ -1988,7 +2007,7 @@ class BaseAdapterV3(ABC):
                 self.last_response_status = get_resp_status(resp)
                 self.logger.debug("Response received", method=method, url=full_url, status=self.last_response_status)
 
-                # GPT5 Fix: Raise for status if not 200
+                # Hardening Fix: Raise for status if not 200
                 if raise_for_status and self.last_response_status != 200:
                     self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=self.last_response_status)
                     if hasattr(resp, "raise_for_status"):
@@ -2198,7 +2217,7 @@ class OfficialTrackAdapter(BaseAdapterV3):
     async def _fetch_data(self, date: str) -> Optional[str]:
         # Perform a GET to check status
         try:
-            # GPT5 Fix: Defensive check to strip trailing slash if URL ends in .html or .php
+            # Hardening Fix: Defensive check to strip trailing slash if URL ends in .html or .php
             url_to_fetch = self.official_url
             if any(url_to_fetch.lower().endswith(ext) for ext in [".html", ".htm", ".php", ".aspx"]):
                 url_to_fetch = url_to_fetch.rstrip("/")
@@ -2890,7 +2909,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         disc = detect_discipline(html_content)
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
         header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
@@ -3238,7 +3257,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         if dist_match: distance = dist_match.group(1).strip()
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
@@ -3658,7 +3677,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         if not runners: return None
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type_raw = summary.get("race_title") or summary.get("race_name") or ""
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', race_type_raw, re.I)
         race_type = rt_match.group(1) if rt_match else ("Handicap" if is_handicap else None)
@@ -3918,7 +3937,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
 class RacingPostB2BAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "RacingPostB2B"
     BASE_URL: ClassVar[str] = "https://backend-us-racecards.widget.rpb2b.com"
-    PROVIDES_ODDS: ClassVar[bool] = False  # GPT5 Fix: RPB2B is racecard-only
+    PROVIDES_ODDS: ClassVar[bool] = False  # Hardening Fix: RPB2B is racecard-only
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=300.0, rate_limit=5.0)
@@ -4327,7 +4346,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
     def _get_headers(self) -> Dict[str, str]:
         # Using the base domain as host to avoid internal API 403s (Fix 3)
-        # Content-Type aligned with Results adapter for reliable POST (GPT5 Fix)
+        # Content-Type aligned with Results adapter for reliable POST (Hardening Fix)
         h = self._get_browser_headers(host="api.nyrabets.com")
         h["Origin"] = "https://www.nyrabets.com"
         h["Referer"] = "https://www.nyrabets.com/"
@@ -4581,7 +4600,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             return None
 
         # Fetch initial set of pages
-        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        # Hardening Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
         clean_links = [l.strip() for l in set(links) if l and l.strip()]
         pages = await self._fetch_race_pages_concurrent([{"url": l} for l in clean_links], self._get_headers(), semaphore_limit=5)
 
@@ -4635,7 +4654,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         if extra_links:
             self.logger.info("Fetching extra race pages from track index", count=len(extra_links))
-            # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+            # Hardening Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
             clean_extra = [l.strip() for l in set(extra_links) if l and l.strip()]
             extra_pages = await self._fetch_race_pages_concurrent([{"url": l} for l in clean_extra], self._get_headers(), semaphore_limit=5)
             all_htmls.extend([p.get("html") for p in extra_pages if p and p.get("html")])
@@ -5215,7 +5234,7 @@ class TrifectaAnalyzer(BaseAnalyzer):
         **kwargs
     ):
         super().__init__(**kwargs)
-        # Use config value if provided and no explicit override (GPT5 Improvement)
+        # Use config value if provided and no explicit override (Capability Improvement)
         self.max_field_size = max_field_size or self.config.get("analysis", {}).get("max_field_size", 11)
         self.min_favorite_odds = Decimal(str(min_favorite_odds))
         self.min_second_favorite_odds = Decimal(str(min_second_favorite_odds))
@@ -6225,7 +6244,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
 
         st = getattr(r, 'start_time', '')
         if isinstance(st, datetime):
-            # Ensure it's in Eastern for display (GPT5 Improvement)
+            # Ensure it's in Eastern for display (Capability Improvement)
             st_str = to_eastern(st).strftime('%H:%M')
         elif isinstance(st, str):
             try:
@@ -6756,7 +6775,7 @@ class SummaryWriter:
 
 @contextmanager
 def open_summary():
-    """Context manager for writing to GHA Job Summary with fallback to stdout (GPT5 Optimized)."""
+    """Context manager for writing to GHA Job Summary with fallback to stdout (Optimized)."""
     path = os.environ.get('GITHUB_STEP_SUMMARY')
     if path:
         with open(path, 'a', encoding='utf-8') as f:
@@ -6838,7 +6857,7 @@ class FortunaDB:
         self.logger = structlog.get_logger(self.__class__.__name__)
 
     def _get_conn(self):
-        """Returns a thread-safe connection using WAL and a thread lock (GPT5 Requirement)."""
+        """Returns a thread-safe connection using WAL and a thread lock (Requirement)."""
         with self._conn_lock:
             if not self._conn:
                 # check_same_thread=False is safe because we use a ThreadPoolExecutor(max_workers=1)
@@ -6895,7 +6914,7 @@ class FortunaDB:
         """Creates the database schema if it doesn't exist."""
         if self._initialized: return
 
-        # Pre-fetch current version to avoid NameError in _init (GPT5 Fix)
+        # Pre-fetch current version to avoid NameError in _init (Hardening Fix)
         def _get_version():
             try:
                 cursor = self._get_conn().execute("SELECT MAX(version) FROM schema_version")
@@ -6906,7 +6925,7 @@ class FortunaDB:
         current_version = await self._run_in_executor(_get_version)
 
         def _init():
-            # Force close and reopen to ensure fresh state for migrations (GPT5 Fix)
+            # Force close and reopen to ensure fresh state for migrations (Hardening Fix)
             with self._conn_lock:
                 if self._conn:
                     self._conn.close()
@@ -8058,7 +8077,7 @@ class HotTipsTracker:
             if total_active > 0:
                 trustworthy_count = sum(1 for run in active_runners if run.metadata.get("odds_source_trustworthy"))
                 trust_ratio = trustworthy_count / total_active
-                # Relaxed to match SimplySuccessAnalyzer config (GPT5 alignment)
+                # Relaxed to match SimplySuccessAnalyzer config (Alignment)
                 # BUG-2 Fix: Align with expected config key
                 min_trust = self.config.get("analysis", {}).get("simply_success_trust_min", 0.25)
                 if trust_ratio < min_trust:
@@ -8210,7 +8229,7 @@ class RaceSummary:
 
 @lru_cache(maxsize=1)
 def get_discovery_adapter_classes() -> List[Type[BaseAdapterV3]]:
-    """Recursively discovers all discovery adapter classes (cached for performance - GPT5 Improvement)."""
+    """Recursively discovers all discovery adapter classes (cached for performance - Capability Improvement)."""
     def get_all_subclasses(cls):
         return set(cls.__subclasses__()).union(
             [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
@@ -8931,7 +8950,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                 race_time_str = node_text(race_time_node)
 
                 # S5 — extract race type (independent review item)
-                # GPT5 Fix: Broaden race type detection to improve scoring population
+                # Hardening Fix: Broaden race type detection to improve scoring population
                 race_type = None
                 header_text = node_text(
                     parser.css_first('.rp-raceCourse__panel__race__info')
@@ -9405,7 +9424,7 @@ async def run_quarter_fetch(
 
         try:
             # GEMINI_3: Increase per-adapter timeout in run_quarter_fetch to 180s
-            # Increased to 300s to match hardened adapter timeouts (GPT5 Fix)
+            # Increased to 300s to match hardened adapter timeouts (Hardening Fix)
             fetch_timeout = 300.0
             if use_playwright_sem:
                 async with playwright_semaphore:
@@ -9413,7 +9432,7 @@ async def run_quarter_fetch(
             else:
                 races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)
 
-            # Record last status for Phase 1 logging (GPT5 Fix)
+            # Record last status for Phase 1 logging (Hardening Fix)
             status = getattr(a, 'last_response_status', None)
             return a.source_name, races, status
         except asyncio.TimeoutError:
@@ -9785,7 +9804,7 @@ async def ensure_browsers(force_install: bool = False):
     if is_frozen():
         return True
 
-    # GPT5 Improvement: Instead of auto-installing, warn the user unless opt-in
+    # Capability Improvement: Instead of auto-installing, warn the user unless opt-in
     # For now, we will assume it's NOT opt-in and ask for manual installation
     # because auto-pip-installing can be surprising.
     structlog.get_logger().warning("Browser dependencies (Playwright Chromium) missing.")
@@ -9811,7 +9830,7 @@ async def ensure_browsers(force_install: bool = False):
     return True # Continue with HTTP-only adapters
 
 async def handle_early_exit_args(args: argparse.Namespace, config: Dict[str, Any]) -> bool:
-    """Handles CLI arguments that should trigger an immediate exit (GPT5 Improvement)."""
+    """Handles CLI arguments that should trigger an immediate exit (Capability Improvement)."""
     if args.quick_help:
         print_quick_help()
         return True
@@ -9862,7 +9881,7 @@ async def main_all_in_one():
     parser.add_argument("--test-all-adapters", action="store_true", help="Run a health check on all available discovery adapters")
     args = parser.parse_args()
 
-    # Handle early-exit arguments via helper (GPT5 Fix/Improvement)
+    # Handle early-exit arguments via helper (Hardening Fix/Improvement)
     if await handle_early_exit_args(args, config):
         return
 
