@@ -420,7 +420,7 @@ class AuditorEngine:
                 continue
 
             try:
-                # Wrap log calls in a level check for high-volume audit performance (GPT5 Fix)
+                # Wrap log calls in a level check for high-volume audit performance (Hardening Fix)
                 self.logger.debug("Attempting match", race_id=race_id, key=tip_key)
 
                 # Item 8: Algorithm optimization
@@ -748,7 +748,7 @@ class AuditorEngine:
                 continue
 
             odds = r.final_win_odds
-            # Fallback to win_payout if odds are missing (common for Harness - GPT5 Fix)
+            # Fallback to win_payout if odds are missing (common for Harness - Hardening Fix)
             if (not odds or odds <= 0) and r.win_payout and r.win_payout > 0:
                 odds = round(r.win_payout / 2.0, 2)
 
@@ -835,7 +835,7 @@ class AuditorEngine:
         if sel.position_numeric > places_paid:
             return Verdict.BURNED, -STANDARD_BET
 
-        # Actual place payout available (GPT5 Fix: Handle zero payouts)
+        # Actual place payout available (Hardening Fix: Handle zero payouts)
         if sel.place_payout and sel.place_payout > 0.01:
             return Verdict.CASHED, sel.place_payout - STANDARD_BET
 
@@ -1170,7 +1170,7 @@ class PageFetchingResultsAdapter(
             for lnk in links
         ))
 
-        # FIX_21: Increase fetch limit and prioritize target venues (GPT5 Fix)
+        # FIX_21: Increase fetch limit and prioritize target venues (Hardening Fix)
         MAX_PAGES = 150
         if len(absolute) > MAX_PAGES:
             self.logger.warning(
@@ -1196,7 +1196,7 @@ class PageFetchingResultsAdapter(
             source=self.SOURCE_NAME,
             count=len(absolute),
         )
-        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        # Hardening Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
         clean_absolute = [u.strip() for u in absolute if u and u.strip()]
         metadata = [{"url": u, "race_number": 0} for u in clean_absolute]
         pages = await self._fetch_race_pages_concurrent(
@@ -1690,7 +1690,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return resolved
 
         self.logger.info("Resolving track indices", count=len(index_links))
-        # GPT5 Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
+        # Hardening Fix: Clean and deduplicate links to avoid net::ERR_INVALID_ARGUMENT
         clean_index_links = [ln.strip() for ln in index_links if ln and ln.strip()]
         metadata = [{"url": ln, "race_number": 0} for ln in clean_index_links]
         index_pages = await self._fetch_race_pages_concurrent(
@@ -1835,7 +1835,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
@@ -2025,7 +2025,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
         header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
@@ -2579,7 +2579,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
             return None
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
         if header_node:
@@ -3158,7 +3158,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         )
 
         # S5 — extract race type (independent review item)
-        # GPT5 Fix: Broaden race type detection to improve scoring population
+        # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         # Try summary header or card info
         header_text = summary.get("race_title") or summary.get("race_name") or ""
@@ -4226,7 +4226,7 @@ async def _harvest_results(
         async with sem:
             try:
                 # PIPE-4 Fix: Add per-adapter timeout to prevent runaway audits
-                # Increased to 300s to match hardened adapter timeouts (GPT5 Fix)
+                # Increased to 300s to match hardened adapter timeouts (Hardening Fix)
                 races = await asyncio.wait_for(adapter.get_races(date_str), timeout=300.0)
                 _analytics_logger.debug(
                     "Fetched results",
