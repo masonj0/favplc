@@ -90,6 +90,7 @@ def get_fav_odds(race: dict) -> Tuple[Optional[float], Optional[float]]:
 async def get_snapshot_data(db: FortunaDB):
     def _get():
         conn = db._get_conn()
+        conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
         def get_one(query, default=0):
@@ -243,6 +244,16 @@ async def main():
                 grade = r.get('_grade', '—')
 
                 f.write(f"| {mtp_s} | {venue} | {rnum} | {f1_s} | {f2_s} | {grade} |\n")
+
+        # --- Adapter Health Section (P2-ENH-6) ---
+        health_path = Path("adapter_health_report.txt")
+        if health_path.exists():
+            f.write("\n## 📡 Adapter Health Dashboard\n\n")
+            f.write("<details>\n<summary>Click to view detailed adapter status</summary>\n\n")
+            f.write("```text\n")
+            f.write(health_path.read_text(encoding="utf-8"))
+            f.write("\n```\n")
+            f.write("</details>\n")
 
         f.write("\n---\n*Refreshes every hour*\n")
 
