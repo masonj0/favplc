@@ -386,7 +386,7 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {
     "Equibase",
-    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets", "FanDuelRacing",
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
     "Official_TheMeadowlands", "Official_YonkersRaceway", "Official_Woodbine",
@@ -425,7 +425,7 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports", "HKJC", "JRA",
-    "TwinSpires", "NYRABets", "RacingPostB2B", "FanDuelRacing" # US sources for 24/7 global coverage
+    "TwinSpires", "NYRABets", "RacingPostB2B" # US sources for 24/7 global coverage
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
@@ -1152,12 +1152,12 @@ class GlobalResourceManager:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.Semaphore(3)
+            return asyncio.Semaphore(2)
 
         if loop not in cls._playwright_semaphores:
             with cls._lock_initialized:
                 if loop not in cls._playwright_semaphores:
-                    cls._playwright_semaphores[loop] = asyncio.Semaphore(3)
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(2)
         return cls._playwright_semaphores[loop]
 
     @classmethod
@@ -1201,6 +1201,13 @@ class UnifiedResponse:
 
 class FetchStrategy(FortunaBaseModel):
     primary_engine: BrowserEngine = BrowserEngine.PLAYWRIGHT
+    allowed_engines: List[BrowserEngine] = Field(
+        default_factory=lambda: [
+            BrowserEngine.CAMOUFOX, BrowserEngine.CURL_CFFI,
+            BrowserEngine.PLAYWRIGHT, BrowserEngine.HTTPX
+        ]
+    )
+    max_engine_attempts: int = Field(3, ge=1, le=5)
     enable_js: bool = True
     stealth_mode: str = "fast"
     block_resources: bool = False
@@ -1211,6 +1218,52 @@ class FetchStrategy(FortunaBaseModel):
     network_idle: bool = False
     wait_for_selector: Optional[str] = None
     impersonate: Optional[str] = "chrome124"  # BUG-D5: chrome133 not supported by curl_cffi
+
+
+def api_fetch_strategy(**overrides) -> FetchStrategy:
+    """For adapters hitting JSON APIs. No browser needed."""
+    defaults = dict(
+        primary_engine=BrowserEngine.CURL_CFFI,
+        allowed_engines=[BrowserEngine.CURL_CFFI, BrowserEngine.HTTPX],
+        max_engine_attempts=2,
+        enable_js=False,
+        timeout=30,
+        max_retries=2,
+    )
+    defaults.update(overrides)
+    return FetchStrategy(**defaults)
+
+
+def scraping_fetch_strategy(**overrides) -> FetchStrategy:
+    """For adapters that scrape rendered HTML behind anti-bot protection."""
+    defaults = dict(
+        primary_engine=BrowserEngine.CAMOUFOX,
+        allowed_engines=[
+            BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT,
+            BrowserEngine.CURL_CFFI,
+        ],
+        max_engine_attempts=2,
+        enable_js=True,
+        stealth_mode="camouflage",
+        timeout=45,
+        max_retries=2,
+    )
+    defaults.update(overrides)
+    return FetchStrategy(**defaults)
+
+
+def lightweight_fetch_strategy(**overrides) -> FetchStrategy:
+    """For health checks and simple GETs. HTTPX only, fast timeout."""
+    defaults = dict(
+        primary_engine=BrowserEngine.HTTPX,
+        allowed_engines=[BrowserEngine.HTTPX],
+        max_engine_attempts=1,
+        enable_js=False,
+        timeout=15,
+        max_retries=1,
+    )
+    defaults.update(overrides)
+    return FetchStrategy(**defaults)
 
 
 class SmartFetcher:
@@ -1243,16 +1296,49 @@ class SmartFetcher:
             self.fingerprint_gen = None
 
     async def _get_persistent_session(self, engine: BrowserEngine) -> Any:
-        """Returns a persistent session for browser-based engines to avoid launch overhead (Fix 12)."""
+        """Gate ALL browser creation behind the global playwright semaphore."""
+        # Fast path: session already exists
         async with self._session_lock:
-            if engine not in self._sessions:
-                if engine == BrowserEngine.CAMOUFOX:
-                    self._sessions[engine] = AsyncStealthySession(headless=True)
-                    await self._sessions[engine].__aenter__()
-                elif engine == BrowserEngine.PLAYWRIGHT:
-                    self._sessions[engine] = AsyncDynamicSession(headless=True)
-                    await self._sessions[engine].__aenter__()
-            return self._sessions[engine]
+            if engine in self._sessions:
+                return self._sessions[engine]
+
+        # Slow path: acquire global browser slot before creating
+        pw_sem = GlobalResourceManager.get_playwright_semaphore()
+        async with pw_sem:
+            async with self._session_lock:
+                # Double-check after acquiring semaphore
+                if engine in self._sessions:
+                    return self._sessions[engine]
+
+                try:
+                    if engine == BrowserEngine.CAMOUFOX and ASYNC_SESSIONS_AVAILABLE:
+                        session = AsyncStealthySession(headless=True)
+                        await asyncio.wait_for(session.__aenter__(), timeout=30)
+                        self._sessions[engine] = session
+                    elif engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.PLAYWRIGHT_LEGACY) \
+                         and ASYNC_SESSIONS_AVAILABLE:
+                        session = AsyncDynamicSession(headless=True)
+                        await asyncio.wait_for(session.__aenter__(), timeout=30)
+                        self._sessions[engine] = session
+                except (BrokenPipeError, ConnectionError, ConnectionResetError, OSError, asyncio.TimeoutError) as e:
+                    self.logger.error('browser_session_creation_failed',
+                                     engine=engine.value, error=str(e))
+                    async with self._health_lock:
+                        self._engine_health[engine] = 0.0
+                    raise FetchError(f'Browser launch failed: {e}',
+                                     category=ErrorCategory.NETWORK)
+
+                return self._sessions.get(engine)
+
+    async def _invalidate_session(self, engine: BrowserEngine) -> None:
+        """Safely tear down a dead browser session."""
+        async with self._session_lock:
+            session = self._sessions.pop(engine, None)
+            if session is not None:
+                try:
+                    await asyncio.wait_for(session.__aexit__(None, None, None), timeout=10)
+                except Exception:
+                    pass  # Session is already dead
 
     async def _get_curl_session(self) -> Any:
         """Returns a persistent curl_cffi session (Fix 07 / BUG-CR-06)."""
@@ -1276,19 +1362,6 @@ class SmartFetcher:
         # Check if engines are available before sorting
         available_engines = [e for e in self._engine_health.keys()]
 
-        # Domain-specific engine prioritization (Hardening Fix)
-        # Some domains are better handled by specific engines
-        if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com", "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com", "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com", "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"]):
-            # For these domains, prioritize Playwright or Camoufox if available
-            self.logger.debug("Prioritizing browser engines for protected domain", url=url)
-            # Favor Camoufox for better stealth on extremely protected domains
-            if BrowserEngine.CAMOUFOX in available_engines:
-                self._engine_health[BrowserEngine.CAMOUFOX] = 1.0
-            if BrowserEngine.PLAYWRIGHT in available_engines:
-                self._engine_health[BrowserEngine.PLAYWRIGHT] = 0.95
-            # Ensure HTTPX is discouraged for these domains
-            if BrowserEngine.HTTPX in available_engines:
-                self._engine_health[BrowserEngine.HTTPX] = 0.1
 
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
             available_engines.remove(BrowserEngine.CURL_CFFI)
@@ -1301,10 +1374,47 @@ class SmartFetcher:
             raise FetchError("No fetch engines available (install curl_cffi or scrapling)")
 
         strategy = kwargs.get("strategy", self.strategy)
-        engines = sorted(available_engines, key=lambda e: self._engine_health[e], reverse=True)
-        if strategy.primary_engine in engines:
-            engines.remove(strategy.primary_engine)
-            engines.insert(0, strategy.primary_engine)
+
+        # Build candidate engines: allowed only, sorted by health
+        async with self._health_lock:
+            # Create local copy of health scores for potential domain-specific re-ranking
+            current_health = self._engine_health.copy()
+
+            # Domain-specific engine prioritization (Hardening Fix / P0-FIX-B2)
+            # Some domains are better handled by specific engines; re-rank locally without mutation
+            protected_domains = [
+                "attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com",
+                "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
+                "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
+                "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
+                "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
+            ]
+            if any(d in url for d in protected_domains):
+                self.logger.debug("Prioritizing browser engines for protected domain", url=url)
+                if BrowserEngine.CAMOUFOX in available_engines:
+                    current_health[BrowserEngine.CAMOUFOX] = max(current_health[BrowserEngine.CAMOUFOX], 1.0)
+                if BrowserEngine.PLAYWRIGHT in available_engines:
+                    current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
+                # Discourage HTTPX locally for these domains
+                if BrowserEngine.HTTPX in available_engines:
+                    current_health[BrowserEngine.HTTPX] = 0.1
+
+            candidates = [
+                eng for eng, score in sorted(
+                    current_health.items(), key=lambda x: -x[1]
+                )
+                if eng in strategy.allowed_engines and eng in available_engines and score > 0.05
+            ]
+
+        # Prioritize primary engine if allowed
+        if strategy.primary_engine in candidates:
+            candidates.remove(strategy.primary_engine)
+            candidates.insert(0, strategy.primary_engine)
+
+        engines = candidates[:strategy.max_engine_attempts]
+        if not engines:
+            raise FetchError(f"No viable engines for {url}", category=ErrorCategory.NETWORK)
+
         self.logger.debug("Fetch engines ordered", url=url, engines=[e.value for e in engines], primary=strategy.primary_engine.value)
         last_error: Optional[Exception] = None
         for engine in engines:
@@ -1507,87 +1617,106 @@ class SmartFetcher:
             return UnifiedResponse(cont, st, st, url_str, dict(hdrs))
 
         if engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT):
-            s = await self._get_persistent_session(engine)
-            if method.upper() == "POST":
-                # Ensure the POST configuration navigations execute
-                action = getattr(s, "post", s.fetch)
-                resp = await action(url, **scrapling_kwargs)
-            else:
-                # Direct fetching or mapping
-                action = getattr(s, "get", getattr(s, "fetch"))
-                try:
+            try:
+                s = await self._get_persistent_session(engine)
+                if s is None:
+                    raise FetchError(f"No session for {engine.value}")
+                if method.upper() == "POST":
+                    # Ensure the POST configuration navigations execute
+                    action = getattr(s, "post", s.fetch)
                     resp = await action(url, **scrapling_kwargs)
-                except TypeError as te:
-                    # In instances older version underlying calls mandate missing standard default keywords safely back out
-                    if "method" in str(te) and getattr(s, "fetch", None) == action:
-                        resp = await action(url, method="GET", **scrapling_kwargs)
-                    else:
-                        raise te
-
-            return _get_unified_resp(resp)
-
-        elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
-            # Direct Playwright usage for cases where scrapling/camoufox fail
-            from playwright.async_api import async_playwright
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                # Apply impersonation via context
-                ua = kwargs.get("headers", {}).get("User-Agent", CHROME_USER_AGENT)
-                context = await browser.new_context(user_agent=ua)
-                page = await context.new_page()
-
-                timeout = kwargs.get("timeout", strategy.timeout) * 1000
-                wait_until = "networkidle" if strategy.network_idle else "domcontentloaded"
-
-                # Apply headers
-                if "headers" in kwargs:
-                    await context.set_extra_http_headers(kwargs["headers"])
-
-                resp_obj = await page.goto(url, wait_until=wait_until, timeout=timeout)
-                content = await page.content()
-                status = resp_obj.status if resp_obj else 0
-                headers = resp_obj.headers if resp_obj else {}
-
-                await browser.close()
-                return UnifiedResponse(content, status, status, url, headers)
-
-        else:
-            # Fallback bare Fetcher block without the specific session configuration elements
-            async with AsyncFetcher() as fetcher:
-                allowed_http = {"timeout", "headers", "extra_headers", "proxy", "data", "json", "params"}
-                safe_fetch_kwargs = {k: v for k, v in scrapling_kwargs.items() if k in allowed_http}
-
-                if method.upper() == "GET":
-                    resp = await fetcher.get(url, **safe_fetch_kwargs)
                 else:
-                    action = getattr(fetcher, "post", getattr(fetcher, "request"))
-                    resp = await action(url, **safe_fetch_kwargs)
+                    # Direct fetching or mapping
+                    action = getattr(s, "get", getattr(s, "fetch"))
+                    try:
+                        resp = await action(url, **scrapling_kwargs)
+                    except TypeError as te:
+                        # In instances older version underlying calls mandate missing standard default keywords safely back out
+                        if "method" in str(te) and getattr(s, "fetch", None) == action:
+                            resp = await action(url, method="GET", **scrapling_kwargs)
+                        else:
+                            raise te
 
                 return _get_unified_resp(resp)
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
+                await self._invalidate_session(engine)
+                async with self._health_lock:
+                    self._engine_health[engine] = 0.0
+                raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
+
+        elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
+            try:
+                # Direct Playwright usage for cases where scrapling/camoufox fail
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    # Apply impersonation via context
+                    ua = kwargs.get("headers", {}).get("User-Agent", CHROME_USER_AGENT)
+                    context = await browser.new_context(user_agent=ua)
+                    page = await context.new_page()
+
+                    timeout = kwargs.get("timeout", strategy.timeout) * 1000
+                    wait_until = "networkidle" if strategy.network_idle else "domcontentloaded"
+
+                    # Apply headers
+                    if "headers" in kwargs:
+                        await context.set_extra_http_headers(kwargs["headers"])
+
+                    resp_obj = await page.goto(url, wait_until=wait_until, timeout=timeout)
+                    content = await page.content()
+                    status = resp_obj.status if resp_obj else 0
+                    headers = resp_obj.headers if resp_obj else {}
+
+                    await browser.close()
+                    return UnifiedResponse(content, status, status, url, headers)
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
+                async with self._health_lock:
+                    self._engine_health[engine] = 0.0
+                raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
+
+        else:
+            try:
+                # Fallback bare Fetcher block without the specific session configuration elements
+                async with AsyncFetcher() as fetcher:
+                    allowed_http = {"timeout", "headers", "extra_headers", "proxy", "data", "json", "params"}
+                    safe_fetch_kwargs = {k: v for k, v in scrapling_kwargs.items() if k in allowed_http}
+
+                    if method.upper() == "GET":
+                        resp = await fetcher.get(url, **safe_fetch_kwargs)
+                    else:
+                        action = getattr(fetcher, "post", getattr(fetcher, "request"))
+                        resp = await action(url, **safe_fetch_kwargs)
+
+                    return _get_unified_resp(resp)
+            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+                self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
+                async with self._health_lock:
+                    self._engine_health[engine] = 0.0
+                raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
 
 
     async def close(self) -> None:
-        """
-        Shared resources are managed by GlobalResourceManager.
-        Persistent scrapling and curl_cffi sessions are cleaned up here (Fix 12/07 / BUG-CR-01).
-        """
+        """Tear down all sessions, tolerating dead browser processes."""
         async with self._session_lock:
-            for key, session in self._sessions.items():
+            for engine, session in list(self._sessions.items()):
                 try:
-                    if key == "_curl":
+                    if engine == "_curl":
                         await session.close()
                     else:
-                        await session.__aexit__(None, None, None)
-                except Exception as e:
-                    name = key.value if hasattr(key, "value") else str(key)
-                    self.logger.warning(f"failed_closing_persistent_session", engine=name, error=str(e))
+                        await asyncio.wait_for(
+                            session.__aexit__(None, None, None), timeout=5
+                        )
+                except Exception:
+                    pass  # Browser already dead
             self._sessions.clear()
 
-            for imp, session in self._curl_sessions.items():
+            for key, session in list(self._curl_sessions.items()):
                 try:
                     await session.close()
-                except Exception as e:
-                    self.logger.warning(f"failed_closing_persistent_curl_session", impersonate=imp, error=str(e))
+                except Exception:
+                    pass
             self._curl_sessions.clear()
 
 
@@ -2049,11 +2178,7 @@ class HKJCAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFet
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(
-            primary_engine=BrowserEngine.HTTPX,
-            enable_js=False,
-            timeout=30
-        )
+        return api_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="racing.hkjc.com")
@@ -2197,9 +2322,20 @@ class OfficialTrackAdapter(BaseAdapterV3):
     Adapter that verifies the availability of an official racetrack website.
     Supports a '200 OK' health check as requested by JB.
     """
+    IS_HEALTH_CHECK_ONLY: ClassVar[bool] = True
     ADAPTER_TYPE = "discovery"
     PROVIDES_ODDS = False
     DISCIPLINE = "Thoroughbred"
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(
+            primary_engine=BrowserEngine.HTTPX,
+            allowed_engines=[BrowserEngine.HTTPX],
+            max_engine_attempts=1,
+            max_retries=1,
+            timeout=15,
+            enable_js=False,
+        )
 
     def __init__(self, track_name: str, url: str, config: Optional[Dict[str, Any]] = None):
         self.track_name = track_name
@@ -2207,16 +2343,6 @@ class OfficialTrackAdapter(BaseAdapterV3):
         # Use a safe name for the source
         source = f"Official_{track_name.replace(' ', '').replace('/', '')}"
         super().__init__(source_name=source, base_url=url, config=config)
-
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Official tracks often have bot protection; prioritizing Playwright for maximum success rate
-        return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=20,
-            network_idle=True
-        )
 
     async def _fetch_data(self, date: str) -> Optional[str]:
         # Perform a GET to check status
@@ -2304,6 +2430,7 @@ class OfficialPennNationalAdapter(OfficialTrackAdapter):
 
 class OfficialCharlesTownAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_CharlesTown"
+    DECOMMISSIONED: ClassVar[bool] = True  # Persistent 403
     def __init__(self, config=None): super().__init__("Charles Town", "https://www.hollywoodcasinocharlestown.com/racing/entries", config=config)
 
 class OfficialMountaineerAdapter(OfficialTrackAdapter):
@@ -2353,6 +2480,7 @@ class OfficialMahoningValleyAdapter(OfficialTrackAdapter):
 
 class OfficialBelterraParkAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_BelterraPark"
+    DECOMMISSIONED: ClassVar[bool] = True  # Redirect loop to 404 page
     def __init__(self, config=None): super().__init__("Belterra Park", "https://www.belterrapark.com/racing/entries/", config=config)
 
 class OfficialSaratogaHarnessAdapter(OfficialTrackAdapter):
@@ -2447,11 +2575,7 @@ class JRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdap
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(
-            primary_engine=BrowserEngine.HTTPX,
-            enable_js=False,
-            timeout=30
-        )
+        return api_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="japanracing.jp")
@@ -2561,6 +2685,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     Note: Highly protected by Cloudflare; requires advanced impersonation.
     """
     SOURCE_NAME: ClassVar[str] = "RacingAndSports"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://www.racingandsports.com.au"
     DECOMMISSIONED: ClassVar[bool] = False
 
@@ -2568,12 +2693,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=60
-        )
+        return api_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.racingandsports.com.au")
@@ -2723,19 +2843,14 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
 class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkyRacingWorld"
-    PROVIDES_ODDS: ClassVar[bool] = False
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://www.skyracingworld.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=60
-        )
+        return api_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.skyracingworld.com")
@@ -2942,10 +3057,11 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 # ----------------------------------------
 class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "AtTheRaces"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://www.attheraces.com"
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage")
+        return scraping_fetch_strategy()
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         kwargs.setdefault("impersonate", "chrome124")
@@ -3338,13 +3454,14 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 # ----------------------------------------
 class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "AtTheRacesGreyhound"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://greyhounds.attheraces.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=True, stealth_mode="camouflage", timeout=45, impersonate="chrome124")
+        return scraping_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="greyhounds.attheraces.com", referer="https://greyhounds.attheraces.com/racecards")
@@ -3525,7 +3642,7 @@ class AtTheRacesGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMix
 # ----------------------------------------
 class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SportingLife"
-    PROVIDES_ODDS: ClassVar[bool] = False
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://www.sportinglife.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -3747,6 +3864,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
 # ----------------------------------------
 class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "SkySports"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://www.skysports.com"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -3941,8 +4059,8 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
 # ----------------------------------------
 class RacingPostB2BAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "RacingPostB2B"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://backend-us-racecards.widget.rpb2b.com"
-    PROVIDES_ODDS: ClassVar[bool] = False  # Hardening Fix: RPB2B is racecard-only
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=300.0, rate_limit=5.0)
@@ -4005,8 +4123,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Hardening Fix: Upgrade to Camoufox for better stealth
-        return FetchStrategy(primary_engine=BrowserEngine.CAMOUFOX, enable_js=True, stealth_mode="camouflage", timeout=60)
+        return scraping_fetch_strategy(timeout=60)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
@@ -4157,7 +4274,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 # ----------------------------------------
 class TabAdapter(BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TAB"
-    PROVIDES_ODDS: ClassVar[bool] = False
+    PROVIDES_ODDS: ClassVar[bool] = True
     # Note: api.tab.com.au often has DNS resolution issues in some environments.
     # api.beta.tab.com.au is more reliable.
     BASE_URL: ClassVar[str] = "https://api.beta.tab.com.au/v1/tab-info-service/racing"
@@ -4167,8 +4284,7 @@ class TabAdapter(BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, rate_limit=2.0)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Switch to CURL_CFFI for TAB API to avoid DNS and TLS issues common in cloud environments
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45)
+        return api_fetch_strategy(timeout=45)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         dt = parse_date_string(date)
@@ -4275,13 +4391,14 @@ class TabAdapter(BaseAdapterV3):
 # ----------------------------------------
 class BetfairDataScientistAdapter(JSONParsingMixin, BaseAdapterV3):
     ADAPTER_NAME: ClassVar[str] = "BetfairDataScientist"
+    PROVIDES_ODDS: ClassVar[bool] = True
 
     def __init__(self, model_name: str = "Ratings", url: str = "https://www.betfair.com.au/hub/ratings/model/horse-racing/", config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=f"{self.ADAPTER_NAME}_{model_name}", base_url=url, config=config)
         self.model_name = model_name
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, impersonate="chrome124")
+        return api_fetch_strategy(impersonate='chrome124')
 
     async def _fetch_data(self, date: str) -> Optional[StringIO]:
         dt = parse_date_string(date)
@@ -4336,6 +4453,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     Uses the internal JSON API for fast discovery and detailed runner info.
     """
     SOURCE_NAME: ClassVar[str] = "NYRABets"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://api.nyrabets.com"
     API_URL: ClassVar[str] = "https://api.nyrabets.com"
 
@@ -4512,14 +4630,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Equibase uses Instart Logic / Imperva; PLAYWRIGHT_LEGACY with network_idle is robust
-        return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT_LEGACY,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=120,
-            network_idle=True
-        )
+        return scraping_fetch_strategy()
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome124 for Equibase as it's the most reliable impersonation for Imperva/Cloudflare
@@ -4763,7 +4874,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 # ----------------------------------------
 class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
     SOURCE_NAME: ClassVar[str] = "TwinSpires"
-    PROVIDES_ODDS: ClassVar[bool] = False
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL: ClassVar[str] = "https://www.twinspires.com"
 
     RACE_CONTAINER_SELECTORS: ClassVar[List[str]] = ['div[class*="RaceCard"]', 'div[class*="race-card"]', 'div[data-testid*="race"]', 'div[data-race-id]', 'section[class*="race"]', 'article[class*="race"]', ".race-container", "[data-race]", 'div[class*="card"][class*="race" i]', 'div[class*="event"]']
@@ -4776,14 +4887,7 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # FIX-23: Upgrade to Camoufox for advanced JS/Bot evasion
-        return FetchStrategy(
-            primary_engine=BrowserEngine.CAMOUFOX,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=90,
-            network_idle=True
-        )
+        return scraping_fetch_strategy(timeout=90, network_idle=True)
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome124 for TwinSpires to bypass basic bot checks
@@ -5069,6 +5173,8 @@ class FanDuelRacingAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin
     High-fidelity source for US and International racecards.
     """
     SOURCE_NAME: ClassVar[str] = "FanDuelRacing"
+    PROVIDES_ODDS: ClassVar[bool] = True
+    DECOMMISSIONED: ClassVar[bool] = True  # 404 since 2026-03
     BASE_URL: ClassVar[str] = "https://www.fanduel.com/racing"
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
@@ -5598,6 +5704,33 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                           gap_abs >= GOLDMINE_GAP_MIN and
                           GOLDMINE_FIELD_MIN <= total_active <= GOLDMINE_FIELD_MAX)
 
+            # Multi-source validation for Goldmines (P2-ENH-4)
+            if is_goldmine:
+                # Count distinct sources providing win odds for the favorite
+                fav_sources = set()
+                if fav.odds:
+                    for source, data in fav.odds.items():
+                        win = data.get('win') if isinstance(data, dict) else getattr(data, 'win', data)
+                        if is_valid_odds(win):
+                            fav_sources.add(source)
+
+                # Tag Goldmines with multi-source status for reporting tiers (P2-ENH-2)
+                is_multi_source = len(fav_sources) >= 2
+                race.metadata['is_goldmine_multi_source'] = is_multi_source
+
+                if not is_multi_source:
+                    self.logger.info("Goldmine marked as Emerging: single-source odds only",
+                                    venue=race.venue, race=race.race_number, selection=fav.name, sources=list(fav_sources))
+
+                # P2-ENH-4 Multi-source gap confirmation
+                # Check if the gap is confirmed by multiple sources or if it's a potential single-source outlier
+                if len(fav_sources) >= 2:
+                    race.metadata['goldmine_confidence'] = 'high'
+                    race.metadata['goldmine_sources'] = list(fav_sources)
+                else:
+                    race.metadata['goldmine_confidence'] = 'low'
+                    race.metadata['goldmine_sources'] = list(fav_sources)
+
             # Composite Scoring — recalibrated for absolute gap
             composite = 45.0  # lower base — marginal races land at B+, not A
 
@@ -6048,8 +6181,8 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     goldmines.sort(key=goldmine_sort_key)
 
     now = datetime.now(EASTERN)
-    immediate_gold_superfecta = []
-    immediate_gold = []
+    high_conf_gold = []     # Multi-source validated
+    emerging_gold = []      # Single-source only
     remaining_gold = []
 
     for r in goldmines:
@@ -6065,23 +6198,24 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
             if start_time.tzinfo is None:
                 start_time = start_time.replace(tzinfo=EASTERN)
 
-            diff = (start_time - now).total_seconds() / 60
-            if 0 <= diff <= 20:
-                if is_superfecta_available(r):
-                    immediate_gold_superfecta.append(r)
-                else:
-                    immediate_gold.append(r)
+            # Classify by multi-source confidence (P2-ENH-2)
+            is_multi = get_field(r, 'metadata', {}).get('is_goldmine_multi_source', False)
+            if is_multi:
+                high_conf_gold.append(r)
             else:
-                remaining_gold.append(r)
+                emerging_gold.append(r)
         else:
             remaining_gold.append(r)
 
     report_lines = ["LIST OF BEST BETS - GOLDMINE REPORT", "===================================", ""]
 
-    def render_races(races_to_render, label):
+    # Tiered rendering (P2-ENH-2)
+    def render_races(races_to_render, label, description=None):
         if not races_to_render:
             return
         report_lines.append(f"--- {label.upper()} ---")
+        if description:
+            report_lines.append(f"({description})")
         report_lines.append("-" * (len(label) + 8))
         report_lines.append("")
 
@@ -6111,8 +6245,11 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
                 r.top_five_numbers = top_5_nums
 
             gap_abs = get_field(r, 'metadata', {}).get('gap_abs', 0.0)
+            conf = get_field(r, 'metadata', {}).get('goldmine_confidence', 'low')
+            conf_icon = "💎" if conf == 'high' else "🔍"
+
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
-            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | gap_abs: {gap_abs:.2f}")
+            report_lines.append(f"{conf_icon} PREDICTED TOP 5: [{top_5_nums}] | gap_abs: {gap_abs:.2f}")
             # Superfecta Keybox annotation
             if get_field(r, 'metadata', {}).get('is_superfecta_key'):
                 key_num  = get_field(r, 'metadata', {}).get('superfecta_key_number', '?')
@@ -6135,14 +6272,11 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
 
             report_lines.append("")
 
-    if immediate_gold_superfecta:
-        render_races(immediate_gold_superfecta, "Immediate Gold (superfecta)")
-
-    if immediate_gold:
-        render_races(immediate_gold, "Immediate Gold")
-
-    if remaining_gold:
-        render_races(remaining_gold, "All Remaining Goldmine Races")
+    render_races(high_conf_gold, "HIGH-CONFIDENCE GOLDMINES",
+                 "Multi-source validated - Strong consensus on favorite value")
+    render_races(emerging_gold, "EMERGING GOLDMINES",
+                 "Single-source only - Monitor for odds confirmation")
+    render_races(remaining_gold, "OTHER GOLDMINES")
 
     return "\n".join(report_lines)
 
@@ -6232,6 +6366,63 @@ def generate_next_to_jump(races: List[Any]) -> str:
     return "\n".join(lines)
 
 
+def generate_adapter_health_report(harvest_summary: Dict[str, Dict]) -> str:
+    """Generate a human-readable adapter health dashboard."""
+    lines = []
+    lines.append('')
+    lines.append('=' * 72)
+    lines.append('  \U0001F4E1 ADAPTER HEALTH DASHBOARD')
+    lines.append('=' * 72)
+
+    succeeded = []
+    failed = []
+    blocked = []
+
+    for name, stats in sorted(harvest_summary.items()):
+        count = stats.get('count', 0)
+        max_odds = stats.get('max_odds', 0)
+        error = str(stats.get('error', ''))
+        status = str(stats.get('status', ''))
+
+        if count > 0:
+            succeeded.append((name, count, max_odds))
+        elif any(kw in error.lower() + status.lower() for kw in
+                 ['bot', 'captcha', 'cloudflare', '403', 'challenge', 'blocked']):
+            blocked.append((name, error or status))
+        else:
+            failed.append((name, error or status or 'no data'))
+
+    if succeeded:
+        lines.append(f'\n  \u2705 PRODUCING DATA ({len(succeeded)} adapters)')
+        lines.append(f'  {"Adapter":<30} {"Races":>6} {"Max Odds":>10}')
+        u_line1 = "\u2500" * 30
+        u_line2 = "\u2500" * 6
+        u_line3 = "\u2500" * 10
+        lines.append(f'  {u_line1} {u_line2} {u_line3}')
+        total_races = 0
+        for name, count, odds in sorted(succeeded, key=lambda x: -x[1]):
+            lines.append(f'  {name:<30} {count:>6} {odds:>10.2f}')
+            total_races += count
+        lines.append(f'  {"TOTAL":<30} {total_races:>6}')
+
+    if blocked:
+        lines.append(f'\n  \U0001F6AB BLOCKED ({len(blocked)} adapters)')
+        for name, err in blocked:
+            lines.append(f'  {name:<30} {err[:40]}')
+
+    if failed:
+        lines.append(f'\n  \u274C FAILED ({len(failed)} adapters)')
+        for name, err in failed:
+            lines.append(f'  {name:<30} {err[:40]}')
+
+    total = len(harvest_summary)
+    lines.append(f'\n  \U0001F4CA {len(succeeded)}/{total} adapters producing data '
+                 f'({len(blocked)} blocked, {len(failed)} failed)')
+    lines.append('=' * 72)
+
+    return '\n'.join(lines)
+
+
 async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any]) -> str:
     """Generates a high-impact, friendly HTML report for the Fortuna Faucet."""
     now_str = datetime.now(EASTERN).strftime(' %H:%M:%S')
@@ -6244,8 +6435,15 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         active = [run for run in runners if not getattr(run, 'scratched', False)]
         if len(active) < 2: continue
 
-        active.sort(key=lambda x: getattr(x, 'win_odds', 999.0) or 999.0)
-        sel = active[1]
+        # IMP-CR-02: Sort runners using _get_best_win_odds to handle multi-source data
+        # Mapping back to float for sorting and metadata access
+        with_best_odds = []
+        for run in active:
+            best = _get_best_win_odds(run)
+            with_best_odds.append((run, float(best) if best else 999.0))
+
+        with_best_odds.sort(key=lambda x: x[1])
+        sel = with_best_odds[0][0] # Favourite is index 0 (Target for Place betting)
 
         st = getattr(r, 'start_time', '')
         if isinstance(st, datetime):
@@ -6282,7 +6480,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 <td>{getattr(r, 'venue', 'Unknown')}</td>
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
-                <td>{ (getattr(sel, 'win_odds') or 0.0):.2f}</td>
+                <td>{ float(_get_best_win_odds(sel) or 0.0):.2f}</td>
                 <td>{gold_badge}{key_badge}</td>
             </tr>
         """)
@@ -6290,6 +6488,70 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
     tips_count = stats.get('tips', 0)
     cashed_count = stats.get('cashed', 0)
     profit = stats.get('profit', 0.0)
+
+    # 2. Goldmine Spotlight Cards (P2-ENH-3)
+    goldmine_cards = []
+    for r in sorted(races, key=lambda x: getattr(x, 'start_time', '')):
+        if not getattr(r, 'metadata', {}).get('is_goldmine'):
+            continue
+
+        is_high_conf = getattr(r, 'metadata', {}).get('is_goldmine_multi_source', False)
+        conf_class = "high-conf" if is_high_conf else ""
+        conf_label = "HIGH CONFIDENCE" if is_high_conf else "EMERGING"
+
+        fav_odds = getattr(r, 'metadata', {}).get('predicted_fav_odds', 0.0)
+        sec_odds = getattr(r, 'metadata', {}).get('predicted_2nd_fav_odds', 0.0)
+        gap = getattr(r, 'metadata', {}).get('gap_abs', 0.0)
+
+        # Get favorite name
+        runners = getattr(r, 'runners', [])
+        active = [run for run in runners if not getattr(run, 'scratched', False)]
+        # IMP-CR-02: Sort active runners using best win odds
+        with_best_odds = []
+        for run in active:
+            best = _get_best_win_odds(run)
+            with_best_odds.append((run, float(best) if best else 999.0))
+        with_best_odds.sort(key=lambda x: x[1])
+
+        sel_name = with_best_odds[0][0].name if with_best_odds else "Unknown"
+        sel_num = with_best_odds[0][0].number if with_best_odds else "?"
+
+        st = getattr(r, 'start_time', '')
+        if isinstance(st, datetime):
+            st_str = to_eastern(st).strftime('%H:%M')
+        else:
+            st_str = "??:??"
+
+        goldmine_cards.append(f"""
+            <div class="goldmine-card {conf_class}">
+                <div class="badge gold" style="float:right;">{conf_label}</div>
+                <div class="goldmine-title">💎 #{sel_num} {sel_name}</div>
+                <div class="goldmine-venue">{getattr(r, 'venue', 'Unknown')} R{getattr(r, 'race_number', '?')} @ {st_str}</div>
+                <div style="display:flex; justify-content:space-between;">
+                    <div>
+                        <div class="goldmine-odds">{fav_odds:.2f}</div>
+                        <div class="goldmine-label">Fav Odds</div>
+                    </div>
+                    <div>
+                        <div class="goldmine-odds">{sec_odds:.2f}</div>
+                        <div class="goldmine-label">2nd Fav</div>
+                    </div>
+                    <div>
+                        <div class="goldmine-odds" style="color:#fbbf24;">+{gap:.2f}</div>
+                        <div class="goldmine-label">Gap</div>
+                    </div>
+                </div>
+            </div>
+        """)
+
+    goldmine_section = ""
+    if goldmine_cards:
+        goldmine_section = f"""
+            <h2>💎 Goldmine Spotlights</h2>
+            <div class="goldmine-grid">
+                {''.join(goldmine_cards)}
+            </div>
+        """
 
     # Build keybox rows
     keybox_rows = []
@@ -6367,6 +6629,13 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }}
             .gold {{ background-color: #fbbf24; color: #0f172a; }}
             .key {{ background-color: #7c3aed; color: #fff; margin-left: 4px; }}
+            .goldmine-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin: 30px 0; }}
+            .goldmine-card {{ background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-left: 4px solid #fbbf24; padding: 20px; border-radius: 8px; position: relative; }}
+            .goldmine-card.high-conf {{ border-left-color: #4ade80; }}
+            .goldmine-title {{ color: #fbbf24; font-size: 18px; font-weight: bold; margin-bottom: 10px; }}
+            .goldmine-venue {{ font-size: 14px; color: #94a3b8; margin-bottom: 15px; }}
+            .goldmine-odds {{ font-size: 20px; font-weight: bold; color: #f8fafc; }}
+            .goldmine-label {{ font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-top: 5px; }}
             .footer {{ margin-top: 40px; text-align: center; font-size: 12px; color: #64748b; }}
         </style>
     </head>
@@ -6389,6 +6658,8 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                     <div class="stat-label">Estimated Profit</div>
                 </div>
             </div>
+
+            {goldmine_section}
 
             <h2>🔥 Best Bet Opportunities</h2>
             <table>
@@ -7892,6 +8163,16 @@ class FortunaDB:
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
             stats['lifetime_avg_payout'] = row[0] if row and row[0] is not None else 0.0
 
+            # Goldmine Performance Stats (P2-ENH-5)
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine = 1").fetchone()
+            stats['total_goldmines'] = row[0] if row else 0
+
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine = 1 AND audit_completed = 1 AND verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
+            stats['goldmines_cashed'] = row[0] if row else 0
+
+            row = conn.execute("SELECT SUM(net_profit) FROM tips WHERE is_goldmine = 1 AND audit_completed = 1").fetchone()
+            stats['goldmine_profit'] = row[0] if row and row[0] is not None else 0.0
+
             return stats
         return await self._run_in_executor(_get)
 
@@ -8252,6 +8533,7 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """Adapter for scraping horse racing odds from Oddschecker, migrated to BaseAdapterV3."""
 
     SOURCE_NAME = "Oddschecker"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL = "https://www.oddschecker.com"
 
     def __init__(self, config=None):
@@ -8476,6 +8758,7 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
     """
 
     SOURCE_NAME = "Timeform"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL = "https://www.timeform.com"
 
     def __init__(self, config=None):
@@ -8762,6 +9045,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     """
 
     SOURCE_NAME = "RacingPost"
+    PROVIDES_ODDS: ClassVar[bool] = True
     BASE_URL = "https://www.racingpost.com"
 
     def __init__(self, config=None):
@@ -8772,14 +9056,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         })
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Optimized for speed: CURL_CFFI is much faster than Playwright for large batches of racecards.
-        return FetchStrategy(
-            primary_engine=BrowserEngine.CURL_CFFI,
-            enable_js=False,
-            stealth_mode="camouflage",
-            timeout=60,
-            block_resources=True
-        )
+        return scraping_fetch_strategy(network_idle=True)
 
     def _get_headers(self) -> dict:
         headers = self._get_browser_headers(host="www.racingpost.com")
@@ -9345,6 +9622,7 @@ async def run_quarter_fetch(
     quality: Optional[str] = None,
     save_path: Optional[str] = None,
     force_fetch: bool = False,
+    include_health_checks: bool = False,
 ) -> List[Race]:
     """
     Performs the structural discovery sweep and saves a snapshot.
@@ -9379,6 +9657,17 @@ async def run_quarter_fetch(
     if not adapter_filter:
         adapter_filter = list(get_daypart_discovery_adapters(daypart))
 
+    # Filter out health-check-only adapters unless explicitly requested
+    if not include_health_checks:
+        all_adapter_classes = get_discovery_adapter_classes()
+        adapter_classes = [
+            cls for cls in all_adapter_classes
+            if not getattr(cls, 'IS_HEALTH_CHECK_ONLY', False)
+        ]
+        # Sync filter with the filtered classes
+        allowed_names = {getattr(c, "SOURCE_NAME", c.__name__) for c in adapter_classes}
+        adapter_filter = [n for n in adapter_filter if n in allowed_names]
+
     # Apply quality filter on top
     if quality == "solid":
         adapter_filter = [n for n in adapter_filter if n in SOLID_DISCOVERY_ADAPTERS]
@@ -9389,94 +9678,141 @@ async def run_quarter_fetch(
     all_adapter_classes = get_discovery_adapter_classes()
     adapter_classes = [c for c in all_adapter_classes if getattr(c, "SOURCE_NAME", c.__name__) in adapter_filter]
 
-    # Load historical performance scores to prioritize adapters
-    adapter_scores = await db.get_adapter_scores(days=30)
-    adapter_classes = sorted(
-        adapter_classes,
-        key=lambda c: (
-            -adapter_scores.get(getattr(c, "SOURCE_NAME", c.__name__), 0),
-            getattr(c, "SOURCE_NAME", c.__name__)
-        )
-    )
+    # Partition adapters into tiers based on their class variables
+    tier1_odds = []      # Adapters with PROVIDES_ODDS = True — highest value
+    tier2_discovery = []  # Data adapters without odds
+    tier3_health = []    # IS_HEALTH_CHECK_ONLY adapters (if included)
+
+    for cls in adapter_classes:
+        if getattr(cls, 'IS_HEALTH_CHECK_ONLY', False):
+            tier3_health.append(cls)
+        elif getattr(cls, 'PROVIDES_ODDS', False):
+            tier1_odds.append(cls)
+        else:
+            tier2_discovery.append(cls)
+
+    # Sort each tier by historical performance score (best first)
+    try:
+        adapter_scores = await db.get_adapter_scores(days=7)
+    except Exception:
+        adapter_scores = {}
+
+    for tier in (tier1_odds, tier2_discovery):
+        tier.sort(key=lambda c: adapter_scores.get(
+            getattr(c, 'SOURCE_NAME', ''), 0), reverse=True)
+
+    logger.info('adapter_tiers',
+                tier1_count=len(tier1_odds),
+                tier2_count=len(tier2_discovery),
+                tier3_count=len(tier3_health))
 
     adapter_configs = config.get("adapters", {}) if config else {}
-    adapters = []
-    for cls in adapter_classes:
-        try:
-            name = getattr(cls, "SOURCE_NAME", cls.__name__)
-            specific_config = adapter_configs.get(name, {}).copy()
-            specific_config.update({"region": region})
-            adapters.append(cls(config=specific_config))
-        except Exception as e:
-            logger.error("Failed to initialize adapter", adapter=cls.__name__, error=str(e))
-
-    all_races_raw = []
     harvest_summary = {}
-    for a in adapters:
-        harvest_summary[a.source_name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
 
     date_str = daypart_tag.split("_")[1] # 260225
 
     # Add semaphore for browser-heavy adapters to prevent resource thrashing
     playwright_semaphore = GlobalResourceManager.get_playwright_semaphore()
 
-    async def fetch_one(a, d_str):
-        # Determine if this adapter uses Playwright
-        strategy = getattr(a, 'strategy', None)
-        use_playwright_sem = False
-        if strategy and strategy.primary_engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.PLAYWRIGHT_LEGACY, BrowserEngine.CAMOUFOX):
-            use_playwright_sem = True
+    async def fetch_one(cls):
+        name = getattr(cls, "SOURCE_NAME", cls.__name__)
+        specific_config = adapter_configs.get(name, {}).copy()
+        specific_config.update({"region": region})
 
+        adapter = None
         try:
+            adapter = cls(config=specific_config)
+            # Determine if this adapter uses Playwright
+            strategy = getattr(adapter, 'strategy', None)
+            use_playwright_sem = False
+            if strategy and strategy.primary_engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.PLAYWRIGHT_LEGACY, BrowserEngine.CAMOUFOX):
+                use_playwright_sem = True
+
             # GEMINI_3: Increase per-adapter timeout in run_quarter_fetch to 180s
             # Increased to 300s to match hardened adapter timeouts (Hardening Fix)
             fetch_timeout = 300.0
             if use_playwright_sem:
                 async with playwright_semaphore:
-                    races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)
+                    races = await asyncio.wait_for(adapter.get_races(date_str), timeout=fetch_timeout)
             else:
-                races = await asyncio.wait_for(a.get_races(d_str), timeout=fetch_timeout)
+                races = await asyncio.wait_for(adapter.get_races(date_str), timeout=fetch_timeout)
 
             # Record last status for Phase 1 logging (Hardening Fix)
-            status = getattr(a, 'last_response_status', None)
-            return a.source_name, races, status
+            status = getattr(adapter, 'last_response_status', None)
+
+            # Update harvest summary
+            if name not in harvest_summary:
+                harvest_summary[name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
+
+            harvest_summary[name]["count"] = len(races)
+            harvest_summary[name]["status"] = status
+            harvest_summary[name]["trust_ratio"] = getattr(adapter, "trust_ratio", 0.0)
+
+            m_odds = 0.0
+            for r in races:
+                for run in r.runners:
+                    if run.win_odds and run.win_odds > m_odds:
+                        m_odds = float(run.win_odds)
+            harvest_summary[name]["max_odds"] = m_odds
+
+            return races
         except asyncio.TimeoutError:
-            logger.warning("adapter_timeout", adapter=a.source_name, timeout=fetch_timeout)
-            return a.source_name, [], "timeout"
+            logger.warning("adapter_timeout", adapter=name, timeout=fetch_timeout)
+            if name not in harvest_summary:
+                harvest_summary[name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
+            harvest_summary[name]["status"] = "timeout"
+            return []
         except Exception as e:
-            logger.error("Error fetching from adapter", adapter=a.source_name, date=d_str, error=str(e))
-            return a.source_name, [], "error"
+            logger.error("Error fetching from adapter", adapter=name, date=date_str, error=str(e))
+            if name not in harvest_summary:
+                harvest_summary[name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
+            harvest_summary[name]["status"] = "error"
+            harvest_summary[name]["error"] = str(e)
+            return []
+        finally:
+            if adapter:
+                try: await adapter.close()
+                except Exception: pass
 
-    fetch_tasks = [fetch_one(a, date_str) for a in adapters]
-    results = await asyncio.gather(*fetch_tasks)
+    all_races_raw = []
 
-    for adapter_name, r_list, status in results:
-        logger.info("adapter_fetch_complete", adapter=adapter_name, count=len(r_list), status=status)
-        all_races_raw.extend(r_list)
-        m_odds = 0.0
-        for r in r_list:
-            for run in r.runners:
-                if run.win_odds and run.win_odds > m_odds:
-                    m_odds = float(run.win_odds)
+    # Phase 1: Odds-providing + discovery adapters (main time budget)
+    phase1_adapters = tier1_odds + tier2_discovery
+    phase1_timeout = 240  # 4 minutes for all data adapters combined
 
-        if adapter_name not in harvest_summary:
-            harvest_summary[adapter_name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
-        harvest_summary[adapter_name]["count"] += len(r_list)
-        harvest_summary[adapter_name]["status"] = status
-        if m_odds > harvest_summary[adapter_name]["max_odds"]:
-            harvest_summary[adapter_name]["max_odds"] = m_odds
-
-        matching_adapter = next((a for a in adapters if a.source_name == adapter_name), None)
-        if matching_adapter:
-            harvest_summary[adapter_name]["trust_ratio"] = max(
-                harvest_summary[adapter_name].get("trust_ratio", 0.0),
-                getattr(matching_adapter, "trust_ratio", 0.0)
+    if phase1_adapters:
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*[
+                    fetch_one(cls) for cls in phase1_adapters
+                ], return_exceptions=True),
+                timeout=phase1_timeout
             )
+            for r in results:
+                if isinstance(r, list):
+                    all_races_raw.extend(r)
+        except asyncio.TimeoutError:
+            logger.warning('phase1_timeout_reached',
+                        completed_races=len(all_races_raw),
+                        adapters_attempted=len(phase1_adapters))
 
-    # Shutdown adapters
-    for a in adapters:
-        try: await a.close()
-        except Exception: pass
+    # Phase 2: Health checks only if time permits and explicitly included
+    if tier3_health:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*[
+                    fetch_one(cls) for cls in tier3_health
+                ], return_exceptions=True),
+                timeout=60  # 1 minute max for health checks
+            )
+        except asyncio.TimeoutError:
+            pass  # Health checks are expendable
+
+    # Results processing (already handled inside fetch_one for the summary)
+    for adapter_name, stats in harvest_summary.items():
+        count = stats.get("count", 0)
+        status = stats.get("status")
+        logger.info("adapter_fetch_complete", adapter=adapter_name, count=count, status=status)
 
     # Deduplicate
     race_map = {}
@@ -9522,7 +9858,16 @@ async def run_quarter_fetch(
         with open(harvest_file, "w") as f:
             json.dump(harvest_summary, f)
         await db.log_harvest(harvest_summary, region=region)
-    except Exception: pass
+
+        # Generate and save health dashboard (P2-ENH-1 / P2-ENH-6)
+        health_report = generate_adapter_health_report(harvest_summary)
+        with open(get_writable_path("adapter_health_report.txt"), "w", encoding="utf-8") as f:
+            f.write(health_report)
+        logger.info("adapter_health_report_generated")
+        # Print to console for GHA log visibility
+        print(health_report)
+    except Exception as e:
+        logger.warning("failed_saving_harvest_summary", error=str(e))
 
     # Generate summary_grid.txt and field_matrix.txt (minimal versions)
     # This part is omitted here for brevity but could be added if needed for GHA visibility.
@@ -9882,6 +10227,7 @@ async def main_all_in_one():
     parser.add_argument("--quick-help", action="store_true", help="Show friendly onboarding guide")
     parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
     parser.add_argument("--install-browsers", action="store_true", help="Install required browser dependencies (Playwright Chromium)")
+    parser.add_argument("--include-health-checks", action="store_true", help="Include Official_* track health-check adapters in discovery. These confirm track websites are reachable but produce no race data. Off by default. Also affects --test-all-adapters.")
     parser.add_argument("--test-adapter", type=str, help="Test a single discovery adapter by name")
     parser.add_argument("--test-all-adapters", action="store_true", help="Run a health check on all available discovery adapters")
     args = parser.parse_args()
@@ -9902,7 +10248,10 @@ async def main_all_in_one():
                 print(f"Error: Adapter '{args.test_adapter}' not found.")
                 return
         else:
-            classes_to_test = all_classes
+            if args.include_health_checks:
+                classes_to_test = all_classes
+            else:
+                classes_to_test = [c for c in all_classes if not getattr(c, 'IS_HEALTH_CHECK_ONLY', False)]
 
         print(f"\n{'='*60}")
         print(f" ADAPTER TESTING MODE - DATE: {test_date}")
@@ -10040,7 +10389,8 @@ async def main_all_in_one():
             adapter_filter=adapter_filter,
             quality=args.quality,
             save_path=args.save,
-            force_fetch=args.force_fetch
+            force_fetch=args.force_fetch,
+            include_health_checks=args.include_health_checks
         )
         return
 

@@ -10,10 +10,23 @@ from datetime import datetime
 def create_version_info():
     """Creates version_info.txt for the Windows EXE metadata."""
     year = datetime.now().year
+
+    # Read version from VERSION file
+    version = "1.0.0"
+    if os.path.exists("VERSION"):
+        with open("VERSION", "r") as f:
+            version = f.read().strip()
+
+    # Standardize to 4 parts for filevers/prodvers
+    v_parts = version.split('.')
+    while len(v_parts) < 4:
+        v_parts.append('0')
+    v_tuple = tuple(int(x) for x in v_parts[:4])
+
     version_content = f"""VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers={v_tuple},
+    prodvers={v_tuple},
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -28,12 +41,12 @@ def create_version_info():
         u'040904B0',
         [StringStruct(u'CompanyName', u'Fortuna Intelligence'),
         StringStruct(u'FileDescription', u'Fortuna Faucet Portable App'),
-        StringStruct(u'FileVersion', u'1.0.0'),
+        StringStruct(u'FileVersion', u'{version}'),
         StringStruct(u'InternalName', u'FortunaFaucetPortableApp'),
         StringStruct(u'LegalCopyright', u'Copyright (c) {year}'),
         StringStruct(u'OriginalFilename', u'FortunaFaucetPortableApp.exe'),
         StringStruct(u'ProductName', u'Fortuna Intelligence'),
-        StringStruct(u'ProductVersion', u'1.0.0')])
+        StringStruct(u'ProductVersion', u'{version}')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
   ]
@@ -68,6 +81,8 @@ def get_data_files():
     report_files = [
         "summary_grid.txt",
         "goldmine_report.txt",
+        "field_matrix.txt",
+        "adapter_health_report.txt",
         "analytics_report.txt",
         "fortuna_report.html",
         "race_data.json",
@@ -237,6 +252,7 @@ def build_exe(console_mode: bool = True, debug: bool = False):
         "camoufox",
         "selectolax",
         "playwright",
+        "patchright",
         "rich",
         "webview",
         "pydantic",

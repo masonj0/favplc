@@ -20,17 +20,24 @@
             .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
             .gold { background-color: #fbbf24; color: #0f172a; }
             .key { background-color: #7c3aed; color: #fff; margin-left: 4px; }
+            .goldmine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; margin: 30px 0; }
+            .goldmine-card { background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-left: 4px solid #fbbf24; padding: 20px; border-radius: 8px; position: relative; }
+            .goldmine-card.high-conf { border-left-color: #4ade80; }
+            .goldmine-title { color: #fbbf24; font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+            .goldmine-venue { font-size: 14px; color: #94a3b8; margin-bottom: 15px; }
+            .goldmine-odds { font-size: 20px; font-weight: bold; color: #f8fafc; }
+            .goldmine-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-top: 5px; }
             .footer { margin-top: 40px; text-align: center; font-size: 12px; color: #64748b; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Fortuna Faucet Intelligence</h1>
-            <p style="text-align:center;">Real-time global racing analysis generated at 2026-02-23 21:39:45 ET</p>
+            <p style="text-align:center;">Real-time global racing analysis generated at  15:21:05 ET</p>
 
             <div class="stats-grid">
                 <div class="stat-card">
-                    <div class="stat-value">0</div>
+                    <div class="stat-value">2</div>
                     <div class="stat-label">Total Selections</div>
                 </div>
                 <div class="stat-card">
@@ -42,6 +49,53 @@
                     <div class="stat-label">Estimated Profit</div>
                 </div>
             </div>
+
+
+            <h2>💎 Goldmine Spotlights</h2>
+            <div class="goldmine-grid">
+
+            <div class="goldmine-card high-conf">
+                <div class="badge gold" style="float:right;">HIGH CONFIDENCE</div>
+                <div class="goldmine-title">💎 #1 High Conf Horse</div>
+                <div class="goldmine-venue">Randwick R1 @ 15:21</div>
+                <div style="display:flex; justify-content:space-between;">
+                    <div>
+                        <div class="goldmine-odds">2.00</div>
+                        <div class="goldmine-label">Fav Odds</div>
+                    </div>
+                    <div>
+                        <div class="goldmine-odds">10.00</div>
+                        <div class="goldmine-label">2nd Fav</div>
+                    </div>
+                    <div>
+                        <div class="goldmine-odds" style="color:#fbbf24;">+8.00</div>
+                        <div class="goldmine-label">Gap</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="goldmine-card ">
+                <div class="badge gold" style="float:right;">EMERGING</div>
+                <div class="goldmine-title">💎 #5 Emerging Horse</div>
+                <div class="goldmine-venue">Flemington R5 @ 15:21</div>
+                <div style="display:flex; justify-content:space-between;">
+                    <div>
+                        <div class="goldmine-odds">3.00</div>
+                        <div class="goldmine-label">Fav Odds</div>
+                    </div>
+                    <div>
+                        <div class="goldmine-odds">8.00</div>
+                        <div class="goldmine-label">2nd Fav</div>
+                    </div>
+                    <div>
+                        <div class="goldmine-odds" style="color:#fbbf24;">+5.00</div>
+                        <div class="goldmine-label">Gap</div>
+                    </div>
+                </div>
+            </div>
+
+            </div>
+
 
             <h2>🔥 Best Bet Opportunities</h2>
             <table>
@@ -56,7 +110,25 @@
                     </tr>
                 </thead>
                 <tbody>
-                    <tr><td colspan="6" style="text-align:center;">No immediate opportunities identified.</td></tr>
+
+            <tr>
+                <td>15:21 (260314)</td>
+                <td>Randwick</td>
+                <td>R1</td>
+                <td>#1 High Conf Horse</td>
+                <td>2.00</td>
+                <td><span class="badge gold">GOLD</span></td>
+            </tr>
+
+            <tr>
+                <td>15:21 (260314)</td>
+                <td>Flemington</td>
+                <td>R5</td>
+                <td>#5 Emerging Horse</td>
+                <td>3.00</td>
+                <td><span class="badge gold">GOLD</span></td>
+            </tr>
+
                 </tbody>
             </table>
 
