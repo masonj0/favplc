@@ -1278,13 +1278,17 @@ class SmartFetcher:
 
         # Domain-specific engine prioritization (Hardening Fix)
         # Some domains are better handled by specific engines
-        if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com", "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com"]):
+        if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com", "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com", "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com", "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"]):
             # For these domains, prioritize Playwright or Camoufox if available
             self.logger.debug("Prioritizing browser engines for protected domain", url=url)
-            if BrowserEngine.PLAYWRIGHT in available_engines:
-                self._engine_health[BrowserEngine.PLAYWRIGHT] = 1.0
+            # Favor Camoufox for better stealth on extremely protected domains
             if BrowserEngine.CAMOUFOX in available_engines:
-                self._engine_health[BrowserEngine.CAMOUFOX] = 0.95
+                self._engine_health[BrowserEngine.CAMOUFOX] = 1.0
+            if BrowserEngine.PLAYWRIGHT in available_engines:
+                self._engine_health[BrowserEngine.PLAYWRIGHT] = 0.95
+            # Ensure HTTPX is discouraged for these domains
+            if BrowserEngine.HTTPX in available_engines:
+                self._engine_health[BrowserEngine.HTTPX] = 0.1
 
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
             available_engines.remove(BrowserEngine.CURL_CFFI)
@@ -2948,7 +2952,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         return await super().make_request(method, url, **kwargs)
 
     SELECTORS: ClassVar[Dict[str, List[str]]] = {
-        "race_links": ['a.race-navigation-link', 'a.sidebar-racecardsigation-link', 'a[href^="/racecard/"]', 'a[href*="/racecard/"]'],
+        "race_links": ['a.race-navigation-link', 'a.sidebar-racecards-navigation-link', 'a[href^="/racecard/"]', 'a[href*="/racecard/"]'],
         "details_container": [".race-header__details--primary", "atr-racecard-race-header .container", ".racecard-header .container"],
         "track_name": ["h2", "h1 a", "h1"],
         "race_time": ["h2 b", "h1 span", ".race-time"],
@@ -2995,7 +2999,8 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
         # Fallback to standard index scraping if movers endpoint is dry
         index_url = f"/racecards/{date_iso}"
-        resp = await self.make_request("GET", index_url, headers=self._get_headers())
+        # Hardening Fix: Use wait_until and timeout to handle slow page loads/bot challenge solving
+        resp = await self.make_request("GET", index_url, headers=self._get_headers(), wait_until="networkidle", timeout=60)
         metadata = []
         if resp and resp.text:
             parser = HTMLParser(resp.text)
@@ -4000,8 +4005,8 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Use CURL_CFFI for robust HTTPS and connection handling
-        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, enable_js=False, stealth_mode="fast", timeout=45, impersonate="chrome124")
+        # Hardening Fix: Upgrade to Camoufox for better stealth
+        return FetchStrategy(primary_engine=BrowserEngine.CAMOUFOX, enable_js=True, stealth_mode="camouflage", timeout=60)
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="standardbredcanada.ca", referer="https://standardbredcanada.ca/racing")
