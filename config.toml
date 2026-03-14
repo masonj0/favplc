@@ -2,7 +2,7 @@
 
 [analysis]
 # Minimum trust ratio (0.0 to 1.0) for a race to be qualified
-trustworthy_ratio_min = 0.7
+simply_success_trust_min = 0.7
 # Maximum field size for standard analysis
 max_field_size = 11
 

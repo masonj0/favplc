@@ -1,0 +1,289 @@
+2026-03-14 14:16:29 [warning  ] config key analysis.trustworthy_ratio_min is deprecated; use analysis.simply_success_trust_min
+
+════════════════════════════════════════════════════════════
+══════════ 🐎 FORTUNA FAUCET INTELLIGENCE - v3.0.0 ══════════
+════════════════════════════════════════════════════════════
+ 📍 Region: GLOBAL | 🔍 Status: READY
+ 📊 Database: 0 tips | ✅ 0 audited | 💎 0 goldmines
+ 🛡️  Odds Hygiene: >70% trust ratio required
+ 📁 Latest Reports: HTML
+════════════════════════════════════════════════════════════
+
+2026-03-14 14:16:29 [info     ] Using default region           region=GLOBAL
+2026-03-14 14:16:31 [info     ] Database initialized           path=fortuna.db schema_version=9
+2026-03-14 14:16:31 [warning  ] http_block_status              engine=curl_cffi status=403 url=https://www.nyrabets.com/
+2026-03-14 14:16:31 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=client challenge url=https://greyhounds.attheraces.com/racecards/2026-03-14
+2026-03-14 14:16:31 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=client challenge url=https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14
+[2026-03-14 14:16:41] INFO: Fetched (200) <GET https://www.britishhorseracing.com/> (referer: https://www.google.com/search?q=britishhorseracing)
+2026-03-14 14:16:41 [warning  ] bot_challenge_detected         engine=playwright keyword=cloudflare url=https://www.britishhorseracing.com
+2026-03-14 14:16:41 [info     ] Waiting for automated challenge solution... engine=playwright
+[2026-03-14 14:16:45] INFO: Fetched (200) <GET https://greyhounds.attheraces.com/racecards/2026-03-14> (referer: https://www.google.com/search?q=attheraces)
+2026-03-14 14:16:45 [warning  ] bot_challenge_detected         engine=playwright keyword=captcha url=https://greyhounds.attheraces.com/racecards/2026-03-14
+2026-03-14 14:16:45 [info     ] Waiting for automated challenge solution... engine=playwright
+[2026-03-14 14:16:45] INFO: Fetched (404) <GET https://www.fanduel.com/racing/race-schedule> (referer: https://www.google.com/search?q=fanduel)
+2026-03-14 14:16:45 [error    ] adapter_http_error             adapter=FanDuelRacing adapter_name=FanDuelRacing status=404 url=https://www.fanduel.com/racing/race-schedule
+2026-03-14 14:16:45 [error    ] Request failed                 adapter_name=FanDuelRacing error=HTTP 404 method=GET url=https://www.fanduel.com/racing/race-schedule
+2026-03-14 14:16:45 [error    ] FanDuel fetch failed           adapter_name=FanDuelRacing error=HTTP 404
+[2026-03-14 14:16:46] INFO: Fetched (200) <GET https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14> (referer: https://www.google.com/search?q=attheraces)
+2026-03-14 14:16:46 [warning  ] bot_challenge_detected         engine=playwright keyword=client challenge url=https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14
+2026-03-14 14:16:46 [info     ] Waiting for automated challenge solution... engine=playwright
+[2026-03-14 14:16:46] INFO: Fetched (301) <GET http://www.bataviadownsgaming.com/> (referer: https://www.google.com/search?q=batavia-downs)
+[2026-03-14 14:16:46] INFO: Fetched (301) <GET https://www.batavia-downs.com/> (referer: https://www.google.com/search?q=batavia-downs)
+[2026-03-14 14:16:46] INFO: Fetched (200) <GET https://www.bataviadownsgaming.com/> (referer: https://www.google.com/search?q=batavia-downs)
+[2026-03-14 14:16:49] INFO: Fetched (301) <GET https://www.ajaxdowns.com/> (referer: https://www.google.com/search?q=ajaxdowns)
+[2026-03-14 14:16:49] INFO: Fetched (200) <GET https://ajaxdowns.com/> (referer: https://www.google.com/search?q=ajaxdowns)
+2026-03-14 14:16:49 [warning  ] bot_challenge_detected         engine=playwright keyword=captcha url=https://www.ajaxdowns.com
+2026-03-14 14:16:49 [info     ] Waiting for automated challenge solution... engine=playwright
+[2026-03-14 14:16:55] INFO: Fetched (302) <GET https://belterrapark.boydgaming.com/racing/entries> (referer: https://www.google.com/search?q=belterrapark)
+[2026-03-14 14:16:55] INFO: Fetched (301) <GET https://belterrapark.boydgaming.com/racing/entries/> (referer: https://www.google.com/search?q=belterrapark)
+[2026-03-14 14:16:55] INFO: Fetched (302) <GET https://www.belterrapark.com/racing/entries/> (referer: https://www.google.com/search?q=belterrapark)
+[2026-03-14 14:16:55] INFO: Fetched (200) <GET https://belterrapark.boydgaming.com/404> (referer: https://www.google.com/search?q=belterrapark)
+[2026-03-14 14:16:59] INFO: Fetched (200) <GET https://www.ascot.com/> (referer: https://www.google.com/search?q=ascot)
+[2026-03-14 14:17:01] INFO: Fetched (200) <GET https://www.britishhorseracing.com/> (referer: https://www.google.com/search?q=britishhorseracing)
+[2026-03-14 14:17:03] INFO: Fetched (200) <GET https://greyhounds.attheraces.com/racecards/2026-03-14> (referer: https://www.google.com/search?q=attheraces)
+2026-03-14 14:17:03 [info     ] Challenge solved successfully! engine=playwright
+2026-03-14 14:17:03 [warning  ] No metadata found              adapter_name=AtTheRacesGreyhound context=ATR Greyhound Index Parsing url=/racecards/2026-03-14
+[2026-03-14 14:17:04] INFO: Fetched (200) <GET https://www.nyrabets.com/> (referer: https://www.google.com/search?q=nyrabets)
+2026-03-14 14:17:04 [warning  ] bot_challenge_detected         engine=camoufox keyword=captcha url=https://www.nyrabets.com/
+[2026-03-14 14:17:04] INFO: Fetched (200) <GET https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14> (referer: https://www.google.com/search?q=attheraces)
+[2026-03-14 14:17:05] INFO: Fetched (200) <GET https://www.canterburypark.com/> (referer: https://www.google.com/search?q=canterburypark)
+[2026-03-14 14:17:14] INFO: Fetched (301) <GET https://www.ajaxdowns.com/> (referer: https://www.google.com/search?q=ajaxdowns)
+[2026-03-14 14:17:14] INFO: Fetched (200) <GET https://ajaxdowns.com/> (referer: https://www.google.com/search?q=ajaxdowns)
+[2026-03-14 14:17:16] INFO: Fetched (200) <GET https://www.dmtc.com/racing/entries> (referer: https://www.google.com/search?q=dmtc)
+2026-03-14 14:17:16 [warning  ] bot_challenge_detected         engine=playwright keyword=captcha url=https://www.dmtc.com/racing/entries
+2026-03-14 14:17:16 [info     ] Waiting for automated challenge solution... engine=playwright
+[2026-03-14 14:17:17] INFO: Fetched (200) <GET https://www.corkracecourse.ie/> (referer: https://www.google.com/search?q=corkracecourse)
+2026-03-14 14:17:18 [warning  ] bot_challenge_detected         engine=playwright keyword=captcha url=https://www.corkracecourse.ie
+2026-03-14 14:17:18 [info     ] Waiting for automated challenge solution... engine=playwright
+[2026-03-14 14:17:19] INFO: Fetched (200) <GET https://www.britishhorseracing.com/> (referer: https://www.google.com/search?q=britishhorseracing)
+2026-03-14 14:17:19 [warning  ] bot_challenge_detected         engine=camoufox keyword=cloudflare url=https://www.britishhorseracing.com
+2026-03-14 14:17:20 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://www.britishhorseracing.com
+[2026-03-14 14:17:21] INFO: Fetched (403) <GET https://www.hollywoodcasinocharlestown.com/racing/entries> (referer: https://www.google.com/search?q=hollywoodcasinocharlestown)
+2026-03-14 14:17:21 [warning  ] http_block_status              engine=camoufox status=403 url=https://www.hollywoodcasinocharlestown.com/racing/entries
+2026-03-14 14:17:22 [warning  ] http_block_status              engine=curl_cffi status=403 url=https://www.hollywoodcasinocharlestown.com/racing/entries
+2026-03-14 14:17:26 [warning  ] bot_challenge_detected         engine=httpx keyword=client challenge url=https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14
+2026-03-14 14:17:26 [error    ] all_engines_failed             error=FetchError('Bot challenge detected (client challenge)') url=https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14
+2026-03-14 14:17:26 [error    ] Request failed                 adapter_name=AtTheRaces error=Bot challenge detected (client challenge) method=GET url=https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-14
+2026-03-14 14:17:26 [error    ] failed_fetching_atr_movers     adapter_name=AtTheRaces error=Bot challenge detected (client challenge) region=uk-ire
+2026-03-14 14:17:28 [warning  ] bot_challenge_detected         engine=playwright_legacy keyword=cloudflare url=https://www.britishhorseracing.com
+[2026-03-14 14:17:30] INFO: Fetched (301) <GET https://www.ajaxdowns.com/> (referer: https://www.google.com/search?q=ajaxdowns)
+[2026-03-14 14:17:31] INFO: Fetched (200) <GET https://ajaxdowns.com/> (referer: https://www.google.com/search?q=ajaxdowns)
+[2026-03-14 14:17:31] INFO: Fetched (200) <GET https://www.nyrabets.com/> (referer: https://www.google.com/search?q=nyrabets)
+2026-03-14 14:17:31 [warning  ] bot_challenge_detected         engine=camoufox keyword=captcha url=https://www.ajaxdowns.com
+2026-03-14 14:17:31 [warning  ] bot_challenge_detected         engine=playwright keyword=captcha url=https://www.nyrabets.com/
+2026-03-14 14:17:31 [info     ] Waiting for automated challenge solution... engine=playwright
+2026-03-14 14:17:32 [warning  ] http_block_status              engine=playwright_legacy status=403 url=https://www.hollywoodcasinocharlestown.com/racing/entries
+2026-03-14 14:17:32 [warning  ] http_block_status              engine=httpx status=403 url=https://www.hollywoodcasinocharlestown.com/racing/entries
+2026-03-14 14:17:32 [error    ] all_engines_failed             error=FetchError('HTTP 403') url=https://www.hollywoodcasinocharlestown.com/racing/entries
+2026-03-14 14:17:32 [error    ] Request failed                 adapter_name=Official_CharlesTown error=HTTP 403 method=GET url=https://www.hollywoodcasinocharlestown.com/racing/entries
+2026-03-14 14:17:33 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=captcha url=https://www.ajaxdowns.com
+2026-03-14 14:17:47 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://www.colonialdowns.com
+[2026-03-14 14:17:47] INFO: Fetched (200) <GET https://www.corkracecourse.ie/> (referer: https://www.google.com/search?q=corkracecourse)
+[2026-03-14 14:17:49] INFO: Fetched (200) <GET https://www.clonmelraces.ie/> (referer: https://www.google.com/search?q=clonmelraces)
+[2026-03-14 14:17:50] INFO: Fetched (301) <GET https://www.cheltenham.co.uk/> (referer: https://www.google.com/search?q=cheltenham)
+2026-03-14 14:17:50 [warning  ] bot_challenge_detected         engine=camoufox keyword=cloudflare url=https://www.clonmelraces.ie
+2026-03-14 14:17:51 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://www.clonmelraces.ie
+[2026-03-14 14:17:52] INFO: Fetched (200) <GET https://www.thejockeyclub.co.uk/cheltenham/> (referer: https://www.google.com/search?q=cheltenham)
+[2026-03-14 14:17:53] INFO: Fetched (301) <GET https://www.downroyal.com/> (referer: https://www.google.com/search?q=downroyal)
+[2026-03-14 14:17:54] INFO: Fetched (200) <GET https://downroyal.com/> (referer: https://www.google.com/search?q=downroyal)
+[2026-03-14 14:17:54] INFO: Fetched (200) <GET https://www.dmtc.com/racing/entries> (referer: https://www.google.com/search?q=dmtc)
+2026-03-14 14:17:54 [warning  ] bot_challenge_detected         engine=playwright keyword=captcha url=https://www.downroyal.com
+2026-03-14 14:17:54 [info     ] Waiting for automated challenge solution... engine=playwright
+2026-03-14 14:17:55 [warning  ] bot_challenge_detected         engine=playwright_legacy keyword=captcha url=https://www.ajaxdowns.com
+[2026-03-14 14:17:59] INFO: Fetched (200) <GET https://emeralddowns.com/> (referer: https://www.google.com/search?q=emeralddowns)
+[2026-03-14 14:18:06] INFO: Fetched (200) <GET https://www.nyrabets.com/> (referer: https://www.google.com/search?q=nyrabets)
+2026-03-14 14:18:07 [warning  ] bot_challenge_detected         engine=playwright_legacy keyword=cloudflare url=https://www.clonmelraces.ie
+[2026-03-14 14:18:13] INFO: Fetched (200) <GET https://www.corkracecourse.ie/> (referer: https://www.google.com/search?q=corkracecourse)
+2026-03-14 14:18:15 [warning  ] bot_challenge_detected         engine=camoufox keyword=captcha url=https://www.corkracecourse.ie
+2026-03-14 14:18:18 [warning  ] http_block_status              engine=httpx status=403 url=https://www.nyrabets.com/
+2026-03-14 14:18:18 [error    ] all_engines_failed             error=FetchError('HTTP 403') url=https://www.nyrabets.com/
+2026-03-14 14:18:18 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=captcha url=https://www.corkracecourse.ie
+2026-03-14 14:18:19 [warning  ] http_block_status              engine=curl_cffi status=403 url=https://www.nyrabets.com/
+2026-03-14 14:18:28 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=captcha url=https://www.dmtc.com/racing/entries
+[2026-03-14 14:19:14] INFO: Fetched (200) <GET https://www.oddschecker.com/horse-racing/2026-03-14> (referer: https://www.google.com/search?q=oddschecker)
+2026-03-14 14:19:16 [warning  ] bot_challenge_detected         engine=playwright keyword=cloudflare url=https://www.oddschecker.com/horse-racing/2026-03-14
+2026-03-14 14:19:34 [info     ] Waiting for automated challenge solution... engine=playwright
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    at writeGeneric (node:internal/stream_base_commons:150:3)
+    at Socket._writeGeneric (node:net:957:11)
+    at Socket._write (node:net:969:8)
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at PipeTransport.send (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/protocol/transport.js:51:21)
+    at dispatcherConnection.onmessage (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/cli/driver.js:59:57)
+    at DispatcherConnection.sendEvent (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/server/dispatchers/dispatcher.js:178:10)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    at writeGeneric (node:internal/stream_base_commons:150:3)
+    at Socket._writeGeneric (node:net:957:11)
+    at Socket._write (node:net:969:8)
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at PipeTransport.send (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/protocol/transport.js:51:21)
+    at dispatcherConnection.onmessage (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/cli/driver.js:59:57)
+    at DispatcherConnection.sendEvent (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/server/dispatchers/dispatcher.js:178:10)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    at writeGeneric (node:internal/stream_base_commons:150:3)
+    at Socket._writeGeneric (node:net:957:11)
+    at Socket._write (node:net:969:8)
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at PipeTransport.send (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/protocol/transport.js:51:21)
+    at dispatcherConnection.onmessage (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/cli/driver.js:59:57)
+    at DispatcherConnection.sendEvent (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/server/dispatchers/dispatcher.js:178:10)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    at writeGeneric (node:internal/stream_base_commons:150:3)
+    at Socket._writeGeneric (node:net:957:11)
+    at Socket._write (node:net:969:8)
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at PipeTransport.send (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/protocol/transport.js:51:21)
+    at dispatcherConnection.onmessage (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/cli/driver.js:59:57)
+    at DispatcherConnection.sendEvent (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/patchright/driver/package/lib/server/dispatchers/dispatcher.js:178:10)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at WriteWrap.onWriteComplete [as oncomplete] (node:internal/stream_base_commons:87:19)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at WriteWrap.onWriteComplete [as oncomplete] (node:internal/stream_base_commons:87:19)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    at writeGeneric (node:internal/stream_base_commons:150:3)
+    at Socket._writeGeneric (node:net:957:11)
+    at Socket._write (node:net:969:8)
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at PipeTransport.send (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/playwright/driver/package/lib/protocol/transport.js:51:21)
+    at dispatcherConnection.onmessage (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/playwright/driver/package/lib/cli/driver.js:59:57)
+    at DispatcherConnection.sendEvent (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/playwright/driver/package/lib/server/dispatchers/dispatcher.js:178:10)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at processTicksAndRejections (node:internal/process/task_queues:90:21)
+    at runNextTicks (node:internal/process/task_queues:69:3)
+    at process.processImmediate (node:internal/timers:459:9) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
+node:events:496
+      throw er; // Unhandled 'error' event
+      ^
+
+Error: write EPIPE
+    at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+    at writeGeneric (node:internal/stream_base_commons:150:3)
+    at Socket._writeGeneric (node:net:957:11)
+    at Socket._write (node:net:969:8)
+    at writeOrBuffer (node:internal/streams/writable:572:12)
+    at _write (node:internal/streams/writable:501:10)
+    at Writable.write (node:internal/streams/writable:510:10)
+    at PipeTransport.send (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/playwright/driver/package/lib/protocol/transport.js:52:21)
+    at dispatcherConnection.onmessage (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/playwright/driver/package/lib/cli/driver.js:59:57)
+    at DispatcherConnection.sendDispose (/home/jules/.pyenv/versions/3.10.20/lib/python3.10/site-packages/playwright/driver/package/lib/server/dispatchers/dispatcher.js:210:10)
+Emitted 'error' event on Socket instance at:
+    at emitErrorNT (node:internal/streams/destroy:170:8)
+    at emitErrorCloseNT (node:internal/streams/destroy:129:3)
+    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
+  errno: -32,
+  code: 'EPIPE',
+  syscall: 'write'
+}
+
+Node.js v22.11.0
