@@ -40,6 +40,7 @@ canary_result.json
 canary_output.log
 *_debug.html
 _diag_snapshots/
+diag-snapshots/
 debug-snapshots/
 debug_snapshots/
 adapter_stats.json
@@ -58,6 +59,9 @@ smartfetcher_health.json
 integration_check_report.md
 engine_health.log
 reporter_output.log
+discovery_fetch.log
+discovery_output.log
+analytics_output.log
 browser_verify.log
 browser_verification.json
 anomaly_history.json
