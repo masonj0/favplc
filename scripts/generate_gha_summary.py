@@ -52,7 +52,7 @@ def load_snapshot_races(snapshot_dir: str = "snapshots") -> list:
     """Load races from the most recent quarter snapshot file."""
     now = now_eastern()
     daypart = resolve_daypart()
-    tag = f"{daypart}_{now.strftime(DATE_FORMAT)}"
+    tag = f"{daypart.value}_{now.strftime(DATE_FORMAT)}"
     path = Path(snapshot_dir) / f"{tag}_races.json"
 
     if not path.exists():
