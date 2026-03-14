@@ -148,7 +148,7 @@ high_vol_results_classes = [c for c in all_results_classes
 
 # ── DB setup ────────────────────────────────────────────────────────
 db_path = "fortuna.db"
-# GPT5 Fix: Always initialize DB via FortunaDB to ensure schema is up-to-date
+# Hardening Fix: Always initialize DB via FortunaDB to ensure schema is up-to-date
 asyncio.run(fortuna.FortunaDB(db_path).initialize())
 
 conn = sqlite3.connect(db_path)
@@ -801,7 +801,7 @@ def q14_best_bet_microscope():
         emit(f"  {str(row['qualification_grade']):<15s} {row['n']:<6d} {row['avg_s']:<10.2f} {row['avg_g']:<10.2f}")
     emit("```\n")
 
-    # 2. Runner Name Hygiene (GPT5 Fix Verification)
+    # 2. Runner Name Hygiene (Hardening Fix Verification)
     emit("### Runner Hygiene — Leaked Scraper Labels")
     leaked_labels = ["Favorite", "Fav", "2nd Fav", "Market Leader", "Scratched", "Runner"]
     hygiene_issues = []
