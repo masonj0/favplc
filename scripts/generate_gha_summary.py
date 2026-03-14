@@ -48,26 +48,28 @@ def _mtp_str(minutes: float) -> str:
     mins = int(minutes % 60)
     return f"{hours}h{mins}m"
 
-def load_snapshot_races(snapshot_dir: str = "snapshots") -> list:
-    """Load races from the most recent quarter snapshot file."""
+def load_snapshot_races(snapshot_dir: str = "snapshots") -> Tuple[list, Optional[str]]:
+    """Load races from the most recent quarter snapshot file. Returns (races, source_filename)."""
     now = now_eastern()
     daypart = resolve_daypart()
     tag = f"{daypart.value}_{now.strftime(DATE_FORMAT)}"
     path = Path(snapshot_dir) / f"{tag}_races.json"
 
+    source_filename = None
     if not path.exists():
         # Fallback: grab the most recently modified snapshot
         snapshots = sorted(Path(snapshot_dir).glob("*_races.json"),
                            key=lambda p: p.stat().st_mtime, reverse=True)
         if not snapshots:
-            return []
+            return [], None
         path = snapshots[0]
 
+    source_filename = path.name
     try:
         with open(path) as f:
-            return json.load(f)
+            return json.load(f), source_filename
     except Exception:
-        return []
+        return [], None
 
 def get_fav_odds(race: dict) -> Tuple[Optional[float], Optional[float]]:
     """Returns (fav_odds, second_fav_odds) from snapshot runner data."""
@@ -170,13 +172,13 @@ async def main():
         }
 
     # 1. Load Upcoming Races from Snapshot (Source of Truth for future races)
-    all_races = load_snapshot_races()
+    all_races, snapshot_source = load_snapshot_races()
 
     upcoming_races = []
     for r in all_races:
         m = _mtp(r.get('start_time'))
-        # 60 mins ago to 90 mins ahead
-        if -60 <= m <= 90:
+        # 60 mins ago to 24 hours ahead (P2-ENH-6)
+        if -60 <= m <= 1440:
             r['_mtp_val'] = m
             # Overlay grade from DB if available
             rid = r.get('id')
@@ -223,8 +225,10 @@ async def main():
         f.write("\n---\n")
 
         # --- Upcoming Races Section ---
-        f.write("# 🏇 Upcoming Races (0-90 MTP)\n\n")
-        f.write(f"Generated: {now_eastern().strftime('%y%m%d %H:%M:%S')} ET\n\n")
+        f.write(f"# 🏇 Upcoming Races (AU/NZ/Global)\n\n")
+        f.write(f"Generated: {now_eastern().strftime('%y%m%d %H:%M:%S')} ET  \n")
+        if snapshot_source:
+            f.write(f"Source: `{snapshot_source}`\n\n")
 
         if not upcoming_races:
             f.write("No upcoming races found in current snapshot (-60 to +90 MTP).\n")

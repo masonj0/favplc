@@ -386,7 +386,7 @@ DEFAULT_REGION: Final[str] = "GLOBAL"
 # AtTheRaces is duplicated into USA as per explicit request.
 USA_DISCOVERY_ADAPTERS: Final[set] = {
     "Equibase",
-    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets", "FanDuelRacing",
+    "TwinSpires", "RacingPostB2B", "StandardbredCanada", "AtTheRaces", "NYRABets",
     "Official_DelMar", "Official_GulfstreamPark", "Official_TampaBayDowns",
     "Official_OaklawnPark", "Official_SantaAnita", "Official_MonmouthPark",
     "Official_TheMeadowlands", "Official_YonkersRaceway", "Official_Woodbine",
@@ -425,7 +425,7 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports", "HKJC", "JRA",
-    "TwinSpires", "NYRABets", "RacingPostB2B", "FanDuelRacing" # US sources for 24/7 global coverage
+    "TwinSpires", "NYRABets", "RacingPostB2B" # US sources for 24/7 global coverage
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
@@ -1362,19 +1362,6 @@ class SmartFetcher:
         # Check if engines are available before sorting
         available_engines = [e for e in self._engine_health.keys()]
 
-        # Domain-specific engine prioritization (Hardening Fix)
-        # Some domains are better handled by specific engines
-        if any(d in url for d in ["attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com", "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com", "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com", "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com", "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"]):
-            # For these domains, prioritize Playwright or Camoufox if available
-            self.logger.debug("Prioritizing browser engines for protected domain", url=url)
-            # Favor Camoufox for better stealth on extremely protected domains
-            if BrowserEngine.CAMOUFOX in available_engines:
-                self._engine_health[BrowserEngine.CAMOUFOX] = 1.0
-            if BrowserEngine.PLAYWRIGHT in available_engines:
-                self._engine_health[BrowserEngine.PLAYWRIGHT] = 0.95
-            # Ensure HTTPX is discouraged for these domains
-            if BrowserEngine.HTTPX in available_engines:
-                self._engine_health[BrowserEngine.HTTPX] = 0.1
 
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
             available_engines.remove(BrowserEngine.CURL_CFFI)
@@ -1390,9 +1377,31 @@ class SmartFetcher:
 
         # Build candidate engines: allowed only, sorted by health
         async with self._health_lock:
+            # Create local copy of health scores for potential domain-specific re-ranking
+            current_health = self._engine_health.copy()
+
+            # Domain-specific engine prioritization (Hardening Fix / P0-FIX-B2)
+            # Some domains are better handled by specific engines; re-rank locally without mutation
+            protected_domains = [
+                "attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com",
+                "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
+                "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
+                "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
+                "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
+            ]
+            if any(d in url for d in protected_domains):
+                self.logger.debug("Prioritizing browser engines for protected domain", url=url)
+                if BrowserEngine.CAMOUFOX in available_engines:
+                    current_health[BrowserEngine.CAMOUFOX] = max(current_health[BrowserEngine.CAMOUFOX], 1.0)
+                if BrowserEngine.PLAYWRIGHT in available_engines:
+                    current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
+                # Discourage HTTPX locally for these domains
+                if BrowserEngine.HTTPX in available_engines:
+                    current_health[BrowserEngine.HTTPX] = 0.1
+
             candidates = [
                 eng for eng, score in sorted(
-                    self._engine_health.items(), key=lambda x: -x[1]
+                    current_health.items(), key=lambda x: -x[1]
                 )
                 if eng in strategy.allowed_engines and eng in available_engines and score > 0.05
             ]
@@ -2334,16 +2343,6 @@ class OfficialTrackAdapter(BaseAdapterV3):
         # Use a safe name for the source
         source = f"Official_{track_name.replace(' ', '').replace('/', '')}"
         super().__init__(source_name=source, base_url=url, config=config)
-
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Official tracks often have bot protection; prioritizing Playwright for maximum success rate
-        return FetchStrategy(
-            primary_engine=BrowserEngine.PLAYWRIGHT,
-            enable_js=True,
-            stealth_mode="camouflage",
-            timeout=20,
-            network_idle=True
-        )
 
     async def _fetch_data(self, date: str) -> Optional[str]:
         # Perform a GET to check status
@@ -5723,6 +5722,15 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     self.logger.info("Goldmine marked as Emerging: single-source odds only",
                                     venue=race.venue, race=race.race_number, selection=fav.name, sources=list(fav_sources))
 
+                # P2-ENH-4 Multi-source gap confirmation
+                # Check if the gap is confirmed by multiple sources or if it's a potential single-source outlier
+                if len(fav_sources) >= 2:
+                    race.metadata['goldmine_confidence'] = 'high'
+                    race.metadata['goldmine_sources'] = list(fav_sources)
+                else:
+                    race.metadata['goldmine_confidence'] = 'low'
+                    race.metadata['goldmine_sources'] = list(fav_sources)
+
             # Composite Scoring — recalibrated for absolute gap
             composite = 45.0  # lower base — marginal races land at B+, not A
 
@@ -6237,8 +6245,11 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
                 r.top_five_numbers = top_5_nums
 
             gap_abs = get_field(r, 'metadata', {}).get('gap_abs', 0.0)
+            conf = get_field(r, 'metadata', {}).get('goldmine_confidence', 'low')
+            conf_icon = "💎" if conf == 'high' else "🔍"
+
             report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
-            report_lines.append(f"PREDICTED TOP 5: [{top_5_nums}] | gap_abs: {gap_abs:.2f}")
+            report_lines.append(f"{conf_icon} PREDICTED TOP 5: [{top_5_nums}] | gap_abs: {gap_abs:.2f}")
             # Superfecta Keybox annotation
             if get_field(r, 'metadata', {}).get('is_superfecta_key'):
                 key_num  = get_field(r, 'metadata', {}).get('superfecta_key_number', '?')
@@ -6424,8 +6435,15 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         active = [run for run in runners if not getattr(run, 'scratched', False)]
         if len(active) < 2: continue
 
-        active.sort(key=lambda x: getattr(x, 'win_odds', 999.0) or 999.0)
-        sel = active[1]
+        # IMP-CR-02: Sort runners using _get_best_win_odds to handle multi-source data
+        # Mapping back to float for sorting and metadata access
+        with_best_odds = []
+        for run in active:
+            best = _get_best_win_odds(run)
+            with_best_odds.append((run, float(best) if best else 999.0))
+
+        with_best_odds.sort(key=lambda x: x[1])
+        sel = with_best_odds[0][0] # Favourite is index 0 (Target for Place betting)
 
         st = getattr(r, 'start_time', '')
         if isinstance(st, datetime):
@@ -6462,7 +6480,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
                 <td>{getattr(r, 'venue', 'Unknown')}</td>
                 <td>R{getattr(r, 'race_number', '?')}</td>
                 <td>#{getattr(sel, 'number', '?')} {getattr(sel, 'name', 'Unknown')}</td>
-                <td>{ (getattr(sel, 'win_odds') or 0.0):.2f}</td>
+                <td>{ float(_get_best_win_odds(sel) or 0.0):.2f}</td>
                 <td>{gold_badge}{key_badge}</td>
             </tr>
         """)
@@ -6488,9 +6506,15 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         # Get favorite name
         runners = getattr(r, 'runners', [])
         active = [run for run in runners if not getattr(run, 'scratched', False)]
-        active.sort(key=lambda x: getattr(x, 'win_odds', 999.0) or 999.0)
-        sel_name = active[0].name if active else "Unknown"
-        sel_num = active[0].number if active else "?"
+        # IMP-CR-02: Sort active runners using best win odds
+        with_best_odds = []
+        for run in active:
+            best = _get_best_win_odds(run)
+            with_best_odds.append((run, float(best) if best else 999.0))
+        with_best_odds.sort(key=lambda x: x[1])
+
+        sel_name = with_best_odds[0][0].name if with_best_odds else "Unknown"
+        sel_num = with_best_odds[0][0].number if with_best_odds else "?"
 
         st = getattr(r, 'start_time', '')
         if isinstance(st, datetime):
@@ -8138,6 +8162,16 @@ class FortunaDB:
             # Lifetime avg payout (used for breakeven)
             row = conn.execute("SELECT AVG(COALESCE(net_profit, 0.0) + 2.0) FROM tips WHERE verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
             stats['lifetime_avg_payout'] = row[0] if row and row[0] is not None else 0.0
+
+            # Goldmine Performance Stats (P2-ENH-5)
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine = 1").fetchone()
+            stats['total_goldmines'] = row[0] if row else 0
+
+            row = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine = 1 AND audit_completed = 1 AND verdict IN ('CASHED', 'CASHED_ESTIMATED')").fetchone()
+            stats['goldmines_cashed'] = row[0] if row else 0
+
+            row = conn.execute("SELECT SUM(net_profit) FROM tips WHERE is_goldmine = 1 AND audit_completed = 1").fetchone()
+            stats['goldmine_profit'] = row[0] if row and row[0] is not None else 0.0
 
             return stats
         return await self._run_in_executor(_get)
