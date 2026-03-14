@@ -2,7 +2,7 @@
 
 **Status:** Three-Module Architecture
 **Version:** 3.1.0
-**Last Updated:** February 22, 2026
+**Last Updated:** March 14, 2026
 
 ---
 
@@ -259,8 +259,8 @@ Results adapters are partitioned by region, with a separate quality partition:
 ```
 USA_RESULTS_ADAPTERS:
   RacingPostUSAResults, SportingLifeResults, EquibaseResults,
-  StandardbredCanadaResults, DRFResults (planned — class not yet implemented)
-  [NYRABetsResults removed 2026-02-21 — API endpoint returns 403]
+  StandardbredCanadaResults, DRFResults,
+  [NYRABetsResults marked DEPRECATED — API endpoint returns 403]
 
 INT_RESULTS_ADAPTERS:
   RacingPostResults, RacingPostTote, AtTheRacesResults,
@@ -657,9 +657,9 @@ This is a discovery-time estimate; actual verdict uses real place payouts.
 | `RacingPostUSAResults` | USA | ✅ 100% | Primary USA TB results source |
 | `StandardbredCanadaResults` | USA | ✅ 100% | Harness; Mohawk etc. |
 | `SportingLifeResults` | USA+INT | ✅ ~100% | UK/IRE primary; also picks up USA |
-| `EquibaseResults` | USA | ❌ 0% | Bot-blocked on dated result pages |
-| `DRFResults` | USA | ⏳ Planned | Class not yet implemented |
-| `NYRABetsResults` | USA | ✅ 100% | Prolific global source; marked SOLID |
+| `EquibaseResults` | USA | ✅ Active | Uses Camoufox to bypass blocks |
+| `DRFResults` | USA | ✅ Active | Supplementary USA TB text charts |
+| `NYRABetsResults` | USA | ⚠️ Deprecated | Internal API returning 403 |
 | `RacingPostResults` | INT | ✅ ~100% | Primary INT TB results source |
 | `SkySportsResults` | INT | ✅ ~100% | UK/IRE |
 | `AtTheRacesResults` | INT | ⚠️ Intermittent | Known crash issues |
