@@ -97,59 +97,8 @@ jobs:
               return bool(conn.execute(f"SELECT 1 FROM pragma_table_info('tips') WHERE name='{col}'").fetchone())
 
           # ═══════════════════════════════════════════════════════════════════
-          emit("# 🔍 DB Auditor + Pipeline Health Monitor v3.1\n")
+          emit("# 📡 Pipeline Health & Entry Discovery Monitor\n")
           emit(f"> **Time:** {now_et.strftime('%y%m%d %H:%M ET')} · **Lookback:** {LOOKBACK}h · **Status:** {'Active' if db_existed else 'RECONSTRUCTING'}\n")
-          flush()
-
-          # ═══════════════════════════════════════════════════════════════════
-          # PHASE 1: RUN THE ACTUAL AUDIT
-          # ═══════════════════════════════════════════════════════════════════
-          emit("## Phase 1: Audit Execution\n")
-          audit_success = False
-          audit_error   = None
-
-          try:
-              t0 = time.time()
-              # BUG-1 Fix: Increased timeout to 1200s to handle large batches and browser overhead
-              result = subprocess.run(
-                  ["python3", "fortuna_analytics.py", "--days", "3", "--lookback-hours", str(LOOKBACK), "--include-lifetime-stats"],
-                  capture_output=True, text=True, timeout=1200, env={**os.environ, "PYTHONPATH": "."}
-              )
-              elapsed = time.time() - t0
-              emit(f"**Exit code:** {result.returncode} · **Duration:** {elapsed:.1f}s\n")
-              if result.stdout:
-                  save_snapshot("audit_stdout", result.stdout)
-                  lines = result.stdout.strip().split("\n")
-                  emit("### Audit Report (tail)\n```text")
-                  for line in lines[-60:]: emit(line)
-                  emit("```\n")
-              if result.stderr:
-                  save_snapshot("audit_stderr", result.stderr)
-              if result.returncode != 0:
-                  emit("### ❌ Audit stderr\n```text\n" + result.stderr[-1500:] + "\n```\n")
-                  audit_error = result.stderr[-500:]
-              else:
-                  audit_success = True
-          except subprocess.TimeoutExpired as e:
-              # Capture whatever partial output was produced before the timeout
-              partial_out = e.stdout or ''
-              partial_err = e.stderr or ''
-              if partial_out:
-                  save_snapshot("audit_stdout_partial", partial_out)
-              if partial_err:
-                  save_snapshot("audit_stderr_partial", partial_err)
-              emit(f"❌ Audit execution timed out after {e.timeout}s\n")
-              if partial_err:
-                  emit(f"### Partial stderr\n```text\n{partial_err[-1000:]}\n```\n")
-              elif partial_out:
-                  lines = partial_out.strip().split("\n")
-                  emit(f"### Partial stdout (last 30 lines)\n```text")
-                  for line in lines[-30:]: emit(line)
-                  emit("```\n")
-              audit_error = f'Timed out after {e.timeout}s'
-          except Exception as e:
-              emit(f"❌ Audit execution failed: `{e}`\n")
-              audit_error = str(e)
           flush()
 
           # ═══════════════════════════════════════════════════════════════════
@@ -261,15 +210,11 @@ jobs:
               if total and uv > total * 0.1: dq.append(f"❌ UNKNOWN: {uv} unmatchable venues.")
 
           # ═══════════════════════════════════════════════════════════════════
-          # ACTION PLAN (emitted FIRST — before forensic details)
+          # ENTRY DISCOVERY ACTION PLAN (Focus on fetching and pipeline)
           # ═══════════════════════════════════════════════════════════════════
-          emit("## 🎯 Action Plan\n")
+          emit("## 🎯 Discovery & Pipeline Action Plan\n")
           findings = []
           severity = "HEALTHY"
-
-          if not audit_success:
-              severity = "WARNING"
-              findings.append(f"🟠 **Audit partial or failed:** `{audit_error or 'Unknown exit code'}`")
 
           if STALE_HOURS > 48:
               severity = "CRITICAL"
@@ -277,31 +222,6 @@ jobs:
           elif STALE_HOURS > 24:
               if severity != "CRITICAL": severity = "WARNING"
               findings.append(f"🟠 **Data Lagging ({STALE_HOURS:.1f}h):** Check individual adapter health.")
-
-          # Hit rate margin assessment
-          if has_table("tips"):
-              overall = conn.execute("SELECT SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, AVG(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN net_profit + 2.0 END) as ap FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchone()
-              ow, ol, ap = (overall['w'] or 0), (overall['l'] or 0), (overall['ap'] or 2.0)
-              dec = ow + ol
-              if dec >= 10:
-                  hr, be = ow/dec*100, 2.0/ap*100
-                  margin = hr - be
-                  if margin < -5:
-                      if severity == "HEALTHY": severity = "WARNING"
-                      findings.append(f"🟠 **Performance Alert:** Hit rate ({hr:.1f}%) is {abs(margin):.1f}pp below breakeven.")
-                  elif margin > 5:
-                      findings.append(f"🟢 **Performance Edge:** Hit rate ({hr:.1f}%) is {margin:.1f}pp above breakeven.")
-
-              # Loss streak assessment
-              res = conn.execute("SELECT verdict FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time DESC LIMIT 10").fetchall()
-              if res:
-                  streak = 0
-                  for x in res:
-                      if x['verdict'] == 'BURNED': streak += 1
-                      else: break
-                  if streak >= 5:
-                      if severity != "CRITICAL": severity = "WARNING"
-                      findings.append(f"🟠 **Alert:** Current loss streak is {streak}. Review qualification thresholds.")
 
           # Scoring columns health check
           if has_table("tips") and total and total > 0:
@@ -318,21 +238,19 @@ jobs:
               severity = "CRITICAL"
               findings.append(f"🔴 **Data Integrity Failure:** {len(dq_errors)} critical assertions failed (Section 2T).")
 
-          emit(f"### Status: **{severity}**\n")
-          if not findings: findings.append("🟢 All systems nominal.")
+          emit(f"### Discovery Status: **{severity}**\n")
+          if not findings: findings.append("🟢 Entry discovery pipeline nominal.")
           for f in findings: emit(f)
-          emit("\n### Recommended Actions\n")
+          emit("\n### Recommended Actions (Discovery)\n")
           if severity == "CRITICAL":
               emit("1. RE-DEPLOY discovery adapters.")
               emit("2. PURGE corrupted data (Section 2T).")
               emit("3. Check proxy health.")
-              emit("4. If scoring columns NULL: verify BUG-10 fix (log_tips) is deployed.")
           elif severity == "WARNING":
-              emit("1. Check Phase 3 harvest logs for failures.")
+              emit("1. Check Phase 2 harvest logs for failures.")
               emit("2. Review stuck tips age distribution.")
-              emit("3. If audit timed out: verify BUG-1 fix (Persistent Browser Sessions) is deployed.")
-          else: emit("1. System healthy. Monitor ROI trend.")
-          emit("\n---\n*Audit assessment completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
+          else: emit("1. Discovery healthy. Monitoring for anomalies.")
+          emit("\n---\n*Discovery assessment completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
           flush()
 
           # ═══════════════════════════════════════════════════════════════════
@@ -762,7 +680,103 @@ jobs:
           emit("```\n")
           flush()
 
-          emit("\n---\n*Audit completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
+          # ═══════════════════════════════════════════════════════════════════
+          # PHASE 4: AUDIT EXECUTION (Moved to bottom)
+          # ═══════════════════════════════════════════════════════════════════
+          emit("## Phase 4: Results Audit Execution\n")
+          audit_success = False
+          audit_error   = None
+
+          try:
+              t0 = time.time()
+              # BUG-1 Fix: Increased timeout to 1200s to handle large batches and browser overhead
+              result = subprocess.run(
+                  ["python3", "fortuna_analytics.py", "--days", "3", "--lookback-hours", str(LOOKBACK), "--include-lifetime-stats"],
+                  capture_output=True, text=True, timeout=1200, env={**os.environ, "PYTHONPATH": "."}
+              )
+              elapsed = time.time() - t0
+              emit(f"**Exit code:** {result.returncode} · **Duration:** {elapsed:.1f}s\n")
+              if result.stdout:
+                  save_snapshot("audit_stdout", result.stdout)
+                  lines = result.stdout.strip().split("\n")
+                  emit("### Audit Report (tail)\n```text")
+                  for line in lines[-60:]: emit(line)
+                  emit("```\n")
+              if result.stderr:
+                  save_snapshot("audit_stderr", result.stderr)
+              if result.returncode != 0:
+                  emit("### ❌ Audit stderr\n```text\n" + result.stderr[-1500:] + "\n```\n")
+                  audit_error = result.stderr[-500:]
+              else:
+                  audit_success = True
+          except subprocess.TimeoutExpired as e:
+              # Capture whatever partial output was produced before the timeout
+              partial_out = e.stdout or ''
+              partial_err = e.stderr or ''
+              if partial_out:
+                  save_snapshot("audit_stdout_partial", partial_out)
+              if partial_err:
+                  save_snapshot("audit_stderr_partial", partial_err)
+              emit(f"❌ Audit execution timed out after {e.timeout}s\n")
+              if partial_err:
+                  emit(f"### Partial stderr\n```text\n{partial_err[-1000:]}\n```\n")
+              elif partial_out:
+                  lines = partial_out.strip().split("\n")
+                  emit(f"### Partial stdout (last 30 lines)\n```text")
+                  for line in lines[-30:]: emit(line)
+                  emit("```\n")
+              audit_error = f'Timed out after {e.timeout}s'
+          except Exception as e:
+              emit(f"❌ Audit execution failed: `{e}`\n")
+              audit_error = str(e)
+          flush()
+
+          # Audit Action Plan (Appears AFTER results execution)
+          if audit_success or audit_error:
+              emit("## 🎯 Audit & ROI Action Plan\n")
+              a_findings = []
+              a_severity = "HEALTHY"
+
+              if not audit_success:
+                  a_severity = "WARNING"
+                  a_findings.append(f"🟠 **Audit partial or failed:** `{audit_error or 'Unknown exit code'}`")
+
+              if has_table("tips"):
+                  overall = conn.execute("SELECT SUM(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN 1 ELSE 0 END) as w, SUM(CASE WHEN verdict='BURNED' THEN 1 ELSE 0 END) as l, AVG(CASE WHEN verdict IN ('CASHED','CASHED_ESTIMATED') THEN net_profit + 2.0 END) as ap FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED')").fetchone()
+                  ow, ol, ap = (overall['w'] or 0), (overall['l'] or 0), (overall['ap'] or 2.0)
+                  dec = ow + ol
+                  if dec >= 10:
+                      hr, be = ow/dec*100, 2.0/ap*100
+                      margin = hr - be
+                      if margin < -5:
+                          if a_severity == "HEALTHY": a_severity = "WARNING"
+                          a_findings.append(f"🟠 **Performance Alert:** Hit rate ({hr:.1f}%) is {abs(margin):.1f}pp below breakeven.")
+                      elif margin > 5:
+                          a_findings.append(f"🟢 **Performance Edge:** Hit rate ({hr:.1f}%) is {margin:.1f}pp above breakeven.")
+
+                  # Loss streak assessment
+                  res = conn.execute("SELECT verdict FROM tips WHERE audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED','BURNED') ORDER BY start_time DESC LIMIT 10").fetchall()
+                  if res:
+                      streak = 0
+                      for x in res:
+                          if x['verdict'] == 'BURNED': streak += 1
+                          else: break
+                      if streak >= 5:
+                          if a_severity != "CRITICAL": a_severity = "WARNING"
+                          a_findings.append(f"🟠 **Alert:** Current loss streak is {streak}. Review qualification thresholds.")
+
+              emit(f"### Audit Status: **{a_severity}**\n")
+              if not a_findings: a_findings.append("🟢 Audit pipeline healthy. Strategy performing as expected.")
+              for f in a_findings: emit(f)
+              emit("\n### Recommended Actions (Audit)\n")
+              if a_severity == "WARNING":
+                  emit("1. Review recent high-odds BURNED streaks.")
+                  emit("2. If audit timed out: verify SmartFetcher persistent session logic.")
+              else: emit("1. Audit healthy. Strategy stable.")
+              emit("\n---\n*Audit assessment completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
+              flush()
+
+          emit("\n---\n*Pipeline diagnostic completed at " + datetime.now(EASTERN).strftime('%y%m%d %H:%M ET') + "*")
           flush()
 
           conn.close()
