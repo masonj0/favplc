@@ -1837,7 +1837,7 @@ class EquibaseResultsAdapter(PageFetchingResultsAdapter):
         # S5 — extract race type (independent review item)
         # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
         is_handicap = None
@@ -2031,7 +2031,7 @@ class RacingPostResultsAdapter(PageFetchingResultsAdapter):
         header_node = parser.css_first(".rp-raceCourse__panel__race__info") or parser.css_first(".RC-course__info")
         if header_node:
             header_text = fortuna.node_text(header_node)
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
             if "HANDICAP" in header_text.upper():
                 is_handicap = True
@@ -2583,7 +2583,7 @@ class AtTheRacesResultsAdapter(PageFetchingResultsAdapter):
         race_type = None
         header_node = parser.css_first(".race-header__details--secondary") or parser.css_first(".race-header")
         if header_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', fortuna.node_text(header_node), re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', fortuna.node_text(header_node), re.I)
             if rt_match: race_type = rt_match.group(1)
 
         return ResultRace(
@@ -3162,7 +3162,7 @@ class SportingLifeResultsAdapter(PageFetchingResultsAdapter):
         race_type = None
         # Try summary header or card info
         header_text = summary.get("race_title") or summary.get("race_name") or ""
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
 
         is_handicap = summary.get("has_handicap")

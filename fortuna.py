@@ -3034,7 +3034,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         header_node = parser.css_first(".sdc-site-racing-header__name") or parser.css_first("h1") or parser.css_first("h2")
         if header_node:
             header_text = node_text(header_node)
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
             if rt_match: race_type = rt_match.group(1)
             if "HANDICAP" in header_text.upper():
                 is_handicap = True
@@ -3381,7 +3381,7 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         # Hardening Fix: Broaden race type detection to improve scoring population
         race_type = None
         is_handicap = None
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
         if rt_match: race_type = rt_match.group(1)
         if "HANDICAP" in header_text.upper():
             is_handicap = True
@@ -3800,11 +3800,10 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
 
         # S5 — extract race type (independent review item)
         # Hardening Fix: Broaden race type detection to improve scoring population
-        race_type_raw = summary.get("race_title") or summary.get("race_name") or ""
-        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', race_type_raw, re.I)
-        race_type = rt_match.group(1) if rt_match else ("Handicap" if is_handicap else None)
-
         is_handicap = summary.get("has_handicap")
+        race_type_raw = summary.get("race_title") or summary.get("race_name") or ""
+        rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition)', race_type_raw, re.I)
+        race_type = rt_match.group(1) if rt_match else ("Handicap" if is_handicap else None)
         return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, is_handicap=is_handicap, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
@@ -3853,7 +3852,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         race_type = None
         ht_node = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
         if ht_node:
-            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', node_text(ht_node), re.I)
+            rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', node_text(ht_node), re.I)
             if rt_match: race_type = rt_match.group(1)
 
         dn = parser.css_first('span[class*="RacecardHeader__Distance"]') or parser.css_first(".race-distance")
@@ -4048,7 +4047,7 @@ class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePa
             # S5 — extract race type (independent review item)
             race_type = None
             if h:
-                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', node_text(h), re.I)
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', node_text(h), re.I)
                 if rt_match: race_type = rt_match.group(1)
 
             races.append(Race(id=generate_race_id("sky", track_name, start_time, item.get("race_number", 0), disc), venue=track_name, race_number=item.get("race_number", 0), start_time=start_time, runners=runners, distance=dist, discipline=disc, race_type=race_type, source=self.source_name, available_bets=ab))
@@ -4797,7 +4796,7 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 # S5 — extract race type (independent review item)
                 race_type = None
                 header_text = node_text(p.css_first("div.race-information")) or html_content[:2000]
-                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
                 runners = [r for node in p.css("table.entries-table tbody tr") if (r := self._parse_runner(node))]
@@ -9239,7 +9238,7 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
                     or parser.css_first('.RC-course__info')
                     or parser.css_first('.RC-courseHeader')
                 )
-                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed)', header_text, re.I)
+                rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition|Hurdle|Chase|Bumper|National\s+Hunt|Steeplechase)', header_text, re.I)
                 if rt_match: race_type = rt_match.group(1)
 
                 is_handicap = None
