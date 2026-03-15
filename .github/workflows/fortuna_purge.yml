@@ -180,8 +180,8 @@ jobs:
                   conn.execute(f"DELETE FROM tips WHERE {where_clause}", params)
                   if harvest_count > 0:
                       conn.execute("DELETE FROM harvest_logs WHERE race_count = 0 OR race_count IS NULL")
-                  conn.execute("VACUUM")
                   conn.commit()
+                  conn.execute("VACUUM")
                   size_after = get_size_kb()
                   print(f"  📦 Database size: {size_before:.1f} KB → {size_after:.1f} KB ({size_before - size_after:+.1f} KB)\n")
 

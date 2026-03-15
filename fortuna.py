@@ -286,9 +286,9 @@ def print_quick_help():
         print_func = lambda msg: sl.info(msg)
 
     help_text = """
-    [bold yellow]Welcome to Fortuna Faucet Intelligence![/]
+    [bold yellow]Welcome to Fortuna Faucet Intelligence![/] ✨
 
-    This app helps you discover "Goldmine" racing opportunities where the
+    Hello! I'm here to help you discover "Goldmine" racing opportunities where the
     second favorite has strong odds and a significant gap from the favorite.
 
     [bold]Common Commands:[/]
@@ -5747,10 +5747,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     race.metadata['goldmine_confidence'] = 'high'
                     race.metadata['goldmine_sources'] = list(fav_sources)
                     race.metadata['is_goldmine'] = True # Ensure high-confidence is marked as Goldmine
+                    # Success Tier: Diamond for multi-source large fields
+                    if total_active >= 8:
+                        race.metadata['success_tier'] = 'Diamond'
+                    else:
+                        race.metadata['success_tier'] = 'Platinum'
                 else:
                     race.metadata['goldmine_confidence'] = 'low'
                     race.metadata['goldmine_sources'] = list(fav_sources)
                     # Low confidence (emerging) also stays goldmine but with low tag
+                    race.metadata['success_tier'] = 'Gold'
 
             # Composite Scoring — recalibrated for absolute gap
             composite = 45.0  # lower base — marginal races land at B+, not A
@@ -6545,9 +6551,12 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         else:
             st_str = "??:??"
 
+        tier = r.metadata.get('success_tier', 'Gold')
+        tier_badge = f'<span class="badge" style="background-color: #e2e8f0; color: #0f172a; margin-right: 5px;">{tier.upper()}</span>'
+
         goldmine_cards.append(f"""
             <div class="goldmine-card {conf_class}">
-                <div class="badge gold" style="float:right;">{conf_label}</div>
+                <div style="float:right;">{tier_badge}<span class="badge gold">{conf_label}</span></div>
                 <div class="goldmine-title">💎 #{sel_num} {sel_name}</div>
                 <div class="goldmine-venue">{getattr(r, 'venue', 'Unknown')} R{getattr(r, 'race_number', '?')} @ {st_str}</div>
                 <div style="display:flex; justify-content:space-between;">
@@ -6639,8 +6648,9 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
         <title>Fortuna Faucet Intelligence Report</title>
         <style>
             body {{ font-family: 'Segoe UI', Arial, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }}
-            .container {{ max-width: 1000px; margin: 0 auto; background-color: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
-            h1 {{ color: #fbbf24; text-align: center; text-transform: uppercase; letter-spacing: 3px; border-bottom: 2px solid #fbbf24; padding-bottom: 15px; }}
+            .container {{ max-width: 1000px; margin: 0 auto; background-color: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); border: 1px solid #334155; }}
+            h1 {{ color: #fbbf24; text-align: center; text-transform: uppercase; letter-spacing: 3px; border-bottom: 2px solid #fbbf24; padding-bottom: 15px; margin-bottom: 10px; }}
+            .welcome-msg {{ text-align: center; color: #4ade80; font-style: italic; margin-bottom: 25px; font-size: 1.1em; }}
             .stats-grid {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 30px 0; }}
             .stat-card {{ background-color: #334155; padding: 20px; border-radius: 8px; text-align: center; }}
             .stat-value {{ font-size: 24px; font-weight: bold; color: #fbbf24; }}
@@ -6665,6 +6675,7 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
     <body>
         <div class="container">
             <h1>Fortuna Faucet Intelligence</h1>
+            <div class="welcome-msg">Hello JB! Ready to discover some incredible racing opportunities together! ✨</div>
             <p style="text-align:center;">Real-time global racing analysis generated at {now_str} ET</p>
 
             <div class="stats-grid">
@@ -6706,8 +6717,8 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             {await _generate_audit_history_html()}
 
             <div class="footer">
-                Fortuna Faucet Portable App - Sci-Fi Intelligence Edition<br>
-                Powered by the Council of Superbrains
+                <p>Fortuna Faucet Portable App - Sci-Fi Intelligence Edition</p>
+                <p style="color: #4ade80;">"Every day is a new opportunity for success. Let's make it a great one!" ✨</p>
             </div>
         </div>
     </body>
@@ -8206,8 +8217,9 @@ class FortunaDB:
             conn = self._get_conn()
             with conn:
                 conn.execute("DELETE FROM tips")
+                conn.execute("DELETE FROM harvest_logs")
             conn.execute("VACUUM")
-            self.logger.info("Database cleared (all tips deleted)")
+            self.logger.info("Database cleared (all tips and logs deleted)")
         await self._run_in_executor(_clear)
 
     async def migrate_from_json(self, json_path: str = "hot_tips_db.json"):
@@ -8583,6 +8595,12 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         Fetches the raw HTML for all race pages for a given date. This involves a multi-level fetch.
         """
+        # Success Strategy: Bootstrap session if using browser
+        try:
+            await self.make_request("GET", "https://www.oddschecker.com/horse-racing", timeout=20, raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
+
         sem = asyncio.Semaphore(3)
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
@@ -9840,7 +9858,10 @@ async def run_quarter_fetch(
     for adapter_name, stats in harvest_summary.items():
         count = stats.get("count", 0)
         status = stats.get("status")
-        logger.info("adapter_fetch_complete", adapter=adapter_name, count=count, status=status)
+        if count > 0:
+            logger.info("Great news! Adapter fetch successful! ✨", adapter=adapter_name, count=count, status=status)
+        else:
+            logger.info("adapter_fetch_complete", adapter=adapter_name, count=count, status=status)
 
     # Deduplicate
     race_map = {}
@@ -9954,7 +9975,7 @@ async def run_score_now(
     if qualified:
         tracker = HotTipsTracker(db, config)
         await tracker.log_tips(qualified, daypart_tag=daypart_tag)
-        logger.info("Persisted qualified tips", count=len(qualified))
+        logger.info("Success! We have persisted some incredible qualified tips! 🚀", count=len(qualified))
 
     # 12. Log scoring run
     await db.log_scoring_run(daypart_tag, len(qualified))
