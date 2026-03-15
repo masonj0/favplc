@@ -421,6 +421,12 @@ jobs:
           path: fortuna.db
           key: fortuna-db-v4-master-${{ github.run_number }}
 
+      - name: Export to Excel
+        if: always()
+        run: |
+          python3 -m pip install openpyxl pandas
+          python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_export.xlsx
+
       - name: Upload Final Reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -432,4 +438,5 @@ jobs:
             analytics_report.txt
             fortuna.db
             workflow_metadata.json
+            fortuna_export.xlsx
           retention-days: 1
