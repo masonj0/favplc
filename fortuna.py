@@ -219,13 +219,17 @@ def print_status_card(config: Dict[str, Any]):
         sl = structlog.get_logger()
         print_func = lambda msg: sl.info(msg)
 
-    print_func("\n" + "═" * 60)
-    print_func(f" 🐎 FORTUNA FAUCET INTELLIGENCE - v{version} ".center(60, "═"))
-    print_func("═" * 60)
+    print_func("\n" + "🌟 " + "═" * 54 + " 🌟")
+    print_func(f" ✨ FORTUNA FAUCET INTELLIGENCE - v{version} ✨ ".center(60, "═"))
+    print_func("🌟 " + "═" * 54 + " 🌟")
+
+    # Friendly Greeting
+    print_func(f"\n [bold yellow]Hello JB![/] 🚀")
+    print_func(f" Ready to discover some incredible racing opportunities today!\n")
 
     # Region and active mode
     region = config.get("region", {}).get("default", "GLOBAL")
-    print_func(f" 📍 Region: [bold cyan]{region}[/] | 🔍 Status: [bold green]READY[/]")
+    print_func(f" 📍 Region: [bold cyan]{region}[/] | 🔍 Status: [bold green]POWERED UP & READY[/]")
 
     # Database status
     db = FortunaDB()
@@ -242,22 +246,32 @@ def print_status_card(config: Dict[str, Any]):
         goldmines = cursor.fetchone()[0]
         conn.close()
 
-        print_func(f" 📊 Database: {total_tips} tips | ✅ {audited} audited | 💎 {goldmines} goldmines")
+        print_func(f" 📊 Database: [bold white]{total_tips}[/] tips | ✅ [bold green]{audited}[/] audited | 💎 [bold gold1]{goldmines}[/] goldmines")
     except Exception:
-        print_func(" 📊 Database: INITIALIZING")
+        print_func(" 📊 Database: WARMING UP...")
 
     # Odds Hygiene
     trust_min = config.get("analysis", {}).get("simply_success_trust_min", 0.25)
-    print_func(f" 🛡️  Odds Hygiene: >{int(trust_min*100)}% trust ratio required")
+    print_func(f" 🛡️  Odds Hygiene: >{int(trust_min*100)}% trust ratio (Pure Signal Only!)")
+
+    # Golden Tip
+    tips = [
+        "Goldmines are the purest signal – trust the gap!",
+        "Handicap races with large fields often yield the best place value.",
+        "Consistency is key: 24/7 global fetching keeps the faucet running.",
+        "The Council of Superbrains recommends checking the Goldmine report first!",
+        "A 70% trust ratio ensures we only bet on high-fidelity data."
+    ]
+    print_func(f" 💡 [bold blue]Golden Tip:[/] {random.choice(tips)}")
 
     # Reports
     reports = []
     if get_writable_path("summary_grid.txt").exists(): reports.append("Summary")
     if get_writable_path("fortuna_report.html").exists(): reports.append("HTML")
     if reports:
-        print_func(f" 📁 Latest Reports: {', '.join(reports)}")
+        print_func(f" 📁 Latest Intel: [bold magenta]{', '.join(reports)}[/]")
 
-    print_func("═" * 60 + "\n")
+    print_func("\n" + "🌟 " + "═" * 54 + " 🌟" + "\n")
 
 def print_quick_help():
     """Prints a friendly onboarding guide for new users."""
@@ -1443,7 +1457,8 @@ class SmartFetcher:
                             # Hardening Fix: If using Playwright, wait and retry once to allow automated solving
                             if engine == BrowserEngine.PLAYWRIGHT:
                                 self.logger.info("Waiting for automated challenge solution...", engine=engine.value)
-                                await asyncio.sleep(18)
+                                # Increased wait to 30s to handle complex Cloudflare/Datadome challenges (P0 Improvement)
+                                await asyncio.sleep(30)
                                 # Hardening Fix: Use copy for internal wait-retry too
                                 retry_kwargs = kwargs.copy()
                                 retry_kwargs["method"] = method
@@ -2863,21 +2878,29 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         # Index for the day
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
+        # Standard URL for SRW form guide
         index_url = f"/form-guide/thoroughbred/{date_iso}"
+
+        # Success Strategy: Bootstrap session on the form guide root first
+        try:
+            await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False)
+        except Exception: pass
+
         # Success Strategy: Try both dated and generic index (Fix redirects)
-        index_urls = [index_url, "/racing/racecards"]
+        index_urls = [index_url, "/form-guide/thoroughbred", "/form-guide"]
         resp = None
         for u in index_urls:
             try:
                 resp = await self.make_request("GET", u, headers=self._get_headers())
                 if resp and resp.text:
-                    if date_iso in resp.text or "/racing/racecards/" + date_iso in resp.text:
+                    # Check if the page actually contains race links for the target date
+                    if date_iso in resp.text or "/R" in resp.text:
                         break
             except Exception:
                 continue
 
         if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+            if resp: self.logger.warning("Unexpected status", status=getattr(resp, 'status', 'unknown'), url=index_url)
             return None
         self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
 
@@ -3084,11 +3107,11 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         # Success Strategy: Bootstrap session if using browser
-        strategy = self.smart_fetcher.strategy
-        if strategy.primary_engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
-            try:
-                await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="domcontentloaded", timeout=15)
-            except Exception: pass
+        # For ATR, always try to establish a session on the main site first
+        try:
+            await self.make_request("GET", "https://www.attheraces.com/", wait_until="domcontentloaded", timeout=20, raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
 
         # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
         dt = parse_date_string(date)
@@ -4479,29 +4502,20 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
         try:
-            await self.smart_fetcher.fetch(
+            await self.make_request(
+                "GET",
                 "https://www.nyrabets.com/",
-                method="GET",
-                headers=self._get_headers()
+                headers=self._get_headers(),
+                timeout=30,
+                raise_for_status=False
             )
-            await asyncio.sleep(1.5)  # Allow cookies to settle
+            await asyncio.sleep(2)  # Allow cookies to settle
         except Exception as e:
-            self.logger.debug("NYRABets bootstrap failed, attempting API anyway", error=str(e))
+            self.logger.debug("NYRABets bootstrap failed", error=str(e))
 
         # 1. Get Cards (Meetings)
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
-
-        # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
-        try:
-            await self.smart_fetcher.fetch(
-                "https://www.nyrabets.com/",
-                method="GET",
-                headers=self._get_headers()
-            )
-            await asyncio.sleep(1.5)  # Allow cookies to settle
-        except Exception as e:
-            self.logger.debug("NYRABets bootstrap failed", error=str(e))
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
@@ -4510,12 +4524,15 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             "header": header, "cohort": "A--", "wageringCohort": "NBI",
             "cardDate": nyra_date, "wantFeaturedContent": True
         }
+
+        # Strategy: Ensure form-data payload is correctly stringified for ListCards (Hardening Fix)
         try:
-            resp = await self.smart_fetcher.fetch(
+            resp = await self.make_request(
+                "POST",
                 f"{self.API_URL}/ListCards.ashx",
-                method="POST",
                 data={"request": json.dumps(cards_payload)},
-                headers=self._get_headers()
+                headers=self._get_headers(),
+                timeout=40
             )
             if not resp or not resp.text: return None
             cards_data = json.loads(resp.text)
@@ -4526,9 +4543,9 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             races_payload = {
                 "header": header, "cohort": "A--", "wageringCohort": "NBI", "cardIds": card_ids
             }
-            resp = await self.smart_fetcher.fetch(
+            resp = await self.make_request(
+                "POST",
                 f"{self.API_URL}/ListRaces.ashx",
-                method="POST",
                 data={"request": json.dumps(races_payload)},
                 headers=self._get_headers()
             )
@@ -5718,7 +5735,10 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 race.metadata['is_goldmine_multi_source'] = is_multi_source
 
                 if not is_multi_source:
-                    self.logger.info("Goldmine marked as Emerging: single-source odds only",
+                    self.logger.info("A promising Goldmine has been spotted! It's marked as Emerging (single-source). ✨",
+                                    venue=race.venue, race=race.race_number, selection=fav.name, sources=list(fav_sources))
+                else:
+                    self.logger.info("🌟 Incredible High-Confidence Goldmine discovered! 🌟",
                                     venue=race.venue, race=race.race_number, selection=fav.name, sources=list(fav_sources))
 
                 # P2-ENH-4 Multi-source gap confirmation
@@ -5726,15 +5746,19 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 if len(fav_sources) >= 2:
                     race.metadata['goldmine_confidence'] = 'high'
                     race.metadata['goldmine_sources'] = list(fav_sources)
+                    race.metadata['is_goldmine'] = True # Ensure high-confidence is marked as Goldmine
                 else:
                     race.metadata['goldmine_confidence'] = 'low'
                     race.metadata['goldmine_sources'] = list(fav_sources)
+                    # Low confidence (emerging) also stays goldmine but with low tag
 
             # Composite Scoring — recalibrated for absolute gap
             composite = 45.0  # lower base — marginal races land at B+, not A
 
             # Gap contribution (capped at 8 points of gap)
-            composite += min(gap_abs, 8.0) * 2.5
+            # Hardening Fix: apply stronger reward for multi-source confirmed gaps
+            gap_weight = 3.0 if is_goldmine and race.metadata.get('goldmine_confidence') == 'high' else 2.5
+            composite += min(gap_abs, 8.0) * gap_weight
 
             # Field size tiers (BUG-CR-02: Fixed shadowing and unreachable code)
             if total_active < 5:          composite -= 10.0  # sub-minimum
@@ -6369,9 +6393,9 @@ def generate_adapter_health_report(harvest_summary: Dict[str, Dict]) -> str:
     """Generate a human-readable adapter health dashboard."""
     lines = []
     lines.append('')
-    lines.append('=' * 72)
-    lines.append('  \U0001F4E1 ADAPTER HEALTH DASHBOARD')
-    lines.append('=' * 72)
+    lines.append('═' * 72)
+    lines.append('  🚀 ADAPTER HEALTH DASHBOARD — READY FOR SUCCESS!')
+    lines.append('═' * 72)
 
     succeeded = []
     failed = []
@@ -9780,20 +9804,25 @@ async def run_quarter_fetch(
     phase1_timeout = 240  # 4 minutes for all data adapters combined
 
     if phase1_adapters:
+        pending = [asyncio.create_task(fetch_one(cls)) for cls in phase1_adapters]
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*[
-                    fetch_one(cls) for cls in phase1_adapters
-                ], return_exceptions=True),
-                timeout=phase1_timeout
-            )
-            for r in results:
-                if isinstance(r, list):
-                    all_races_raw.extend(r)
-        except asyncio.TimeoutError:
-            logger.warning('phase1_timeout_reached',
-                        completed_races=len(all_races_raw),
-                        adapters_attempted=len(phase1_adapters))
+            done, pending = await asyncio.wait(pending, timeout=phase1_timeout)
+            for task in done:
+                try:
+                    r = task.result()
+                    if isinstance(r, list):
+                        all_races_raw.extend(r)
+                except Exception as e:
+                    logger.error("task_error", error=str(e))
+
+            if pending:
+                logger.warning('Some discovery adapters are taking longer than expected, but we have collected what we could! ✨',
+                            completed_races=len(all_races_raw),
+                            adapters_pending=len(pending))
+                for task in pending:
+                    task.cancel()
+        except Exception as e:
+            logger.error('phase1_execution_error', error=str(e))
 
     # Phase 2: Health checks only if time permits and explicitly included
     if tier3_health:

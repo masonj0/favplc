@@ -10,14 +10,14 @@ on:
         type: choice
         options: ['false', 'true']
       cutoff_date:
-        description: 'Delete ALL tips before this date (YYMMDD, default is 260225)'
+        description: 'Delete ALL tips before this date (YYMMDD, default is 260312)'
         required: false
-        default: "260225"
+        default: "260312"
         type: string
       cutoff_time:
-        description: 'Delete tips before this time on cutoff date (HH:MM in ET, default: 11:00)'
+        description: 'Delete tips before this time on cutoff date (HH:MM in ET, default: 00:00)'
         required: false
-        default: '11:00'
+        default: '00:00'
         type: string
       exclude_venues:
         description: 'Keep tips from these venues (comma-separated, e.g., Aqueduct,Turfway Park)'
@@ -25,9 +25,9 @@ on:
         default: ''
         type: string
       target_adapters:
-        description: 'Only purge tips from these adapters (comma-separated, blank = all corrupted)'
+        description: 'Only purge tips from these adapters (comma-separated, blank = all)'
         required: false
-        default: 'RacingAndSportsResults,AtTheRacesResults,AtTheRacesGreyhoundResults'
+        default: ''
         type: string
 
 permissions:

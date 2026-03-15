@@ -299,6 +299,7 @@ async def test_sky_racing_world_adapter_parsing():
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
         mock_fetch.side_effect = [
+            MockResponse("bootstrap", 200),
             MockResponse(index_html, 200),
             MockResponse(race_html, 200)
         ]
