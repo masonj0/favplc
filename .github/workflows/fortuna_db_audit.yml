@@ -777,12 +777,20 @@ jobs:
             python3 scripts/generate_gha_summary.py || true
           fi
 
+      - name: Export to Excel
+        if: always()
+        run: |
+          python3 -m pip install openpyxl pandas
+          python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_audit_export.xlsx
+
       - name: Upload Audit Snapshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audit-snapshots-${{ github.run_number }}
-          path: _audit_snapshots/
+          path: |
+            _audit_snapshots/
+            fortuna_audit_export.xlsx
           retention-days: 7
           if-no-files-found: ignore
 

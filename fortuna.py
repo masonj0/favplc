@@ -2863,21 +2863,29 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         # Index for the day
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
+        # Standard URL for SRW form guide
         index_url = f"/form-guide/thoroughbred/{date_iso}"
+
+        # Success Strategy: Bootstrap session on the form guide root first
+        try:
+            await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False)
+        except Exception: pass
+
         # Success Strategy: Try both dated and generic index (Fix redirects)
-        index_urls = [index_url, "/racing/racecards"]
+        index_urls = [index_url, "/form-guide/thoroughbred"]
         resp = None
         for u in index_urls:
             try:
                 resp = await self.make_request("GET", u, headers=self._get_headers())
                 if resp and resp.text:
-                    if date_iso in resp.text or "/racing/racecards/" + date_iso in resp.text:
+                    # Check if the page actually contains race links for the target date
+                    if date_iso in resp.text or "/R" in resp.text:
                         break
             except Exception:
                 continue
 
         if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=resp.status, url=index_url)
+            if resp: self.logger.warning("Unexpected status", status=getattr(resp, 'status', 'unknown'), url=index_url)
             return None
         self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
 
@@ -3084,11 +3092,11 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         # Success Strategy: Bootstrap session if using browser
-        strategy = self.smart_fetcher.strategy
-        if strategy.primary_engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
-            try:
-                await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="domcontentloaded", timeout=15)
-            except Exception: pass
+        # For ATR, always try to establish a session on the main site first
+        try:
+            await self.make_request("GET", "https://www.attheraces.com/", wait_until="domcontentloaded", timeout=20, raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
 
         # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
         dt = parse_date_string(date)
@@ -4479,29 +4487,20 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
         try:
-            await self.smart_fetcher.fetch(
+            await self.make_request(
+                "GET",
                 "https://www.nyrabets.com/",
-                method="GET",
-                headers=self._get_headers()
+                headers=self._get_headers(),
+                timeout=30,
+                raise_for_status=False
             )
-            await asyncio.sleep(1.5)  # Allow cookies to settle
+            await asyncio.sleep(2)  # Allow cookies to settle
         except Exception as e:
-            self.logger.debug("NYRABets bootstrap failed, attempting API anyway", error=str(e))
+            self.logger.debug("NYRABets bootstrap failed", error=str(e))
 
         # 1. Get Cards (Meetings)
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
-
-        # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
-        try:
-            await self.smart_fetcher.fetch(
-                "https://www.nyrabets.com/",
-                method="GET",
-                headers=self._get_headers()
-            )
-            await asyncio.sleep(1.5)  # Allow cookies to settle
-        except Exception as e:
-            self.logger.debug("NYRABets bootstrap failed", error=str(e))
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
@@ -4511,9 +4510,9 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             "cardDate": nyra_date, "wantFeaturedContent": True
         }
         try:
-            resp = await self.smart_fetcher.fetch(
+            resp = await self.make_request(
+                "POST",
                 f"{self.API_URL}/ListCards.ashx",
-                method="POST",
                 data={"request": json.dumps(cards_payload)},
                 headers=self._get_headers()
             )
@@ -4526,9 +4525,9 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             races_payload = {
                 "header": header, "cohort": "A--", "wageringCohort": "NBI", "cardIds": card_ids
             }
-            resp = await self.smart_fetcher.fetch(
+            resp = await self.make_request(
+                "POST",
                 f"{self.API_URL}/ListRaces.ashx",
-                method="POST",
                 data={"request": json.dumps(races_payload)},
                 headers=self._get_headers()
             )
@@ -9780,20 +9779,25 @@ async def run_quarter_fetch(
     phase1_timeout = 240  # 4 minutes for all data adapters combined
 
     if phase1_adapters:
+        pending = [asyncio.create_task(fetch_one(cls)) for cls in phase1_adapters]
         try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*[
-                    fetch_one(cls) for cls in phase1_adapters
-                ], return_exceptions=True),
-                timeout=phase1_timeout
-            )
-            for r in results:
-                if isinstance(r, list):
-                    all_races_raw.extend(r)
-        except asyncio.TimeoutError:
-            logger.warning('phase1_timeout_reached',
-                        completed_races=len(all_races_raw),
-                        adapters_attempted=len(phase1_adapters))
+            done, pending = await asyncio.wait(pending, timeout=phase1_timeout)
+            for task in done:
+                try:
+                    r = task.result()
+                    if isinstance(r, list):
+                        all_races_raw.extend(r)
+                except Exception as e:
+                    logger.error("task_error", error=str(e))
+
+            if pending:
+                logger.warning('phase1_timeout_reached',
+                            completed_races=len(all_races_raw),
+                            adapters_pending=len(pending))
+                for task in pending:
+                    task.cancel()
+        except Exception as e:
+            logger.error('phase1_execution_error', error=str(e))
 
     # Phase 2: Health checks only if time permits and explicitly included
     if tier3_health:
