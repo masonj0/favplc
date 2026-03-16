@@ -188,7 +188,46 @@ async def main():
     upcoming_races.sort(key=lambda x: x['_mtp_val'])
 
     with open(summary_path, mode, encoding="utf-8") as f:
-        # --- FortunaDB Snapshot Section ---
+        # --- Upcoming Races Section (Moved to Top for Visibility) ---
+        f.write(f"# 🏇 Upcoming Races (AU/NZ/Global)\n\n")
+        f.write(f"Generated: {now_eastern().strftime('%y%m%d %H:%M:%S')} ET  \n")
+        if snapshot_source:
+            f.write(f"Source: `{snapshot_source}`\n\n")
+
+        if not upcoming_races:
+            f.write("No upcoming races found in current snapshot (-60 to +1440 MTP).\n")
+        else:
+            f.write("| MTP | Venue | R# | 1st Fav | 2nd Fav | Grade |\n")
+            f.write("|---|---|---|---|---|---|\n")
+            for r in upcoming_races:
+                mtp_s = _mtp_str(r['_mtp_val'])
+                venue = r.get('venue', 'Unknown')
+                rnum = r.get('race_number', '?')
+
+                # Get odds from snapshot runners
+                fav1, fav2 = get_fav_odds(r)
+                f1_s = f"{fav1:.2f}" if fav1 else ".unk."
+                f2_s = f"{fav2:.2f}" if fav2 else ".unk."
+
+                grade = r.get('_grade', '—')
+
+                f.write(f"| {mtp_s} | {venue} | {rnum} | {f1_s} | {f2_s} | {grade} |\n")
+
+        f.write("\n---\n")
+
+        # --- Adapter Health Section (P2-ENH-6) ---
+        health_path = Path("adapter_health_report.txt")
+        if health_path.exists():
+            f.write("\n## 📡 Adapter Health Dashboard\n\n")
+            f.write("<details>\n<summary>Click to view detailed adapter status</summary>\n\n")
+            f.write("```text\n")
+            f.write(health_path.read_text(encoding="utf-8"))
+            f.write("\n```\n")
+            f.write("</details>\n")
+
+        f.write("\n---\n")
+
+        # --- FortunaDB Snapshot Section (Moved to Bottom) ---
         f.write("## 🐎 FortunaDB Snapshot\n\n")
         if not db_path.exists():
             f.write(f"**Database:** `{db_path}` _(not found in workspace)_\n\n")
@@ -222,42 +261,30 @@ async def main():
                     profit  = f"${(row['net_profit'] or 0.0):+.2f}"
                     f.write(f"| {ts} | {venue} | R{rn} | {emoji} {verdict} | {profit} |\n")
 
-        f.write("\n---\n")
-
-        # --- Upcoming Races Section ---
-        f.write(f"# 🏇 Upcoming Races (AU/NZ/Global)\n\n")
-        f.write(f"Generated: {now_eastern().strftime('%y%m%d %H:%M:%S')} ET  \n")
-        if snapshot_source:
-            f.write(f"Source: `{snapshot_source}`\n\n")
-
-        if not upcoming_races:
-            f.write("No upcoming races found in current snapshot (-60 to +90 MTP).\n")
-        else:
-            f.write("| MTP | Venue | R# | 1st Fav | 2nd Fav | Grade |\n")
-            f.write("|---|---|---|---|---|---|\n")
-            for r in upcoming_races:
-                mtp_s = _mtp_str(r['_mtp_val'])
-                venue = r.get('venue', 'Unknown')
-                rnum = r.get('race_number', '?')
-
-                # Get odds from snapshot runners
-                fav1, fav2 = get_fav_odds(r)
-                f1_s = f"{fav1:.2f}" if fav1 else ".unk."
-                f2_s = f"{fav2:.2f}" if fav2 else ".unk."
-
-                grade = r.get('_grade', '—')
-
-                f.write(f"| {mtp_s} | {venue} | {rnum} | {f1_s} | {f2_s} | {grade} |\n")
-
-        # --- Adapter Health Section (P2-ENH-6) ---
-        health_path = Path("adapter_health_report.txt")
-        if health_path.exists():
-            f.write("\n## 📡 Adapter Health Dashboard\n\n")
-            f.write("<details>\n<summary>Click to view detailed adapter status</summary>\n\n")
-            f.write("```text\n")
-            f.write(health_path.read_text(encoding="utf-8"))
-            f.write("\n```\n")
-            f.write("</details>\n")
+        # Section 4: Goldmine Intelligence
+        try:
+            gm = await db.get_goldmine_stats()
+            if gm.get('total', 0) > 0:
+                f.write(f"\n### 💎 Goldmine Intelligence\n\n")
+                f.write(f"**Lifetime:** {gm['cashed']}/{gm['total']} cashed ({gm['strike_rate']:.1f}%) | "
+                        f"Net: ${gm['profit']:+.2f} | Avg Gap: {gm['avg_gap']:.2f}\n\n")
+                if gm.get('gap_tiers'):
+                    f.write("| Gap Range | Strike Rate | Profit | N |\n")
+                    f.write("|-----------|-------------|--------|---|\n")
+                    for label, t in gm['gap_tiers'].items():
+                        f.write(f"| {label} | {t['strike_rate']:.1f}% | ${t['profit']:+.2f} | {t['total']} |\n")
+                    f.write("\n")
+                if gm.get('tier_stats'):
+                    emoji_map = {'Diamond':'💎💎💎','Platinum':'💎💎','Gold':'💎'}
+                    f.write("| Tier | Strike Rate | Profit | N |\n")
+                    f.write("|------|-------------|--------|---|\n")
+                    for name, t in gm['tier_stats'].items():
+                        f.write(f"| {emoji_map.get(name,'')} {name} | {t['strike_rate']:.1f}% | ${t['profit']:+.2f} | {t['total']} |\n")
+                    f.write("\n")
+                if gm.get('superfecta_total'):
+                    f.write(f"**Superfecta:** {gm['superfecta_hits']}/{gm['superfecta_total']} hits | Avg: ${gm['avg_sf_payout']:.2f}\n")
+        except Exception:
+            pass  # Backward-compatible — old DBs without goldmine columns are fine
 
         f.write("\n---\n*Refreshes every hour*\n")
 
