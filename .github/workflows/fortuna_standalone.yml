@@ -122,7 +122,7 @@ jobs:
         with:
           path: |
             ~/.cache/pip
-            ~/.cache/ms-playwright
+            ~/.cache/ms-patchright
           key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
@@ -134,6 +134,9 @@ jobs:
           restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
+        env:
+          PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
@@ -183,6 +186,7 @@ jobs:
             races_${{ needs.resolve-mode.outputs.daypart_tag }}.json
             fortuna_${{ needs.resolve-mode.outputs.daypart_tag }}.db
             discovery_harvest_${{ needs.resolve-mode.outputs.daypart_tag }}.json
+            adapter_health_report.txt
           retention-days: 1
 
   scoring-loop:
@@ -267,7 +271,7 @@ jobs:
         with:
           path: |
             ~/.cache/pip
-            ~/.cache/ms-playwright
+            ~/.cache/ms-patchright
           key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
@@ -278,6 +282,9 @@ jobs:
           restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
+        env:
+          PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
@@ -441,4 +448,5 @@ jobs:
             fortuna.db
             workflow_metadata.json
             fortuna_export.xlsx
+            adapter_health_report.txt
           retention-days: 1
