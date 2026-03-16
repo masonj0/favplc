@@ -26,6 +26,13 @@ jobs:
         with:
           python-version: '3.12'    # Must match codebase target (was 3.11)
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-patchright
+          key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
+
       - name: Restore Master Database
         uses: actions/cache/restore@v4
         with:
@@ -34,6 +41,9 @@ jobs:
           restore-keys: fortuna-db-v4-master-
 
       - name: Install dependencies
+        env:
+          PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+          PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt

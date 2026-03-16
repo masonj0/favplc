@@ -7,6 +7,16 @@ import sys
 import platform
 import os
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CRITICAL: Monkeypatch playwright with patchright
+# Scrapling and Camoufox expect playwright internals
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+try:
+    import patchright
+    sys.modules['playwright'] = patchright
+except ImportError:
+    pass
+
 if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
     # Running as frozen EXE on Windows
     import asyncio
@@ -2756,30 +2766,65 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return api_fetch_strategy()
-
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.racingandsports.com.au")
 
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        # RAS is heavily protected; use CAMOUFOX for the form-guide sweep
+        return scraping_fetch_strategy(network_idle=True)
+
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        # Use the structured JSON endpoint for stability (Council of Superbrains Directive)
-        url = "https://www.racingandsports.com.au/todays-racing-json-v2"
-        # Note: This endpoint is dynamic; if it doesn't support date params, we fall back to today.
+        # Success Strategy: Always bootstrap session on the homepage
         try:
-            resp = await self.make_request("GET", url, headers=self._get_headers())
+            await self.make_request("GET", "https://www.racingandsports.com.au", timeout=30, raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
+
+        # 1. Primary: Use the structured JSON endpoint for speed and stability
+        url = "https://www.racingandsports.com.au/todays-racing-json-v2"
+        try:
+            resp = await self.make_request("GET", url, headers=self._get_headers(), raise_for_status=False)
+            if resp and resp.text:
+                try:
+                    data = json.loads(resp.text)
+                    if isinstance(data, (dict, list)) and data:
+                        return {"json_data": data, "date": date}
+                except Exception: pass
+        except Exception: pass
+
+        # 2. Secondary (EXTRA CREDIT): Fetch from /form-guide as requested in AGENTS.md
+        # This provides deeper coverage for Australian/NZ regions
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        # RAS form-guide index
+        fg_url = f"/form-guide/{date_iso}"
+
+        try:
+            resp = await self.make_request("GET", fg_url, headers=self._get_headers())
             if not resp or not resp.text:
                 return None
 
-            try:
-                data = resp.json()
-            except Exception:
-                import json
-                data = json.loads(resp.text)
-            return {"json_data": data, "date": date}
+            self._save_debug_snapshot(resp.text, f"ras_formguide_{date}")
+            parser = HTMLParser(resp.text)
+
+            # Discover race links in form-guide
+            metadata = []
+            for a in parser.css('a[href*="/form-guide/"]'):
+                href = a.attributes.get("href")
+                # Look for race links like /form-guide/australia/track/date/R1
+                if href and re.search(r'/R\d+$', href):
+                    metadata.append({"url": href})
+
+            if metadata:
+                # Deduplicate and limit to capture a broad sample
+                metadata = list({m['url']: m for m in metadata}.values())
+                self.logger.info("found_ras_formguide_links", count=len(metadata))
+                pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers(), semaphore_limit=5)
+                return {"pages": pages, "date": date}
         except Exception as e:
-            self.logger.error("failed_fetching_ras_json", error=str(e))
-            return None
+            self.logger.error("failed_fetching_ras_formguide", error=str(e))
+
+        return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("json_data"): return []
@@ -3152,14 +3197,20 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _get_headers(self) -> Dict[str, str]:
-        return self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
+        h = self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
+        h["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        h["Upgrade-Insecure-Requests"] = "1"
+        return h
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         # Success Strategy: Bootstrap session if using browser
         # For ATR, always try to establish a session on the main site first
         try:
-            await self.make_request("GET", "https://www.attheraces.com/", wait_until="domcontentloaded", timeout=20, raise_for_status=False)
-            await asyncio.sleep(1)
+            # Hardening Fix: ATR is extremely sensitive; bootstrapping to the homepage is mandatory
+            await self.make_request("GET", "https://www.attheraces.com/", wait_until="networkidle", timeout=30, raise_for_status=False)
+            # Establish session on racecards index too
+            await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await asyncio.sleep(2)
         except Exception: pass
 
         # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
@@ -4566,6 +4617,10 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
+
+        # Hardening Fix: NYRA requires session establishment on the homepage before API calls
+        await self.make_request("GET", "https://www.nyrabets.com/", headers=self._get_headers(), raise_for_status=False)
+
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
         }
@@ -8934,10 +8989,16 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
         index_url = f"/horse-racing/racecards/{date_iso}"
+        # Hardening Fix: Establish session on the homepage to avoid 500 errors on dated racecards
+        await self.make_request("GET", "https://www.timeform.com/horse-racing", headers=self._get_headers(), raise_for_status=False)
+
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
             self.logger.warning("Failed to fetch Timeform index page", url=index_url)
-            return None
+            # Fallback to generic racecards if dated index fails
+            index_response = await self.make_request("GET", "/horse-racing/racecards", headers=self._get_headers())
+            if not index_response or not index_response.text:
+                return None
 
         self._save_debug_snapshot(index_response.text, f"timeform_index_{date}")
 
@@ -9205,9 +9266,14 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _get_headers(self) -> dict:
         headers = self._get_browser_headers(host="www.racingpost.com")
         headers.update({
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
         })
         return headers
 
