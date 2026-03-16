@@ -261,6 +261,67 @@ async def main():
                     profit  = f"${(row['net_profit'] or 0.0):+.2f}"
                     f.write(f"| {ts} | {venue} | R{rn} | {emoji} {verdict} | {profit} |\n")
 
+        # Section 4: Goldmine Intelligence
+        try:
+            gm = await db.get_goldmine_stats()
+            if gm.get('total', 0) > 0:
+                f.write(f"\n### 💎 Goldmine Intelligence\n\n")
+                f.write(f"**Lifetime:** {gm['cashed']}/{gm['total']} cashed ({gm['strike_rate']:.1f}%) | "
+                        f"Net: ${gm['profit']:+.2f} | Avg Gap: {gm['avg_gap']:.2f}\n\n")
+                if gm.get('gap_tiers'):
+                    f.write("| Gap Range | Strike Rate | Profit | N |\n")
+                    f.write("|-----------|-------------|--------|---|\n")
+                    for label, t in gm['gap_tiers'].items():
+                        f.write(f"| {label} | {t['strike_rate']:.1f}% | ${t['profit']:+.2f} | {t['total']} |\n")
+                    f.write("\n")
+                if gm.get('tier_stats'):
+                    emoji_map = {'Diamond':'💎💎💎','Platinum':'💎💎','Gold':'💎'}
+                    f.write("| Tier | Strike Rate | Profit | N |\n")
+                    f.write("|------|-------------|--------|---|\n")
+                    for name, t in gm['tier_stats'].items():
+                        f.write(f"| {emoji_map.get(name,'')} {name} | {t['strike_rate']:.1f}% | ${t['profit']:+.2f} | {t['total']} |\n")
+                    f.write("\n")
+                if gm.get('superfecta_total'):
+                    f.write(f"**Superfecta:** {gm['superfecta_hits']}/{gm['superfecta_total']} hits | Avg: ${gm['avg_sf_payout']:.2f}\n")
+        except Exception:
+            pass  # Backward-compatible — old DBs without goldmine columns are fine
+
+        f.write("\n---\n")
+
+        # --- FortunaDB Snapshot Section (Moved to Bottom) ---
+        f.write("## 🐎 FortunaDB Snapshot\n\n")
+        if not db_path.exists():
+            f.write(f"**Database:** `{db_path}` _(not found in workspace)_\n\n")
+            f.write("⚠️ No database artifact available yet.\n")
+        else:
+            f.write(f"- **Database path:** `{db_path}`\n")
+            f.write(f"- **Total tips stored:** {snapshot['total_tips']}\n")
+            f.write(f"- **Audited tips:** {snapshot['audited']}\n")
+            f.write(f"- **Unverified tips:** {snapshot['unverified']}\n")
+            f.write(f"- **Goldmines:** {snapshot['goldmines']}\n")
+            f.write(f"- **Best bets:** {snapshot['best_bets']}\n")
+            f.write(f"- **Harvest log entries:** {snapshot['harvest_rows']}\n")
+
+            last_harvest = snapshot['last_harvest']
+            if last_harvest:
+                f.write(f"- **Last harvest:** {last_harvest['timestamp']} · {last_harvest['adapter_name']} ({last_harvest['race_count']} races)\n")
+
+            f.write("\n### 🔍 Most Recent Audits\n\n")
+            recent_audited = snapshot['recent_audited']
+            if not recent_audited:
+                f.write("No audited tips yet.\n")
+            else:
+                f.write("| Time | Venue | Race | Verdict | Profit |\n")
+                f.write("| --- | --- | --- | --- | --- |\n")
+                for row in recent_audited:
+                    ts      = (row["audit_timestamp"] or "N/A")[:16].replace("T", " ")
+                    venue   = row["venue"] or "Unknown"
+                    rn      = row["race_number"] or "?"
+                    verdict = row["verdict"] or "?"
+                    emoji   = EMOJI.get(verdict, "")
+                    profit  = f"${(row['net_profit'] or 0.0):+.2f}"
+                    f.write(f"| {ts} | {venue} | R{rn} | {emoji} {verdict} | {profit} |\n")
+
         f.write("\n---\n*Refreshes every hour*\n")
 
     if db_path.exists():

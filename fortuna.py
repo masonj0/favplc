@@ -273,6 +273,34 @@ def print_status_card(config: Dict[str, Any]):
 
     print_func("\n" + "🌟 " + "═" * 54 + " 🌟" + "\n")
 
+async def print_goldmine_intelligence(db: FortunaDB) -> None:
+    try:
+        stats = await db.get_goldmine_stats()
+    except Exception:
+        return
+    if not stats.get('total'):
+        return
+
+    from rich.console import Console
+    console = Console()
+
+    print('\n' + '💎' * 36)
+    print('  GOLDMINE HISTORICAL INTELLIGENCE')
+    print('💎' * 36)
+    print(f"  Lifetime: {stats['cashed']}/{stats['total']} cashed ({stats['strike_rate']:.1f}%) | Net: ${stats['profit']:+.2f}")
+    print(f"  Avg Gap at Selection: {stats['avg_gap']:.2f}")
+    if stats.get('superfecta_total'):
+        print(f"  Superfecta: {stats['superfecta_hits']}/{stats['superfecta_total']} hits | Avg Payout: ${stats['avg_sf_payout']:.2f}")
+    if stats.get('gap_tiers'):
+        print(f"\n  {'Gap':>6} {'Strike':>8} {'Profit':>10} {'N':>5}")
+        for label, t in stats['gap_tiers'].items():
+            print(f"  {label:>6} {t['strike_rate']:>7.1f}% ${t['profit']:>+9.2f} {t['total']:>5}")
+    if stats.get('tier_stats'):
+        emoji_map = {'Diamond': '💎💎💎', 'Platinum': '💎💎', 'Gold': '💎'}
+        for name, t in stats['tier_stats'].items():
+            print(f"  {emoji_map.get(name,'')} {name}: {t['cashed']}/{t['total']} ({t['strike_rate']:.1f}%) ${t['profit']:+.2f}")
+    print('')
+
 def print_quick_help():
     """Prints a friendly onboarding guide for new users."""
     try:
@@ -463,7 +491,7 @@ SOLID_DISCOVERY_ADAPTERS: Final[set] = {"TwinSpires", "SkyRacingWorld", "RacingP
 
 # Scoring Loop Infrastructure (Phase B1)
 SCORING_MTP_MAX: Final[int] = 15
-ODDS_REFRESH_ADAPTERS: Final[List[str]] = ["TwinSpires", "Oddschecker", "NYRABets"]
+ODDS_REFRESH_ADAPTERS: Final[List[str]] = ["TwinSpires", "NYRABets"]
 SNAPSHOT_DIR: Final[str] = "snapshots"
 
 # DayPart regional mapping - Phase A2 fix (adding INT/GLOBAL to Q4)
@@ -745,6 +773,13 @@ class ScoringMetadata(TypedDict, total=False):
     superfecta_key_number: Optional[int]
     superfecta_key_name: Optional[str]
     superfecta_box_numbers: Optional[List[str]]
+    superfecta_box_valid: bool
+    superfecta_scratched_runners: List[str]
+    goldmine_tier: str
+    goldmine_sources: List[str]
+    goldmine_gap_confirmed: bool
+    success_tier: str
+    goldmine_confidence: str
 
 def build_track_categories(races: List[Any]) -> Dict[str, str]:
     """Shared utility to build track categories from a list of races (IMP-CR-03)."""
@@ -1008,6 +1043,21 @@ async def refresh_odds_for_races(
         adapters_used=len(ODDS_REFRESH_ADAPTERS),
         runners_updated=fresh_count,
         races_targeted=len(scorable_races))
+
+    # Validate superfecta box runners are not scratched
+    for race in scorable_races:
+        box_nums = race.metadata.get('superfecta_box_numbers', [])
+        if not box_nums:
+            continue
+        scratched = [str(r.number) for r in race.runners if str(r.number) in box_nums and r.scratched]
+        race.metadata['superfecta_box_valid'] = len(scratched) == 0
+        if scratched:
+            race.metadata['superfecta_scratched_runners'] = scratched
+            logger.warning(
+                'superfecta_box_runner_scratched',
+                venue=race.venue, race=race.race_number, scratched=scratched
+            )
+
     return scorable_races
 
 
@@ -1311,6 +1361,9 @@ class SmartFetcher:
 
     async def _get_persistent_session(self, engine: BrowserEngine) -> Any:
         """Gate ALL browser creation behind the global playwright semaphore."""
+        if os.getenv('FORTUNA_NO_BROWSER') == '1':
+            return None
+
         # Fast path: session already exists
         async with self._session_lock:
             if engine in self._sessions:
@@ -1420,10 +1473,8 @@ class SmartFetcher:
                 if eng in strategy.allowed_engines and eng in available_engines and score > 0.05
             ]
 
-        # Prioritize primary engine if allowed
-        if strategy.primary_engine in candidates:
-            candidates.remove(strategy.primary_engine)
-            candidates.insert(0, strategy.primary_engine)
+        # Primary preference is already expressed through initial health values,
+        # so we stay sorted by health score to handle degraded engines.
 
         engines = candidates[:strategy.max_engine_attempts]
         if not engines:
@@ -1968,11 +2019,9 @@ class BaseAdapterV3(ABC):
                 if is_frozen():
                     self.logger.info("Skipping browser-dependent adapter in monolith mode")
                     return []
-                # FIX_06: Gracefully skip if Playwright is required but missing (GHA check)
-                try:
-                    import playwright
-                except ImportError:
-                    self.logger.warning("Playwright not installed, skipping browser-based adapter", source=self.source_name)
+                # FIX_06: Gracefully skip if Browser support is required but missing (GHA check)
+                if not ASYNC_SESSIONS_AVAILABLE:
+                    self.logger.warning("Browser support (scrapling/patchright) not available, skipping browser-based adapter", source=self.source_name)
                     return []
 
             if not await self.circuit_breaker.allow_request(): return []
@@ -4903,7 +4952,8 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return scraping_fetch_strategy(timeout=90, network_idle=True)
+        # Success Strategy: Switch TwinSpires to browser-free API strategy for robustness (P1-Audit)
+        return api_fetch_strategy(timeout=40)
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome124 for TwinSpires to bypass basic bot checks
@@ -6275,9 +6325,11 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
 
             gap_abs = get_field(r, 'metadata', {}).get('gap_abs', 0.0)
             conf = get_field(r, 'metadata', {}).get('goldmine_confidence', 'low')
+            tier = get_field(r, 'metadata', {}).get('success_tier', 'Gold')
+            tier_emoji = {'Diamond': '💎💎💎', 'Platinum': '💎💎', 'Gold': '💎'}.get(tier, '💎')
             conf_icon = "💎" if conf == 'high' else "🔍"
 
-            report_lines.append(f"{cat}~{track} - Race {race_num} ({time_str})")
+            report_lines.append(f"{tier_emoji} {tier.upper()} | {cat}~{track} - Race {race_num} ({time_str})")
             report_lines.append(f"{conf_icon} PREDICTED TOP 5: [{top_5_nums}] | gap_abs: {gap_abs:.2f}")
             # Superfecta Keybox annotation
             if get_field(r, 'metadata', {}).get('is_superfecta_key'):
@@ -6552,7 +6604,9 @@ async def generate_friendly_html_report(races: List[Any], stats: Dict[str, Any])
             st_str = "??:??"
 
         tier = r.metadata.get('success_tier', 'Gold')
-        tier_badge = f'<span class="badge" style="background-color: #e2e8f0; color: #0f172a; margin-right: 5px;">{tier.upper()}</span>'
+        tier_emoji = {'Diamond': '💎💎💎', 'Platinum': '💎💎', 'Gold': '💎'}.get(tier, '💎')
+        tier_color = {'Diamond': '#00ffff', 'Platinum': '#e5e4e2', 'Gold': '#ffd700'}.get(tier, '#ffd700')
+        tier_badge = f'<span class="badge" style="background-color: {tier_color}; color: #0f172a; margin-right: 5px;">{tier_emoji} {tier.upper()}</span>'
 
         goldmine_cards.append(f"""
             <div class="goldmine-card {conf_class}">
@@ -7358,7 +7412,8 @@ class FortunaDB:
                     "is_handicap": "INTEGER", "is_best_bet": "INTEGER",
                     "is_superfecta_key": "INTEGER DEFAULT 0", "superfecta_key_number": "INTEGER",
                     "superfecta_key_name": "TEXT", "predicted_fav_odds": "REAL",
-                    "tip_tier": "TEXT", "actual_fav_odds": "REAL", "discipline": "TEXT"
+                    "tip_tier": "TEXT", "actual_fav_odds": "REAL", "discipline": "TEXT",
+                    "goldmine_tier": "TEXT", "goldmine_sources": "INTEGER", "goldmine_gap_confirmed": "INTEGER"
                 }
                 existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(tips)").fetchall()}
                 for col, dtype in EXPECTED_COLUMNS.items():
@@ -7838,7 +7893,10 @@ class FortunaDB:
                     tip.get("superfecta_key_name"),
                     daypart_val,
                     float(tip.get("predicted_fav_odds")) if tip.get("predicted_fav_odds") is not None else None,
-                    tip.get("tip_tier")
+                    tip.get("tip_tier"),
+                    tip.get("goldmine_tier"),
+                    tip.get("goldmine_sources"),
+                    tip.get("goldmine_gap_confirmed")
                 )
 
                 if rid not in already_logged:
@@ -7860,8 +7918,8 @@ class FortunaDB:
                                 field_size, market_depth, place_prob, predicted_ev, race_type,
                                 condition_modifier, qualification_grade, composite_score, is_handicap, is_best_bet,
                                 is_superfecta_key, superfecta_key_number, superfecta_key_name, daypart,
-                                predicted_fav_odds, tip_tier
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                predicted_fav_odds, tip_tier, goldmine_tier, goldmine_sources, goldmine_gap_confirmed
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, to_insert)
 
                     if to_update:
@@ -7873,7 +7931,7 @@ class FortunaDB:
                                 predicted_ev=?, race_type=?, condition_modifier=?, qualification_grade=?,
                                 composite_score=?, is_handicap=?, is_best_bet=?,
                                 is_superfecta_key=?, superfecta_key_number=?, superfecta_key_name=?, daypart=?,
-                                predicted_fav_odds=?, tip_tier=?
+                                predicted_fav_odds=?, tip_tier=?, goldmine_tier=?, goldmine_sources=?, goldmine_gap_confirmed=?
                             WHERE race_id=? AND audit_completed=0
                         """, to_update)
 
@@ -8208,6 +8266,48 @@ class FortunaDB:
             stats['goldmine_profit'] = row[0] if row and row[0] is not None else 0.0
 
             return stats
+
+    async def get_goldmine_stats(self) -> Dict[str, Any]:
+        """Get goldmine-specific performance statistics."""
+        def _get():
+            conn = self._get_conn()
+            gap_filter = "AND gap_abs IS NOT NULL AND gap_abs != '' AND CAST(gap_abs AS REAL) > 0"
+
+            total  = conn.execute('SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND audit_completed=1').fetchone()[0]
+            cashed = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND audit_completed=1 AND verdict IN ('CASHED','CASHED_ESTIMATED')").fetchone()[0]
+            profit = conn.execute('SELECT SUM(net_profit) FROM tips WHERE is_goldmine=1 AND audit_completed=1').fetchone()[0] or 0.0
+            avg_gap= conn.execute(f'SELECT AVG(CAST(gap_abs AS REAL)) FROM tips WHERE is_goldmine=1 {gap_filter}').fetchone()[0] or 0.0
+            sf_total = conn.execute('SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND is_superfecta_key=1 AND audit_completed=1').fetchone()[0]
+            sf_hits  = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND is_superfecta_key=1 AND audit_completed=1 AND superfecta_payout > 0").fetchone()[0]
+            avg_sf   = conn.execute('SELECT AVG(superfecta_payout) FROM tips WHERE is_goldmine=1 AND superfecta_payout > 0').fetchone()[0] or 0.0
+
+            gap_tiers = {}
+            for lo, hi, label in [(2.0, 3.0, '2-3'), (3.0, 5.0, '3-5'), (5.0, 99.0, '5+')]:
+                t = conn.execute(f'SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND audit_completed=1 {gap_filter} AND CAST(gap_abs AS REAL)>=? AND CAST(gap_abs AS REAL)<?', (lo, hi)).fetchone()[0]
+                c = conn.execute(f"SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND audit_completed=1 {gap_filter} AND CAST(gap_abs AS REAL)>=? AND CAST(gap_abs AS REAL)<? AND verdict IN ('CASHED','CASHED_ESTIMATED')", (lo, hi)).fetchone()[0]
+                p = conn.execute(f'SELECT SUM(net_profit) FROM tips WHERE is_goldmine=1 AND audit_completed=1 {gap_filter} AND CAST(gap_abs AS REAL)>=? AND CAST(gap_abs AS REAL)<?', (lo, hi)).fetchone()[0] or 0.0
+                if t > 0:
+                    gap_tiers[label] = {'total': t, 'cashed': c, 'strike_rate': c/t*100, 'profit': p}
+
+            tier_stats = {}
+            try:
+                for name in ['Diamond', 'Platinum', 'Gold']:
+                    t = conn.execute('SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND audit_completed=1 AND goldmine_tier=?', (name,)).fetchone()[0]
+                    c = conn.execute("SELECT COUNT(*) FROM tips WHERE is_goldmine=1 AND audit_completed=1 AND goldmine_tier=? AND verdict IN ('CASHED','CASHED_ESTIMATED')", (name,)).fetchone()[0]
+                    p = conn.execute('SELECT SUM(net_profit) FROM tips WHERE is_goldmine=1 AND audit_completed=1 AND goldmine_tier=?', (name,)).fetchone()[0] or 0.0
+                    if t > 0:
+                        tier_stats[name] = {'total': t, 'cashed': c, 'strike_rate': c/t*100, 'profit': p}
+            except Exception:
+                pass
+
+            return {
+                'total': total, 'cashed': cashed,
+                'strike_rate': (cashed/total*100) if total else 0,
+                'profit': profit, 'avg_gap': avg_gap,
+                'superfecta_total': sf_total, 'superfecta_hits': sf_hits, 'avg_sf_payout': avg_sf,
+                'gap_tiers': gap_tiers, 'tier_stats': tier_stats,
+            }
+        return await self._run_in_executor(_get)
         return await self._run_in_executor(_get)
 
     async def clear_all_tips(self):
@@ -8457,7 +8557,10 @@ class HotTipsTracker:
                 "is_superfecta_key":     is_superfecta_key,
                 "superfecta_key_number": r.metadata.get('superfecta_key_number'),
                 "superfecta_key_name":   r.metadata.get('superfecta_key_name'),
-                "daypart":               daypart_tag
+                "daypart":               daypart_tag,
+                "goldmine_tier":          r.metadata.get('success_tier'),
+                "goldmine_sources":       len(r.metadata.get('goldmine_sources', [])),
+                "goldmine_gap_confirmed": 1 if r.metadata.get('goldmine_confidence') == 'high' else 0
             }
             new_tips.append(tip_data)
 
@@ -9807,7 +9910,10 @@ async def run_quarter_fetch(
             logger.error("Error fetching from adapter", adapter=name, date=date_str, error=str(e))
             if name not in harvest_summary:
                 harvest_summary[name] = {"count": 0, "max_odds": 0.0, "trust_ratio": 0.0}
-            harvest_summary[name]["status"] = "error"
+
+            error_str = str(e).lower()
+            bot_keywords = ['captcha','cloudflare','bot','403','challenge','blocked','perimeterx','datadome']
+            harvest_summary[name]["status"] = "blocked" if any(kw in error_str for kw in bot_keywords) else "error"
             harvest_summary[name]["error"] = str(e)
             return []
         finally:
@@ -10346,6 +10452,12 @@ async def main_all_in_one():
 
     # Print status card for all normal runs
     print_status_card(config)
+    try:
+        _gm_db = FortunaDB()
+        await _gm_db.initialize()
+        await print_goldmine_intelligence(_gm_db)
+    except Exception:
+        pass
 
     if args.install_browsers:
         await ensure_browsers(force_install=True)

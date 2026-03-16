@@ -395,6 +395,8 @@ jobs:
 
       - name: Score Approaching Races
         if: always()
+        env:
+          FORTUNA_NO_BROWSER: '1'
         run: |
           # If we have raw races (from discovery or audit artifact), we can score now
           RAW_RACES=""
