@@ -20,11 +20,20 @@ jobs:
   audit-and-diagnose:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-patchright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'    # Must match codebase target (was 3.11)
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-patchright
+          key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
         uses: actions/cache/restore@v4
@@ -791,11 +800,10 @@ jobs:
             python3 scripts/generate_gha_summary.py || true
           fi
 
-      - name: Export to Excel
+      - name: Export to CSV
         if: always()
         run: |
-          python3 -m pip install openpyxl pandas
-          python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_audit_export.xlsx
+          python3 scripts/fortuna_to_csv.py fortuna.db --output db_audit_export
 
       - name: Upload Audit Snapshots
         if: always()
@@ -804,7 +812,7 @@ jobs:
           name: audit-snapshots-${{ github.run_number }}
           path: |
             _audit_snapshots/
-            fortuna_audit_export.xlsx
+            db_audit_export/
           retention-days: 7
           if-no-files-found: ignore
 

@@ -35,9 +35,12 @@ async def test_at_the_races_adapter_ajax_movers():
     target_date_str = "260218"
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. bootstrap index, 2. uk-ire movers, 3. international movers (empty)
+        # 1. bootstrap home, 2. bootstrap index, 3. bootstrap movers, 4. bootstrap movers intl, 5. uk-ire movers, 6. international movers (empty)
         mock_fetch.side_effect = [
+            MockResponse("home", 200),
             MockResponse("index", 200),
+            MockResponse("movers_boot", 200),
+            MockResponse("movers_boot_intl", 200),
             MockResponse(movers_html, 200),
             MockResponse("", 200)
         ]
@@ -98,9 +101,12 @@ async def test_at_the_races_adapter_fallback_parsing():
             self.status_code = status
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. bootstrap index, 2. uk-ire movers (empty), 3. international movers (empty), 4. index re-fetch, 5. race page
+        # 1. bootstrap home, 2. bootstrap index, 3. bootstrap movers, 4. bootstrap movers intl, 5. uk-ire movers (empty), 6. international movers (empty), 7. index re-fetch, 8. race page
         mock_fetch.side_effect = [
-            MockResponse("bootstrap", 200),
+            MockResponse("home", 200),
+            MockResponse("index", 200),
+            MockResponse("movers_boot", 200),
+            MockResponse("movers_boot_intl", 200),
             MockResponse("", 200),
             MockResponse("", 200),
             MockResponse(index_html, 200),
@@ -157,7 +163,12 @@ async def test_racing_and_sports_json_v2():
             return self.data
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        mock_fetch.return_value = MockResponse(json_data, 200)
+        # 1. bootstrap home, 2. JSON API, 3. form-guide (as fallback)
+        mock_fetch.side_effect = [
+            MockResponse("home", 200),
+            MockResponse(json_data, 200),
+            MockResponse("no links", 200)
+        ]
 
         races = await adapter.get_races("260218")
 

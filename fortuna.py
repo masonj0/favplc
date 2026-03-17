@@ -7,6 +7,16 @@ import sys
 import platform
 import os
 
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CRITICAL: Monkeypatch playwright with patchright
+# Scrapling and Camoufox expect playwright internals
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+try:
+    import patchright
+    sys.modules['playwright'] = patchright
+except ImportError:
+    pass
+
 if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
     # Running as frozen EXE on Windows
     import asyncio
@@ -2756,33 +2766,100 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
-    def _configure_fetch_strategy(self) -> FetchStrategy:
-        return api_fetch_strategy()
-
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.racingandsports.com.au")
 
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        # RAS is heavily protected; use CAMOUFOX for the form-guide sweep
+        return scraping_fetch_strategy(network_idle=True)
+
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
-        # Use the structured JSON endpoint for stability (Council of Superbrains Directive)
-        url = "https://www.racingandsports.com.au/todays-racing-json-v2"
-        # Note: This endpoint is dynamic; if it doesn't support date params, we fall back to today.
+        # Success Strategy: Always bootstrap session on the homepage
         try:
-            resp = await self.make_request("GET", url, headers=self._get_headers())
+            await self.make_request("GET", "https://www.racingandsports.com.au", timeout=30, raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
+
+        # 1. Primary: Use the structured JSON endpoint for speed and stability
+        url = "https://www.racingandsports.com.au/todays-racing-json-v2"
+        try:
+            resp = await self.make_request("GET", url, headers=self._get_headers(), raise_for_status=False)
+            if resp and resp.text:
+                try:
+                    data = json.loads(resp.text)
+                    if isinstance(data, (dict, list)) and data:
+                        self.logger.info("ras_json_fetch_success", meeting_count=len(data.get('meetings', [])) if isinstance(data, dict) else len(data))
+                        return {"json_data": data, "date": date}
+                except Exception as e:
+                    self.logger.warning("ras_json_parse_failed", error=str(e))
+        except Exception as e:
+            self.logger.warning("ras_json_request_failed", error=str(e))
+
+        # 2. Secondary (EXTRA CREDIT): Fetch from /form-guide as requested in AGENTS.md
+        # This provides deeper coverage for Australian/NZ regions
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        # RAS form-guide index
+        fg_url = f"/form-guide/{date_iso}"
+
+        try:
+            resp = await self.make_request("GET", fg_url, headers=self._get_headers())
             if not resp or not resp.text:
                 return None
 
-            try:
-                data = resp.json()
-            except Exception:
-                import json
-                data = json.loads(resp.text)
-            return {"json_data": data, "date": date}
+            self._save_debug_snapshot(resp.text, f"ras_formguide_{date}")
+            parser = HTMLParser(resp.text)
+
+            # Discover race links in form-guide
+            metadata = []
+            for a in parser.css('a[href*="/form-guide/"]'):
+                href = a.attributes.get("href")
+                # Look for race links like /form-guide/australia/track/date/R1
+                if href and re.search(r'/R\d+$', href):
+                    metadata.append({"url": href})
+
+            if metadata:
+                # Deduplicate and limit to capture a broad sample
+                metadata = list({m['url']: m for m in metadata}.values())
+                self.logger.info("found_ras_formguide_links", count=len(metadata))
+                pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers(), semaphore_limit=5)
+                return {"pages": pages, "date": date}
         except Exception as e:
-            self.logger.error("failed_fetching_ras_json", error=str(e))
-            return None
+            self.logger.error("failed_fetching_ras_formguide", error=str(e))
+
+        return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
-        if not raw_data or not raw_data.get("json_data"): return []
+        self.logger.debug("parsing_ras_races", keys=list(raw_data.keys()) if isinstance(raw_data, dict) else "not_dict")
+        if not raw_data: return []
+
+        # Handle form-guide pages fetch result
+        if "pages" in raw_data:
+            races = []
+            try:
+                race_date = parse_date_string(raw_data["date"]).date()
+            except Exception:
+                race_date = now_eastern().date()
+
+            for p in raw_data["pages"]:
+                if p and p.get("html"):
+                    # Extract venue/race from URL if possible
+                    # /form-guide/australia/wyong/2026-03-17/R1
+                    url = p.get("url", "")
+                    venue = "Unknown"
+                    race_num = 1
+                    parts = url.rstrip("/").split("/")
+                    if len(parts) >= 6:
+                        venue = parts[-3] # /form-guide/country/track/date/R1 -> track
+                        r_match = re.search(r'R(\d+)', parts[-1])
+                        if r_match:
+                            race_num = int(r_match.group(1))
+
+                    race = self._parse_single_race(p["html"], url, race_date, normalize_venue_name(venue), race_num)
+                    if race: races.append(race)
+            return races
+
+        if not raw_data.get("json_data"): return []
         data = raw_data["json_data"]
         if isinstance(data, list):
             # Sometimes RAS returns a raw list of meetings instead of a dict with 'meetings' key
@@ -2795,6 +2872,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         races = []
         # RAS JSON v2 structure: data['meetings'] -> list of meetings
         meetings = data.get('meetings', [])
+        self.logger.info("parsing_ras_json", meeting_count=len(meetings))
         for m in meetings:
             venue_raw = m.get('venueName') or m.get('venue')
             if not venue_raw: continue
@@ -3152,14 +3230,24 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _get_headers(self) -> Dict[str, str]:
-        return self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
+        h = self._get_browser_headers(host="www.attheraces.com", referer="https://www.attheraces.com/racecards")
+        h["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
+        h["Upgrade-Insecure-Requests"] = "1"
+        return h
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         # Success Strategy: Bootstrap session if using browser
         # For ATR, always try to establish a session on the main site first
         try:
-            await self.make_request("GET", "https://www.attheraces.com/", wait_until="domcontentloaded", timeout=20, raise_for_status=False)
-            await asyncio.sleep(1)
+            # Hardening Fix: ATR is extremely sensitive; bootstrapping to the homepage is mandatory
+            await self.make_request("GET", "https://www.attheraces.com/", wait_until="networkidle", timeout=30, raise_for_status=False)
+            # Establish session on racecards index too
+            await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="networkidle", timeout=30, raise_for_status=False)
+            # Boot movers index specifically for AJAX calls
+            await self.make_request("GET", "https://www.attheraces.com/market-movers", wait_until="networkidle", timeout=30, raise_for_status=False)
+            # Also try hitting the international tab specifically to set its cookies
+            await self.make_request("GET", "https://www.attheraces.com/market-movers/international", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await asyncio.sleep(2)
         except Exception: pass
 
         # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
@@ -4551,9 +4639,18 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
         try:
+            # Hardening Fix: Establish session on the homepage before API calls
             await self.make_request(
                 "GET",
                 "https://www.nyrabets.com/",
+                headers=self._get_headers(),
+                timeout=30,
+                raise_for_status=False
+            )
+            # Also hit a form page to get deeper cookies
+            await self.make_request(
+                "GET",
+                "https://www.nyrabets.com/betting",
                 headers=self._get_headers(),
                 timeout=30,
                 raise_for_status=False
@@ -4566,6 +4663,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
+
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"
         }
@@ -8934,10 +9032,16 @@ class TimeformAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, BaseAda
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
         index_url = f"/horse-racing/racecards/{date_iso}"
+        # Hardening Fix: Establish session on the homepage to avoid 500 errors on dated racecards
+        await self.make_request("GET", "https://www.timeform.com/horse-racing", headers=self._get_headers(), raise_for_status=False)
+
         index_response = await self.make_request("GET", index_url, headers=self._get_headers())
         if not index_response or not index_response.text:
             self.logger.warning("Failed to fetch Timeform index page", url=index_url)
-            return None
+            # Fallback to generic racecards if dated index fails
+            index_response = await self.make_request("GET", "/horse-racing/racecards", headers=self._get_headers())
+            if not index_response or not index_response.text:
+                return None
 
         self._save_debug_snapshot(index_response.text, f"timeform_index_{date}")
 
@@ -9205,9 +9309,14 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
     def _get_headers(self) -> dict:
         headers = self._get_browser_headers(host="www.racingpost.com")
         headers.update({
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
         })
         return headers
 
@@ -9215,6 +9324,12 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         Fetches the raw HTML content for all races on a given date, including international.
         """
+        # Hardening Fix: Establish session on the homepage before fetching racecards
+        try:
+            await self.make_request("GET", "https://www.racingpost.com/", headers=self._get_headers(), raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
+
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
         index_url = f"/racecards/{date_iso}"
