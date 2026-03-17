@@ -35,10 +35,11 @@ async def test_at_the_races_adapter_ajax_movers():
     target_date_str = "260218"
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. bootstrap home, 2. bootstrap index, 3. uk-ire movers, 4. international movers (empty)
+        # 1. bootstrap home, 2. bootstrap index, 3. bootstrap movers, 4. uk-ire movers, 5. international movers (empty)
         mock_fetch.side_effect = [
             MockResponse("home", 200),
             MockResponse("index", 200),
+            MockResponse("movers_boot", 200),
             MockResponse(movers_html, 200),
             MockResponse("", 200)
         ]
@@ -99,10 +100,11 @@ async def test_at_the_races_adapter_fallback_parsing():
             self.status_code = status
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. bootstrap home, 2. bootstrap index, 3. uk-ire movers (empty), 4. international movers (empty), 5. index re-fetch, 6. race page
+        # 1. bootstrap home, 2. bootstrap index, 3. bootstrap movers, 4. uk-ire movers (empty), 5. international movers (empty), 6. index re-fetch, 7. race page
         mock_fetch.side_effect = [
             MockResponse("home", 200),
             MockResponse("index", 200),
+            MockResponse("movers_boot", 200),
             MockResponse("", 200),
             MockResponse("", 200),
             MockResponse(index_html, 200),

@@ -21,8 +21,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
-      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+      PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-patchright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
