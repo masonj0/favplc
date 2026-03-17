@@ -9281,6 +9281,12 @@ class RacingPostAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         Fetches the raw HTML content for all races on a given date, including international.
         """
+        # Hardening Fix: Establish session on the homepage before fetching racecards
+        try:
+            await self.make_request("GET", "https://www.racingpost.com/", headers=self._get_headers(), raise_for_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
+
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
         index_url = f"/racecards/{date_iso}"

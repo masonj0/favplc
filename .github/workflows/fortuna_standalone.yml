@@ -113,6 +113,9 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-22.04
     timeout-minutes: 25
+    env:
+      PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -197,6 +200,9 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-22.04
     timeout-minutes: 8
+    env:
+      PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -262,6 +268,9 @@ jobs:
       cancel-in-progress: true
     runs-on: ubuntu-22.04
     timeout-minutes: 25
+    env:
+      PATCHRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.patchright-browsers
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -331,6 +340,14 @@ jobs:
 
       - name: Download All Artifacts
         uses: actions/download-artifact@v4
+
+      - name: Consolidate Artifacts
+        if: always()
+        run: |
+          # Flatten artifact subdirectories to root for generate_gha_summary.py
+          find . -name "*.txt" -maxdepth 2 -exec mv {} . \;
+          find . -name "*.json" -maxdepth 2 -exec mv {} . \;
+          ls -R
 
       - name: Install dependencies
         run: |
