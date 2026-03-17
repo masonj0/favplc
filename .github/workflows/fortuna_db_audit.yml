@@ -20,11 +20,20 @@ jobs:
   audit-and-diagnose:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-patchright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'    # Must match codebase target (was 3.11)
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/ms-patchright
+          key: deps-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
 
       - name: Restore Master Database
         uses: actions/cache/restore@v4
