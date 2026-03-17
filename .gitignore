@@ -43,6 +43,8 @@ _diag_snapshots/
 diag-snapshots/
 debug-snapshots/
 debug_snapshots/
+snapshots/
+adapter_health_report.txt
 adapter_stats.json
 qualified_races.json
 raw_race_data.json
