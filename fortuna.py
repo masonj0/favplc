@@ -1340,6 +1340,40 @@ def lightweight_fetch_strategy(**overrides) -> FetchStrategy:
     return FetchStrategy(**defaults)
 
 
+class GlobalEngineHealthRegistry:
+    """Shared state for tracking engine health across all fetcher instances."""
+    _health_scores: Dict[BrowserEngine, float] = {
+        BrowserEngine.CAMOUFOX: 0.9,
+        BrowserEngine.CURL_CFFI: 0.8,
+        BrowserEngine.PLAYWRIGHT: 0.7,
+        BrowserEngine.PLAYWRIGHT_LEGACY: 0.6,
+        BrowserEngine.HTTPX: 0.5
+    }
+    _last_decay_time: float = time.time()
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_scores(cls) -> Dict[BrowserEngine, float]:
+        with cls._lock:
+            # Automatic recovery over time
+            now = time.time()
+            elapsed = now - cls._last_decay_time
+            if elapsed > 300: # Every 5 minutes, recover slightly
+                for engine in cls._health_scores:
+                    cls._health_scores[engine] = min(1.0, cls._health_scores[engine] + 0.1)
+                cls._last_decay_time = now
+            return cls._health_scores.copy()
+
+    @classmethod
+    def record_failure(cls, engine: BrowserEngine, penalty: float = 0.2):
+        with cls._lock:
+            cls._health_scores[engine] = max(0.0, cls._health_scores[engine] - penalty)
+
+    @classmethod
+    def record_success(cls, engine: BrowserEngine, reward: float = 0.05):
+        with cls._lock:
+            cls._health_scores[engine] = min(1.0, cls._health_scores[engine] + reward)
+
 class SmartFetcher:
     BOT_DETECTION_KEYWORDS: ClassVar[List[str]] = [
         "datadome", "perimeterx", "access denied", "captcha", "cloudflare",
@@ -1349,15 +1383,6 @@ class SmartFetcher:
     def __init__(self, strategy: Optional[FetchStrategy] = None):
         self.strategy = strategy or FetchStrategy()
         self.logger = structlog.get_logger(self.__class__.__name__)
-        self._health_lock = asyncio.Lock()
-        self._request_count = 0
-        self._engine_health = {
-            BrowserEngine.CAMOUFOX: 0.9,
-            BrowserEngine.CURL_CFFI: 0.8,
-            BrowserEngine.PLAYWRIGHT: 0.7,
-            BrowserEngine.PLAYWRIGHT_LEGACY: 0.6,
-            BrowserEngine.HTTPX: 0.5
-        }
         self.last_engine: str = "unknown"
         self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
         self._curl_sessions: Dict[str, Any] = {} # Hardening Fix: Initialize session tracking (Fix AttributeError)
@@ -1430,15 +1455,9 @@ class SmartFetcher:
         method = kwargs.get("method", "GET").upper()
         kwargs.pop("url", None)
 
-        async with self._health_lock:
-            self._request_count += 1
-            if self._request_count % 100 == 0:
-                for engine in self._engine_health:
-                    self._engine_health[engine] = max(0.1, self._engine_health[engine] * 0.995)
-
-        # Check if engines are available before sorting
-        available_engines = [e for e in self._engine_health.keys()]
-
+        # Get latest health scores from global registry
+        current_health = GlobalEngineHealthRegistry.get_scores()
+        available_engines = list(current_health.keys())
 
         if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
             available_engines.remove(BrowserEngine.CURL_CFFI)
@@ -1452,36 +1471,31 @@ class SmartFetcher:
 
         strategy = kwargs.get("strategy", self.strategy)
 
-        # Build candidate engines: allowed only, sorted by health
-        async with self._health_lock:
-            # Create local copy of health scores for potential domain-specific re-ranking
-            current_health = self._engine_health.copy()
+        # Domain-specific engine prioritization (Hardening Fix / P0-FIX-B2)
+        # Some domains are better handled by specific engines; re-rank locally without mutation
+        protected_domains = [
+            "attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com",
+            "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
+            "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
+            "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
+            "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
+        ]
+        if any(d in url for d in protected_domains):
+            self.logger.debug("Prioritizing browser engines for protected domain", url=url)
+            if BrowserEngine.CAMOUFOX in available_engines:
+                current_health[BrowserEngine.CAMOUFOX] = max(current_health[BrowserEngine.CAMOUFOX], 1.0)
+            if BrowserEngine.PLAYWRIGHT in available_engines:
+                current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
+            # Discourage HTTPX locally for these domains
+            if BrowserEngine.HTTPX in available_engines:
+                current_health[BrowserEngine.HTTPX] = 0.1
 
-            # Domain-specific engine prioritization (Hardening Fix / P0-FIX-B2)
-            # Some domains are better handled by specific engines; re-rank locally without mutation
-            protected_domains = [
-                "attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com",
-                "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
-                "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
-                "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
-                "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
-            ]
-            if any(d in url for d in protected_domains):
-                self.logger.debug("Prioritizing browser engines for protected domain", url=url)
-                if BrowserEngine.CAMOUFOX in available_engines:
-                    current_health[BrowserEngine.CAMOUFOX] = max(current_health[BrowserEngine.CAMOUFOX], 1.0)
-                if BrowserEngine.PLAYWRIGHT in available_engines:
-                    current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
-                # Discourage HTTPX locally for these domains
-                if BrowserEngine.HTTPX in available_engines:
-                    current_health[BrowserEngine.HTTPX] = 0.1
-
-            candidates = [
-                eng for eng, score in sorted(
-                    current_health.items(), key=lambda x: -x[1]
-                )
-                if eng in strategy.allowed_engines and eng in available_engines and score > 0.05
-            ]
+        candidates = [
+            eng for eng, score in sorted(
+                current_health.items(), key=lambda x: -x[1]
+            )
+            if eng in strategy.allowed_engines and eng in available_engines and score > 0.05
+        ]
 
         # Primary preference is already expressed through initial health values,
         # so we stay sorted by health score to handle degraded engines.
@@ -1532,14 +1546,12 @@ class SmartFetcher:
                             if not challenge_solved:
                                 raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
 
-                async with self._health_lock:
-                    self._engine_health[engine] = min(1.0, self._engine_health[engine] + 0.1)
+                GlobalEngineHealthRegistry.record_success(engine)
                 self.last_engine = engine.value
                 return response
             except Exception as e:
                 self.logger.debug(f"Engine {engine.value} failed", error=str(e))
-                async with self._health_lock:
-                    self._engine_health[engine] = max(0.0, self._engine_health[engine] - 0.2)
+                GlobalEngineHealthRegistry.record_failure(engine)
                 last_error = e
                 continue
         err_msg = repr(last_error) if last_error else "All fetch engines failed"
