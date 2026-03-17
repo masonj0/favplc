@@ -2788,9 +2788,12 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                 try:
                     data = json.loads(resp.text)
                     if isinstance(data, (dict, list)) and data:
+                        self.logger.info("ras_json_fetch_success", meeting_count=len(data.get('meetings', [])) if isinstance(data, dict) else len(data))
                         return {"json_data": data, "date": date}
-                except Exception: pass
-        except Exception: pass
+                except Exception as e:
+                    self.logger.warning("ras_json_parse_failed", error=str(e))
+        except Exception as e:
+            self.logger.warning("ras_json_request_failed", error=str(e))
 
         # 2. Secondary (EXTRA CREDIT): Fetch from /form-guide as requested in AGENTS.md
         # This provides deeper coverage for Australian/NZ regions
@@ -2827,7 +2830,36 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         return None
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
-        if not raw_data or not raw_data.get("json_data"): return []
+        self.logger.debug("parsing_ras_races", keys=list(raw_data.keys()) if isinstance(raw_data, dict) else "not_dict")
+        if not raw_data: return []
+
+        # Handle form-guide pages fetch result
+        if "pages" in raw_data:
+            races = []
+            try:
+                race_date = parse_date_string(raw_data["date"]).date()
+            except Exception:
+                race_date = now_eastern().date()
+
+            for p in raw_data["pages"]:
+                if p and p.get("html"):
+                    # Extract venue/race from URL if possible
+                    # /form-guide/australia/wyong/2026-03-17/R1
+                    url = p.get("url", "")
+                    venue = "Unknown"
+                    race_num = 1
+                    parts = url.rstrip("/").split("/")
+                    if len(parts) >= 6:
+                        venue = parts[-3] # /form-guide/country/track/date/R1 -> track
+                        r_match = re.search(r'R(\d+)', parts[-1])
+                        if r_match:
+                            race_num = int(r_match.group(1))
+
+                    race = self._parse_single_race(p["html"], url, race_date, normalize_venue_name(venue), race_num)
+                    if race: races.append(race)
+            return races
+
+        if not raw_data.get("json_data"): return []
         data = raw_data["json_data"]
         if isinstance(data, list):
             # Sometimes RAS returns a raw list of meetings instead of a dict with 'meetings' key
@@ -2840,6 +2872,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         races = []
         # RAS JSON v2 structure: data['meetings'] -> list of meetings
         meetings = data.get('meetings', [])
+        self.logger.info("parsing_ras_json", meeting_count=len(meetings))
         for m in meetings:
             venue_raw = m.get('venueName') or m.get('venue')
             if not venue_raw: continue
@@ -3212,6 +3245,8 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="networkidle", timeout=30, raise_for_status=False)
             # Boot movers index specifically for AJAX calls
             await self.make_request("GET", "https://www.attheraces.com/market-movers", wait_until="networkidle", timeout=30, raise_for_status=False)
+            # Also try hitting the international tab specifically to set its cookies
+            await self.make_request("GET", "https://www.attheraces.com/market-movers/international", wait_until="networkidle", timeout=30, raise_for_status=False)
             await asyncio.sleep(2)
         except Exception: pass
 
@@ -4604,9 +4639,18 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
     async def _fetch_data(self, date_str: str) -> Optional[Dict[str, Any]]:
         # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
         try:
+            # Hardening Fix: Establish session on the homepage before API calls
             await self.make_request(
                 "GET",
                 "https://www.nyrabets.com/",
+                headers=self._get_headers(),
+                timeout=30,
+                raise_for_status=False
+            )
+            # Also hit a form page to get deeper cookies
+            await self.make_request(
+                "GET",
+                "https://www.nyrabets.com/betting",
                 headers=self._get_headers(),
                 timeout=30,
                 raise_for_status=False
@@ -4619,9 +4663,6 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         # Modern NYRA backend requires 8-digit years (YYYY-MM-DD)
         dt = parse_date_string(date_str)
         nyra_date = dt.strftime("%Y-%m-%dT00:00:00.000")
-
-        # Hardening Fix: NYRA requires session establishment on the homepage before API calls
-        await self.make_request("GET", "https://www.nyrabets.com/", headers=self._get_headers(), raise_for_status=False)
 
         header = {
             "version": 2, "fragmentLanguage": "Javascript", "fragmentVersion": "", "clientIdentifier": "nyra.1b"

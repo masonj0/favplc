@@ -114,7 +114,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     env:
-      PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-patchright
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-patchright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 8
     env:
-      PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-patchright
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-patchright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -267,7 +267,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     env:
-      PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-patchright
+      PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-patchright
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -422,14 +422,22 @@ jobs:
         env:
           FORTUNA_NO_BROWSER: '1'
         run: |
-          # If we have raw races (consolidated to root), score now
-          RAW_RACES="races_${{ needs.resolve-mode.outputs.daypart_tag }}.json"
+          # If we have raw races (consolidated to root or in snapshots/), score now
+          DAYPART_TAG="${{ needs.resolve-mode.outputs.daypart_tag }}"
+          RAW_RACES="races_${DAYPART_TAG}.json"
+          SNAPSHOT_RACES="snapshots/${DAYPART_TAG}_races.json"
 
           if [ -f "$RAW_RACES" ] && [ -s "$RAW_RACES" ]; then
             python3 fortuna.py --daypart ${{ needs.resolve-mode.outputs.daypart }} --load "$RAW_RACES" --score-now
+          elif [ -f "$SNAPSHOT_RACES" ] && [ -s "$SNAPSHOT_RACES" ]; then
+            python3 fortuna.py --daypart ${{ needs.resolve-mode.outputs.daypart }} --load "$SNAPSHOT_RACES" --score-now
           else
             # Try generic fallback if specific tag is missing
             FALLBACK_RACES=$(ls races_*.json 2>/dev/null | head -n 1)
+            if [ -z "$FALLBACK_RACES" ]; then
+              FALLBACK_RACES=$(ls snapshots/*_races.json 2>/dev/null | head -n 1)
+            fi
+
             if [ -n "$FALLBACK_RACES" ]; then
               python3 fortuna.py --daypart ${{ needs.resolve-mode.outputs.daypart }} --load "$FALLBACK_RACES" --score-now
             else
@@ -448,11 +456,10 @@ jobs:
           path: fortuna.db
           key: fortuna-db-v4-master-${{ github.run_number }}
 
-      - name: Export to Excel
+      - name: Export to CSV
         if: always()
         run: |
-          python3 -m pip install openpyxl pandas
-          python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_export.xlsx
+          python3 scripts/fortuna_to_csv.py fortuna.db --output db_export
 
       - name: Upload Final Reports
         if: always()
@@ -465,6 +472,6 @@ jobs:
             analytics_report.txt
             fortuna.db
             workflow_metadata.json
-            fortuna_export.xlsx
+            db_export/
             adapter_health_report.txt
           retention-days: 1
