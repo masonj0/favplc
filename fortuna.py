@@ -1226,12 +1226,13 @@ class GlobalResourceManager:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.Semaphore(2)
+            return asyncio.Semaphore(1) # More conservative when outside loop
 
         if loop not in cls._playwright_semaphores:
             with cls._lock_initialized:
                 if loop not in cls._playwright_semaphores:
-                    cls._playwright_semaphores[loop] = asyncio.Semaphore(2)
+                    # Reduced to 1 for high-stability on resource-constrained environments (GHA)
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(1)
         return cls._playwright_semaphores[loop]
 
     @classmethod
@@ -2274,9 +2275,14 @@ class HKJCAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFet
         dt = parse_date_string(date)
         date_hk = dt.strftime("%Y/%m/%d")
 
+        # FIX-CR-HKJC: Establish session first
+        try:
+            await self.make_request("GET", "/racing/information/English/racing/RaceCard.aspx", headers=self._get_headers(), raise_for_status=False)
+        except Exception: pass
+
         # Try RaceCard first (Discovery)
         url = f"/racing/information/English/racing/RaceCard.aspx?RaceDate={date_hk}"
-        resp = await self.make_request("GET", url, headers=self._get_headers())
+        resp = await self.make_request("GET", url, headers=self._get_headers(), follow_redirects=True)
 
         if not resp or not resp.text or "Information will be released shortly" in resp.text:
             # Try Results page if RaceCard is not available (maybe it just finished)
@@ -3022,6 +3028,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         # Success Strategy: Bootstrap session on the form guide root first
         try:
+            # FIX-CR-SRW: Establish session on the home page first
+            await self.make_request("GET", "https://www.skyracingworld.com/", timeout=20, raise_for_status=False)
             await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False)
         except Exception: pass
 
@@ -3030,7 +3038,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         resp = None
         for u in index_urls:
             try:
-                resp = await self.make_request("GET", u, headers=self._get_headers())
+                # FIX-CR-SRW: Follow redirects explicitly
+                resp = await self.make_request("GET", u, headers=self._get_headers(), follow_redirects=True)
                 if resp and resp.text:
                     # Check if the page actually contains race links for the target date
                     if date_iso in resp.text or "/R" in resp.text:
@@ -4307,26 +4316,29 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         index_html = None
 
         # 1. Try browser-based fetch if available
+        # FIX-CR-SC: Gate browser launch behind playwright semaphore to prevent unregulated spawns
         try:
-            from playwright.async_api import async_playwright
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
-                try:
-                    await page.goto(f"{self.base_url}/entries", wait_until="networkidle")
-                    await page.evaluate("() => { document.querySelectorAll('details').forEach(d => d.open = true); }")
-                    try: await page.select_option("#edit-entries-track", label="View All Tracks")
-                    except Exception: pass
-                    try: await page.select_option("#edit-entries-date", label=date_label)
-                    except Exception: pass
-                    try: await page.click("#edit-custom-submit-entries", force=True, timeout=5000)
-                    except Exception: pass
-                    try: await page.wait_for_selector("#entries-results-container a[href*='/entries/']", timeout=10000)
-                    except Exception: pass
-                    index_html = await page.content()
-                finally:
-                    await page.close()
-                    await browser.close()
+            pw_sem = GlobalResourceManager.get_playwright_semaphore()
+            async with pw_sem:
+                from playwright.async_api import async_playwright
+                async with async_playwright() as p:
+                    browser = await p.chromium.launch(headless=True)
+                    page = await browser.new_page()
+                    try:
+                        await page.goto(f"{self.base_url}/entries", wait_until="networkidle")
+                        await page.evaluate("() => { document.querySelectorAll('details').forEach(d => d.open = true); }")
+                        try: await page.select_option("#edit-entries-track", label="View All Tracks")
+                        except Exception: pass
+                        try: await page.select_option("#edit-entries-date", label=date_label)
+                        except Exception: pass
+                        try: await page.click("#edit-custom-submit-entries", force=True, timeout=5000)
+                        except Exception: pass
+                        try: await page.wait_for_selector("#entries-results-container a[href*='/entries/']", timeout=10000)
+                        except Exception: pass
+                        index_html = await page.content()
+                    finally:
+                        await page.close()
+                        await browser.close()
         except Exception as e:
             self.logger.debug("Playwright index fetch failed, trying fallback", error=str(e))
 
@@ -4725,9 +4737,10 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 get_races_payload = {
                     "header": header, "cohort": "A--", "wageringCohort": "NBI", "raceIds": chunk, "wantContents": True
                 }
-                resp = await self.smart_fetcher.fetch(
+                # FIX-CR-NYRA: Use make_request instead of direct smart_fetcher.fetch to respect rate limits
+                resp = await self.make_request(
+                    "POST",
                     f"{self.API_URL}/GetRaces.ashx",
-                    method="POST",
                     data={"request": json.dumps(get_races_payload)},
                     headers=self._get_headers()
                 )
@@ -5879,6 +5892,16 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
         # Data shows the superfecta edge lives almost entirely in Fav2Group 6.0+.
         SUPERFECTA_SEC_FAV_MIN = analysis_cfg.get("superfecta_sec_fav_min", 6.00)
 
+        # [CHANGE 3] Sprint / 6-furlong bonus thresholds
+        R9_SIX_FUR_BONUS   = analysis_cfg.get("r9_six_fur_bonus", 4.0)
+        R10_SIX_FUR_BONUS  = analysis_cfg.get("r10_six_fur_bonus", 2.5)
+        R8_ROUTE_BONUS     = analysis_cfg.get("r8_route_bonus", 2.0)
+
+        # [CHANGE 2] Graduated second-favourite composite bonuses
+        SEC_FAV_BONUS_HIGH = analysis_cfg.get("sec_fav_bonus_high", 6.0)
+        SEC_FAV_BONUS_MID  = analysis_cfg.get("sec_fav_bonus_mid", 3.0)
+        SEC_FAV_BONUS_LOW  = analysis_cfg.get("sec_fav_bonus_low", 1.0)
+
         fingerprints = {}
 
         for race in races:
@@ -6071,21 +6094,21 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
             # New: stepped bonuses aligned with the validated performance tiers.
             # Data shows the cliff is at 6.0, not 7.0.
             if sec_fav_odds >= 6.0:
-                composite += 6.0               # dominant positive zone in data
+                composite += SEC_FAV_BONUS_HIGH  # dominant positive zone in data
             elif sec_fav_odds >= 5.0:
-                composite += 3.0               # selective positive zone
+                composite += SEC_FAV_BONUS_MID   # selective positive zone
             elif sec_fav_odds >= 4.5:
-                composite += 1.0               # mostly negative but SEC_FAV_FLOOR passes
+                composite += SEC_FAV_BONUS_LOW   # mostly negative but SEC_FAV_FLOOR passes
 
             # [CHANGE 3] Sprint / 6-furlong sweet-spot bonus.
             # r9 × 6f achieves 74 % FvP hit rate; r10 × 6f achieves 62 %.
             # Only applies where sec_fav_odds >= 4.5 (data gate).
             if profile["r9_six_fur"]:
-                composite += 4.0               # strongest validated single slice
+                composite += R9_SIX_FUR_BONUS    # strongest validated single slice
             elif profile["r10_six_fur"]:
-                composite += 2.5
+                composite += R10_SIX_FUR_BONUS
             elif profile["r8_route"] and not profile["is_sprint"]:
-                composite += 2.0               # r8 route FvW +5.4 %
+                composite += R8_ROUTE_BONUS      # r8 route FvW +5.4 %
 
             # Discipline-specific gap floor
             min_gap = get_discipline_threshold(race.discipline, "min_gap12")
@@ -6174,6 +6197,12 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                 "goldmine_gap_min":       GOLDMINE_GAP_MIN,
                 "goldmine_field_max":     GOLDMINE_FIELD_MAX,          # [CHANGE 1]
                 "superfecta_sec_fav_min": SUPERFECTA_SEC_FAV_MIN,      # [CHANGE 5]
+                "r9_six_fur_bonus":       R9_SIX_FUR_BONUS,
+                "r10_six_fur_bonus":      R10_SIX_FUR_BONUS,
+                "r8_route_bonus":         R8_ROUTE_BONUS,
+                "sec_fav_bonus_high":     SEC_FAV_BONUS_HIGH,
+                "sec_fav_bonus_mid":      SEC_FAV_BONUS_MID,
+                "sec_fav_bonus_low":      SEC_FAV_BONUS_LOW,
             },
             "races": qualified,
         }
@@ -10260,13 +10289,18 @@ async def run_quarter_fetch(
             race_map[key] = race
         else:
             existing = race_map[key]
+            # Merge runners with shadow-runner / double-header detection
             for nr in race.runners:
+                # Find matching runner in existing race by number or name
                 er = next((r for r in existing.runners if (r.number != 0 and r.number == nr.number) or (r.name.lower() == nr.name.lower())), None)
                 if er:
+                    # Update odds and metadata
                     er.odds.update(nr.odds)
                     if not er.win_odds and nr.win_odds: er.win_odds = nr.win_odds
                     if not er.number and nr.number: er.number = nr.number
+                    er.metadata.update(nr.metadata)
                 else:
+                    # New runner discovered for this race (e.g. from a different aggregator)
                     existing.runners.append(nr)
             sources = set((existing.source or "").split(", "))
             sources.add(race.source or "Unknown")
