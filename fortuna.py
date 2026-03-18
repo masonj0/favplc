@@ -3028,6 +3028,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             await self.make_request("GET", "https://www.skyracingworld.com/", timeout=20, raise_for_status=False)
             await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False)
             await self.make_request("GET", "/form-guide/thoroughbred", timeout=20, raise_for_status=False)
+            # FIX: Additional delay to satisfy SRW's rate limiters during bootstrap
+            await asyncio.sleep(2)
         except Exception: pass
 
         # Success Strategy: Try both dated and generic index (Fix redirects)
@@ -3265,7 +3267,8 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
             await self.make_request("GET", "https://www.attheraces.com/market-movers", wait_until="networkidle", timeout=30, raise_for_status=False)
             # Also try hitting the international tab specifically to set its cookies
             await self.make_request("GET", "https://www.attheraces.com/market-movers/international", wait_until="networkidle", timeout=30, raise_for_status=False)
-            await asyncio.sleep(2)
+            # FIX: Additional delay to allow browser scripts/moat/cloudflare to settle
+            await asyncio.sleep(5)
         except Exception: pass
 
         # Success Strategy: Use Market Movers AJAX for deterministic top-tier odds (Council Intelligence)
@@ -4661,12 +4664,14 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
         # FIX-24: Bootstrap session cookies by hitting the main site first to prevent 403 Forbidden on API
         try:
             # Hardening Fix: Establish session on the homepage before API calls
+            # NYRABets often challenges standard HTTPX; use scraping strategy
             await self.make_request(
                 "GET",
                 "https://www.nyrabets.com/",
                 headers=self._get_headers(),
                 timeout=30,
-                raise_for_status=False
+                raise_for_status=False,
+                strategy=scraping_fetch_strategy()
             )
             # Also hit a form page to get deeper cookies
             await self.make_request(
@@ -4674,9 +4679,10 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 "https://www.nyrabets.com/betting",
                 headers=self._get_headers(),
                 timeout=30,
-                raise_for_status=False
+                raise_for_status=False,
+                strategy=scraping_fetch_strategy()
             )
-            await asyncio.sleep(2)  # Allow cookies to settle
+            await asyncio.sleep(5)  # Allow cookies and bot scripts to settle
         except Exception as e:
             self.logger.debug("NYRABets bootstrap failed", error=str(e))
 
@@ -8983,8 +8989,9 @@ class OddscheckerAdapter(BrowserHeadersMixin, DebugMixin, BaseAdapterV3):
         """
         # Success Strategy: Bootstrap session if using browser
         try:
-            await self.make_request("GET", "https://www.oddschecker.com/horse-racing", timeout=20, raise_for_status=False)
-            await asyncio.sleep(1)
+            # FIX: Use longer timeout and mandatory delay for Cloudflare
+            await self.make_request("GET", "https://www.oddschecker.com/horse-racing", timeout=45, raise_for_status=False)
+            await asyncio.sleep(5)
         except Exception: pass
 
         sem = asyncio.Semaphore(3)
@@ -10155,9 +10162,6 @@ async def run_quarter_fetch(
 
     date_str = daypart_tag.split("_")[1] # 260225
 
-    # Add semaphore for browser-heavy adapters to prevent resource thrashing
-    playwright_semaphore = GlobalResourceManager.get_playwright_semaphore()
-
     async def fetch_one(cls):
         name = getattr(cls, "SOURCE_NAME", cls.__name__)
         specific_config = adapter_configs.get(name, {}).copy()
@@ -10175,11 +10179,9 @@ async def run_quarter_fetch(
             # GEMINI_3: Increase per-adapter timeout in run_quarter_fetch to 180s
             # Increased to 300s to match hardened adapter timeouts (Hardening Fix)
             fetch_timeout = 300.0
-            if use_playwright_sem:
-                async with playwright_semaphore:
-                    races = await asyncio.wait_for(adapter.get_races(date_str), timeout=fetch_timeout)
-            else:
-                races = await asyncio.wait_for(adapter.get_races(date_str), timeout=fetch_timeout)
+            # FIX: Deadlock guard — do not acquire playwright_semaphore here!
+            # SmartFetcher already handles the semaphore internally during session creation.
+            races = await asyncio.wait_for(adapter.get_races(date_str), timeout=fetch_timeout)
 
             # Record last status for Phase 1 logging (Hardening Fix)
             status = getattr(adapter, 'last_response_status', None)
