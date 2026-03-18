@@ -5865,7 +5865,7 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
     - Detect 'Goldmines' where favourite has dominant value
     """
 
-    def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
+    def qualify_races(self, races, now=None):
         """
         Core qualification engine — Simply Success playbook.
         Recalibrated against 8,708-race historical validation (Mar 2024–Jul 2025).
