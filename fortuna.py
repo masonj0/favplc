@@ -1231,8 +1231,8 @@ class GlobalResourceManager:
         if loop not in cls._playwright_semaphores:
             with cls._lock_initialized:
                 if loop not in cls._playwright_semaphores:
-                    # Reduced to 1 for high-stability on resource-constrained environments (GHA)
-                    cls._playwright_semaphores[loop] = asyncio.Semaphore(1)
+                    # Capability Improvement: Increased to 2 for better throughput while maintaining stability
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(2)
         return cls._playwright_semaphores[loop]
 
     @classmethod
@@ -1426,8 +1426,7 @@ class SmartFetcher:
                 except (BrokenPipeError, ConnectionError, ConnectionResetError, OSError, asyncio.TimeoutError) as e:
                     self.logger.error('browser_session_creation_failed',
                                      engine=engine.value, error=str(e))
-                    async with self._health_lock:
-                        self._engine_health[engine] = 0.0
+                    GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
                     raise FetchError(f'Browser launch failed: {e}',
                                      category=ErrorCategory.NETWORK)
 
@@ -1730,8 +1729,7 @@ class SmartFetcher:
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
                 await self._invalidate_session(engine)
-                async with self._health_lock:
-                    self._engine_health[engine] = 0.0
+                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
                 raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
@@ -1761,8 +1759,7 @@ class SmartFetcher:
                     return UnifiedResponse(content, status, status, url, headers)
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
-                async with self._health_lock:
-                    self._engine_health[engine] = 0.0
+                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
                 raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
 
         else:
@@ -1781,8 +1778,7 @@ class SmartFetcher:
                     return _get_unified_resp(resp)
             except (BrokenPipeError, ConnectionResetError, OSError) as e:
                 self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
-                async with self._health_lock:
-                    self._engine_health[engine] = 0.0
+                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
                 raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
 
 
@@ -3031,6 +3027,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             # FIX-CR-SRW: Establish session on the home page first
             await self.make_request("GET", "https://www.skyracingworld.com/", timeout=20, raise_for_status=False)
             await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False)
+            await self.make_request("GET", "/form-guide/thoroughbred", timeout=20, raise_for_status=False)
         except Exception: pass
 
         # Success Strategy: Try both dated and generic index (Fix redirects)
@@ -10228,7 +10225,8 @@ async def run_quarter_fetch(
 
     # Phase 1: Odds-providing + discovery adapters (main time budget)
     phase1_adapters = tier1_odds + tier2_discovery
-    phase1_timeout = 240  # 4 minutes for all data adapters combined
+    # Capability Improvement: Increased to 10 minutes to allow multiple browser adapters to finish
+    phase1_timeout = 600
 
     if phase1_adapters:
         pending = [asyncio.create_task(fetch_one(cls)) for cls in phase1_adapters]
