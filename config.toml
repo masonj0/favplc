@@ -6,6 +6,28 @@ simply_success_trust_min = 0.7
 # Maximum field size for standard analysis
 max_field_size = 11
 
+# ── Simply Success — analytical calibration (Mar 2024–Jul 2025 validation) ──
+
+# Raised from 10: r11 validates well across all Fav2Group tiers
+goldmine_field_max = 11
+
+# Superfecta trigger: must be sec-fav odds, not just gap.
+# Data shows superfecta edge lives almost entirely in Fav2Group >= 6.0.
+superfecta_sec_fav_min = 6.00
+
+# Sprint / 6-furlong bonus thresholds (added to composite score)
+# r9_six_fur_bonus  and  r10_six_fur_bonus  are applied inside the analyzer;
+# these config keys let operators tune them without touching Python.
+r9_six_fur_bonus   = 4.0
+r10_six_fur_bonus  = 2.5
+r8_route_bonus     = 2.0
+
+# Graduated second-favourite composite bonuses
+# (replacing the old flat +3 at >= 7.0)
+sec_fav_bonus_high = 6.0   # applied when sec_fav_odds >= 6.0
+sec_fav_bonus_mid  = 3.0   # applied when sec_fav_odds >= 5.0
+sec_fav_bonus_low  = 1.0   # applied when sec_fav_odds >= 4.5 (just past floor)
+
 [region]
 # Default region: USA, INT, or GLOBAL
 default = "GLOBAL"

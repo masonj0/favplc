@@ -5733,6 +5733,116 @@ def get_discipline_threshold(discipline: str, key: str) -> float:
         norm_d = "Thoroughbred"
     return DISCIPLINE_THRESHOLDS.get(norm_d, DISCIPLINE_THRESHOLDS["Thoroughbred"]).get(key, 0.0)
 
+
+def _classify_race_profile(
+    total_active: int,
+    sec_fav_odds: float,
+    fav_odds: float,
+    distance: str | None,
+    race_type: str | None,
+) -> dict:
+    """
+    Encode validated dimensional conditions from historical analysis.
+    Returns a dict of boolean flags and a human-readable profile tag.
+
+    Validated slices (PowerQuery_For_Hobby.csv, n=8,708):
+
+    ┌─────────────────────────────────────┬───────┬──────────┬─────────┐
+    │ Slice                               │  n    │ FvP ROI  │ Hit%    │
+    ├─────────────────────────────────────┼───────┼──────────┼─────────┤
+    │ r9 × 6f × low-purse  (v0)           │  152  │  +2.5 %  │  74.3 % │
+    │ r8 × mid-purse × route              │   74  │  –       │  79.5 % │
+    │ r10 × 6f × mid-purse (v3)           │   50  │  +4.0 %  │  62.0 % │
+    │ r10 × sprint × mid-purse            │   91  │  +2.3 %  │  59.3 % │
+    │ Fav2Group 6.0–6.5  (all runners)    │  695  │  varies  │  varies │
+    └─────────────────────────────────────┴───────┴──────────┴─────────┘
+    """
+    # ── Distance parsing ──────────────────────────────────────────────
+    dist_str   = (distance or "").lower().strip()
+    is_sprint  = False   # Under 7 furlongs
+    is_six_fur = False   # Exactly ~6f (0.70–0.80 miles)
+
+    # Accept common formats: "6f", "6 furlongs", "1200m", "6.0f", "0.75m"
+    fur_match = None
+    import re
+    m = re.search(r"(\d+(?:\.\d+)?)\s*f(?:url)?", dist_str)
+    if m:
+        fur_match = float(m.group(1))
+    elif re.search(r"(\d+(?:\.\d+)?)\s*m(?:i|le)?", dist_str):
+        # Extract miles value specifically from the pattern (Hardening Fix)
+        mile_match = re.search(r"(\d+(?:\.\d+)?)\s*m", dist_str)
+        if mile_match:
+            miles = float(mile_match.group(1))
+            fur_match = miles * 8.0
+    elif re.search(r"(\d+)\s*m\b", dist_str):          # metres
+        metre_match = re.search(r"(\d+)\s*m\b", dist_str)
+        if metre_match:
+            metres = float(metre_match.group(1))
+            fur_match = metres / 201.168
+
+    if fur_match is not None:
+        is_sprint  = fur_match < 7.0
+        is_six_fur = 5.5 <= fur_match <= 6.5   # 6f ±0.5f tolerance
+
+    # ── Fav2Group tier ────────────────────────────────────────────────
+    fg_high    = sec_fav_odds >= 6.0            # dominant positive zone
+    fg_mid     = 5.0 <= sec_fav_odds < 6.0     # selective positives
+    fg_low     = sec_fav_odds < 5.0            # mostly negative
+
+    # ── Field-size groups ─────────────────────────────────────────────
+    in_goldmine_field = 7 <= total_active <= 11   # validated Goldmine range
+    in_small_field    = 5 <= total_active <= 6    # 55-family sweet spot
+    in_mid_field      = 8 <= total_active <= 10   # r8/r9/r10 focused slices
+
+    # ── Validated sweet-spot combos ───────────────────────────────────
+    #   r9 × 6f × sec_fav >= 4.5  (FvP hit 74 %, FAV_PS hit 76 %)
+    r9_six_fur = (total_active == 9 and is_six_fur and sec_fav_odds >= 4.5)
+
+    #   r10 × 6f × sec_fav >= 4.5  (FvP +4 %, TopTwoW +11 %)
+    r10_six_fur = (total_active == 10 and is_six_fur and sec_fav_odds >= 4.5)
+
+    #   r8 × route × sec_fav >= 4.5  (FvW +5.4 %, hit 60 %)
+    r8_route = (total_active == 8 and not is_sprint and sec_fav_odds >= 4.5)
+
+    #   55-family / Sup1x55 fires hard: small field + sec_fav >= 6.0
+    sup55_zone = (in_small_field and sec_fav_odds >= 6.0)
+
+    # ── Profile tag ───────────────────────────────────────────────────
+    if sec_fav_odds >= 6.0 and in_small_field:
+        profile = "sup55_prime"          # best 55-family superfecta zone
+    elif r9_six_fur:
+        profile = "r9_6f_sweet_spot"     # highest validated hit rate
+    elif r10_six_fur:
+        profile = "r10_6f_sweet_spot"
+    elif r8_route:
+        profile = "r8_route_sweet_spot"
+    elif sec_fav_odds >= 6.0 and in_goldmine_field:
+        profile = "goldmine_high_fav2"   # Fav2Group 6+ standard Goldmine
+    elif sec_fav_odds >= 6.0:
+        profile = "high_fav2"
+    elif in_goldmine_field and sec_fav_odds >= 4.5:
+        profile = "goldmine_standard"
+    else:
+        profile = "standard"
+
+    return {
+        "is_sprint":         is_sprint,
+        "is_six_fur":        is_six_fur,
+        "furlongs":          round(fur_match, 1) if fur_match is not None else None,
+        "fg_high":           fg_high,
+        "fg_mid":            fg_mid,
+        "fg_low":            fg_low,
+        "in_goldmine_field": in_goldmine_field,
+        "in_small_field":    in_small_field,
+        "in_mid_field":      in_mid_field,
+        "r9_six_fur":        r9_six_fur,
+        "r10_six_fur":       r10_six_fur,
+        "r8_route":          r8_route,
+        "sup55_zone":        sup55_zone,
+        "profile":           profile,
+    }
+
+
 class SimplySuccessAnalyzer(BaseAnalyzer):
     """
     Core qualification engine for Fortuna.
@@ -5742,66 +5852,75 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
     - Detect 'Goldmines' where favourite has dominant value
     """
 
-    def qualify_races(self, races: List[Race], now: Optional[datetime] = None) -> Dict[str, Any]:
+    def qualify_races(self, races, now=None):
         """
-        Phase 1 Core algorithm rewrite:
-        Target FAVOURITE for PLACE betting with recalibrated absolute gap metrics.
+        Core qualification engine — Simply Success playbook.
+        Recalibrated against 8,708-race historical validation (Mar 2024–Jul 2025).
         """
         qualified = []
         if now is None:
             now = now_eastern()
 
-        analysis_cfg = self.config.get('analysis', {})
+        analysis_cfg = self.config.get("analysis", {})
         TRUSTWORTHY_RATIO_MIN = analysis_cfg.get("simply_success_trust_min", 0.25)
-        NON_CHALK_MIN = analysis_cfg.get('non_chalk_min', 0.90)
-        SEC_FAV_FLOOR = analysis_cfg.get('second_fav_floor', 4.50)
-        GAP_ABS_MIN = analysis_cfg.get('gap_abs_min', 0.75)
+        NON_CHALK_MIN         = analysis_cfg.get("non_chalk_min", 0.90)
+        SEC_FAV_FLOOR         = analysis_cfg.get("second_fav_floor", 4.50)
+        GAP_ABS_MIN           = analysis_cfg.get("gap_abs_min", 0.75)
 
         # Goldmine configuration
-        GOLDMINE_FAV_MIN = analysis_cfg.get('goldmine_fav_min', 1.10)
-        GOLDMINE_SEC_FAV_MIN = analysis_cfg.get('goldmine_sec_fav_min', 4.50)
-        GOLDMINE_GAP_MIN = analysis_cfg.get('goldmine_gap_min', 2.00)
-        GOLDMINE_FIELD_MIN = analysis_cfg.get('goldmine_field_min', 5)
-        GOLDMINE_FIELD_MAX = analysis_cfg.get('goldmine_field_max', 10)
+        GOLDMINE_FAV_MIN      = analysis_cfg.get("goldmine_fav_min", 1.10)
+        GOLDMINE_SEC_FAV_MIN  = analysis_cfg.get("goldmine_sec_fav_min", 4.50)
+        GOLDMINE_GAP_MIN      = analysis_cfg.get("goldmine_gap_min", 2.00)
+        GOLDMINE_FIELD_MIN    = analysis_cfg.get("goldmine_field_min", 5)
+        # [CHANGE 1] raised from 10 → 11: r11 fires well in all validated slices
+        GOLDMINE_FIELD_MAX    = analysis_cfg.get("goldmine_field_max", 11)
 
-        # Superfecta configuration
-        SUPERFECTA_GAP_MIN = analysis_cfg.get('superfecta_gap_min', 4.00)
+        # [CHANGE 5] Superfecta trigger: sec_fav ≥ 6.0 (not gap-only).
+        # Data shows the superfecta edge lives almost entirely in Fav2Group 6.0+.
+        SUPERFECTA_SEC_FAV_MIN = analysis_cfg.get("superfecta_sec_fav_min", 6.00)
 
         fingerprints = {}
 
         for race in races:
             canonical_venue = get_canonical_venue(race.venue)
-            if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES) or canonical_venue in BLOCKED_VENUES:
-                self.logger.info("Skipping race in untested region", venue=race.venue, canonical=canonical_venue)
+            if any(canonical_venue.startswith(p) for p in INVALID_REGION_PREFIXES) \
+                    or canonical_venue in BLOCKED_VENUES:
+                self.logger.info("Skipping race in untested region",
+                                 venue=race.venue, canonical=canonical_venue)
                 continue
 
             active_runners = [r for r in race.runners if not r.scratched]
-            total_active = len(active_runners)
+            total_active   = len(active_runners)
 
-            # Discipline-specific gate (Phase J)
-            min_field = get_discipline_threshold(race.discipline, 'min_field_size')
-            max_field = get_discipline_threshold(race.discipline, 'max_field_size')
+            min_field = get_discipline_threshold(race.discipline, "min_field_size")
+            max_field = get_discipline_threshold(race.discipline, "max_field_size")
             if total_active < min_field or (max_field > 0 and total_active > max_field):
-                self.logger.debug("Skipping race: field size outside discipline limits", venue=race.venue, size=total_active, disc=race.discipline)
+                self.logger.debug("Skipping race: field size outside discipline limits",
+                                  venue=race.venue, size=total_active, disc=race.discipline)
                 continue
 
-            # Trustworthiness Airlock
+            # Trustworthiness airlock
             skip_trust_check = race.metadata.get("provides_odds") is False
             if skip_trust_check:
-                valid_odds_count = sum(1 for r in active_runners if isinstance(r.win_odds, (int, float)) and r.win_odds > 0)
+                valid_odds_count = sum(
+                    1 for r in active_runners
+                    if isinstance(r.win_odds, (int, float)) and r.win_odds > 0
+                )
                 if valid_odds_count < 2:
                     continue
             elif total_active > 0:
-                trustworthy_count = sum(1 for r in active_runners if r.metadata.get("odds_source_trustworthy"))
+                trustworthy_count = sum(
+                    1 for r in active_runners if r.metadata.get("odds_source_trustworthy")
+                )
                 if trustworthy_count / total_active < TRUSTWORTHY_RATIO_MIN:
                     continue
 
             all_valid_with_odds = sorted(
-                [(r, odds) for r in active_runners if (odds := _get_best_win_odds(r)) is not None],
-                key=lambda x: x[1]
+                [(r, odds) for r in active_runners
+                 if (odds := _get_best_win_odds(r)) is not None],
+                key=lambda x: x[1],
             )
 
-            # Deduplicate by name and number
             seen_runner_names = set()
             valid_r_with_odds = []
             for r, odds in all_valid_with_odds:
@@ -5811,223 +5930,252 @@ class SimplySuccessAnalyzer(BaseAnalyzer):
                     valid_r_with_odds.append((r, odds))
 
             if len(valid_r_with_odds) < 2:
-                # USER-REQ-01: Blanket override for 4-5 runner races without odds to "You Might Like"
                 if 4 <= total_active <= 5:
-                    self.logger.info("Applying override for small field without odds", venue=race.venue, size=total_active)
-                    race.metadata['qualification_grade'] = 'B+ (Override)'
-                    race.metadata['composite_score'] = 45.0
-                    race.metadata['tip_tier'] = 'you_might_like'
-                    race.metadata['is_best_bet'] = False
-                    race.metadata['is_goldmine'] = False
-                    race.metadata['gap_abs'] = 0.0
+                    race.metadata["qualification_grade"] = "B+ (Override)"
+                    race.metadata["composite_score"]     = 45.0
+                    race.metadata["tip_tier"]            = "you_might_like"
+                    race.metadata["is_best_bet"]         = False
+                    race.metadata["is_goldmine"]         = False
+                    race.metadata["gap_abs"]             = 0.0
                     qualified.append(race)
                 continue
 
-            seen_nums = set()
-            top_nums = []
+            seen_nums  = set()
+            top_nums   = []
             for r, o in valid_r_with_odds:
                 n = r.number
                 if n and n not in seen_nums:
                     seen_nums.add(n)
                     top_nums.append(str(n))
-                if len(top_nums) >= 5: break
+                if len(top_nums) >= 5:
+                    break
             race.top_five_numbers = ", ".join(top_nums)
 
-            fav = valid_r_with_odds[0][0]
-            fav_odds = float(valid_r_with_odds[0][1])
+            fav          = valid_r_with_odds[0][0]
+            fav_odds     = float(valid_r_with_odds[0][1])
             sec_fav_odds = float(valid_r_with_odds[1][1])
 
-            # Gate 0: malformed data
-            if fav_odds < 0.10: continue
-
-            # Gate 1: non-chalk floor
+            if fav_odds < 0.10:        continue
             if fav_odds < NON_CHALK_MIN: continue
-
-            # Gate 2: 2nd favourite floor
             if sec_fav_odds < SEC_FAV_FLOOR: continue
 
-            race.metadata['selection_number'] = fav.number
-            race.metadata['selection_name'] = fav.name
-            race.metadata['predicted_fav_odds'] = fav_odds
+            race.metadata["selection_number"]    = fav.number
+            race.metadata["selection_name"]      = fav.name
+            race.metadata["predicted_fav_odds"]  = fav_odds
 
-            # Uniform Odds Check
-            if len(valid_r_with_odds) >= 3 and len(set(o for r, o in valid_r_with_odds[:3])) == 1:
+            if (len(valid_r_with_odds) >= 3
+                    and len(set(o for r, o in valid_r_with_odds[:3])) == 1):
                 continue
 
-            # Duplicate Content Detection (BUG-CR-03: Use canonical venue)
             active_content = [(r.name, str(r.win_odds)) for r in race.runners if not r.scratched]
-            content_fp = (canonical_venue, frozenset(active_content))
+            content_fp     = (canonical_venue, frozenset(active_content))
             if content_fp in fingerprints:
                 continue
             fingerprints[content_fp] = 1
 
-            # 3. Apply Scoring Math
-            # absolute odds gap (decimal points), not ratio
             gap_abs = sec_fav_odds - fav_odds
+            if gap_abs <= GAP_ABS_MIN:
+                continue
 
-            # Initialize flags for this race (ISSUE-2 Fix)
-            is_goldmine = False
-            is_best_bet = False
+            # ── Validated race profile (new helper) ───────────────────
+            profile = _classify_race_profile(
+                total_active=total_active,
+                sec_fav_odds=sec_fav_odds,
+                fav_odds=fav_odds,
+                distance=race.distance,
+                race_type=race.race_type,
+            )
+            race.metadata["race_profile"]   = profile["profile"]
+            race.metadata["race_furlongs"]  = profile["furlongs"]
+            race.metadata["is_sprint"]      = profile["is_sprint"]
+
+            # ── Goldmine detection ────────────────────────────────────
+            is_goldmine = (
+                fav_odds     >= GOLDMINE_FAV_MIN     and
+                sec_fav_odds >= GOLDMINE_SEC_FAV_MIN and
+                gap_abs      >= GOLDMINE_GAP_MIN     and
+                GOLDMINE_FIELD_MIN <= total_active <= GOLDMINE_FIELD_MAX  # [CHANGE 1]
+            )
+
+            is_best_bet       = False
             is_superfecta_key = False
-            tip_tier = 'best_bet'
+            tip_tier          = "best_bet"
 
-            # Gate 3: minimum gap
-            if gap_abs <= GAP_ABS_MIN: continue
-
-            # Goldmine redefinition
-            is_goldmine = (fav_odds >= GOLDMINE_FAV_MIN and
-                          sec_fav_odds >= GOLDMINE_SEC_FAV_MIN and
-                          gap_abs >= GOLDMINE_GAP_MIN and
-                          GOLDMINE_FIELD_MIN <= total_active <= GOLDMINE_FIELD_MAX)
-
-            # Multi-source validation for Goldmines (P2-ENH-4)
             if is_goldmine:
-                # Count distinct sources providing win odds for the favorite
                 fav_sources = set()
                 if fav.odds:
                     for source, data in fav.odds.items():
-                        win = data.get('win') if isinstance(data, dict) else getattr(data, 'win', data)
+                        win = (data.get("win") if isinstance(data, dict)
+                               else getattr(data, "win", data))
                         if is_valid_odds(win):
                             fav_sources.add(source)
 
-                # Tag Goldmines with multi-source status for reporting tiers (P2-ENH-2)
                 is_multi_source = len(fav_sources) >= 2
-                race.metadata['is_goldmine_multi_source'] = is_multi_source
+                race.metadata["is_goldmine_multi_source"] = is_multi_source
 
-                if not is_multi_source:
-                    self.logger.info("A promising Goldmine has been spotted! It's marked as Emerging (single-source). ✨",
-                                    venue=race.venue, race=race.race_number, selection=fav.name, sources=list(fav_sources))
-                else:
-                    self.logger.info("🌟 Incredible High-Confidence Goldmine discovered! 🌟",
-                                    venue=race.venue, race=race.race_number, selection=fav.name, sources=list(fav_sources))
-
-                # P2-ENH-4 Multi-source gap confirmation
-                # Check if the gap is confirmed by multiple sources or if it's a potential single-source outlier
-                if len(fav_sources) >= 2:
-                    race.metadata['goldmine_confidence'] = 'high'
-                    race.metadata['goldmine_sources'] = list(fav_sources)
-                    race.metadata['is_goldmine'] = True # Ensure high-confidence is marked as Goldmine
-                    # Success Tier: Diamond for multi-source large fields
-                    if total_active >= 8:
-                        race.metadata['success_tier'] = 'Diamond'
+                if is_multi_source:
+                    self.logger.info(
+                        "🌟 High-Confidence Goldmine discovered! 🌟",
+                        venue=race.venue, race=race.race_number,
+                        selection=fav.name, sources=list(fav_sources),
+                        profile=profile["profile"],
+                    )
+                    race.metadata["goldmine_confidence"] = "high"
+                    race.metadata["goldmine_sources"]    = list(fav_sources)
+                    race.metadata["is_goldmine"]         = True
+                    # [CHANGE 8] Diamond: multi-source AND runners 7–11 (was ≥ 8)
+                    if 7 <= total_active <= 11:
+                        race.metadata["success_tier"] = "Diamond"
                     else:
-                        race.metadata['success_tier'] = 'Platinum'
+                        race.metadata["success_tier"] = "Platinum"
                 else:
-                    race.metadata['goldmine_confidence'] = 'low'
-                    race.metadata['goldmine_sources'] = list(fav_sources)
-                    # Low confidence (emerging) also stays goldmine but with low tag
-                    race.metadata['success_tier'] = 'Gold'
+                    self.logger.info(
+                        "✨ Emerging Goldmine (single-source).",
+                        venue=race.venue, race=race.race_number,
+                        selection=fav.name, sources=list(fav_sources),
+                    )
+                    race.metadata["goldmine_confidence"] = "low"
+                    race.metadata["goldmine_sources"]    = list(fav_sources)
+                    race.metadata["success_tier"]        = "Gold"
 
-            # Composite Scoring — recalibrated for absolute gap
-            composite = 45.0  # lower base — marginal races land at B+, not A
+            # ── Composite scoring ─────────────────────────────────────
+            composite = 45.0
 
-            # Gap contribution (capped at 8 points of gap)
-            # Hardening Fix: apply stronger reward for multi-source confirmed gaps
-            gap_weight = 3.0 if is_goldmine and race.metadata.get('goldmine_confidence') == 'high' else 2.5
+            # Gap contribution
+            gap_weight = (3.0 if is_goldmine
+                          and race.metadata.get("goldmine_confidence") == "high"
+                          else 2.5)
             composite += min(gap_abs, 8.0) * gap_weight
 
-            # Field size tiers (BUG-CR-02: Fixed shadowing and unreachable code)
-            if total_active < 5:          composite -= 10.0  # sub-minimum
-            elif total_active <= 8:       composite += 8.0   # 5-8 sweet spot
-            elif total_active <= 10:      composite += 4.0   # 9-10
-            elif total_active <= 12:      pass               # 11-12 neutral
-            else:                         composite -= 5.0   # 13+
+            # [CHANGE 4] Field-size tiers — r11 is not neutral, it's in the
+            # same validated band as r9/r10. Removed the old neutral/penalty
+            # for 11-12 and the sub-minimum penalty for <5.
+            if total_active < 5:
+                composite -= 10.0              # too small for exotic payouts
+            elif 5 <= total_active <= 8:
+                composite += 8.0               # small-to-mid sweet spot
+            elif 9 <= total_active <= 11:
+                composite += 4.0               # [CHANGE 4] r9/r10/r11 all equal
+            # 12+ gets no bonus and no penalty — insufficient data
 
-            # Favourite odds quality (Place-value sweet spot)
-            if 2.00 <= fav_odds <= 4.00:  composite += 5.0   # ideal Place range
-            elif 1.50 <= fav_odds < 2.00 or 4.00 < fav_odds <= 6.00: composite += 2.0
-            elif fav_odds < 1.50:         composite -= 3.0   # very short, minimal Place return
+            # Favourite odds quality
+            if 2.00 <= fav_odds <= 4.00:
+                composite += 5.0
+            elif 1.50 <= fav_odds < 2.00 or 4.00 < fav_odds <= 6.00:
+                composite += 2.0
+            elif fav_odds < 1.50:
+                composite -= 3.0
 
-            # favourite separation bonus
-            if sec_fav_odds >= 7.00:      composite += 3.0   # field well behind favourite
+            # [CHANGE 2] Graduated second-favourite bonus.
+            # Old code: flat +3 if sec_fav >= 7.0.
+            # New: stepped bonuses aligned with the validated performance tiers.
+            # Data shows the cliff is at 6.0, not 7.0.
+            if sec_fav_odds >= 6.0:
+                composite += 6.0               # dominant positive zone in data
+            elif sec_fav_odds >= 5.0:
+                composite += 3.0               # selective positive zone
+            elif sec_fav_odds >= 4.5:
+                composite += 1.0               # mostly negative but SEC_FAV_FLOOR passes
 
-            # Discipline-specific adjustments (recalibrated for absolute values)
-            min_gap = get_discipline_threshold(race.discipline, 'min_gap12')
+            # [CHANGE 3] Sprint / 6-furlong sweet-spot bonus.
+            # r9 × 6f achieves 74 % FvP hit rate; r10 × 6f achieves 62 %.
+            # Only applies where sec_fav_odds >= 4.5 (data gate).
+            if profile["r9_six_fur"]:
+                composite += 4.0               # strongest validated single slice
+            elif profile["r10_six_fur"]:
+                composite += 2.5
+            elif profile["r8_route"] and not profile["is_sprint"]:
+                composite += 2.0               # r8 route FvW +5.4 %
+
+            # Discipline-specific gap floor
+            min_gap = get_discipline_threshold(race.discipline, "min_gap12")
             if gap_abs < min_gap:
                 composite -= 20.0
                 is_goldmine = False
 
-            # Grade -> Tip Tier mapping
+            # Grade → tip tier
             if composite >= 60:
-                race.metadata['qualification_grade'] = 'A+'
+                race.metadata["qualification_grade"] = "A+"
                 is_best_bet = True
-                tip_tier = 'best_bet'
+                tip_tier    = "best_bet"
             elif composite >= 52:
-                race.metadata['qualification_grade'] = 'A'
+                race.metadata["qualification_grade"] = "A"
                 is_best_bet = True
-                tip_tier = 'best_bet'
+                tip_tier    = "best_bet"
             elif composite >= 45:
-                race.metadata['qualification_grade'] = 'B+'
+                race.metadata["qualification_grade"] = "B+"
                 is_best_bet = False
-                tip_tier = 'you_might_like'
+                tip_tier    = "you_might_like"
             else:
-                # D-grade must NOT be appended
-                race.metadata['qualification_grade'] = 'D'
-                composite = 0.0
+                race.metadata["qualification_grade"] = "D"
                 is_goldmine = False
                 is_best_bet = False
                 continue
 
-            # Superfecta Key adjustment
-            if gap_abs >= SUPERFECTA_GAP_MIN:
-                # Superfecta Key horse: FAVOURITE (same as selection)
+            # [CHANGE 5] Superfecta key: triggered by sec_fav ≥ 6.0 (not gap).
+            # Historical data: superfecta ROI positive almost exclusively when
+            # Fav2Group ≥ 6.0.  Gap alone is insufficient — tight-fav/long-field
+            # races look similar by gap but have no superfecta edge.
+            if sec_fav_odds >= SUPERFECTA_SEC_FAV_MIN:
                 is_superfecta_key = True
-                race.metadata['superfecta_key_number'] = fav.number
-                race.metadata['superfecta_key_name'] = fav.name
-                race.metadata['superfecta_box_numbers'] = [str(r[0].number) for r in valid_r_with_odds[1:4]]
+                race.metadata["superfecta_key_number"]  = fav.number
+                race.metadata["superfecta_key_name"]    = fav.name
+                race.metadata["superfecta_box_numbers"] = [
+                    str(r[0].number) for r in valid_r_with_odds[1:4]
+                ]
 
-            # Final metadata storage (IMP-CR-02: Use gap_abs)
-            race.metadata['composite_score'] = round(composite, 2)
-            race.metadata['is_goldmine'] = is_goldmine
-            race.metadata['is_best_bet'] = is_best_bet
-            race.metadata['tip_tier'] = tip_tier
-            race.metadata['gap_abs'] = round(gap_abs, 4)
-            race.metadata['is_superfecta_key'] = is_superfecta_key
-            race.metadata['predicted_2nd_fav_odds'] = sec_fav_odds
+            # Final metadata
+            race.metadata["composite_score"]       = round(composite, 2)
+            race.metadata["is_goldmine"]           = is_goldmine
+            race.metadata["is_best_bet"]           = is_best_bet
+            race.metadata["tip_tier"]              = tip_tier
+            race.metadata["gap_abs"]               = round(gap_abs, 4)
+            race.metadata["is_superfecta_key"]     = is_superfecta_key
+            race.metadata["predicted_2nd_fav_odds"] = sec_fav_odds
+            race.metadata["market_depth"]          = float(len(valid_r_with_odds))
 
-            # S5 — populate extra scoring signals (BUG-10 / EV-1)
-            race.metadata['market_depth'] = float(len(valid_r_with_odds))
-
-            # IMP-D3: Compute actual condition modifier from available signals
             cond_mod = 1.0
-            if race.is_handicap:
-                cond_mod += 0.10  # Handicaps historically better for place betting
-            if total_active <= 6:
-                cond_mod -= 0.10  # Small fields reduce place value (fewer places paid)
-            elif total_active >= 10:
-                cond_mod += 0.05  # Larger fields = more places paid
-            if gap_abs >= 3.0:
-                cond_mod += 0.05  # Strong separation = higher confidence
-            race.metadata['condition_modifier'] = round(cond_mod, 2)
+            if race.is_handicap:               cond_mod += 0.10
+            if total_active <= 6:              cond_mod -= 0.10
+            elif total_active >= 10:           cond_mod += 0.05
+            if gap_abs >= 3.0:                 cond_mod += 0.05
+            # [CHANGE 3] Extra reliability for validated 6f profiles
+            if profile["r9_six_fur"] or profile["r10_six_fur"]:
+                                               cond_mod += 0.05
+            race.metadata["condition_modifier"] = round(cond_mod, 2)
 
-            # Place probability (field-size-aware) — Favourite-based
+            # Place probability (field-size-aware)
             if total_active <= 7:
-                p_place = round(min(0.95, 1.8 / max(1.0, fav_odds)), 4)  # 2 places
+                p_place = round(min(0.95, 1.8 / max(1.0, fav_odds)), 4)
             else:
-                p_place = round(min(0.95, 2.5 / max(1.0, fav_odds)), 4)  # 3 places
-            race.metadata['place_prob'] = p_place
+                p_place = round(min(0.95, 2.5 / max(1.0, fav_odds)), 4)
+            # [CHANGE 3] Validated hit-rate uplift for r9 × 6f × low-purse
+            if profile["r9_six_fur"]:
+                p_place = min(0.95, p_place * 1.10)   # +10 % relative to base
+            race.metadata["place_prob"] = p_place
 
-            # Place payout estimate — UK each-way: (win_odds - 1) / divisor + 1
-            # The divisor applies to the WIN PROFIT (odds minus 1), not total odds
-            place_divisor = 4.0 if total_active >= 8 else 3.0
+            place_divisor    = 4.0 if total_active >= 8 else 3.0
             est_place_return = ((fav_odds - 1.0) / place_divisor) + 1.0
-            race.metadata['predicted_ev'] = round((p_place * est_place_return) - 1.0, 4)
+            race.metadata["predicted_ev"] = round(
+                (p_place * est_place_return) - 1.0, 4
+            )
 
             race.qualification_score = round(composite, 2)
             qualified.append(race)
 
         return {
             "criteria": {
-                "mode": "simply_success",
-                "non_chalk_min": NON_CHALK_MIN,
-                "sec_fav_floor": SEC_FAV_FLOOR,
-                "gap_abs_min": GAP_ABS_MIN,
-                "goldmine_fav_min": GOLDMINE_FAV_MIN,
-                "goldmine_sec_fav_min": GOLDMINE_SEC_FAV_MIN,
-                "goldmine_gap_min": GOLDMINE_GAP_MIN,
-                "superfecta_gap_min": SUPERFECTA_GAP_MIN,
+                "mode":                   "simply_success",
+                "non_chalk_min":          NON_CHALK_MIN,
+                "sec_fav_floor":          SEC_FAV_FLOOR,
+                "gap_abs_min":            GAP_ABS_MIN,
+                "goldmine_fav_min":       GOLDMINE_FAV_MIN,
+                "goldmine_sec_fav_min":   GOLDMINE_SEC_FAV_MIN,
+                "goldmine_gap_min":       GOLDMINE_GAP_MIN,
+                "goldmine_field_max":     GOLDMINE_FIELD_MAX,          # [CHANGE 1]
+                "superfecta_sec_fav_min": SUPERFECTA_SEC_FAV_MIN,      # [CHANGE 5]
             },
-            "races": qualified
+            "races": qualified,
         }
 
 class AnalyzerEngine:
@@ -8418,7 +8566,6 @@ class FortunaDB:
                 'gap_tiers': gap_tiers, 'tier_stats': tier_stats,
             }
         return await self._run_in_executor(_get)
-        return await self._run_in_executor(_get)
 
     async def clear_all_tips(self):
         """Wipes all records from the tips table."""
@@ -10209,6 +10356,27 @@ async def run_score_now(
         tracker = HotTipsTracker(db, config)
         await tracker.log_tips(qualified, daypart_tag=daypart_tag)
         logger.info("Success! We have persisted some incredible qualified tips! 🚀", count=len(qualified))
+
+        # [CHANGE 6] Enhanced analytical logging for qualified races
+        for race in qualified:
+            active_runners = [r for r in race.runners if not r.scratched]
+            total_active = len(active_runners)
+            profile_tag = race.metadata.get('race_profile', 'standard')
+            furlongs    = race.metadata.get('race_furlongs')
+            dist_label  = f"{furlongs:.1f}f" if furlongs else (race.distance or '?')
+
+            logger.info(
+                "Qualified race",
+                venue=race.venue,
+                race=race.race_number,
+                grade=race.metadata.get('qualification_grade'),
+                score=race.qualification_score,
+                profile=profile_tag,          # e.g. 'r9_6f_sweet_spot', 'goldmine_high_fav2'
+                distance=dist_label,
+                sec_fav=race.metadata.get('predicted_2nd_fav_odds'),
+                runners=total_active,
+                superfecta=race.metadata.get('is_superfecta_key', False),
+            )
 
     # 12. Log scoring run
     await db.log_scoring_run(daypart_tag, len(qualified))
