@@ -140,6 +140,16 @@ async def get_snapshot_data(db: FortunaDB):
         except sqlite3.OperationalError:
             pass
 
+        # Also get grades for unaudited tips to join with snapshot
+        tip_grades = {}
+        try:
+            rows = cursor.execute(
+                "SELECT race_id, qualification_grade FROM tips WHERE audit_completed = 0"
+            ).fetchall()
+            tip_grades = {row["race_id"]: row["qualification_grade"] for row in rows}
+        except sqlite3.OperationalError:
+            pass
+
         return {
             "total_tips": total_tips,
             "audited": audited,
