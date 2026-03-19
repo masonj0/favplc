@@ -25,3 +25,5 @@ No adapter data available yet.
 📦 🗄️ [Database](fortuna.db)
 
 *Refreshes every 30 minutes*
+
+## 📈 Overall ROI Performance
