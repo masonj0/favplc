@@ -1359,9 +1359,9 @@ class GlobalEngineHealthRegistry:
             # Automatic recovery over time
             now = time.time()
             elapsed = now - cls._last_decay_time
-            if elapsed > 300: # Every 5 minutes, recover slightly
+            if elapsed > 60: # Every minute, recover slightly
                 for engine in cls._health_scores:
-                    cls._health_scores[engine] = min(1.0, cls._health_scores[engine] + 0.1)
+                    cls._health_scores[engine] = min(1.0, cls._health_scores[engine] + 0.2)
                 cls._last_decay_time = now
             return cls._health_scores.copy()
 
@@ -2261,7 +2261,8 @@ class HKJCAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFet
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return api_fetch_strategy()
+        # Capability Improvement: Upgrade to scraping strategy to bypass persistent 403s on aggregate discovery
+        return scraping_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="racing.hkjc.com")
@@ -2663,7 +2664,8 @@ class JRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdap
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return api_fetch_strategy()
+        # Capability Improvement: Upgrade to scraping strategy to bypass persistent 403s on aggregate discovery
+        return scraping_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="japanracing.jp")
@@ -3006,7 +3008,8 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return api_fetch_strategy()
+        # Capability Improvement: Upgrade to scraping strategy to bypass persistent 403s on aggregate discovery
+        return scraping_fetch_strategy()
 
     def _get_headers(self) -> Dict[str, str]:
         return self._get_browser_headers(host="www.skyracingworld.com")
