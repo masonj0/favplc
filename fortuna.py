@@ -1231,8 +1231,8 @@ class GlobalResourceManager:
         if loop not in cls._playwright_semaphores:
             with cls._lock_initialized:
                 if loop not in cls._playwright_semaphores:
-                    # Capability Improvement: Increased to 2 for better throughput while maintaining stability
-                    cls._playwright_semaphores[loop] = asyncio.Semaphore(2)
+                    # Capability Improvement: Increased to 4 for better throughput while maintaining stability
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(4)
         return cls._playwright_semaphores[loop]
 
     @classmethod
@@ -1488,9 +1488,9 @@ class SmartFetcher:
                 current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
             # Discourage HTTPX and CURL_CFFI locally for these domains to prefer browser automation
             if BrowserEngine.HTTPX in available_engines:
-                current_health[BrowserEngine.HTTPX] = 0.1
+                current_health[BrowserEngine.HTTPX] = 0.05
             if BrowserEngine.CURL_CFFI in available_engines:
-                current_health[BrowserEngine.CURL_CFFI] = min(current_health[BrowserEngine.CURL_CFFI], 0.3)
+                current_health[BrowserEngine.CURL_CFFI] = min(current_health[BrowserEngine.CURL_CFFI], 0.1)
 
         candidates = [
             eng for eng, score in sorted(
@@ -1601,8 +1601,12 @@ class SmartFetcher:
         BROWSER_SPECIFIC_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "impersonate",
             "stealth", "block_resources", "wait_for_selector", "stealth_mode",
-            "strategy"
+            "strategy", "update_status", "follow_redirects", "allow_redirects"
         ]
+
+        # Extract redirect settings for normalization
+        follow_redirects = kwargs.get("follow_redirects", True)
+        allow_redirects = kwargs.get("allow_redirects", follow_redirects)
 
         strategy = kwargs.get("strategy", self.strategy)
         if engine == BrowserEngine.HTTPX:
@@ -1615,6 +1619,7 @@ class SmartFetcher:
                 k: v for k, v in kwargs.items()
                 if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
             }
+            req_kwargs["follow_redirects"] = allow_redirects
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
         
@@ -1639,6 +1644,7 @@ class SmartFetcher:
                 k: v for k, v in kwargs.items()
                 if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
             }
+            clean_kwargs["allow_redirects"] = allow_redirects
             
             last_err = None
             session = await self._get_curl_session()
@@ -1672,7 +1678,8 @@ class SmartFetcher:
         # 1. Broaden supported kwargs explicitly!
         SCRAPLING_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "stealth_mode",
-            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params"
+            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params",
+            "follow_redirects", "allow_redirects"
         ]
 
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
@@ -1752,7 +1759,10 @@ class SmartFetcher:
                         resp = await action(url, **scrapling_kwargs)
                     except TypeError as te:
                         # In instances older version underlying calls mandate missing standard default keywords safely back out
-                        if "method" in str(te) and getattr(s, "fetch", None) == action:
+                        if ("method" in str(te) or "redirect" in str(te)) and getattr(s, "fetch", None) == action:
+                            # Strip incompatible kwargs and retry
+                            for k in ["follow_redirects", "allow_redirects", "method"]:
+                                scrapling_kwargs.pop(k, None)
                             resp = await action(url, method="GET", **scrapling_kwargs)
                         else:
                             raise te
