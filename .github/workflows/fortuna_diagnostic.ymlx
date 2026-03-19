@@ -30,13 +30,16 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Cache Playwright
+      - name: Cache Patchright
         uses: actions/cache@v4
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}
+          path: ~/.cache/ms-patchright
+          key: patchright-chromium-${{ runner.os }}
 
       - name: Install dependencies
+        env:
+          PATCHRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-patchright
+          PLAYWRIGHT_BROWSERS_PATH: /home/runner/.cache/ms-patchright
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
