@@ -1231,8 +1231,8 @@ class GlobalResourceManager:
         if loop not in cls._playwright_semaphores:
             with cls._lock_initialized:
                 if loop not in cls._playwright_semaphores:
-                    # Capability Improvement: Increased to 2 for better throughput while maintaining stability
-                    cls._playwright_semaphores[loop] = asyncio.Semaphore(2)
+                    # Capability Improvement: Increased to 4 for better throughput while maintaining stability
+                    cls._playwright_semaphores[loop] = asyncio.Semaphore(4)
         return cls._playwright_semaphores[loop]
 
     @classmethod
@@ -1317,7 +1317,7 @@ def scraping_fetch_strategy(**overrides) -> FetchStrategy:
             BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT,
             BrowserEngine.CURL_CFFI,
         ],
-        max_engine_attempts=2,
+        max_engine_attempts=3,
         enable_js=True,
         stealth_mode="camouflage",
         timeout=45,
@@ -1486,9 +1486,11 @@ class SmartFetcher:
                 current_health[BrowserEngine.CAMOUFOX] = max(current_health[BrowserEngine.CAMOUFOX], 1.0)
             if BrowserEngine.PLAYWRIGHT in available_engines:
                 current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
-            # Discourage HTTPX locally for these domains
+            # Discourage HTTPX and CURL_CFFI locally for these domains to prefer browser automation
             if BrowserEngine.HTTPX in available_engines:
-                current_health[BrowserEngine.HTTPX] = 0.1
+                current_health[BrowserEngine.HTTPX] = 0.05
+            if BrowserEngine.CURL_CFFI in available_engines:
+                current_health[BrowserEngine.CURL_CFFI] = min(current_health[BrowserEngine.CURL_CFFI], 0.1)
 
         candidates = [
             eng for eng, score in sorted(
@@ -1499,6 +1501,12 @@ class SmartFetcher:
 
         # Primary preference is already expressed through initial health values,
         # so we stay sorted by health score to handle degraded engines.
+
+        # Primary strategy engine should always be tried if allowed
+        if strategy.primary_engine in candidates:
+            # Move primary to the front
+            candidates.remove(strategy.primary_engine)
+            candidates.insert(0, strategy.primary_engine)
 
         engines = candidates[:strategy.max_engine_attempts]
         if not engines:
@@ -1518,9 +1526,12 @@ class SmartFetcher:
                     sc = response.status_code
                     if sc == 429:
                         self.logger.warning("rate_limited", engine=engine.value, url=url)
+                        # Penalty for 429 is higher to force engine switch or backoff
+                        GlobalEngineHealthRegistry.record_failure(engine, penalty=0.4)
                         raise FetchError("Rate limited (429)", response=response, category=ErrorCategory.RATE_LIMIT)
                     if sc in (403, 503):
                         self.logger.warning("http_block_status", engine=engine.value, status=sc, url=url)
+                        GlobalEngineHealthRegistry.record_failure(engine, penalty=0.3)
                         raise FetchError(f"HTTP {sc}", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 if response and hasattr(response, "text") and response.text:
@@ -1530,20 +1541,24 @@ class SmartFetcher:
                         if kw in body_lower:
                             self.logger.warning("bot_challenge_detected", engine=engine.value, keyword=kw, url=url)
                             # Hardening Fix: If using Playwright, wait and retry once to allow automated solving
-                            if engine == BrowserEngine.PLAYWRIGHT:
+                            if engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
                                 self.logger.info("Waiting for automated challenge solution...", engine=engine.value)
                                 # Increased wait to 30s to handle complex Cloudflare/Datadome challenges (P0 Improvement)
                                 await asyncio.sleep(30)
                                 # Hardening Fix: Use copy for internal wait-retry too
                                 retry_kwargs = kwargs.copy()
                                 retry_kwargs["method"] = method
+                                # Ensure we use the same browser engine for retry to leverage solving
                                 response = await self._fetch_with_engine(engine, url, **retry_kwargs)
-                                if response and hasattr(response, "text") and kw not in response.text.lower():
+                                if response and hasattr(response, "text") and not any(k in response.text.lower() for k in self.BOT_DETECTION_KEYWORDS):
                                     self.logger.info("Challenge solved successfully!", engine=engine.value)
                                     challenge_solved = True
                                     break # Success in the kw loop
 
                             if not challenge_solved:
+                                # Invalidate poisoned session
+                                if engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
+                                    await self._invalidate_session(engine)
                                 raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 GlobalEngineHealthRegistry.record_success(engine)
@@ -1586,8 +1601,12 @@ class SmartFetcher:
         BROWSER_SPECIFIC_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "impersonate",
             "stealth", "block_resources", "wait_for_selector", "stealth_mode",
-            "strategy"
+            "strategy", "update_status", "follow_redirects", "allow_redirects"
         ]
+
+        # Extract redirect settings for normalization
+        follow_redirects = kwargs.get("follow_redirects", True)
+        allow_redirects = kwargs.get("allow_redirects", follow_redirects)
 
         strategy = kwargs.get("strategy", self.strategy)
         if engine == BrowserEngine.HTTPX:
@@ -1600,6 +1619,7 @@ class SmartFetcher:
                 k: v for k, v in kwargs.items()
                 if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
             }
+            req_kwargs["follow_redirects"] = allow_redirects
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
         
@@ -1624,6 +1644,7 @@ class SmartFetcher:
                 k: v for k, v in kwargs.items()
                 if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
             }
+            clean_kwargs["allow_redirects"] = allow_redirects
             
             last_err = None
             session = await self._get_curl_session()
@@ -1657,7 +1678,8 @@ class SmartFetcher:
         # 1. Broaden supported kwargs explicitly!
         SCRAPLING_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "stealth_mode",
-            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params"
+            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params",
+            "follow_redirects", "allow_redirects"
         ]
 
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
@@ -1666,11 +1688,13 @@ class SmartFetcher:
         if "headers" in kwargs and "headers" not in scrapling_kwargs:
             scrapling_kwargs["headers"] = kwargs["headers"]
 
-        if "timeout" not in scrapling_kwargs:
-            timeout_val = kwargs.get("timeout", strategy.timeout)
-            is_browser = engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT)
-            # Browsers process times typically in miliseconds inside underlying libs
-            scrapling_kwargs["timeout"] = timeout_val * 1000 if is_browser else timeout_val
+        timeout_val = scrapling_kwargs.get("timeout") or kwargs.get("timeout") or strategy.timeout
+        is_browser = engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT)
+        # Browsers process times typically in miliseconds inside underlying libs (Fix timeout units)
+        if is_browser and timeout_val < 1000:
+            scrapling_kwargs["timeout"] = int(timeout_val * 1000)
+        else:
+            scrapling_kwargs["timeout"] = timeout_val
 
         if "wait_until" not in scrapling_kwargs:
             scrapling_kwargs["wait_until"] = strategy.wait_until or strategy.page_load_strategy
@@ -1712,25 +1736,44 @@ class SmartFetcher:
                 if method.upper() == "POST":
                     # Ensure the POST configuration navigations execute
                     action = getattr(s, "post", s.fetch)
+                    # Mapping data/json to body for scrapling
+                    if "data" in scrapling_kwargs:
+                        scrapling_kwargs["body"] = scrapling_kwargs.pop("data")
+                    if "json" in scrapling_kwargs:
+                        scrapling_kwargs["body"] = json.dumps(scrapling_kwargs.pop("json"))
                     resp = await action(url, **scrapling_kwargs)
                 else:
                     # Direct fetching or mapping
                     action = getattr(s, "get", getattr(s, "fetch"))
                     try:
+                        # Map params to url for scrapling if needed
+                        if "params" in scrapling_kwargs:
+                            from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
+                            params = scrapling_kwargs.pop("params")
+                            url_parts = list(urlparse(url))
+                            query = dict(parse_qsl(url_parts[4]))
+                            query.update(params)
+                            url_parts[4] = urlencode(query)
+                            url = urlunparse(url_parts)
+
                         resp = await action(url, **scrapling_kwargs)
                     except TypeError as te:
                         # In instances older version underlying calls mandate missing standard default keywords safely back out
-                        if "method" in str(te) and getattr(s, "fetch", None) == action:
+                        if ("method" in str(te) or "redirect" in str(te)) and getattr(s, "fetch", None) == action:
+                            # Strip incompatible kwargs and retry
+                            for k in ["follow_redirects", "allow_redirects", "method"]:
+                                scrapling_kwargs.pop(k, None)
                             resp = await action(url, method="GET", **scrapling_kwargs)
                         else:
                             raise te
 
                 return _get_unified_resp(resp)
-            except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            except (BrokenPipeError, ConnectionResetError, OSError, asyncio.TimeoutError) as e:
                 self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
                 await self._invalidate_session(engine)
-                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
-                raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
+                # Penalize browser engine for timeout or pipe error
+                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.4 if isinstance(e, asyncio.TimeoutError) else 0.5)
+                raise FetchError(f"Browser error: {e}", category=ErrorCategory.NETWORK)
 
         elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
             try:
@@ -2197,6 +2240,7 @@ class BaseAdapterV3(ABC):
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
         raise_for_status = kwargs.pop("raise_for_status", True)
+        update_status = kwargs.pop("update_status", True)
 
         # Apply host-based rate limiting to prevent 429s (Fix 13)
         from urllib.parse import urlparse
@@ -2220,19 +2264,21 @@ class BaseAdapterV3(ABC):
                 # Use adapter-specific strategy
                 kwargs.setdefault("strategy", self.smart_fetcher.strategy)
                 resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
-                self.last_response_status = get_resp_status(resp)
-                self.logger.debug("Response received", method=method, url=full_url, status=self.last_response_status)
+                status = get_resp_status(resp)
+                if update_status:
+                    self.last_response_status = status
+                self.logger.debug("Response received", method=method, url=full_url, status=status)
 
                 # Hardening Fix: Raise for status if not 200
-                if raise_for_status and self.last_response_status != 200:
-                    self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=self.last_response_status)
+                if raise_for_status and status != 200:
+                    self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=status)
                     if hasattr(resp, "raise_for_status"):
                         try:
                             resp.raise_for_status()
                         except Exception:
-                            raise httpx.HTTPStatusError(f"HTTP {self.last_response_status}", request=None, response=resp)
+                            raise httpx.HTTPStatusError(f"HTTP {status}", request=None, response=resp)
                     else:
-                        raise Exception(f"HTTP {self.last_response_status}")
+                        raise Exception(f"HTTP {status}")
 
                 return resp
             except Exception as e:
@@ -3028,9 +3074,9 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         # Success Strategy: Bootstrap session on the form guide root first
         try:
             # FIX-CR-SRW: Establish session on the home page first
-            await self.make_request("GET", "https://www.skyracingworld.com/", timeout=20, raise_for_status=False)
-            await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False)
-            await self.make_request("GET", "/form-guide/thoroughbred", timeout=20, raise_for_status=False)
+            await self.make_request("GET", "https://www.skyracingworld.com/", timeout=20, raise_for_status=False, update_status=False)
+            await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False, update_status=False)
+            await self.make_request("GET", "/form-guide/thoroughbred", timeout=20, raise_for_status=False, update_status=False)
             # FIX: Additional delay to satisfy SRW's rate limiters during bootstrap
             await asyncio.sleep(2)
         except Exception: pass
@@ -3263,13 +3309,13 @@ class AtTheRacesAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, B
         # For ATR, always try to establish a session on the main site first
         try:
             # Hardening Fix: ATR is extremely sensitive; bootstrapping to the homepage is mandatory
-            await self.make_request("GET", "https://www.attheraces.com/", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await self.make_request("GET", "https://www.attheraces.com/", wait_until="networkidle", timeout=30, raise_for_status=False, update_status=False)
             # Establish session on racecards index too
-            await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await self.make_request("GET", "https://www.attheraces.com/racecards", wait_until="networkidle", timeout=30, raise_for_status=False, update_status=False)
             # Boot movers index specifically for AJAX calls
-            await self.make_request("GET", "https://www.attheraces.com/market-movers", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await self.make_request("GET", "https://www.attheraces.com/market-movers", wait_until="networkidle", timeout=30, raise_for_status=False, update_status=False)
             # Also try hitting the international tab specifically to set its cookies
-            await self.make_request("GET", "https://www.attheraces.com/market-movers/international", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await self.make_request("GET", "https://www.attheraces.com/market-movers/international", wait_until="networkidle", timeout=30, raise_for_status=False, update_status=False)
             # FIX: Additional delay to allow browser scripts/moat/cloudflare to settle
             await asyncio.sleep(5)
         except Exception: pass
@@ -4674,6 +4720,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 headers=self._get_headers(),
                 timeout=30,
                 raise_for_status=False,
+                update_status=False,
                 strategy=scraping_fetch_strategy()
             )
             # Also hit a form page to get deeper cookies
@@ -4683,6 +4730,7 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
                 headers=self._get_headers(),
                 timeout=30,
                 raise_for_status=False,
+                update_status=False,
                 strategy=scraping_fetch_strategy()
             )
             await asyncio.sleep(5)  # Allow cookies and bot scripts to settle
