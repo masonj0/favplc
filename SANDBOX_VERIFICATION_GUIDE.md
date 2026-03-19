@@ -2,11 +2,12 @@
 
 ## ⚠️ CRITICAL RULES
 
-1. **NEVER** run `submit`, `git commit`, `git push`, or any Git commands
+1. **NEVER** run `submit`, `git commit`, `git push`, or any Git commands (unless explicitly instructed by a plan step to submit a bug fix)
 2. **NEVER** create or modify files outside the repo working directory
-3. All results are reported via `message_user` — not committed
-4. If a step fails, log the error and continue to the next step
-5. Report ALL outcomes — including failures — to the user
+3. **REAL DATA ONLY**: All verification runs MUST use real, legit data from live adapters. Do NOT simulate, fake, or mock data to produce a "passing" report. A report with 0 races discovered during off-hours is a legitimate and correct outcome.
+4. All results are reported via `message_user` — not committed
+5. If a step fails, log the error and continue to the next step
+6. Report ALL outcomes — including failures — to the user
 
 ---
 
