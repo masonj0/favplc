@@ -1452,6 +1452,39 @@ class SmartFetcher:
             return self._sessions["_curl"]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
+        # INTERACTIVE MODE: Prompt user for content
+        # Check if we have already failed this URL in this run to avoid infinite retry prompts
+        if not hasattr(self, "_interactive_history"):
+            self._interactive_history = set()
+
+        if url in self._interactive_history:
+            return UnifiedResponse("", 404, 404, url)
+
+        print(f"\n[INTERACTIVE FETCH] {url}")
+        print("Please paste the page content below. End with a line containing only 'EOF' (or 'SKIP'):")
+
+        lines = []
+        try:
+            while True:
+                line = input()
+                if line.strip() in ("EOF", "SKIP"):
+                    if line.strip() == "SKIP":
+                        lines = []
+                    break
+                lines.append(line)
+        except EOFError:
+            pass
+
+        content = "\n".join(lines)
+        if not content:
+            print("No content provided or skipped.")
+            self._interactive_history.add(url)
+            return UnifiedResponse("", 404, 404, url)
+
+        print(f"Captured {len(content)} bytes. Processing...")
+        return UnifiedResponse(content, 200, 200, url)
+
+    async def _fetch_original(self, url: str, **kwargs: Any) -> Any:
         method = kwargs.get("method", "GET").upper()
         kwargs.pop("url", None)
 
@@ -1573,7 +1606,7 @@ class SmartFetcher:
         self.logger.error("all_engines_failed", url=url, error=err_msg)
         raise last_error or FetchError("All fetch engines failed")
 
-    
+
     async def _fetch_with_engine(self, engine: BrowserEngine, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
         # Generate browserforge headers if available
@@ -1622,11 +1655,11 @@ class SmartFetcher:
             req_kwargs["follow_redirects"] = allow_redirects
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
-        
+
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
                 raise ImportError("curl_cffi is not available")
-            
+
             self.logger.debug(f"Using curl_cffi for {url}")
             timeout = kwargs.get("timeout", strategy.timeout)
 
@@ -1638,14 +1671,14 @@ class SmartFetcher:
             impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
-            
+
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
                 k: v for k, v in kwargs.items()
                 if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
             }
             clean_kwargs["allow_redirects"] = allow_redirects
-            
+
             last_err = None
             session = await self._get_curl_session()
             for imp_version in impersonate_chain:
@@ -1999,40 +2032,20 @@ class DebugMixin:
 
 class RacePageFetcherMixin:
     async def _fetch_race_pages_concurrent(self, metadata: List[Dict[str, Any]], headers: Dict[str, str], semaphore_limit: int = 5, delay_range: tuple[float, float] = (0.5, 1.5), **kwargs: Any) -> List[Dict[str, Any]]:
-        local_sem = asyncio.Semaphore(semaphore_limit)
-        async def fetch_single(item):
+        # INTERACTIVE MODE: Sequential processing to avoid overlapping prompts
+        results = []
+        for item in metadata:
             url = item.get("url")
-            if not url: return None
+            if not url: continue
 
-            async with local_sem:
-                    # Stagger requests by sleeping inside the semaphore (Project Convention)
-                    await asyncio.sleep(delay_range[0] + random.random() * (delay_range[1] - delay_range[0]))
-                    try:
-                        if hasattr(self, 'logger'):
-                            self.logger.debug("fetching_race_page", url=url)
-                        # make_request handles global_sem internally
-                        resp = None
-                        for attempt in range(2): # 1 retry
-                            resp = await self.make_request("GET", url, headers=headers, **kwargs)
-                            # Lowered threshold to 100 to avoid unnecessary retries for small valid data files
-                            if resp and hasattr(resp, "text") and resp.text and len(resp.text) > 100:
-                                break
-                            await asyncio.sleep(1 * (attempt + 1))
-
-                        if resp and hasattr(resp, "text") and resp.text:
-                            if hasattr(self, 'logger'):
-                                self.logger.debug("fetched_race_page", url=url, status=getattr(resp, 'status', 'unknown'))
-                            return {**item, "html": resp.text}
-                        elif resp:
-                            if hasattr(self, 'logger'):
-                                self.logger.warning("failed_fetching_race_page_unexpected_status", url=url, status=getattr(resp, 'status', 'unknown'))
-                    except Exception as e:
-                        if hasattr(self, 'logger'):
-                            self.logger.error("failed_fetching_race_page", url=url, error=str(e))
-                    return None
-        tasks = [fetch_single(m) for m in metadata]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [r for r in results if not isinstance(r, Exception) and r is not None]
+            try:
+                resp = await self.make_request("GET", url, headers=headers, **kwargs)
+                if resp and hasattr(resp, "text") and resp.text:
+                    results.append({**item, "html": resp.text})
+            except Exception as e:
+                if hasattr(self, 'logger'):
+                    self.logger.error("failed_fetching_race_page", url=url, error=str(e))
+        return results
 
 
 # --- BASE ADAPTER ---
@@ -10282,25 +10295,14 @@ async def run_quarter_fetch(
     phase1_timeout = 600
 
     if phase1_adapters:
-        pending = [asyncio.create_task(fetch_one(cls)) for cls in phase1_adapters]
-        try:
-            done, pending = await asyncio.wait(pending, timeout=phase1_timeout)
-            for task in done:
-                try:
-                    r = task.result()
-                    if isinstance(r, list):
-                        all_races_raw.extend(r)
-                except Exception as e:
-                    logger.error("task_error", error=str(e))
-
-            if pending:
-                logger.warning('Some discovery adapters are taking longer than expected, but we have collected what we could! ✨',
-                            completed_races=len(all_races_raw),
-                            adapters_pending=len(pending))
-                for task in pending:
-                    task.cancel()
-        except Exception as e:
-            logger.error('phase1_execution_error', error=str(e))
+        # INTERACTIVE MODE: Sequential processing to avoid overlapping prompts
+        for cls in phase1_adapters:
+            try:
+                r = await fetch_one(cls)
+                if isinstance(r, list):
+                    all_races_raw.extend(r)
+            except Exception as e:
+                logger.error("task_error", adapter=getattr(cls, "SOURCE_NAME", cls.__name__), error=str(e))
 
     # Phase 2: Health checks only if time permits and explicitly included
     if tier3_health:
@@ -10975,7 +10977,7 @@ async def main_all_in_one():
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
         os.makedirs("debug_snapshots", exist_ok=True)
-    
+
     # Windows Event Loop Policy Fix (Project Hardening)
     if sys.platform == 'win32' and not getattr(sys, 'frozen', False):
         try:
