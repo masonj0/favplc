@@ -10803,17 +10803,33 @@ async def main_all_in_one():
 
         links_found = []
 
+        # Data density priority mapping (higher = more runners/odds)
+        PRIORITY = {
+            "racingpost": 100, "skyracingworld": 95, "twinspires": 90,
+            "sportinglife": 85, "attheraces": 80, "oddschecker": 75,
+            "timeform": 70, "skysports": 65, "equibase": 60, "nyrabets": 55,
+            "hkjc": 50, "japanracing": 45, "tab.com": 40
+        }
+
         # We need to monkeypatch SmartFetcher.fetch temporarily to just log and skip
         original_fetch = SmartFetcher.fetch
 
         async def fetch_log_only(self, url, **kwargs):
             from urllib.parse import urlparse
             p = urlparse(url)
-            slug = re.sub(r'[^a-z0-9]', '_', (p.netloc + p.path).lower()).strip('_')
+            domain = p.netloc.lower()
+            slug = re.sub(r'[^a-z0-9]', '_', (domain + p.path).lower()).strip('_')
             filename = f"manual_fetch/{slug}.html"
-            print(f"[LINK] {url}")
-            print(f"      Filename: {filename}")
-            links_found.append({"url": url, "filename": filename})
+
+            # Determine priority
+            val = 10 # Default
+            for k, v in PRIORITY.items():
+                if k in domain:
+                    val = v
+                    break
+
+            print(f"[LINK] {url} (Priority: {val})")
+            links_found.append({"url": url, "filename": filename, "val": val})
             return UnifiedResponse("", 404, 404, url)
 
         SmartFetcher.fetch = fetch_log_only
@@ -10824,16 +10840,21 @@ async def main_all_in_one():
 
         # Output to files
         if links_found:
+            # Sort descending by priority
+            links_found.sort(key=lambda x: x["val"], reverse=True)
+
             with open("manual_links.txt", "w") as f:
                 for lnk in links_found:
                     f.write(f"URL: {lnk['url']}\nFILE: {lnk['filename']}\n\n")
 
             with open("manual_links.md", "w") as f:
                 f.write("### 🔗 Manual Discovery: URLs to Fetch\n\n")
+                f.write("> Sorted by data density (high-value files first)\n\n")
                 f.write("| Target URL | Expected Filename in `manual_fetch/` |\n")
                 f.write("| :--- | :--- |\n")
                 for lnk in links_found:
-                    f.write(f"| {lnk['url']} | `{lnk['filename']}` |\n")
+                    # Use tiny monospace font for better GHA readability
+                    f.write(f"| <small><code>{lnk['url']}</code></small> | <small><code>{lnk['filename']}</code></small> |\n")
 
         print("\n=== DISCOVERY COMPLETE ===")
         print(f"Found {len(links_found)} links. Details saved to manual_links.txt and manual_links.md")
