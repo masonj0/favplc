@@ -1403,6 +1403,9 @@ class BaseAdapterV3(ABC):
         requests.  The filename is derived from the URL slug so it matches what
         --list-links reports.  Returns a UnifiedResponse on success, or None if the
         file is missing (the adapter's _fetch_data will treat None as a failed fetch).
+
+        If the file is missing and the session is interactive (stdin is a TTY),
+        the user is prompted to paste the HTML content manually.
         """
         from urllib.parse import urlparse
         full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
@@ -1414,11 +1417,48 @@ class BaseAdapterV3(ABC):
             slug = slug[:180]
         filepath = Path("manual_fetch") / f"{slug}.html"
 
+        # 1. Try file-based ingest (Primary)
         if filepath.exists():
             self.logger.info("manual_fetch_hit", file=str(filepath))
             content = filepath.read_text(encoding="utf-8", errors="replace")
             self.last_response_status = 200
             return UnifiedResponse(text=content, status=200, status_code=200, url=full_url)
+
+        # 2. Sequential Terminal Interaction (Fallback)
+        # Check if we have already failed this URL in this run
+        if not hasattr(self, "_interactive_history"):
+            self._interactive_history = set()
+
+        if full_url in self._interactive_history:
+            self.last_response_status = 404
+            return None
+
+        # Prompt user if in interactive environment
+        if sys.stdin.isatty():
+            print(f"\n[INTERACTIVE FETCH] {full_url}")
+            print(f"Target filename: manual_fetch/{slug}.html")
+            print("Please paste the page content below. End with a line containing only 'EOF' (or 'SKIP'):")
+
+            lines = []
+            try:
+                while True:
+                    line = input()
+                    if line.strip() in ("EOF", "SKIP"):
+                        if line.strip() == "SKIP":
+                            lines = []
+                        break
+                    lines.append(line)
+            except EOFError:
+                pass
+
+            content = "\n".join(lines)
+            if content:
+                print(f"Captured {len(content)} bytes. Processing...")
+                self.last_response_status = 200
+                return UnifiedResponse(text=content, status=200, status_code=200, url=full_url)
+            else:
+                print("No content provided or skipped.")
+                self._interactive_history.add(full_url)
 
         self.logger.warning("manual_fetch_miss", file=str(filepath), url=full_url)
         self.last_response_status = 404
@@ -3506,32 +3546,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
         index_html = None
 
-        # 1. Try browser-based fetch if available
-        # FIX-CR-SC: Gate browser launch behind playwright semaphore to prevent unregulated spawns
-        try:
-            pw_sem = GlobalResourceManager.get_playwright_semaphore()
-            async with pw_sem:
-                from playwright.async_api import async_playwright
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    page = await browser.new_page()
-                    try:
-                        await page.goto(f"{self.base_url}/entries", wait_until="networkidle")
-                        await page.evaluate("() => { document.querySelectorAll('details').forEach(d => d.open = true); }")
-                        try: await page.select_option("#edit-entries-track", label="View All Tracks")
-                        except Exception: pass
-                        try: await page.select_option("#edit-entries-date", label=date_label)
-                        except Exception: pass
-                        try: await page.click("#edit-custom-submit-entries", force=True, timeout=5000)
-                        except Exception: pass
-                        try: await page.wait_for_selector("#entries-results-container a[href*='/entries/']", timeout=10000)
-                        except Exception: pass
-                        index_html = await page.content()
-                    finally:
-                        await page.close()
-                        await browser.close()
-        except Exception as e:
-            self.logger.debug("Playwright index fetch failed, trying fallback", error=str(e))
+        # Browser-based fetch disabled in interactive mode (Fix stale GlobalResourceManager reference)
 
         # 2. Fallback: Try to guess the data URL pattern if index fetch failed
         if not index_html:
@@ -9745,24 +9760,36 @@ async def main_all_in_one():
 
         # Output to files
         if links_found:
-            # Sort descending by priority
-            links_found.sort(key=lambda x: x["val"], reverse=True)
+            # 1. Deduplicate by URL while preserving highest priority
+            unique_links = {}
+            for lnk in links_found:
+                url = lnk["url"]
+                if url not in unique_links or lnk["val"] > unique_links[url]["val"]:
+                    unique_links[url] = lnk
+
+            final_links = list(unique_links.values())
+
+            # 2. Sort descending by priority
+            final_links.sort(key=lambda x: x["val"], reverse=True)
+
+            # 3. Crop at 50 rows
+            final_links = final_links[:50]
 
             with open("manual_links.txt", "w") as f:
-                for lnk in links_found:
+                for lnk in final_links:
                     f.write(f"URL: {lnk['url']}\nFILE: {lnk['filename']}\n\n")
 
             with open("manual_links.md", "w") as f:
                 f.write("### 🔗 Manual Discovery: URLs to Fetch\n\n")
-                f.write("> Sorted by data density (high-value files first)\n\n")
+                f.write("> Sorted by data density (high-value files first). Capped at top 50.\n\n")
                 f.write("| Target URL | Expected Filename in `manual_fetch/` |\n")
                 f.write("| :--- | :--- |\n")
-                for lnk in links_found:
+                for lnk in final_links:
                     # Use tiny monospace font for better GHA readability
                     f.write(f"| <small><code>{lnk['url']}</code></small> | <small><code>{lnk['filename']}</code></small> |\n")
 
         print("\n=== DISCOVERY COMPLETE ===")
-        print(f"Found {len(links_found)} links. Details saved to manual_links.txt and manual_links.md")
+        print(f"Found {len(final_links)} unique links. Details saved to manual_links.txt and manual_links.md")
         return
 
     # Note: --test-adapter and --test-all-adapters removed in interactive mode
@@ -9895,8 +9922,8 @@ async def main_all_in_one():
         adapter_names=adapter_filter,
         save_path=args.save,
         fetch_only=args.fetch_only,
-        live_dashboard=args.live_dashboard,
-        track_odds=args.track_odds,
+        live_dashboard=False,
+        track_odds=False,
         region=args.region, # Pass region to run_discovery
         config=config
     )
