@@ -21,7 +21,6 @@
 | <small><code>https://www.twinspires.com/bet/todays-races/greyhound?region=INT</code></small> | <small><code>manual_fetch/www_twinspires_com_bet_todays_races_greyhound.html</code></small> |
 | <small><code>https://www.twinspires.com/bet/todays-races/time</code></small> | <small><code>manual_fetch/www_twinspires_com_bet_todays_races_time.html</code></small> |
 | <small><code>https://www.sportinglife.com/racing/racecards/2026-03-20/</code></small> | <small><code>manual_fetch/www_sportinglife_com_racing_racecards_2026_03_20.html</code></small> |
-| <small><code>https://greyhounds.attheraces.com/racecards/2026-03-20</code></small> | <small><code>manual_fetch/greyhounds_attheraces_com_racecards_2026_03_20.html</code></small> |
 | <small><code>https://www.attheraces.com/</code></small> | <small><code>manual_fetch/www_attheraces_com.html</code></small> |
 | <small><code>https://www.attheraces.com/racecards</code></small> | <small><code>manual_fetch/www_attheraces_com_racecards.html</code></small> |
 | <small><code>https://www.attheraces.com/market-movers</code></small> | <small><code>manual_fetch/www_attheraces_com_market_movers.html</code></small> |
@@ -29,6 +28,7 @@
 | <small><code>https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-20</code></small> | <small><code>manual_fetch/www_attheraces_com_ajax_marketmovers_tabs_uk_ire_2026_03_20.html</code></small> |
 | <small><code>https://www.attheraces.com/ajax/marketmovers/tabs/international/2026-03-20</code></small> | <small><code>manual_fetch/www_attheraces_com_ajax_marketmovers_tabs_international_2026_03_20.html</code></small> |
 | <small><code>https://www.attheraces.com/racecards/2026-03-20</code></small> | <small><code>manual_fetch/www_attheraces_com_racecards_2026_03_20.html</code></small> |
+| <small><code>https://greyhounds.attheraces.com/racecards/2026-03-20</code></small> | <small><code>manual_fetch/greyhounds_attheraces_com_racecards_2026_03_20.html</code></small> |
 | <small><code>https://www.oddschecker.com/horse-racing</code></small> | <small><code>manual_fetch/www_oddschecker_com_horse_racing.html</code></small> |
 | <small><code>https://www.oddschecker.com/horse-racing/2026-03-20</code></small> | <small><code>manual_fetch/www_oddschecker_com_horse_racing_2026_03_20.html</code></small> |
 | <small><code>https://www.timeform.com/horse-racing</code></small> | <small><code>manual_fetch/www_timeform_com_horse_racing.html</code></small> |

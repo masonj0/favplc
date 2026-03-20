@@ -49,9 +49,6 @@ FILE: manual_fetch/www_twinspires_com_bet_todays_races_time.html
 URL: https://www.sportinglife.com/racing/racecards/2026-03-20/
 FILE: manual_fetch/www_sportinglife_com_racing_racecards_2026_03_20.html
 
-URL: https://greyhounds.attheraces.com/racecards/2026-03-20
-FILE: manual_fetch/greyhounds_attheraces_com_racecards_2026_03_20.html
-
 URL: https://www.attheraces.com/
 FILE: manual_fetch/www_attheraces_com.html
 
@@ -72,6 +69,9 @@ FILE: manual_fetch/www_attheraces_com_ajax_marketmovers_tabs_international_2026_
 
 URL: https://www.attheraces.com/racecards/2026-03-20
 FILE: manual_fetch/www_attheraces_com_racecards_2026_03_20.html
+
+URL: https://greyhounds.attheraces.com/racecards/2026-03-20
+FILE: manual_fetch/greyhounds_attheraces_com_racecards_2026_03_20.html
 
 URL: https://www.oddschecker.com/horse-racing
 FILE: manual_fetch/www_oddschecker_com_horse_racing.html
