@@ -1,5 +1,37 @@
 from __future__ import annotations
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# fortuna_interactive.py  —  Interactive / Manual-Ingest Edition
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#
+# PURPOSE
+#   This is the cleaned version of the Fortuna discovery engine
+#   optimised for manual (file-based) ingest.  All browser-automation
+#   machinery (Playwright, Camoufox, curl_cffi, Scrapling,
+#   SmartFetcher, browserforge, PyInstaller/frozen-app setup) has been
+#   stripped out.  Adapters now read HTML from the manual_fetch/
+#   directory instead of making live HTTP requests.
+#
+# MODES
+#   --list-links   Discovers which URLs are needed and prints filenames
+#                  for manual_fetch/.  No HTML consumed.
+#   --quarter-fetch  Reads HTML from manual_fetch/, parses races,
+#                    saves a snapshot (no scoring).
+#   --score-now    Loads a snapshot, scores approaching races, persists
+#                  tips to fortuna.db.
+#   (default)      Full discovery + score + persist in one pass.
+#
+# WORKFLOW
+#   1. python fortuna_interactive.py --list-links
+#      → prints manual_links.txt with URL → filename pairs
+#   2. Open each URL in a real browser, save the page HTML to the
+#      corresponding manual_fetch/<slug>.html file.
+#   3. python fortuna_interactive.py --quarter-fetch
+#      → parses saved HTML, builds race snapshot
+#   4. python fortuna_interactive.py --score-now
+#      → scores races, writes tips to fortuna.db
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # CRITICAL: Fix for Playwright + PyInstaller + Windows
 # Must be at the very top, before any other imports
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -11,27 +43,7 @@ import os
 # CRITICAL: Monkeypatch playwright with patchright
 # Scrapling and Camoufox expect playwright internals
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-try:
-    import patchright
-    sys.modules['playwright'] = patchright
-except ImportError:
-    pass
-
-if platform.system() == 'Windows' and getattr(sys, 'frozen', False):
-    # Running as frozen EXE on Windows
-    import asyncio
-    try:
-        # Check if Playwright is likely to be available
-        playwright_path = os.path.expanduser("~\\AppData\\Local\\ms-playwright")
-        has_playwright = os.path.exists(playwright_path)
-
-        # Hardening Fix: Default to Selector loop if Playwright is missing to satisfy curl_cffi
-        if os.getenv("FORTUNA_USE_SELECTOR_EVENT_LOOP") == "1" or not has_playwright:
-            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-        else:
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    except AttributeError:
-        pass
+# Interactive mode: patchright and Windows frozen-app setup not required.
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # fortuna_discovery_engine.py
 # Aggregated monolithic discovery adapters for Fortuna
@@ -109,10 +121,7 @@ from tenacity import (
 )
 
 # --- OPTIONAL IMPORTS ---
-try:
-    from curl_cffi import requests as curl_requests
-except Exception:
-    curl_requests = None
+curl_requests = None  # Not used in interactive mode
 
 try:
     import tomli
@@ -120,30 +129,15 @@ try:
 except ImportError:
     HAS_TOML = False
 
-try:
-    from scrapling import AsyncFetcher, Fetcher
-    from scrapling.parser import Selector
-    ASYNC_SESSIONS_AVAILABLE = True
-except Exception:
-    ASYNC_SESSIONS_AVAILABLE = False
-    Selector = None  # type: ignore
+# Scrapling / Playwright not needed in interactive (file-based) mode
+ASYNC_SESSIONS_AVAILABLE = False
+Selector = None  # type: ignore
 
-try:
-    from scrapling.fetchers import AsyncDynamicSession, AsyncStealthySession
-except Exception:
-    ASYNC_SESSIONS_AVAILABLE = False
+class StealthMode:  # type: ignore
+    FAST = "fast"
+    CAMOUFLAGE = "camouflage"
 
-try:
-    from scrapling.core.custom_types import StealthMode
-except Exception:
-    class StealthMode:  # type: ignore
-        FAST = "fast"
-        CAMOUFLAGE = "camouflage"
-
-try:
-    import winsound
-except (ImportError, RuntimeError):
-    winsound = None
+winsound = None
 
 
 def get_resp_status(resp: Any) -> Union[int, str]:
@@ -151,8 +145,8 @@ def get_resp_status(resp: Any) -> Union[int, str]:
     return getattr(resp, "status", "unknown")
 
 def is_frozen() -> bool:
-    """Check if running as a frozen executable (PyInstaller, cx_Freeze, etc.)"""
-    return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+    """Always False in interactive mode — no PyInstaller packaging."""
+    return False
 
 def get_base_path() -> Path:
     """Returns the base path of the application (frozen or source)."""
@@ -398,20 +392,9 @@ def open_report_in_browser():
     else:
         print("No report found. Run discovery first!")
 
-try:
-    from notifications import DesktopNotifier
-    HAS_NOTIFICATIONS = True
-except Exception:
-    HAS_NOTIFICATIONS = False
+HAS_NOTIFICATIONS = False  # Not needed in interactive mode
 
-try:
-    from browserforge.headers import HeaderGenerator
-    from browserforge.fingerprints import FingerprintGenerator
-    # Smoke test: HeaderGenerator often fails if data files are missing (frozen app issue)
-    _hg = HeaderGenerator()
-    BROWSERFORGE_AVAILABLE = True
-except Exception:
-    BROWSERFORGE_AVAILABLE = False
+BROWSERFORGE_AVAILABLE = False  # Not needed in interactive mode
 
 
 # --- TYPE VARIABLES ---
@@ -994,80 +977,11 @@ async def refresh_odds_for_races(
     scorable_races: List[Race],
     config: Dict,
 ) -> List[Race]:
-    """Fetch fresh odds from fast adapters and merge into scorable races."""
-    if not scorable_races:
-        return scorable_races
-
-    logger = structlog.get_logger("refresh_odds")
-    date_str = now_eastern().strftime(DATE_FORMAT)
-
-    # Build lookup for matching: (canonical_venue, race_number, date) -> Race
-    race_lookup: Dict[tuple, Race] = {}
-    for race in scorable_races:
-        date_component = race.start_time.strftime(DATE_FORMAT) if isinstance(race.start_time, datetime) else ''
-        key = (get_canonical_venue(race.venue), race.race_number, date_component)
-        race_lookup[key] = race
-
-    # Fetch from HTTPX-only adapters
-    fresh_count = 0
-    for adapter_name in ODDS_REFRESH_ADAPTERS:
-        adapter_cls = _find_adapter_class(adapter_name)
-        if not adapter_cls:
-            continue
-        adapter = adapter_cls(config=config)
-        try:
-            fresh_races = await adapter.get_races(date_str)
-            for fresh_race in fresh_races:
-                fresh_date = fresh_race.start_time.strftime(DATE_FORMAT) if isinstance(fresh_race.start_time, datetime) else ''
-                key = (get_canonical_venue(fresh_race.venue), fresh_race.race_number, fresh_date)
-                target = race_lookup.get(key)
-                if not target:
-                    continue
-                # Merge runners: match by number, then by name
-                for new_runner in fresh_race.runners:
-                    matched = None
-                    for existing_runner in target.runners:
-                        if (new_runner.number and existing_runner.number
-                                and new_runner.number == existing_runner.number):
-                            matched = existing_runner
-                            break
-                        if new_runner.name.lower() == existing_runner.name.lower():
-                            matched = existing_runner
-                            break
-                    if matched:
-                        # DO NOT CLEAR: merge to preserve multi-source depth (Hardening Fix)
-                        matched.odds.update(new_runner.odds)
-                        if new_runner.win_odds is not None:
-                            matched.win_odds = new_runner.win_odds
-                        fresh_count += 1
-        except Exception as e:
-            logger.warning("odds_refresh_failed",
-                adapter=adapter_name, error=str(e))
-        finally:
-            try:
-                await adapter.close()
-            except Exception:
-                pass
-
-    logger.info("odds_refresh_complete",
-        adapters_used=len(ODDS_REFRESH_ADAPTERS),
-        runners_updated=fresh_count,
-        races_targeted=len(scorable_races))
-
-    # Validate superfecta box runners are not scratched
-    for race in scorable_races:
-        box_nums = race.metadata.get('superfecta_box_numbers', [])
-        if not box_nums:
-            continue
-        scratched = [str(r.number) for r in race.runners if str(r.number) in box_nums and r.scratched]
-        race.metadata['superfecta_box_valid'] = len(scratched) == 0
-        if scratched:
-            race.metadata['superfecta_scratched_runners'] = scratched
-            logger.warning(
-                'superfecta_box_runner_scratched',
-                venue=race.venue, race=race.race_number, scratched=scratched
-            )
-
+    """No-op in interactive mode: odds are taken as-is from the manually fetched HTML."""
+    structlog.get_logger('refresh_odds').info(
+        'odds_refresh_skipped_interactive_mode',
+        count=len(scorable_races)
+    )
     return scorable_races
 
 
@@ -1102,155 +1016,11 @@ class DataValidationPipeline:
 
 
 # --- CORE INFRASTRUCTURE ---
-@dataclass
-class RateLimiter:
-    requests_per_second: float = 10.0
-    _tokens: float = field(default=10.0, init=False)
-    _last_update: float = field(default_factory=time.time, init=False)
-    _locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = field(default_factory=weakref.WeakKeyDictionary, init=False)
-    _lock_sentinel: ClassVar[threading.Lock] = threading.Lock()
-
-    def __post_init__(self):
-        self._tokens = self.requests_per_second
-
-    def _get_lock(self) -> asyncio.Lock:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.Lock()
-
-        if loop not in self._locks:
-            with self._lock_sentinel:
-                if loop not in self._locks:
-                    self._locks[loop] = asyncio.Lock()
-        return self._locks[loop]
-
-    async def acquire(self) -> None:
-        lock = self._get_lock()
-
-        for _ in range(1000): # Iteration limit to prevent potential hangs
-            wait_time = 0
-            async with lock:
-                now = time.time()
-                elapsed = now - self._last_update
-                self._tokens = min(self.requests_per_second, self._tokens + (elapsed * self.requests_per_second))
-                self._last_update = now
-                if self._tokens >= 1:
-                    self._tokens -= 1
-                    return
-                wait_time = (1 - self._tokens) / self.requests_per_second
-
-            if wait_time >= 0:
-                await asyncio.sleep(max(wait_time, 0.01))
+# RateLimiter removed — not needed for file-based ingest.
 
 
-class GlobalResourceManager:
-    """Manages shared resources like HTTP clients and semaphores."""
-    _clients: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, httpx.AsyncClient]] = weakref.WeakKeyDictionary()
-    _semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
-    _playwright_semaphores: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]] = weakref.WeakKeyDictionary()
-    _locks: ClassVar[weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]] = weakref.WeakKeyDictionary()
-    _host_limiters: ClassVar[Dict[str, RateLimiter]] = {}
-    _lock_initialized: ClassVar[threading.Lock] = threading.Lock()
+# GlobalResourceManager removed — HTTP client pooling not needed for file-based ingest.
 
-    @classmethod
-    async def get_host_limiter(cls, host: str) -> RateLimiter:
-        """Returns a per-host rate limiter."""
-        if host not in cls._host_limiters:
-            with cls._lock_initialized:
-                if host not in cls._host_limiters:
-                    # Default to 2 requests per second per host to avoid 429s (Fix 13)
-                    limit = 2.0
-                    if "racingpost" in host: limit = 1.5 # Extra conservative for RP
-                    cls._host_limiters[host] = RateLimiter(requests_per_second=limit)
-        return cls._host_limiters[host]
-
-    @classmethod
-    async def _get_lock(cls) -> asyncio.Lock:
-        loop = asyncio.get_running_loop()
-        if loop not in cls._locks:
-            with cls._lock_initialized:
-                if loop not in cls._locks:
-                    cls._locks[loop] = asyncio.Lock()
-        return cls._locks[loop]
-
-    @classmethod
-    async def get_httpx_client(cls, timeout: Optional[int] = None) -> httpx.AsyncClient:
-        """
-        Returns a shared httpx client for the current event loop.
-        If timeout is provided and differs from current client, the client is recreated.
-        """
-        loop = asyncio.get_running_loop()
-        lock = await cls._get_lock()
-        async with lock:
-            client = cls._clients.get(loop)
-            if client is not None:
-                # Guard against None in timeout comparison
-                current_timeout = getattr(client.timeout, "read", None)
-                if timeout is not None and current_timeout is not None and abs(current_timeout - timeout) > 0.001:
-                    try:
-                        await client.aclose()
-                    except Exception:
-                        pass
-                    client = None
-
-            if client is None:
-                use_timeout = timeout or DEFAULT_REQUEST_TIMEOUT
-                client = httpx.AsyncClient(
-                    follow_redirects=True,
-                    timeout=httpx.Timeout(use_timeout),
-                    headers={**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT},
-                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
-                )
-                cls._clients[loop] = client
-        return client
-
-    @classmethod
-    def get_global_semaphore(cls) -> asyncio.Semaphore:
-        """Returns a shared semaphore for the current event loop."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # If called outside a loop, we create a temporary semaphore
-            return asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
-
-        if loop not in cls._semaphores:
-            with cls._lock_initialized:
-                if loop not in cls._semaphores:
-                    cls._semaphores[loop] = asyncio.Semaphore(DEFAULT_CONCURRENT_REQUESTS * 2)
-        return cls._semaphores[loop]
-
-    @classmethod
-    def get_playwright_semaphore(cls) -> asyncio.Semaphore:
-        """Returns a shared playwright semaphore for the current event loop."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.Semaphore(1) # More conservative when outside loop
-
-        if loop not in cls._playwright_semaphores:
-            with cls._lock_initialized:
-                if loop not in cls._playwright_semaphores:
-                    # Capability Improvement: Increased to 4 for better throughput while maintaining stability
-                    cls._playwright_semaphores[loop] = asyncio.Semaphore(4)
-        return cls._playwright_semaphores[loop]
-
-    @classmethod
-    async def cleanup(cls):
-        """Closes all clients for all event loops."""
-        clients_to_close = []
-        with cls._lock_initialized:
-            clients_to_close = list(cls._clients.values())
-            cls._clients.clear()
-            cls._semaphores.clear()
-            cls._playwright_semaphores.clear()
-            cls._locks.clear()
-
-        for client in clients_to_close:
-            try:
-                await client.aclose()
-            except (AttributeError, RuntimeError):
-                pass
 
 
 class BrowserEngine(Enum):
@@ -1296,634 +1066,28 @@ class FetchStrategy(FortunaBaseModel):
 
 
 def api_fetch_strategy(**overrides) -> FetchStrategy:
-    """For adapters hitting JSON APIs. No browser needed."""
-    defaults = dict(
-        primary_engine=BrowserEngine.CURL_CFFI,
-        allowed_engines=[BrowserEngine.CURL_CFFI, BrowserEngine.HTTPX],
-        max_engine_attempts=2,
-        enable_js=False,
-        timeout=30,
-        max_retries=2,
-    )
-    defaults.update(overrides)
-    return FetchStrategy(**defaults)
+    """Stub — returns a default FetchStrategy. No live HTTP in interactive mode."""
+    return FetchStrategy(**{k: v for k, v in overrides.items() if k in FetchStrategy.model_fields})
 
 
 def scraping_fetch_strategy(**overrides) -> FetchStrategy:
-    """For adapters that scrape rendered HTML behind anti-bot protection."""
-    defaults = dict(
-        primary_engine=BrowserEngine.CAMOUFOX,
-        allowed_engines=[
-            BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT,
-            BrowserEngine.CURL_CFFI,
-        ],
-        max_engine_attempts=3,
-        enable_js=True,
-        stealth_mode="camouflage",
-        timeout=45,
-        max_retries=2,
-    )
-    defaults.update(overrides)
-    return FetchStrategy(**defaults)
+    """Stub — returns a default FetchStrategy. No live HTTP in interactive mode."""
+    return FetchStrategy(**{k: v for k, v in overrides.items() if k in FetchStrategy.model_fields})
 
 
 def lightweight_fetch_strategy(**overrides) -> FetchStrategy:
-    """For health checks and simple GETs. HTTPX only, fast timeout."""
-    defaults = dict(
-        primary_engine=BrowserEngine.HTTPX,
-        allowed_engines=[BrowserEngine.HTTPX],
-        max_engine_attempts=1,
-        enable_js=False,
-        timeout=15,
-        max_retries=1,
-    )
-    defaults.update(overrides)
-    return FetchStrategy(**defaults)
+    """Stub — returns a default FetchStrategy. No live HTTP in interactive mode."""
+    return FetchStrategy(**{k: v for k, v in overrides.items() if k in FetchStrategy.model_fields})
 
 
-class GlobalEngineHealthRegistry:
-    """Shared state for tracking engine health across all fetcher instances."""
-    _health_scores: Dict[BrowserEngine, float] = {
-        BrowserEngine.CAMOUFOX: 0.9,
-        BrowserEngine.CURL_CFFI: 0.8,
-        BrowserEngine.PLAYWRIGHT: 0.7,
-        BrowserEngine.PLAYWRIGHT_LEGACY: 0.6,
-        BrowserEngine.HTTPX: 0.5
-    }
-    _last_decay_time: float = time.time()
-    _lock = threading.Lock()
+# GlobalEngineHealthRegistry removed — engine health tracking not needed for file-based ingest.
 
-    @classmethod
-    def get_scores(cls) -> Dict[BrowserEngine, float]:
-        with cls._lock:
-            # Automatic recovery over time
-            now = time.time()
-            elapsed = now - cls._last_decay_time
-            if elapsed > 60: # Every minute, recover slightly
-                for engine in cls._health_scores:
-                    cls._health_scores[engine] = min(1.0, cls._health_scores[engine] + 0.2)
-                cls._last_decay_time = now
-            return cls._health_scores.copy()
 
-    @classmethod
-    def record_failure(cls, engine: BrowserEngine, penalty: float = 0.2):
-        with cls._lock:
-            cls._health_scores[engine] = max(0.0, cls._health_scores[engine] - penalty)
+# SmartFetcher removed — multi-engine HTTP fetching not needed for file-based ingest.
+# In interactive mode, make_request() reads from manual_fetch/ directory.
 
-    @classmethod
-    def record_success(cls, engine: BrowserEngine, reward: float = 0.05):
-        with cls._lock:
-            cls._health_scores[engine] = min(1.0, cls._health_scores[engine] + reward)
 
-class SmartFetcher:
-    BOT_DETECTION_KEYWORDS: ClassVar[List[str]] = [
-        "datadome", "perimeterx", "access denied", "captcha", "cloudflare",
-        "please verify", "client challenge", "javascript is disabled",
-        "just a moment", "enable cookies", "sucuri", "unsupported browser"
-    ]
-    def __init__(self, strategy: Optional[FetchStrategy] = None):
-        self.strategy = strategy or FetchStrategy()
-        self.logger = structlog.get_logger(self.__class__.__name__)
-        self.last_engine: str = "unknown"
-        self._sessions: Dict[Union[BrowserEngine, str], Any] = {}
-        self._curl_sessions: Dict[str, Any] = {} # Hardening Fix: Initialize session tracking (Fix AttributeError)
-        self._session_lock = asyncio.Lock()
-        if BROWSERFORGE_AVAILABLE:
-            self.header_gen = HeaderGenerator()
-            self.fingerprint_gen = FingerprintGenerator()
-        else:
-            self.header_gen = None
-            self.fingerprint_gen = None
-
-    async def _get_persistent_session(self, engine: BrowserEngine) -> Any:
-        """Gate ALL browser creation behind the global playwright semaphore."""
-        if os.getenv('FORTUNA_NO_BROWSER') == '1':
-            return None
-
-        # Fast path: session already exists
-        async with self._session_lock:
-            if engine in self._sessions:
-                return self._sessions[engine]
-
-        # Slow path: acquire global browser slot before creating
-        pw_sem = GlobalResourceManager.get_playwright_semaphore()
-        async with pw_sem:
-            async with self._session_lock:
-                # Double-check after acquiring semaphore
-                if engine in self._sessions:
-                    return self._sessions[engine]
-
-                try:
-                    if engine == BrowserEngine.CAMOUFOX and ASYNC_SESSIONS_AVAILABLE:
-                        session = AsyncStealthySession(headless=True)
-                        await asyncio.wait_for(session.__aenter__(), timeout=30)
-                        self._sessions[engine] = session
-                    elif engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.PLAYWRIGHT_LEGACY) \
-                         and ASYNC_SESSIONS_AVAILABLE:
-                        session = AsyncDynamicSession(headless=True)
-                        await asyncio.wait_for(session.__aenter__(), timeout=30)
-                        self._sessions[engine] = session
-                except (BrokenPipeError, ConnectionError, ConnectionResetError, OSError, asyncio.TimeoutError) as e:
-                    self.logger.error('browser_session_creation_failed',
-                                     engine=engine.value, error=str(e))
-                    GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
-                    raise FetchError(f'Browser launch failed: {e}',
-                                     category=ErrorCategory.NETWORK)
-
-                return self._sessions.get(engine)
-
-    async def _invalidate_session(self, engine: BrowserEngine) -> None:
-        """Safely tear down a dead browser session."""
-        async with self._session_lock:
-            session = self._sessions.pop(engine, None)
-            if session is not None:
-                try:
-                    await asyncio.wait_for(session.__aexit__(None, None, None), timeout=10)
-                except Exception:
-                    pass  # Session is already dead
-
-    async def _get_curl_session(self) -> Any:
-        """Returns a persistent curl_cffi session (Fix 07 / BUG-CR-06)."""
-        async with self._session_lock:
-            if "_curl" not in self._sessions:
-                if not curl_requests:
-                    raise ImportError("curl_cffi is not available")
-                self._sessions["_curl"] = curl_requests.AsyncSession()
-            return self._sessions["_curl"]
-
-    async def fetch(self, url: str, **kwargs: Any) -> Any:
-        # INTERACTIVE MODE: Check for file-based input or prompt user
-
-        # 1. Try file-based input (for GHA or batch usage)
-        manual_dir = Path("manual_fetch")
-        if manual_dir.exists():
-            # Use slug of URL as filename
-            from urllib.parse import urlparse
-            p = urlparse(url)
-            slug = re.sub(r'[^a-z0-9]', '_', (p.netloc + p.path).lower()).strip('_')
-
-            # Check for .html or .txt
-            for ext in [".html", ".txt"]:
-                file_path = manual_dir / f"{slug}{ext}"
-                if file_path.exists():
-                    print(f"[MANUAL FETCH] Loading from {file_path}")
-                    content = file_path.read_text(encoding="utf-8")
-                    return UnifiedResponse(content, 200, 200, url)
-
-        # 2. Check if we have already failed this URL in this run
-        if not hasattr(self, "_interactive_history"):
-            self._interactive_history = set()
-
-        if url in self._interactive_history:
-            return UnifiedResponse("", 404, 404, url)
-
-        # 3. Prompt user if in interactive environment
-        if not sys.stdin.isatty():
-            print(f"[MANUAL FETCH] Skipping {url} (not a terminal and no file found in manual_fetch/)")
-            return UnifiedResponse("", 404, 404, url)
-
-        print(f"\n[INTERACTIVE FETCH] {url}")
-        print("Please paste the page content below. End with a line containing only 'EOF' (or 'SKIP'):")
-
-        lines = []
-        try:
-            while True:
-                line = input()
-                if line.strip() in ("EOF", "SKIP"):
-                    if line.strip() == "SKIP":
-                        lines = []
-                    break
-                lines.append(line)
-        except EOFError:
-            pass
-
-        content = "\n".join(lines)
-        if not content:
-            print("No content provided or skipped.")
-            self._interactive_history.add(url)
-            return UnifiedResponse("", 404, 404, url)
-
-        print(f"Captured {len(content)} bytes. Processing...")
-        return UnifiedResponse(content, 200, 200, url)
-
-    async def _fetch_original(self, url: str, **kwargs: Any) -> Any:
-        method = kwargs.get("method", "GET").upper()
-        kwargs.pop("url", None)
-
-        # Get latest health scores from global registry
-        current_health = GlobalEngineHealthRegistry.get_scores()
-        available_engines = list(current_health.keys())
-
-        if not curl_requests and BrowserEngine.CURL_CFFI in available_engines:
-            available_engines.remove(BrowserEngine.CURL_CFFI)
-        if not ASYNC_SESSIONS_AVAILABLE:
-            for e in [BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT]:
-                if e in available_engines: available_engines.remove(e)
-
-        if not available_engines:
-            self.logger.error("no_fetch_engines_available", url=url)
-            raise FetchError("No fetch engines available (install curl_cffi or scrapling)")
-
-        strategy = kwargs.get("strategy", self.strategy)
-
-        # Domain-specific engine prioritization (Hardening Fix / P0-FIX-B2)
-        # Some domains are better handled by specific engines; re-rank locally without mutation
-        protected_domains = [
-            "attheraces.com", "equibase.com", "nyrabets.com", "oddschecker.com",
-            "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
-            "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
-            "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
-            "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
-        ]
-        if any(d in url for d in protected_domains):
-            self.logger.debug("Prioritizing browser engines for protected domain", url=url)
-            if BrowserEngine.CAMOUFOX in available_engines:
-                current_health[BrowserEngine.CAMOUFOX] = max(current_health[BrowserEngine.CAMOUFOX], 1.0)
-            if BrowserEngine.PLAYWRIGHT in available_engines:
-                current_health[BrowserEngine.PLAYWRIGHT] = max(current_health[BrowserEngine.PLAYWRIGHT], 0.95)
-            # Discourage HTTPX and CURL_CFFI locally for these domains to prefer browser automation
-            if BrowserEngine.HTTPX in available_engines:
-                current_health[BrowserEngine.HTTPX] = 0.05
-            if BrowserEngine.CURL_CFFI in available_engines:
-                current_health[BrowserEngine.CURL_CFFI] = min(current_health[BrowserEngine.CURL_CFFI], 0.1)
-
-        candidates = [
-            eng for eng, score in sorted(
-                current_health.items(), key=lambda x: -x[1]
-            )
-            if eng in strategy.allowed_engines and eng in available_engines and score > 0.05
-        ]
-
-        # Primary preference is already expressed through initial health values,
-        # so we stay sorted by health score to handle degraded engines.
-
-        # Primary strategy engine should always be tried if allowed
-        if strategy.primary_engine in candidates:
-            # Move primary to the front
-            candidates.remove(strategy.primary_engine)
-            candidates.insert(0, strategy.primary_engine)
-
-        engines = candidates[:strategy.max_engine_attempts]
-        if not engines:
-            raise FetchError(f"No viable engines for {url}", category=ErrorCategory.NETWORK)
-
-        self.logger.debug("Fetch engines ordered", url=url, engines=[e.value for e in engines], primary=strategy.primary_engine.value)
-        last_error: Optional[Exception] = None
-        for engine in engines:
-            try:
-                # Hardening Fix: Create a shallow copy of kwargs to prevent multiple values for 'method' during recursion
-                fetch_kwargs = kwargs.copy()
-                fetch_kwargs["method"] = method
-                response = await self._fetch_with_engine(engine, url, **fetch_kwargs)
-
-                # Check for bot detection in response body and status code (Hardening Fix / BUG-CR-05)
-                if response and hasattr(response, "status_code"):
-                    sc = response.status_code
-                    if sc == 429:
-                        self.logger.warning("rate_limited", engine=engine.value, url=url)
-                        # Penalty for 429 is higher to force engine switch or backoff
-                        GlobalEngineHealthRegistry.record_failure(engine, penalty=0.4)
-                        raise FetchError("Rate limited (429)", response=response, category=ErrorCategory.RATE_LIMIT)
-                    if sc in (403, 503):
-                        self.logger.warning("http_block_status", engine=engine.value, status=sc, url=url)
-                        GlobalEngineHealthRegistry.record_failure(engine, penalty=0.3)
-                        raise FetchError(f"HTTP {sc}", response=response, category=ErrorCategory.BOT_DETECTION)
-
-                if response and hasattr(response, "text") and response.text:
-                    body_lower = response.text.lower()
-                    challenge_solved = False
-                    for kw in self.BOT_DETECTION_KEYWORDS:
-                        if kw in body_lower:
-                            self.logger.warning("bot_challenge_detected", engine=engine.value, keyword=kw, url=url)
-                            # Hardening Fix: If using Playwright, wait and retry once to allow automated solving
-                            if engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
-                                self.logger.info("Waiting for automated challenge solution...", engine=engine.value)
-                                # Increased wait to 30s to handle complex Cloudflare/Datadome challenges (P0 Improvement)
-                                await asyncio.sleep(30)
-                                # Hardening Fix: Use copy for internal wait-retry too
-                                retry_kwargs = kwargs.copy()
-                                retry_kwargs["method"] = method
-                                # Ensure we use the same browser engine for retry to leverage solving
-                                response = await self._fetch_with_engine(engine, url, **retry_kwargs)
-                                if response and hasattr(response, "text") and not any(k in response.text.lower() for k in self.BOT_DETECTION_KEYWORDS):
-                                    self.logger.info("Challenge solved successfully!", engine=engine.value)
-                                    challenge_solved = True
-                                    break # Success in the kw loop
-
-                            if not challenge_solved:
-                                # Invalidate poisoned session
-                                if engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
-                                    await self._invalidate_session(engine)
-                                raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
-
-                GlobalEngineHealthRegistry.record_success(engine)
-                self.last_engine = engine.value
-                return response
-            except Exception as e:
-                self.logger.debug(f"Engine {engine.value} failed", error=str(e))
-                GlobalEngineHealthRegistry.record_failure(engine)
-                last_error = e
-                continue
-        err_msg = repr(last_error) if last_error else "All fetch engines failed"
-        self.logger.error("all_engines_failed", url=url, error=err_msg)
-        raise last_error or FetchError("All fetch engines failed")
-
-
-    async def _fetch_with_engine(self, engine: BrowserEngine, url: str, **kwargs: Any) -> Any:
-        method = kwargs.pop("method", "GET").upper()
-        # Generate browserforge headers if available
-        if BROWSERFORGE_AVAILABLE:
-            try:
-                # Generate headers and a corresponding user agent
-                fingerprint = self.fingerprint_gen.generate()
-                bf_headers = self.header_gen.generate()
-                # Ensure User-Agent is consistent between fingerprint and headers
-                ua = getattr(fingerprint.navigator, 'userAgent', getattr(fingerprint.navigator, 'user_agent', CHROME_USER_AGENT))
-                bf_headers['User-Agent'] = ua
-
-                # Copy headers before mutation to avoid leaking state across requests
-                headers = dict(kwargs.get("headers", {}))
-                # Merge - browserforge headers complement provided ones
-                for k, v in bf_headers.items():
-                    if k not in headers:
-                        headers[k] = v
-                kwargs["headers"] = headers
-                self.logger.debug("Applied browserforge headers", engine=engine.value)
-            except Exception as e:
-                self.logger.warning("Failed to generate browserforge headers", error=str(e))
-
-        # Define browser-specific arguments to strip for non-browser engines
-        BROWSER_SPECIFIC_KWARGS = [
-            "network_idle", "wait_selector", "wait_until", "impersonate",
-            "stealth", "block_resources", "wait_for_selector", "stealth_mode",
-            "strategy", "update_status", "follow_redirects", "allow_redirects"
-        ]
-
-        # Extract redirect settings for normalization
-        follow_redirects = kwargs.get("follow_redirects", True)
-        allow_redirects = kwargs.get("allow_redirects", follow_redirects)
-
-        strategy = kwargs.get("strategy", self.strategy)
-        if engine == BrowserEngine.HTTPX:
-            # Pass strategy timeout if present in kwargs or use default
-            timeout = kwargs.get("timeout", strategy.timeout)
-            client = await GlobalResourceManager.get_httpx_client(timeout=timeout)
-
-            # Remove timeout and browser-specific keys from kwargs
-            req_kwargs = {
-                k: v for k, v in kwargs.items()
-                if k != "timeout" and k not in BROWSER_SPECIFIC_KWARGS
-            }
-            req_kwargs["follow_redirects"] = allow_redirects
-            resp = await client.request(method, url, timeout=timeout, **req_kwargs)
-            return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
-
-        if engine == BrowserEngine.CURL_CFFI:
-            if not curl_requests:
-                raise ImportError("curl_cffi is not available")
-
-            self.logger.debug(f"Using curl_cffi for {url}")
-            timeout = kwargs.get("timeout", strategy.timeout)
-
-            # Default headers if still not present after browserforge attempt
-            headers = kwargs.get("headers", {**DEFAULT_BROWSER_HEADERS, "User-Agent": CHROME_USER_AGENT})
-
-            # BUG-14: Impersonation fallback chain to handle unsupported versions
-            requested_impersonate = kwargs.get("impersonate") or getattr(strategy, "impersonate", None) or "chrome124"
-            impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome110"]
-            # Filter out duplicates while preserving order
-            impersonate_chain = list(dict.fromkeys(impersonate_chain))
-
-            # Remove keys that curl_requests.AsyncSession.request doesn't like
-            clean_kwargs = {
-                k: v for k, v in kwargs.items()
-                if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
-            }
-            clean_kwargs["allow_redirects"] = allow_redirects
-
-            last_err = None
-            session = await self._get_curl_session()
-            for imp_version in impersonate_chain:
-                try:
-                    resp = await session.request(
-                        method,
-                        url,
-                        timeout=timeout,
-                        headers=headers,
-                        impersonate=imp_version,
-                        **clean_kwargs
-                    )
-                    return UnifiedResponse(resp.text, resp.status_code, resp.status_code, resp.url, resp.headers)
-                except Exception as e:
-                    err_lower = str(e).lower()
-                    if ("impersonat" in err_lower or "supported" in err_lower) and "chrome" in err_lower:
-                        self.logger.debug("curl_cffi impersonation not supported, trying next", version=imp_version)
-                        # Discard the poisoned session from the main cache (Hardening Fix)
-                        async with self._session_lock:
-                            self._sessions.pop('_curl', None)
-                        last_err = e
-                        continue
-                    raise
-
-            raise last_err or FetchError(f"All curl_cffi impersonations failed for {url}")
-
-        if not ASYNC_SESSIONS_AVAILABLE:
-            raise ImportError("scrapling not available")
-
-        # 1. Broaden supported kwargs explicitly!
-        SCRAPLING_KWARGS = [
-            "network_idle", "wait_selector", "wait_until", "stealth_mode",
-            "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params",
-            "follow_redirects", "allow_redirects"
-        ]
-
-        scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
-
-        # Enforce essential mapping fallback for custom header names & HTTP formats.
-        if "headers" in kwargs and "headers" not in scrapling_kwargs:
-            scrapling_kwargs["headers"] = kwargs["headers"]
-
-        timeout_val = scrapling_kwargs.get("timeout") or kwargs.get("timeout") or strategy.timeout
-        is_browser = engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT)
-        # Browsers process times typically in miliseconds inside underlying libs (Fix timeout units)
-        if is_browser and timeout_val < 1000:
-            scrapling_kwargs["timeout"] = int(timeout_val * 1000)
-        else:
-            scrapling_kwargs["timeout"] = timeout_val
-
-        if "wait_until" not in scrapling_kwargs:
-            scrapling_kwargs["wait_until"] = strategy.wait_until or strategy.page_load_strategy
-        if "network_idle" not in scrapling_kwargs:
-            scrapling_kwargs["network_idle"] = strategy.network_idle
-        if "stealth_mode" not in scrapling_kwargs:
-            scrapling_kwargs["stealth_mode"] = strategy.stealth_mode
-        if "block_resources" not in scrapling_kwargs:
-            scrapling_kwargs["block_resources"] = strategy.block_resources
-
-        # Helper method: Safely and completely unpack Adapters regardless of structure
-        def _get_unified_resp(r) -> UnifiedResponse:
-            st = getattr(r, "status", getattr(r, "status_code", 200))
-            url_str = str(getattr(r, "url", url))
-            hdrs = getattr(r, "headers", getattr(r, "response_headers", getattr(r, "extra_headers", {})))
-
-            # Smart html fallback block avoiding bytes => string mutation corruption (`b"<html>..."` literal representation string failures)
-            body = getattr(r, "html_content", getattr(r, "body", None))
-            if isinstance(body, (bytes, bytearray)):
-                encoding = getattr(r, "encoding", "utf-8") or "utf-8"
-                cont = body.decode(encoding, errors="replace")
-            elif isinstance(body, str) and body:
-                cont = body
-            else:
-                alt = getattr(r, "raw_html", getattr(r, "html", getattr(r, "text", "")))
-                if isinstance(alt, (bytes, bytearray)):
-                    cont = alt.decode("utf-8", errors="replace")
-                else:
-                    cont = str(alt)
-
-            # Map Unified responses effectively
-            return UnifiedResponse(cont, st, st, url_str, dict(hdrs))
-
-        if engine in (BrowserEngine.CAMOUFOX, BrowserEngine.PLAYWRIGHT):
-            try:
-                s = await self._get_persistent_session(engine)
-                if s is None:
-                    raise FetchError(f"No session for {engine.value}")
-                if method.upper() == "POST":
-                    # Ensure the POST configuration navigations execute
-                    action = getattr(s, "post", s.fetch)
-                    # Mapping data/json to body for scrapling
-                    if "data" in scrapling_kwargs:
-                        scrapling_kwargs["body"] = scrapling_kwargs.pop("data")
-                    if "json" in scrapling_kwargs:
-                        scrapling_kwargs["body"] = json.dumps(scrapling_kwargs.pop("json"))
-                    resp = await action(url, **scrapling_kwargs)
-                else:
-                    # Direct fetching or mapping
-                    action = getattr(s, "get", getattr(s, "fetch"))
-                    try:
-                        # Map params to url for scrapling if needed
-                        if "params" in scrapling_kwargs:
-                            from urllib.parse import urlencode, urlparse, urlunparse, parse_qsl
-                            params = scrapling_kwargs.pop("params")
-                            url_parts = list(urlparse(url))
-                            query = dict(parse_qsl(url_parts[4]))
-                            query.update(params)
-                            url_parts[4] = urlencode(query)
-                            url = urlunparse(url_parts)
-
-                        resp = await action(url, **scrapling_kwargs)
-                    except TypeError as te:
-                        # In instances older version underlying calls mandate missing standard default keywords safely back out
-                        if ("method" in str(te) or "redirect" in str(te)) and getattr(s, "fetch", None) == action:
-                            # Strip incompatible kwargs and retry
-                            for k in ["follow_redirects", "allow_redirects", "method"]:
-                                scrapling_kwargs.pop(k, None)
-                            resp = await action(url, method="GET", **scrapling_kwargs)
-                        else:
-                            raise te
-
-                return _get_unified_resp(resp)
-            except (BrokenPipeError, ConnectionResetError, OSError, asyncio.TimeoutError) as e:
-                self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
-                await self._invalidate_session(engine)
-                # Penalize browser engine for timeout or pipe error
-                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.4 if isinstance(e, asyncio.TimeoutError) else 0.5)
-                raise FetchError(f"Browser error: {e}", category=ErrorCategory.NETWORK)
-
-        elif engine == BrowserEngine.PLAYWRIGHT_LEGACY:
-            try:
-                # Direct Playwright usage for cases where scrapling/camoufox fail
-                from playwright.async_api import async_playwright
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    # Apply impersonation via context
-                    ua = kwargs.get("headers", {}).get("User-Agent", CHROME_USER_AGENT)
-                    context = await browser.new_context(user_agent=ua)
-                    page = await context.new_page()
-
-                    timeout = kwargs.get("timeout", strategy.timeout) * 1000
-                    wait_until = "networkidle" if strategy.network_idle else "domcontentloaded"
-
-                    # Apply headers
-                    if "headers" in kwargs:
-                        await context.set_extra_http_headers(kwargs["headers"])
-
-                    resp_obj = await page.goto(url, wait_until=wait_until, timeout=timeout)
-                    content = await page.content()
-                    status = resp_obj.status if resp_obj else 0
-                    headers = resp_obj.headers if resp_obj else {}
-
-                    await browser.close()
-                    return UnifiedResponse(content, status, status, url, headers)
-            except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
-                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
-                raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
-
-        else:
-            try:
-                # Fallback bare Fetcher block without the specific session configuration elements
-                async with AsyncFetcher() as fetcher:
-                    allowed_http = {"timeout", "headers", "extra_headers", "proxy", "data", "json", "params"}
-                    safe_fetch_kwargs = {k: v for k, v in scrapling_kwargs.items() if k in allowed_http}
-
-                    if method.upper() == "GET":
-                        resp = await fetcher.get(url, **safe_fetch_kwargs)
-                    else:
-                        action = getattr(fetcher, "post", getattr(fetcher, "request"))
-                        resp = await action(url, **safe_fetch_kwargs)
-
-                    return _get_unified_resp(resp)
-            except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                self.logger.warning("browser_pipe_error", engine=engine.value, url=url, error=str(e))
-                GlobalEngineHealthRegistry.record_failure(engine, penalty=0.5)
-                raise FetchError(f"Browser process died: {e}", category=ErrorCategory.NETWORK)
-
-
-    async def close(self) -> None:
-        """Tear down all sessions, tolerating dead browser processes."""
-        async with self._session_lock:
-            for engine, session in list(self._sessions.items()):
-                try:
-                    if engine == "_curl":
-                        await session.close()
-                    else:
-                        await asyncio.wait_for(
-                            session.__aexit__(None, None, None), timeout=5
-                        )
-                except Exception:
-                    pass  # Browser already dead
-            self._sessions.clear()
-
-            for key, session in list(self._curl_sessions.items()):
-                try:
-                    await session.close()
-                except Exception:
-                    pass
-            self._curl_sessions.clear()
-
-
-@dataclass
-class CircuitBreaker:
-    failure_threshold: int = 5
-    recovery_timeout: float = 60.0
-    state: str = "closed"
-    failure_count: int = 0
-    last_failure_time: Optional[float] = None
-    async def record_success(self) -> None:
-        self.failure_count = 0
-        self.state = "closed"
-    async def record_failure(self) -> None:
-        self.failure_count += 1
-        self.last_failure_time = time.time()
-        if self.failure_count >= self.failure_threshold: self.state = "open"
-    async def allow_request(self) -> bool:
-        if self.state == "closed": return True
-        if self.state == "open" and self.last_failure_time:
-            if time.time() - self.last_failure_time > self.recovery_timeout:
-                self.state = "half-open"
-                return True
-        return self.state == "half-open"
+# CircuitBreaker removed — not needed for file-based ingest.
 
 
 class AdapterMetrics:
@@ -2080,22 +1244,12 @@ class BaseAdapterV3(ABC):
         self.source_name = source_name
         self.base_url = base_url.rstrip("/")
         self.config = config or {}
-        # Merge kwargs into config
         self.config.update(kwargs)
         self.headers: Dict[str, str] = {}
-        self.trust_ratio = 0.0 # Tracking odds quality ratio (0.0 to 1.0)
-
-        # Override rate_limit from config if present
-        actual_rate_limit = float(self.config.get("rate_limit", rate_limit))
-
+        self.trust_ratio = 0.0
         self.logger = structlog.get_logger(adapter_name=self.source_name)
-        self.circuit_breaker = CircuitBreaker(
-            failure_threshold=int(self.config.get("failure_threshold", 5)),
-            recovery_timeout=float(self.config.get("recovery_timeout", 60.0))
-        )
-        self.rate_limiter = RateLimiter(requests_per_second=actual_rate_limit)
         self.metrics = AdapterMetrics()
-        self.smart_fetcher = SmartFetcher(strategy=self._configure_fetch_strategy())
+        self._configure_fetch_strategy()  # Called for subclass side-effects; return value unused
         self.last_race_count = 0
         self.last_duration_s = 0.0
         self.last_response_status: Optional[Union[int, str]] = None
@@ -2110,45 +1264,16 @@ class BaseAdapterV3(ABC):
     async def get_races(self, date: str) -> List[Race]:
         start = time.time()
         try:
-            # Check for browser requirement in monolith mode
-            strategy = self.smart_fetcher.strategy
-            if strategy.primary_engine in [BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX]:
-                if is_frozen():
-                    self.logger.info("Skipping browser-dependent adapter in monolith mode")
-                    return []
-                # FIX_06: Gracefully skip if Browser support is required but missing (GHA check)
-                if not ASYNC_SESSIONS_AVAILABLE:
-                    self.logger.warning("Browser support (scrapling/patchright) not available, skipping browser-based adapter", source=self.source_name)
-                    return []
-
-            if not await self.circuit_breaker.allow_request(): return []
-
-            raw = None
-            # Hardening Fix: Implement retries with strict status validation
-            for attempt in range(3):
-                try:
-                    await self.rate_limiter.acquire()
-                    raw = await self._fetch_data(date)
-                    if raw:
-                        break
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    self.logger.warning("Fetch attempt failed, retrying", attempt=attempt+1, error=str(e))
-                    await asyncio.sleep(1)
-
+            raw = await self._fetch_data(date)
             if not raw:
-                await self.circuit_breaker.record_failure()
                 return []
             races = self._validate_and_parse_races(raw)
             self.last_race_count = len(races)
             self.last_duration_s = time.time() - start
-            await self.circuit_breaker.record_success()
             await self.metrics.record_success(self.last_duration_s * 1000)
             return races
         except Exception as e:
             self.logger.error("Adapter failed", error=str(e))
-            await self.circuit_breaker.record_failure()
             await self.metrics.record_failure(str(e))
             return []
 
@@ -2272,56 +1397,78 @@ class BaseAdapterV3(ABC):
         valid, warnings = DataValidationPipeline.validate_parsed_races(deduped_races, adapter_name=self.source_name)
         return valid
 
-    async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
-        full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
-        raise_for_status = kwargs.pop("raise_for_status", True)
-        update_status = kwargs.pop("update_status", True)
+    async def make_request(self, method: str, url: str, **kwargs: Any) -> Optional[Any]:
+        """
+        Interactive mode: reads HTML from manual_fetch/ directory instead of making live HTTP
+        requests.  The filename is derived from the URL slug so it matches what
+        --list-links reports.  Returns a UnifiedResponse on success, or None if the
+        file is missing (the adapter's _fetch_data will treat None as a failed fetch).
 
-        # Apply host-based rate limiting to prevent 429s (Fix 13)
+        If the file is missing and the session is interactive (stdin is a TTY),
+        the user is prompted to paste the HTML content manually.
+        """
         from urllib.parse import urlparse
-        host = urlparse(full_url).netloc
-        if host:
-            limiter = await GlobalResourceManager.get_host_limiter(host)
-            await limiter.acquire()
+        full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+        p = urlparse(full_url)
+        domain = p.netloc.lower()
+        slug = re.sub(r'[^a-z0-9]', '_', (domain + p.path).lower()).strip('_')
+        # Truncate very long slugs (some paths are extremely long query strings)
+        if len(slug) > 180:
+            slug = slug[:180]
+        filepath = Path("manual_fetch") / f"{slug}.html"
 
-        self.logger.debug("Requesting", method=method, url=full_url)
+        # 1. Try file-based ingest (Primary)
+        if filepath.exists():
+            self.logger.info("manual_fetch_hit", file=str(filepath))
+            content = filepath.read_text(encoding="utf-8", errors="replace")
+            self.last_response_status = 200
+            return UnifiedResponse(text=content, status=200, status_code=200, url=full_url)
 
-        # Merge adapter-level headers if defined
-        if hasattr(self, 'headers') and self.headers:
-            current_headers = kwargs.get("headers", {})
-            # Passed headers take precedence over adapter defaults
-            merged_headers = {**self.headers, **current_headers}
-            kwargs["headers"] = merged_headers
+        # 2. Sequential Terminal Interaction (Fallback)
+        # Check if we have already failed this URL in this run
+        if not hasattr(self, "_interactive_history"):
+            self._interactive_history = set()
 
-        # Apply global concurrency limit
-        async with GlobalResourceManager.get_global_semaphore():
+        if full_url in self._interactive_history:
+            self.last_response_status = 404
+            return None
+
+        # Prompt user if in interactive environment
+        if sys.stdin.isatty():
+            print(f"\n[INTERACTIVE FETCH] {full_url}")
+            print(f"Target filename: manual_fetch/{slug}.html")
+            print("Please paste the page content below. End with a line containing only 'EOF' (or 'SKIP'):")
+
+            lines = []
             try:
-                # Use adapter-specific strategy
-                kwargs.setdefault("strategy", self.smart_fetcher.strategy)
-                resp = await self.smart_fetcher.fetch(full_url, method=method, **kwargs)
-                status = get_resp_status(resp)
-                if update_status:
-                    self.last_response_status = status
-                self.logger.debug("Response received", method=method, url=full_url, status=status)
+                while True:
+                    line = input()
+                    if line.strip() in ("EOF", "SKIP"):
+                        if line.strip() == "SKIP":
+                            lines = []
+                        break
+                    lines.append(line)
+            except EOFError:
+                pass
 
-                # Hardening Fix: Raise for status if not 200
-                if raise_for_status and status != 200:
-                    self.logger.error("adapter_http_error", adapter=self.source_name, url=full_url, status=status)
-                    if hasattr(resp, "raise_for_status"):
-                        try:
-                            resp.raise_for_status()
-                        except Exception:
-                            raise httpx.HTTPStatusError(f"HTTP {status}", request=None, response=resp)
-                    else:
-                        raise Exception(f"HTTP {status}")
+            content = "\n".join(lines)
+            if content:
+                print(f"Captured {len(content)} bytes. Processing...")
+                self.last_response_status = 200
+                return UnifiedResponse(text=content, status=200, status_code=200, url=full_url)
+            else:
+                print("No content provided or skipped.")
+                self._interactive_history.add(full_url)
 
-                return resp
-            except Exception as e:
-                self.logger.error("Request failed", method=method, url=full_url, error=str(e))
-                raise
+        self.logger.warning("manual_fetch_miss", file=str(filepath), url=full_url)
+        self.last_response_status = 404
+        return None
 
-    async def close(self) -> None: await self.smart_fetcher.close()
-    async def shutdown(self) -> None: await self.close()
+    async def close(self) -> None:
+        pass  # No browser sessions to tear down in interactive mode
+
+    async def shutdown(self) -> None:
+        await self.close()
 
 # ============================================================================
 # ADAPTER IMPLEMENTATIONS
@@ -4399,32 +3546,7 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
         index_html = None
 
-        # 1. Try browser-based fetch if available
-        # FIX-CR-SC: Gate browser launch behind playwright semaphore to prevent unregulated spawns
-        try:
-            pw_sem = GlobalResourceManager.get_playwright_semaphore()
-            async with pw_sem:
-                from playwright.async_api import async_playwright
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    page = await browser.new_page()
-                    try:
-                        await page.goto(f"{self.base_url}/entries", wait_until="networkidle")
-                        await page.evaluate("() => { document.querySelectorAll('details').forEach(d => d.open = true); }")
-                        try: await page.select_option("#edit-entries-track", label="View All Tracks")
-                        except Exception: pass
-                        try: await page.select_option("#edit-entries-date", label=date_label)
-                        except Exception: pass
-                        try: await page.click("#edit-custom-submit-entries", force=True, timeout=5000)
-                        except Exception: pass
-                        try: await page.wait_for_selector("#entries-results-container a[href*='/entries/']", timeout=10000)
-                        except Exception: pass
-                        index_html = await page.content()
-                    finally:
-                        await page.close()
-                        await browser.close()
-        except Exception as e:
-            self.logger.debug("Playwright index fetch failed, trying fallback", error=str(e))
+        # Browser-based fetch disabled in interactive mode (Fix stale GlobalResourceManager reference)
 
         # 2. Fallback: Try to guess the data URL pattern if index fetch failed
         if not index_html:
@@ -6327,69 +5449,15 @@ class AnalyzerEngine:
 
 
 class AudioAlertSystem:
-    """Plays sound alerts for important events."""
-
-    def __init__(self):
-        self.sounds = {
-            "high_value": Path(__file__).resolve().parent / "assets" / "sounds" / "alert_premium.wav",
-        }
-        self.enabled = winsound is not None
-
-    def play(self, sound_type: str):
-        if not self.enabled:
-            return
-
-        sound_file = self.sounds.get(sound_type)
-        if sound_file and sound_file.exists():
-            try:
-                winsound.PlaySound(str(sound_file), winsound.SND_FILENAME | winsound.SND_ASYNC)
-            except Exception as e:
-                log.warning("Could not play sound", file=sound_file, error=e)
+    """Stub — audio alerts not available in interactive mode."""
+    def __init__(self): pass
+    def play(self, sound_type: str): pass
 
 
 class RaceNotifier:
-    """Handles sending native notifications and audio alerts for high-value races."""
-
-    def __init__(self):
-        self.notifier = DesktopNotifier() if HAS_NOTIFICATIONS else None
-        self.audio_system = AudioAlertSystem()
-        self.notified_races = set()
-        self.notifications_enabled = self.notifier is not None
-        if not self.notifications_enabled:
-            log.debug("Native notifications disabled (platform not supported or library missing)")
-
-    def notify_qualified_race(self, race):
-        if race.id in self.notified_races:
-            return
-
-        # Always log the high-value opportunity regardless of notification setting
-        log.info(
-            "High-value opportunity identified",
-            venue=race.venue,
-            race=race.race_number,
-            score=race.qualification_score
-        )
-
-        if not self.notifications_enabled or self.notifier is None:
-            return
-
-        title = "🐎 High-Value Opportunity!"
-        # Guard against None start_time
-        time_str = race.start_time.strftime('%I:%M %p') if race.start_time else "TBD"
-        message = f"{race.venue} - Race {race.race_number}\nScore: {race.qualification_score:.0f}%\nPost Time: {time_str}"
-
-        try:
-            # Use keyword arguments for better compatibility (AI Review Fix)
-            self.notifier.send(
-                title=title,
-                message=message,
-                urgency="high" if race.qualification_score >= 80 else "normal"
-            )
-            self.notified_races.add(race.id)
-            self.audio_system.play("high_value")
-            log.info("Notification and audio alert sent for high-value race", race_id=race.id)
-        except Exception as e:
-            log.error("Failed to send notification", error=str(e))
+    """Stub — desktop notifications not available in interactive mode."""
+    def __init__(self): self.notified_races: set = set()
+    def notify_qualified_race(self, race): pass
 
 
 # ----------------------------------------
@@ -10587,156 +9655,10 @@ async def run_discovery(
 
     return qualified
 
-async def start_desktop_app():
-    """Starts a FastAPI server and opens a webview window for the Fortuna Dashboard."""
-    try:
-        import uvicorn
-        from fastapi import FastAPI
-        from fastapi.responses import HTMLResponse
-        import webview
-        import threading
-        import time
-    except ImportError as e:
-        print(f"GUI dependencies missing: {e}. Install with 'pip install fastapi uvicorn pywebview'")
-        return
 
-    app = FastAPI(title="Fortuna Desktop Intelligence")
-
-    @app.get("/", response_class=HTMLResponse)
-    async def get_dashboard():
-        # Retrieve latest Goldmines from the database
-        db = FortunaDB()
-        try:
-            async with db.get_connection() as conn:
-                try:
-                    async with conn.execute(
-                        "SELECT venue, race_number, selection_number, predicted_2nd_fav_odds, start_time "
-                        "FROM tips ORDER BY id DESC LIMIT 50"
-                    ) as cursor:
-                        tips = await cursor.fetchall()
-                except Exception as e:
-                    print(f"DB query failed: {e}")
-                    tips = []
-        except Exception as e:
-            print(f"Failed to connect to database: {e}")
-            tips = []
-
-        tips_html = "".join([
-            f"<tr><td>{t[4]}</td><td>{t[0]}</td><td>R{t[1]}</td><td>#{t[2]}</td><td>{t[3]}</td></tr>"
-            for t in tips
-        ])
-
-        return f"""
-        <html>
-            <head>
-                <title>Fortuna Intelligence Desktop</title>
-                <style>
-                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; padding: 30px; }}
-                    .container {{ max-width: 1200px; margin: auto; }}
-                    h1 {{ color: #fbbf24; border-bottom: 2px solid #fbbf24; padding-bottom: 10px; text-transform: uppercase; letter-spacing: 2px; }}
-                    table {{ width: 100%; border-collapse: collapse; margin-top: 20px; background: #1e293b; border-radius: 8px; overflow: hidden; }}
-                    th, td {{ padding: 15px; text-align: left; border-bottom: 1px solid #334155; }}
-                    th {{ background: #334155; color: #fbbf24; }}
-                    tr:hover {{ background: #475569; }}
-                    .footer {{ margin-top: 30px; font-size: 0.8em; color: #94a3b8; text-align: center; }}
-                    .btn {{ display: inline-block; background: #fbbf24; color: #0f172a; padding: 10px 20px; border-radius: 5px; text-decoration: none; font-weight: bold; margin-bottom: 20px; }}
-                </style>
-                <script>
-                    setTimeout(() => {{ location.reload(); }}, 30000);
-                </script>
-            </head>
-            <body>
-                <div class="container">
-                    <h1>Fortuna Intelligence Dashboard</h1>
-                    <p>Monitoring global racing markets for Goldmine opportunities...</p>
-                    <a href="/" class="btn">REFRESH NOW</a>
-                    <table>
-                        <thead>
-                            <tr><th>Time Discovered</th><th>Venue</th><th>Race</th><th>Selection</th><th>Odds</th></tr>
-                        </thead>
-                        <tbody>
-                            {tips_html or "<tr><td colspan='5'>No opportunities found yet. Run discovery to populate the database.</td></tr>"}
-                        </tbody>
-                    </table>
-                    <div class="footer">Fortuna Intelligence Monolith - Sci-Fi Future Edition - Auto-refreshing every 30s</div>
-                </div>
-            </body>
-        </html>
-        """
-
-    def run_server():
-        uvicorn.run(app, host="127.0.0.1", port=8013, log_level="error")
-
-    # Start FastAPI in a background thread
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
-
-    # Wait a moment for server to initialize
-    time.sleep(2.0)
-
-    # Create and start the webview window if server is up
-    if server_thread.is_alive():
-        print("Launching Fortuna Desktop Window...")
-        webview.create_window('Fortuna Intelligence Desktop', 'http://127.0.0.1:8013', width=1300, height=900)
-        webview.start()
-    else:
-        print("⚠️ Error: GUI Server failed to start.")
-
-async def ensure_browsers(force_install: bool = False):
-    """Ensure browser dependencies are available for scraping."""
-
-    # Skip Playwright in frozen apps if binary doesn't exist - use HTTP-only adapters
-    if is_frozen():
-        playwright_path = os.path.expanduser("~\\AppData\\Local\\ms-playwright")
-        if not os.path.exists(playwright_path) and platform.system() == 'Windows':
-            structlog.get_logger().info("Running as frozen app - Playwright disabled (binary not found)")
-            return True
-
-    try:
-        # Check if playwright is installed and has a chromium binary
-        from playwright.async_api import async_playwright
-        async with async_playwright() as p:
-            try:
-                # We try to launch a headless browser to verify installation
-                browser = await p.chromium.launch(headless=True)
-                await browser.close()
-                return True
-            except Exception as e:
-                structlog.get_logger().debug("Playwright launch failed during verification", error=str(e))
-                if is_frozen():
-                    structlog.get_logger().info("Frozen app: Playwright launch failed, using HTTP-only fallbacks")
-                    return True
-    except ImportError:
-        structlog.get_logger().debug("Playwright not imported")
-        if is_frozen(): return True
-
-    if is_frozen():
-        return True
-
-    # Capability Improvement: Instead of auto-installing, warn the user unless opt-in
-    # For now, we will assume it's NOT opt-in and ask for manual installation
-    # because auto-pip-installing can be surprising.
-    structlog.get_logger().warning("Browser dependencies (Playwright Chromium) missing.")
-    print("\nBrowser dependencies missing!")
-    print("To use browser-based adapters, please run:")
-    print(f"  {sys.executable} -m pip install playwright==1.49.1")
-    print(f"  {sys.executable} -m playwright install chromium")
-    print("Alternatively, run Fortuna with: --install-browsers\n")
-
-    # Check if we should auto-install via flag or environment variable
-    if force_install or os.getenv("FORTUNA_AUTO_INSTALL_BROWSERS") == "1":
-        structlog.get_logger().info("Auto-installing browser dependencies as requested...")
-        try:
-            # Remove version pin to avoid conflicts
-            subprocess.run([sys.executable, "-m", "pip", "install", "playwright"], check=True, capture_output=True, text=True)
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, capture_output=True, text=True)
-            structlog.get_logger().info("Browser dependencies installed successfully.")
-            return True
-        except subprocess.CalledProcessError as e:
-            structlog.get_logger().error("Failed to auto-install browsers", error=str(e))
-            return False
-
-    return True # Continue with HTTP-only adapters
+async def ensure_browsers(force_install: bool = False) -> bool:
+    """No-op in interactive mode — no browser automation required."""
+    return True
 
 async def handle_early_exit_args(args: argparse.Namespace, config: Dict[str, Any]) -> bool:
     """Handles CLI arguments that should trigger an immediate exit (Capability Improvement)."""
@@ -10778,17 +9700,11 @@ async def main_all_in_one():
     parser.add_argument("--fetch-only", action="store_true", help="Only fetch and save data, skip analysis and reporting")
     parser.add_argument("--db-path", type=str, help="Path to tip history database")
     parser.add_argument("--clear-db", action="store_true", help="Clear all tips from the database and exit")
-    parser.add_argument("--gui", action="store_true", help="Start the Fortuna Desktop GUI")
-    parser.add_argument("--live-dashboard", action="store_true", help="Show live updating terminal dashboard")
-    parser.add_argument("--track-odds", action="store_true", help="Monitor live odds and send notifications")
     parser.add_argument("--status", action="store_true", help="Show application status card and latest metrics")
     parser.add_argument("--show-log", action="store_true", help="Print recent fetch/audit highlights")
     parser.add_argument("--quick-help", action="store_true", help="Show friendly onboarding guide")
     parser.add_argument("--open-dashboard", action="store_true", help="Open the HTML intelligence report in browser")
-    parser.add_argument("--install-browsers", action="store_true", help="Install required browser dependencies (Playwright Chromium)")
     parser.add_argument("--include-health-checks", action="store_true", help="Include Official_* track health-check adapters in discovery. These confirm track websites are reachable but produce no race data. Off by default. Also affects --test-all-adapters.")
-    parser.add_argument("--test-adapter", type=str, help="Test a single discovery adapter by name")
-    parser.add_argument("--test-all-adapters", action="store_true", help="Run a health check on all available discovery adapters")
     parser.add_argument("--list-links", action="store_true", help="INTERACTIVE: Only list racecard URLs needed, skip fetching and processing.")
     args = parser.parse_args()
 
@@ -10811,14 +9727,18 @@ async def main_all_in_one():
             "hkjc": 50, "japanracing": 45, "tab.com": 40
         }
 
-        # We need to monkeypatch SmartFetcher.fetch temporarily to just log and skip
-        original_fetch = SmartFetcher.fetch
+        # We need to monkeypatch BaseAdapterV3.make_request temporarily to just log and skip
+        original_make_request = BaseAdapterV3.make_request
 
-        async def fetch_log_only(self, url, **kwargs):
+        async def fetch_log_only(self, method, url, **kwargs):
             from urllib.parse import urlparse
-            p = urlparse(url)
+            full_url = url if url.startswith("http") else f"{self.base_url}/{url.lstrip('/')}"
+            p = urlparse(full_url)
             domain = p.netloc.lower()
             slug = re.sub(r'[^a-z0-9]', '_', (domain + p.path).lower()).strip('_')
+            # Truncate very long slugs (some paths are extremely long query strings)
+            if len(slug) > 180:
+                slug = slug[:180]
             filename = f"manual_fetch/{slug}.html"
 
             # Determine priority
@@ -10828,11 +9748,11 @@ async def main_all_in_one():
                     val = v
                     break
 
-            print(f"[LINK] {url} (Priority: {val})")
-            links_found.append({"url": url, "filename": filename, "val": val})
-            return UnifiedResponse("", 404, 404, url)
+            print(f"[LINK] {full_url} (Priority: {val})")
+            links_found.append({"url": full_url, "filename": filename, "val": val})
+            return UnifiedResponse("", 404, 404, full_url)
 
-        SmartFetcher.fetch = fetch_log_only
+        BaseAdapterV3.make_request = fetch_log_only
 
         # Run discovery as normal
         daypart_tag = get_daypart_tag(args)
@@ -10840,81 +9760,47 @@ async def main_all_in_one():
 
         # Output to files
         if links_found:
-            # Sort descending by priority
-            links_found.sort(key=lambda x: x["val"], reverse=True)
+            # 1. Deduplicate by URL while preserving highest priority
+            unique_links = {}
+            for lnk in links_found:
+                url = lnk["url"]
+                if url not in unique_links or lnk["val"] > unique_links[url]["val"]:
+                    unique_links[url] = lnk
 
-            with open("manual_links.txt", "w") as f:
-                for lnk in links_found:
-                    f.write(f"URL: {lnk['url']}\nFILE: {lnk['filename']}\n\n")
+            final_links = list(unique_links.values())
 
-            with open("manual_links.md", "w") as f:
-                f.write("### 🔗 Manual Discovery: URLs to Fetch\n\n")
-                f.write("> Sorted by data density (high-value files first)\n\n")
-                f.write("| Target URL | Expected Filename in `manual_fetch/` |\n")
-                f.write("| :--- | :--- |\n")
-                for lnk in links_found:
-                    # Use tiny monospace font for better GHA readability
-                    f.write(f"| <small><code>{lnk['url']}</code></small> | <small><code>{lnk['filename']}</code></small> |\n")
+            # 2. Sort descending by priority
+            final_links.sort(key=lambda x: x["val"], reverse=True)
+
+            # 3. Crop at 50 rows
+            final_links = final_links[:50]
+
+            # Capability Improvement: Single HTML artifact for better JB UX (v3.3.0+)
+            html_path = "manual_links.html"
+            with open(html_path, "w") as f:
+                f.write("<!DOCTYPE html><html><head><title>Fortuna Manual Discovery</title>")
+                # Tiny monospace font requested by JB for efficiency
+                f.write("<style>body{font-family:monospace;font-size:10px;background:#1a1a1a;color:#eee;padding:20px;}")
+                f.write("table{width:100%;border-collapse:collapse;margin-top:20px;}")
+                f.write("th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #444;}")
+                f.write("th{background:#333;color:#ffd700;border-top:2px solid #ffd700;} tr:hover{background:#252525;}")
+                f.write("code{font-family:monospace;background:#000;padding:1px 3px;border-radius:2px;color:#00ff41;}")
+                f.write(".priority{font-weight:bold;color:#ffa500;} a{text-decoration:none;}</style></head><body>")
+                f.write("<h1>🔗 Manual Discovery: URLs to Fetch</h1>")
+                f.write(f"<p>Sorted by data density. Capped at top 50 rows. Generated: {datetime.now().strftime('%y%m%d %H:%M')}</p>")
+                f.write("<table><thead><tr><th>Priority</th><th>Target URL</th><th>Expected Filename (manual_fetch/)</th></tr></thead><tbody>")
+                for lnk in final_links:
+                    f.write(f"<tr><td class='priority'>{lnk['val']}</td>")
+                    f.write(f"<td><a href='{lnk['url']}' target='_blank' style='color:#3498db;'>{lnk['url']}</a></td>")
+                    f.write(f"<td><code>{lnk['filename'].replace('manual_fetch/', '')}</code></td></tr>")
+                f.write("</tbody></table></body></html>")
 
         print("\n=== DISCOVERY COMPLETE ===")
-        print(f"Found {len(links_found)} links. Details saved to manual_links.txt and manual_links.md")
+        print(f"Found {len(final_links)} unique links. Details saved to {html_path}")
         return
 
-    # Phase 5: Implement adapter testing tool
-    if args.test_adapter or args.test_all_adapters:
-        await ensure_browsers()
-        test_date = args.date or now_eastern().strftime(DATE_FORMAT)
-        all_classes = get_discovery_adapter_classes()
-
-        if args.test_adapter:
-            classes_to_test = [c for c in all_classes if getattr(c, "SOURCE_NAME", c.__name__) == args.test_adapter]
-            if not classes_to_test:
-                print(f"Error: Adapter '{args.test_adapter}' not found.")
-                return
-        else:
-            if args.include_health_checks:
-                classes_to_test = all_classes
-            else:
-                classes_to_test = [c for c in all_classes if not getattr(c, 'IS_HEALTH_CHECK_ONLY', False)]
-
-        print(f"\n{'='*60}")
-        print(f" ADAPTER TESTING MODE - DATE: {test_date}")
-        print(f"{'='*60}\n")
-
-        for cls in classes_to_test:
-            name = getattr(cls, "SOURCE_NAME", cls.__name__)
-            print(f"Testing {name}...")
-            try:
-                adapter = cls()
-                start_time = time.time()
-                # Use a generous timeout for testing
-                races = await asyncio.wait_for(adapter.get_races(test_date), timeout=120.0)
-                duration = time.time() - start_time
-
-                status_emoji = "✅" if races else "⚠️"
-                print(f"  STATUS:  {status_emoji} {len(races)} races returned")
-                print(f"  TIME:    {duration:.1f}s")
-
-                if races:
-                    venues = Counter([r.venue for r in races])
-                    venue_summary = ", ".join([f"{v} ({c})" for v, c in venues.most_common(3)])
-                    print(f"  VENUES:  {venue_summary}...")
-
-                    # Sample detail
-                    sample = races[0]
-                    runner_count = len(sample.runners)
-                    trust_count = sum(1 for run in sample.runners if run.metadata.get("odds_source_trustworthy"))
-                    trust_pct = (trust_count / runner_count * 100) if runner_count else 0
-
-                    print(f"  SAMPLE:  {sample.venue} R{sample.race_number} | {sample.start_time.strftime('%H:%M')} | {runner_count} runners | discipline={sample.discipline}")
-                    print(f"  ODDS:    {trust_count}/{runner_count} runners have trustworthy odds ({trust_pct:.0f}%)")
-
-                await adapter.close()
-            except Exception as e:
-                print(f"  STATUS:  ❌ FAILED")
-                print(f"  ERROR:   {str(e)}")
-            print(f"\n{'-'*60}\n")
-        return
+    # Note: --test-adapter and --test-all-adapters removed in interactive mode
+    # (they require live HTTP; use fortuna.py for live adapter testing)
 
     if args.db_path:
         os.environ["FORTUNA_DB_PATH"] = args.db_path
@@ -10928,16 +9814,9 @@ async def main_all_in_one():
     except Exception:
         pass
 
-    if args.install_browsers:
-        await ensure_browsers(force_install=True)
-        print("Installation complete.")
-        return
+    # --install-browsers removed in interactive mode (no browser installation required)
 
-    if args.gui:
-        # Start GUI. It runs its own event loop for the webview.
-        await ensure_browsers()
-        await start_desktop_app()
-        return
+    # --gui removed in interactive mode (no FastAPI/pywebview required)
 
     if args.clear_db:
         db = FortunaDB()
@@ -11010,7 +9889,6 @@ async def main_all_in_one():
         if args.score_now:
             parser.error("--quarter-fetch and --score-now are mutually exclusive")
 
-        await ensure_browsers()
         daypart_tag = get_daypart_tag(args)
 
         await run_quarter_fetch(
@@ -11044,7 +9922,6 @@ async def main_all_in_one():
         if future.date() > now.date():
             target_dates.append(future.strftime(DATE_FORMAT))
 
-    await ensure_browsers()
     await run_discovery(
         target_dates,
         window_hours=args.hours,
@@ -11052,8 +9929,8 @@ async def main_all_in_one():
         adapter_names=adapter_filter,
         save_path=args.save,
         fetch_only=args.fetch_only,
-        live_dashboard=args.live_dashboard,
-        track_odds=args.track_odds,
+        live_dashboard=False,
+        track_odds=False,
         region=args.region, # Pass region to run_discovery
         config=config
     )
