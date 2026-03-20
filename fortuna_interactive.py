@@ -9775,21 +9775,28 @@ async def main_all_in_one():
             # 3. Crop at 50 rows
             final_links = final_links[:50]
 
-            with open("manual_links.txt", "w") as f:
+            # Capability Improvement: Single HTML artifact for better JB UX (v3.3.0+)
+            html_path = "manual_links.html"
+            with open(html_path, "w") as f:
+                f.write("<!DOCTYPE html><html><head><title>Fortuna Manual Discovery</title>")
+                # Tiny monospace font requested by JB for efficiency
+                f.write("<style>body{font-family:monospace;font-size:10px;background:#1a1a1a;color:#eee;padding:20px;}")
+                f.write("table{width:100%;border-collapse:collapse;margin-top:20px;}")
+                f.write("th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #444;}")
+                f.write("th{background:#333;color:#ffd700;border-top:2px solid #ffd700;} tr:hover{background:#252525;}")
+                f.write("code{font-family:monospace;background:#000;padding:1px 3px;border-radius:2px;color:#00ff41;}")
+                f.write(".priority{font-weight:bold;color:#ffa500;} a{text-decoration:none;}</style></head><body>")
+                f.write("<h1>🔗 Manual Discovery: URLs to Fetch</h1>")
+                f.write(f"<p>Sorted by data density. Capped at top 50 rows. Generated: {datetime.now().strftime('%y%m%d %H:%M')}</p>")
+                f.write("<table><thead><tr><th>Priority</th><th>Target URL</th><th>Expected Filename (manual_fetch/)</th></tr></thead><tbody>")
                 for lnk in final_links:
-                    f.write(f"URL: {lnk['url']}\nFILE: {lnk['filename']}\n\n")
-
-            with open("manual_links.md", "w") as f:
-                f.write("### 🔗 Manual Discovery: URLs to Fetch\n\n")
-                f.write("> Sorted by data density (high-value files first). Capped at top 50.\n\n")
-                f.write("| Target URL | Expected Filename in `manual_fetch/` |\n")
-                f.write("| :--- | :--- |\n")
-                for lnk in final_links:
-                    # Use tiny monospace font for better GHA readability
-                    f.write(f"| <small><code>{lnk['url']}</code></small> | <small><code>{lnk['filename']}</code></small> |\n")
+                    f.write(f"<tr><td class='priority'>{lnk['val']}</td>")
+                    f.write(f"<td><a href='{lnk['url']}' target='_blank' style='color:#3498db;'>{lnk['url']}</a></td>")
+                    f.write(f"<td><code>{lnk['filename'].replace('manual_fetch/', '')}</code></td></tr>")
+                f.write("</tbody></table></body></html>")
 
         print("\n=== DISCOVERY COMPLETE ===")
-        print(f"Found {len(final_links)} unique links. Details saved to manual_links.txt and manual_links.md")
+        print(f"Found {len(final_links)} unique links. Details saved to {html_path}")
         return
 
     # Note: --test-adapter and --test-all-adapters removed in interactive mode
