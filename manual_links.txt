@@ -1,0 +1,149 @@
+URL: https://www.racingpost.com/
+FILE: manual_fetch/www_racingpost_com.html
+
+URL: https://www.racingpost.com/racecards/2026-03-20
+FILE: manual_fetch/www_racingpost_com_racecards_2026_03_20.html
+
+URL: https://www.racingpost.com/racecards/international/2026-03-20
+FILE: manual_fetch/www_racingpost_com_racecards_international_2026_03_20.html
+
+URL: https://www.racingpost.com/racecards/2026-03-20/international
+FILE: manual_fetch/www_racingpost_com_racecards_2026_03_20_international.html
+
+URL: https://www.racingpost.com/racecards/international
+FILE: manual_fetch/www_racingpost_com_racecards_international.html
+
+URL: https://www.skyracingworld.com/
+FILE: manual_fetch/www_skyracingworld_com.html
+
+URL: https://www.skyracingworld.com/form-guide
+FILE: manual_fetch/www_skyracingworld_com_form_guide.html
+
+URL: https://www.skyracingworld.com/form-guide/thoroughbred
+FILE: manual_fetch/www_skyracingworld_com_form_guide_thoroughbred.html
+
+URL: https://www.skyracingworld.com/form-guide/thoroughbred/2026-03-20
+FILE: manual_fetch/www_skyracingworld_com_form_guide_thoroughbred_2026_03_20.html
+
+URL: https://www.twinspires.com/bet/todays-races/thoroughbred
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_thoroughbred.html
+
+URL: https://www.twinspires.com/bet/todays-races/thoroughbred?region=INT
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_thoroughbred.html
+
+URL: https://www.twinspires.com/bet/todays-races/harness
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_harness.html
+
+URL: https://www.twinspires.com/bet/todays-races/harness?region=INT
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_harness.html
+
+URL: https://www.twinspires.com/bet/todays-races/greyhound
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_greyhound.html
+
+URL: https://www.twinspires.com/bet/todays-races/greyhound?region=INT
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_greyhound.html
+
+URL: https://www.twinspires.com/bet/todays-races/time
+FILE: manual_fetch/www_twinspires_com_bet_todays_races_time.html
+
+URL: https://www.sportinglife.com/racing/racecards/2026-03-20/
+FILE: manual_fetch/www_sportinglife_com_racing_racecards_2026_03_20.html
+
+URL: https://greyhounds.attheraces.com/racecards/2026-03-20
+FILE: manual_fetch/greyhounds_attheraces_com_racecards_2026_03_20.html
+
+URL: https://www.attheraces.com/
+FILE: manual_fetch/www_attheraces_com.html
+
+URL: https://www.attheraces.com/racecards
+FILE: manual_fetch/www_attheraces_com_racecards.html
+
+URL: https://www.attheraces.com/market-movers
+FILE: manual_fetch/www_attheraces_com_market_movers.html
+
+URL: https://www.attheraces.com/market-movers/international
+FILE: manual_fetch/www_attheraces_com_market_movers_international.html
+
+URL: https://www.attheraces.com/ajax/marketmovers/tabs/uk-ire/2026-03-20
+FILE: manual_fetch/www_attheraces_com_ajax_marketmovers_tabs_uk_ire_2026_03_20.html
+
+URL: https://www.attheraces.com/ajax/marketmovers/tabs/international/2026-03-20
+FILE: manual_fetch/www_attheraces_com_ajax_marketmovers_tabs_international_2026_03_20.html
+
+URL: https://www.attheraces.com/racecards/2026-03-20
+FILE: manual_fetch/www_attheraces_com_racecards_2026_03_20.html
+
+URL: https://www.oddschecker.com/horse-racing
+FILE: manual_fetch/www_oddschecker_com_horse_racing.html
+
+URL: https://www.oddschecker.com/horse-racing/2026-03-20
+FILE: manual_fetch/www_oddschecker_com_horse_racing_2026_03_20.html
+
+URL: https://www.timeform.com/horse-racing
+FILE: manual_fetch/www_timeform_com_horse_racing.html
+
+URL: https://www.timeform.com/horse-racing/racecards/2026-03-20
+FILE: manual_fetch/www_timeform_com_horse_racing_racecards_2026_03_20.html
+
+URL: https://www.timeform.com/horse-racing/racecards
+FILE: manual_fetch/www_timeform_com_horse_racing_racecards.html
+
+URL: https://www.skysports.com/racing/racecards/20-03-2026
+FILE: manual_fetch/www_skysports_com_racing_racecards_20_03_2026.html
+
+URL: https://www.equibase.com/static/entry/index.html?SAP=TN
+FILE: manual_fetch/www_equibase_com_static_entry_index_html.html
+
+URL: https://www.equibase.com/static/entry/index.html
+FILE: manual_fetch/www_equibase_com_static_entry_index_html.html
+
+URL: https://www.equibase.com/entries/260320
+FILE: manual_fetch/www_equibase_com_entries_260320.html
+
+URL: https://www.equibase.com/entries/index.cfm?date=03/20/2026
+FILE: manual_fetch/www_equibase_com_entries_index_cfm.html
+
+URL: https://www.nyrabets.com/
+FILE: manual_fetch/www_nyrabets_com.html
+
+URL: https://www.nyrabets.com/betting
+FILE: manual_fetch/www_nyrabets_com_betting.html
+
+URL: https://api.nyrabets.com/ListCards.ashx
+FILE: manual_fetch/api_nyrabets_com_listcards_ashx.html
+
+URL: https://racing.hkjc.com/racing/information/English/racing/RaceCard.aspx
+FILE: manual_fetch/racing_hkjc_com_racing_information_english_racing_racecard_aspx.html
+
+URL: https://racing.hkjc.com/racing/information/English/racing/RaceCard.aspx?RaceDate=2026/03/20
+FILE: manual_fetch/racing_hkjc_com_racing_information_english_racing_racecard_aspx.html
+
+URL: https://racing.hkjc.com/racing/information/English/Racing/LocalResults.aspx?RaceDate=2026/03/20
+FILE: manual_fetch/racing_hkjc_com_racing_information_english_racing_localresults_aspx.html
+
+URL: https://japanracing.jp/racing/calendar/2026/3/20.html
+FILE: manual_fetch/japanracing_jp_racing_calendar_2026_3_20_html.html
+
+URL: https://japanracing.jp/en/racing/go_racing/
+FILE: manual_fetch/japanracing_jp_en_racing_go_racing.html
+
+URL: https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/2026-03-20/meetings
+FILE: manual_fetch/api_beta_tab_com_au_v1_tab_info_service_racing_dates_2026_03_20_meetings.html
+
+URL: https://api.tab.com.au/v1/tab-info-service/racing/dates/2026-03-20/meetings
+FILE: manual_fetch/api_tab_com_au_v1_tab_info_service_racing_dates_2026_03_20_meetings.html
+
+URL: https://www.racingandsports.com.au
+FILE: manual_fetch/www_racingandsports_com_au.html
+
+URL: https://www.racingandsports.com.au/todays-racing-json-v2
+FILE: manual_fetch/www_racingandsports_com_au_todays_racing_json_v2.html
+
+URL: https://www.racingandsports.com.au/form-guide/2026-03-20
+FILE: manual_fetch/www_racingandsports_com_au_form_guide_2026_03_20.html
+
+URL: https://backend-us-racecards.widget.rpb2b.com/v2/racecards/daily/2026-03-20
+FILE: manual_fetch/backend_us_racecards_widget_rpb2b_com_v2_racecards_daily_2026_03_20.html
+
+URL: https://standardbredcanada.ca/racing/entries/data/e0320lonn.dat
+FILE: manual_fetch/standardbredcanada_ca_racing_entries_data_e0320lonn_dat.html
