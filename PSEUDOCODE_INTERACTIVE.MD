@@ -1,7 +1,7 @@
 # 🐎 Fortuna Faucet — Interactive System Blueprint
 
 **Status:** Hybrid Three-Module Architecture (Automated + Interactive)
-**Version:** 3.2.0
+**Version:** 3.3.0
 **Last Updated:** March 20, 2026
 
 ---
@@ -26,7 +26,7 @@
 ```
 ╔════════════════════════════════════════════════════════════════╗
 ║           FORTUNA FAUCET — Racing Analysis Platform           ║
-║               Hybrid Architecture v3.2.0                      ║
+║               Hybrid Architecture v3.3.0                      ║
 ╚════════════════════════════════════════════════════════════════╝
 
 MISSION:
@@ -65,7 +65,7 @@ CORE TENETS:
           │                 │                   │                    │
           ▼                 ▼                   ▼                    ▼
 ┌───────────────────────────────────────────────────────────────────────────────┐
-│                fortuna.py  /  fortuna_interactive.py                          │
+│    fortuna.py (automated, SmartFetcher)  /  fortuna_interactive.py (manual)   │
 │  ┌──────────────────────────────────────────────────────┐   ┌──────────────┐  │
 │  │  Discovery Engine                                    │   │  Ingest Mode │  │
 │  │  • 20+ Adapter classes (BaseAdapterV3 subclasses)   │   │  • Link Disc │  │
@@ -130,10 +130,12 @@ The discovery engine now operates in two distinct tiers: **Automated** and **Int
 - **Quality filter (`--quality solid | lousy`):** Restricts to the `SOLID_DISCOVERY_ADAPTERS` set or its complement.
 
 #### Interactive/Manual Ingest (`fortuna_interactive.py`)
-- **Interactive Mode:** When run in a terminal, prompts the user to paste HTML content for each URL. Use `EOF` to submit and `SKIP` to bypass.
-- **Link Discovery Mode (`--list-links`):** Identifies all URLs the engine needs to fetch and prints them along with the expected slug-based filenames for `manual_fetch/`.
-- **File-based Ingest:** Automatically detects and loads HTML files from the `manual_fetch/` directory matching the target URL slugs. This mode is used for GitHub Actions automation.
-- **Sequential Execution:** Unlike the automated engine, the interactive version processes all requests sequentially to maintain a clean input buffer.
+- **Link Discovery Mode (`--list-links`):** Identifies all URLs the engine needs to fetch and prints them along with the expected slug-based filenames for `manual_fetch/`. Outputs `manual_links.txt` and `manual_links.md`, sorted by data-density priority.
+- **File-based Ingest (`--quarter-fetch`):** Reads pre-saved HTML files from `manual_fetch/` whose filenames match the URL slugs reported by `--list-links`. Parses races and saves a daypart snapshot. No live HTTP occurs.
+- **Score-now (`--score-now`):** Loads a previously saved daypart snapshot, scores races approaching post time, and persists tips to `fortuna.db`.
+- **Combined pass (default):** Runs file-based ingest and scoring in a single sequential pass.
+- **Sequential Execution:** All adapter calls are processed sequentially (never concurrent) to avoid input-buffer collisions and to match the single-threaded nature of manual HTML ingest.
+- **No browser automation:** `fortuna_interactive.py` contains no Playwright, Camoufox, curl_cffi, Scrapling, or browserforge code. All HTML is supplied externally via `manual_fetch/` files.
 
 ### 3.2 Region & Quality Adapter Pools
 
@@ -155,21 +157,27 @@ SOLID_DISCOVERY_ADAPTERS (high-reliability subset):
   TwinSpires, SkyRacingWorld, RacingPost
 ```
 
-### 3.3 SmartFetcher — Multi-Engine HTTP Layer
+### 3.3 HTTP Layer — Module Divergence
 
-All adapters share a common `SmartFetcher` that maintains a health score (0.0–1.0) for each available engine. On every request, engines are tried in descending health order. A successful response increases the engine's health; a failure decreases it.
+**`fortuna.py` (automated)** uses the full `SmartFetcher` multi-engine stack: Camoufox → curl_cffi → Playwright → httpx, with `browserforge` fingerprint augmentation, per-engine health scoring, and automatic fallback. See the `fortuna.py` source for full documentation.
 
-**Engine priority order (default):**
+**`fortuna_interactive.py` (this module)** has no `SmartFetcher`. The entire browser-automation layer — `SmartFetcher`, `GlobalResourceManager`, `GlobalEngineHealthRegistry`, `RateLimiter`, `CircuitBreaker`, `BrowserEngine`, all scrapling/Camoufox/curl_cffi/browserforge imports — has been removed.
 
-| Engine | Description |
-|--------|-------------|
-| Camoufox (scrapling) | Stealthy headless browser — highest anti-bot score |
-| curl_cffi | Browser TLS impersonation without a full browser |
-| Playwright (scrapling) | Full headless Chromium via scrapling wrapper |
-| Playwright Legacy | Direct Playwright without scrapling — fallback |
-| httpx | Plain async HTTP — fastest, lowest stealth |
+Instead, `BaseAdapterV3.make_request()` is replaced with a file reader:
 
-If `browserforge` is available, all requests are augmented with a generated browser fingerprint (User-Agent, headers) consistent with the chosen engine.
+```
+make_request(method, url, **kwargs):
+  1. Derive slug from URL:  domain + path → lowercase alphanumeric, underscores
+     Truncate to 180 chars if necessary.
+  2. Build filepath:  manual_fetch/{slug}.html
+  3. If file exists → read and return as UnifiedResponse(status=200)
+  4. If file missing → log warning, return None
+     (adapter's _fetch_data treats None as a failed fetch and returns [])
+```
+
+The `FetchStrategy` class and `BrowserEngine` enum are retained as stubs so adapter `_configure_fetch_strategy()` methods compile without changes.
+
+`refresh_odds_for_races()` is a no-op stub — odds are taken as-is from the manually fetched HTML.
 
 ### 3.4 Adapter Base Class (`BaseAdapterV3`)
 
@@ -183,7 +191,7 @@ Every discovery adapter inherits from `BaseAdapterV3` and optionally mixes in:
 Each adapter must implement:
 
 - `SOURCE_NAME` — a unique string identifier
-- `fetch_races(target_date)` — returns a list of `Race` objects
+- `get_races(target_date)` — returns a list of `Race` objects
 
 ### 3.5 Race & Runner Data Models
 
@@ -246,9 +254,9 @@ See [Section 7](#7-analytical-scoring-system) for the full scoring model.
 
 Schema migrations are applied automatically via `ALTER TABLE` guards on startup. See [Section 6](#6-data-models--persistence).
 
-### 3.10 Integrated FastAPI Dashboard (GUI mode only)
+### 3.10 Integrated FastAPI Dashboard
 
-When launched with `--gui`, a FastAPI/Uvicorn server starts on `localhost:8013`. The root route `/` generates an HTML dashboard from live DB data. The `pywebview` window displays this as a native desktop application. This mode is intended for Windows local use; it is not part of the CI/CD pipeline.
+> **Not present in `fortuna_interactive.py`.** The FastAPI/Uvicorn/pywebview desktop dashboard (`--gui`) exists only in `fortuna.py`. `fortuna_interactive.py` does not depend on `fastapi`, `uvicorn`, or `pywebview`.
 
 ---
 
@@ -697,9 +705,11 @@ All production workflows run on GitHub Actions using Ubuntu 22.04 runners. The S
 **Inputs:** `daypart` (Q1-Q4), `list_links_only` (bool)
 **What it does:**
 1. Allows the user to select a DayPart and choose between discovering URLs or ingesting files.
-2. In **List Links** mode: Executes `fortuna_interactive.py --list-links` to show which HTML files need to be uploaded to `manual_fetch/`.
-3. In **Ingest** mode: Executes a sequential discovery pass, loading HTML content from the `manual_fetch/` directory, then performs scoring and grading.
-4. Uploads the resulting reports and database state as artifacts.
+2. In **List Links** mode: Executes `fortuna_interactive.py --list-links` to print which HTML files need to be uploaded to `manual_fetch/`. Outputs `manual_links.txt` (plain) and `manual_links.md` (GHA-formatted table), sorted by data-density priority.
+3. In **Ingest** mode: Executes `fortuna_interactive.py --quarter-fetch` followed by `--score-now`. HTML files must already be present in `manual_fetch/` (uploaded as part of the workflow dispatch or committed to the repo). No live HTTP calls are made.
+4. Uploads the resulting reports, `fortuna.db`, and adapter health output as workflow artifacts.
+
+**Dependencies:** `fortuna_interactive.py` requires only the core Fortuna stack — `selectolax`, `pydantic`, `structlog`, `httpx`, `pandas`, `sqlite3`. Playwright, Camoufox, curl_cffi, Scrapling, and browserforge are **not** installed for this workflow.
 
 ### 9.3 Workflow: Analytics (`fortuna_analytics.py`)
 
@@ -747,6 +757,8 @@ For local use, `fortuna.py` can be packaged as a self-contained Windows executab
 - Running PyInstaller with `--onefile`
 - Verifying the generated executable launches without error
 
+`fortuna_interactive.py` is **not** packaged as a PyInstaller executable and contains no frozen-app or Windows event-loop setup code. It is intended to be run directly with `python fortuna_interactive.py`.
+
 ---
 
 ## 10. END-TO-END WORKFLOW
@@ -787,28 +799,56 @@ Evening (CI/CD — scheduled after races finish):
 
 ### 10.3 Data Flow Summary
 
+**Automated path (`fortuna.py`):**
 ```
   Raw HTML / JSON                      SQLite (fortuna.db)
   from 20+ websites                         │
        │                                    │
        ▼                                    │
   SmartFetcher                             ┌▼──────────────────┐
-  (multi-engine)                           │  tips table        │
-       │                                   │  (predictions +   │
-       ▼                                   │   verdicts +      │
-  Adapter parse                            │   scoring cols)   │
-       │                                   └───────────────────┘
-       ▼                                            ▲
-  Race/Runner                                       │
-  models                                     AuditorEngine
-       │                                     (match + verdict)
-       ▼                                            ▲
-  SimplySuccessAnalyzer                             │
-  (score + grade)                            ResultRace/Runner
+  (multi-engine:                           │  tips table        │
+   Camoufox → curl_cffi                   │  (predictions +   │
+   → Playwright → httpx)                  │   verdicts +      │
+       │                                   │   scoring cols)   │
+       ▼                                   └───────────────────┘
+  Adapter parse                                     ▲
+       │                                            │
+       ▼                                     AuditorEngine
+  Race/Runner models                         (match + verdict)
        │                                            ▲
        ▼                                            │
-  FortunaDB.save_tips()               ResultsAdapter.fetch()
-                                       (11 adapters, parallel)
+  SimplySuccessAnalyzer                      ResultRace/Runner
+  (score + grade)                                   ▲
+       │                                            │
+       ▼                                  ResultsAdapter.fetch()
+  FortunaDB.save_tips()                   (11 adapters, parallel)
+```
+
+**Interactive path (`fortuna_interactive.py`):**
+```
+  manual_fetch/*.html                  SQLite (fortuna.db)
+  (saved by user from                       │
+   real browser)                            │
+       │                                    │
+       ▼                                    │
+  make_request()                           ┌▼──────────────────┐
+  (reads file from disk,                   │  tips table        │
+   no HTTP)                                │  (predictions +   │
+       │                                   │   verdicts +      │
+       ▼                                   │   scoring cols)   │
+  Adapter._parse_races()                   └───────────────────┘
+  (identical HTML parsing                          ▲
+   logic to fortuna.py)                            │
+       │                                    FortunaDB.log_tips()
+       ▼
+  Race/Runner models
+       │
+       ▼
+  SimplySuccessAnalyzer
+  (score + grade)
+       │
+       ▼
+  HotTipsTracker.log_tips()
 ```
 
 ### 10.4 Canonical Key — The Matching Backbone
