@@ -1452,12 +1452,34 @@ class SmartFetcher:
             return self._sessions["_curl"]
 
     async def fetch(self, url: str, **kwargs: Any) -> Any:
-        # INTERACTIVE MODE: Prompt user for content
-        # Check if we have already failed this URL in this run to avoid infinite retry prompts
+        # INTERACTIVE MODE: Check for file-based input or prompt user
+
+        # 1. Try file-based input (for GHA or batch usage)
+        manual_dir = Path("manual_fetch")
+        if manual_dir.exists():
+            # Use slug of URL as filename
+            from urllib.parse import urlparse
+            p = urlparse(url)
+            slug = re.sub(r'[^a-z0-9]', '_', (p.netloc + p.path).lower()).strip('_')
+
+            # Check for .html or .txt
+            for ext in [".html", ".txt"]:
+                file_path = manual_dir / f"{slug}{ext}"
+                if file_path.exists():
+                    print(f"[MANUAL FETCH] Loading from {file_path}")
+                    content = file_path.read_text(encoding="utf-8")
+                    return UnifiedResponse(content, 200, 200, url)
+
+        # 2. Check if we have already failed this URL in this run
         if not hasattr(self, "_interactive_history"):
             self._interactive_history = set()
 
         if url in self._interactive_history:
+            return UnifiedResponse("", 404, 404, url)
+
+        # 3. Prompt user if in interactive environment
+        if not sys.stdin.isatty():
+            print(f"[MANUAL FETCH] Skipping {url} (not a terminal and no file found in manual_fetch/)")
             return UnifiedResponse("", 404, 404, url)
 
         print(f"\n[INTERACTIVE FETCH] {url}")
@@ -10767,10 +10789,37 @@ async def main_all_in_one():
     parser.add_argument("--include-health-checks", action="store_true", help="Include Official_* track health-check adapters in discovery. These confirm track websites are reachable but produce no race data. Off by default. Also affects --test-all-adapters.")
     parser.add_argument("--test-adapter", type=str, help="Test a single discovery adapter by name")
     parser.add_argument("--test-all-adapters", action="store_true", help="Run a health check on all available discovery adapters")
+    parser.add_argument("--list-links", action="store_true", help="INTERACTIVE: Only list racecard URLs needed, skip fetching and processing.")
     args = parser.parse_args()
 
     # Handle early-exit arguments via helper (Hardening Fix/Improvement)
     if await handle_early_exit_args(args, config):
+        return
+
+    # INTERACTIVE: Link discovery mode
+    if args.list_links:
+        print("\n=== INTERACTIVE LINK DISCOVERY MODE ===")
+        print("Discovering upcoming racecard URLs...\n")
+
+        # We need to monkeypatch SmartFetcher.fetch temporarily to just log and skip
+        original_fetch = SmartFetcher.fetch
+
+        async def fetch_log_only(self, url, **kwargs):
+            from urllib.parse import urlparse
+            p = urlparse(url)
+            slug = re.sub(r'[^a-z0-9]', '_', (p.netloc + p.path).lower()).strip('_')
+            print(f"[LINK] {url}")
+            print(f"      Filename: manual_fetch/{slug}.html")
+            return UnifiedResponse("", 404, 404, url)
+
+        SmartFetcher.fetch = fetch_log_only
+
+        # Run discovery as normal
+        daypart_tag = get_daypart_tag(args)
+        await run_quarter_fetch(config, daypart_tag, force_fetch=True)
+
+        print("\n=== DISCOVERY COMPLETE ===")
+        print("Please save the HTML content of the [LINK] URLs above to the corresponding Filename.")
         return
 
     # Phase 5: Implement adapter testing tool
