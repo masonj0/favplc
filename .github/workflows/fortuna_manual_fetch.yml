@@ -1,25 +1,36 @@
-name: Fortuna Manual Ingest
+name: Fortuna Manual Ingest (v3.3.0)
 
 on:
   workflow_dispatch:
     inputs:
       daypart:
-        description: 'Target DayPart (Q1, Q2, Q3, Q4)'
+        description: 'Target DayPart (auto, Q1, Q2, Q3, Q4)'
         required: true
         default: 'auto'
-      list_links_only:
-        description: 'Only list links to fetch, do not ingest'
-        type: boolean
-        default: false
+        type: choice
+        options: [auto, Q1, Q2, Q3, Q4]
+      mode:
+        description: 'Execution Mode'
+        required: true
+        default: 'list-links'
+        type: choice
+        options: [list-links, ingest-and-score, audit-only]
+      region:
+        description: 'Region Filter'
+        required: true
+        default: 'GLOBAL'
+        type: choice
+        options: [GLOBAL, USA, INT]
 
 jobs:
-  ingest:
+  process:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       PYTHONPATH: .
       FORTUNA_NO_BROWSER: "1"
+      FORTUNA_DB_PATH: "fortuna.db"
 
     steps:
       - name: Checkout repository
@@ -36,26 +47,73 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore Database Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-v3-${{ github.run_number }}
+          restore-keys: |
+            fortuna-db-v3-
+
       - name: List Links (Discovery)
-        if: ${{ github.event.inputs.list_links_only == 'true' }}
+        if: ${{ github.event.inputs.mode == 'list-links' }}
         run: |
-          python fortuna_interactive.py --region GLOBAL --daypart ${{ github.event.inputs.daypart }} --list-links
+          python fortuna_interactive.py --region ${{ github.event.inputs.region }} --daypart ${{ github.event.inputs.daypart }} --list-links
+          echo "## 🔗 Manual Discovery: URLs to Fetch" >> $GITHUB_STEP_SUMMARY
           if [ -f manual_links.md ]; then
             cat manual_links.md >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No links discovered. Check if the daypart is active for the selected region." >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Manual Ingest (Process Files)
-        if: ${{ github.event.inputs.list_links_only == 'false' }}
+      - name: Verify Manual Files
+        if: ${{ github.event.inputs.mode == 'ingest-and-score' }}
         run: |
-          python fortuna_interactive.py --region GLOBAL --daypart ${{ github.event.inputs.daypart }} --quarter-fetch
-          python fortuna_interactive.py --score-now
+          echo "## 📂 Manual Ingest Status" >> $GITHUB_STEP_SUMMARY
+          if [ -d "manual_fetch" ] && [ "$(ls -A manual_fetch 2>/dev/null)" ]; then
+            echo "✅ Found $(ls -1 manual_fetch | wc -l) files in manual_fetch/" >> $GITHUB_STEP_SUMMARY
+            ls -lh manual_fetch >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Warning: manual_fetch/ is empty or missing. Ingest will likely find 0 races." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Manual Ingest & Score
+        if: ${{ github.event.inputs.mode == 'ingest-and-score' }}
+        run: |
+          # 1. Structural Ingest
+          python fortuna_interactive.py --region ${{ github.event.inputs.region }} --daypart ${{ github.event.inputs.daypart }} --quarter-fetch
+
+          # 2. Scoring Loop
+          python fortuna_interactive.py --region ${{ github.event.inputs.region }} --daypart ${{ github.event.inputs.daypart }} --score-now
+
+      - name: Run Results Audit
+        if: ${{ github.event.inputs.mode == 'audit-only' }}
+        run: |
+          # Audit results from the last 7 days
+          python fortuna_analytics.py --days 7
+
+      - name: Generate GHA Summary
+        if: always()
+        run: |
+          python scripts/generate_gha_summary.py
+          # The script appends to $GITHUB_STEP_SUMMARY
+
+      - name: Save Database Cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-v3-${{ github.run_number }}
 
       - name: Upload Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: manual-ingest-results
+          name: manual-ingest-results-${{ github.run_number }}
           path: |
             summary_grid.txt
+            goldmine_report.txt
             fortuna_report.html
             fortuna.db
             manual_links.*
+            snapshots/*.json
