@@ -10801,6 +10801,8 @@ async def main_all_in_one():
         print("\n=== INTERACTIVE LINK DISCOVERY MODE ===")
         print("Discovering upcoming racecard URLs...\n")
 
+        links_found = []
+
         # We need to monkeypatch SmartFetcher.fetch temporarily to just log and skip
         original_fetch = SmartFetcher.fetch
 
@@ -10808,8 +10810,10 @@ async def main_all_in_one():
             from urllib.parse import urlparse
             p = urlparse(url)
             slug = re.sub(r'[^a-z0-9]', '_', (p.netloc + p.path).lower()).strip('_')
+            filename = f"manual_fetch/{slug}.html"
             print(f"[LINK] {url}")
-            print(f"      Filename: manual_fetch/{slug}.html")
+            print(f"      Filename: {filename}")
+            links_found.append({"url": url, "filename": filename})
             return UnifiedResponse("", 404, 404, url)
 
         SmartFetcher.fetch = fetch_log_only
@@ -10818,8 +10822,21 @@ async def main_all_in_one():
         daypart_tag = get_daypart_tag(args)
         await run_quarter_fetch(config, daypart_tag, force_fetch=True)
 
+        # Output to files
+        if links_found:
+            with open("manual_links.txt", "w") as f:
+                for lnk in links_found:
+                    f.write(f"URL: {lnk['url']}\nFILE: {lnk['filename']}\n\n")
+
+            with open("manual_links.md", "w") as f:
+                f.write("### 🔗 Manual Discovery: URLs to Fetch\n\n")
+                f.write("| Target URL | Expected Filename in `manual_fetch/` |\n")
+                f.write("| :--- | :--- |\n")
+                for lnk in links_found:
+                    f.write(f"| {lnk['url']} | `{lnk['filename']}` |\n")
+
         print("\n=== DISCOVERY COMPLETE ===")
-        print("Please save the HTML content of the [LINK] URLs above to the corresponding Filename.")
+        print(f"Found {len(links_found)} links. Details saved to manual_links.txt and manual_links.md")
         return
 
     # Phase 5: Implement adapter testing tool

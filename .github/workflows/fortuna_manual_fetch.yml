@@ -40,6 +40,9 @@ jobs:
         if: ${{ github.event.inputs.list_links_only == 'true' }}
         run: |
           python fortuna_interactive.py --region GLOBAL --daypart ${{ github.event.inputs.daypart }} --list-links
+          if [ -f manual_links.md ]; then
+            cat manual_links.md >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Manual Ingest (Process Files)
         if: ${{ github.event.inputs.list_links_only == 'false' }}
@@ -55,3 +58,4 @@ jobs:
             summary_grid.txt
             fortuna_report.html
             fortuna.db
+            manual_links.*
