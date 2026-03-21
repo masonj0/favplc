@@ -9714,16 +9714,18 @@ async def main_all_in_one():
 
     # INTERACTIVE: Link discovery mode
     if args.list_links:
-        print("\n=== INTERACTIVE LINK DISCOVERY MODE ===")
+        print("\n=== INTERACTIVE LINK DISCOVERY MODE (v2) ===")
         print("Discovering upcoming racecard URLs...\n")
 
         links_found = []
 
-        # Advanced priority mapping based on 5-Tier system (Capability Improvement)
+        # Advanced priority mapping based on 5-Tier system v2 (Capability Improvement)
         def get_url_priority(url: str) -> int:
             u = url.lower().rstrip('/')
             # Tier 1 (86-100): APIs/JSON
-            if "tab.com.au/v1" in u: return 100
+            if "equibase.com/static/entry/index.html" in u: return 100
+            if "equibase.com/static/chart/index.html" in u: return 99
+            if "tab.com.au/v1" in u: return 97
             if "api.nyrabets.com" in u: return 95
             if "racingandsports.com.au/todays-racing-json-v2" in u: return 92
             if "backend-us-racecards.widget.rpb2b.com" in u: return 90
@@ -9735,40 +9737,43 @@ async def main_all_in_one():
             if "racing.hkjc.com" in u and "localresults.aspx" in u: return 82
             if "sportinglife.com/racing/racecards/20" in u: return 78
             if "skysports.com/racing/racecards/" in u: return 75
+            if "drf.com/entries" in u: return 73
             if "nyrabets.com/betting" in u: return 72
+            if "trackinfo.com" in u: return 70
             if "attheraces.com/racecards/20" in u: return 68
-            if "greyhounds.attheraces.com" in u: return 65
+            if "drf.com/results" in u: return 67
 
             # Tier 3 (40-64): JS-heavy / Auth
             if "racingpost.com/racecards/20" in u: return 60
             if "racingpost.com/racecards/international/20" in u: return 58
-            if u.endswith("racingpost.com"): return 55
+            if "tvg.com" in u: return 54
             if "racingpost.com/racecards/20" in u and u.endswith("international"): return 52
             if "timeform.com" in u and "/racecards/20" in u: return 50
             if "skyracingworld.com" in u and "/form-guide/thoroughbred/20" in u: return 48
             if "oddschecker.com" in u and "/horse-racing/20" in u: return 45
-            if "twinspires.com" in u and "thoroughbred" in u and "region=int" in u: return 42
-            if "twinspires.com" in u and "harness" in u and "region=int" in u: return 40
-            if "twinspires.com" in u and "greyhound" in u and "region=int" in u: return 38
+            if "twinspires.com" in u and "region=int" in u and "thoroughbred" in u: return 42
 
             # Tier 4 (20-39): Supplemental
+            if "horseracingnation.com/tracks" in u: return 38
             if "japanracing.jp/en/racing/go_racing" in u: return 35
             if "japanracing.jp/racing/calendar" in u: return 33
-            if u.endswith("attheraces.com"): return 30
+            if "racing.com/form-guide" in u: return 30
             if "attheraces.com/market-movers/international" in u: return 28
             if "racingandsports.com.au/form-guide/20" in u: return 25
 
             # Tier 5 (1-19): Low yield / Homepages
-            if u.endswith("timeform.com/horse-racing/racecards"): return 15
+            if u.endswith("racingpost.com"): return 15
             if u.endswith("timeform.com/horse-racing"): return 12
             if u.endswith("oddschecker.com/horse-racing"): return 10
             if u.endswith("skyracingworld.com"): return 8
-            if u.endswith("skyracingworld.com/form-guide"): return 7
-            if u.endswith("skyracingworld.com/form-guide/thoroughbred"): return 5
-            if "twinspires.com/bet/todays-races/time" in u: return 4
-            if u.endswith("attheraces.com/racecards"): return 3
-            if u.endswith("attheraces.com/market-movers"): return 2
-            if u.endswith("racingandsports.com.au"): return 1
+            if u.endswith("attheraces.com"): return 5
+            if u.endswith("racingandsports.com.au"): return 3
+            if "twinspires.com/bet/todays-races/time" in u: return 2
+
+            # Other Disciplines (Collapsed/Low Priority)
+            if "greyhounds.attheraces.com" in u: return 6
+            if "twinspires.com" in u and "harness" in u: return 4
+            if "twinspires.com" in u and "greyhound" in u: return 2
 
             return 10 # Default
 
@@ -9798,6 +9803,20 @@ async def main_all_in_one():
         daypart_tag = get_daypart_tag(args)
         await run_quarter_fetch(config, daypart_tag, force_fetch=True)
 
+        # Capability Improvement: Inject Essential US v2 Targets (Independent of Adapters)
+        essential_v2 = [
+            {"url": "https://www.equibase.com/static/entry/index.html", "filename": "manual_fetch/equibase_entries_today.html"},
+            {"url": "https://www.equibase.com/static/chart/index.html", "filename": "manual_fetch/equibase_charts_today.html"},
+            {"url": "https://www.drf.com/entries", "filename": "manual_fetch/drf_entries_today.html"},
+            {"url": "https://www.drf.com/results", "filename": "manual_fetch/drf_results_today.html"},
+            {"url": "https://www.trackinfo.com/", "filename": "manual_fetch/trackinfo_entries_today.html"},
+            {"url": "https://www.tvg.com/", "filename": "manual_fetch/tvg_races_today.html"},
+            {"url": "https://www.horseracingnation.com/tracks", "filename": "manual_fetch/horseracingnation_tracks.html"},
+            {"url": "https://www.racing.com/form-guide/", "filename": "manual_fetch/racingcom_formguide_today.html"},
+        ]
+        for item in essential_v2:
+            links_found.append({**item, "val": get_url_priority(item["url"])})
+
         # Output to files
         if links_found:
             # 1. Deduplicate by URL while preserving highest priority
@@ -9818,51 +9837,132 @@ async def main_all_in_one():
             # Capability Improvement: Stylized HTML artifact for better JB UX (v3.3.0+)
             html_path = "manual_links.html"
 
+            # Capability Improvement: Rebuilt Stylized HTML Dashboard v2 for JB (v3.3.0+)
+            html_path = "manual_links.html"
+
+            # Helper to assign schema tags and formats (v2 Schema)
+            def get_link_meta(url: str) -> Tuple[List[str], str, str, bool]:
+                u = url.lower()
+                tags, fmt, reason, is_new = [], "struct", "", False
+                if any(x in u for x in ["api.", "json", ".ashx", ".dat"]): fmt = "json"
+                if "ajax" in u or "marketmovers" in u: fmt = "ajax"
+
+                if "equibase" in u:
+                    tags, is_new = ["FLD", "ODDS", "DIST", "PURSE"], True
+                    if "chart" in u: tags.append("PAYS ★")
+                    reason = "Official US racing canonical source. " + ("Includes exotic payouts." if "chart" in u else "Today's entries.")
+                elif "tab.com.au" in u:
+                    tags, reason = ["FLD", "ODDS", "DIST"], "AUS/NZ production API feed."
+                elif "nyrabets" in u:
+                    tags, reason = ["FLD", "ODDS", "DIST"], "NYRA USA cards API."
+                elif "racingandsports" in u:
+                    tags, reason = ["FLD", "ODDS", "DIST"], "R&S AUS/Intl feed."
+                elif "hkjc" in u:
+                    tags = ["FLD", "ODDS", "DIST", "PURSE"]
+                    if "localresults" in u: tags.append("PAYS")
+                    reason = "Data-rich HKJC authoritative source."
+                elif "drf.com" in u:
+                    tags, reason, is_new = ["FLD", "ODDS", "DIST", "PURSE"], "Daily Racing Form US entries/results.", True
+                elif "trackinfo" in u:
+                    tags, reason, is_new = ["FLD", "ODDS", "DIST"], "Broad free US racing coverage.", True
+                elif "racingpost" in u:
+                    tags, reason = ["FLD", "ODDS", "DIST", "PURSE"], "Global gold standard data (JS/Auth required)."
+                elif "tvg.com" in u:
+                    tags, reason, is_new = ["FLD", "LIVE ODDS", "DIST"], "US wagering platform (FanDuel Racing).", True
+                elif "timeform" in u:
+                    tags, reason = ["FLD", "ODDS", "DIST", "PURSE"], "Premium speed ratings and form."
+                elif "horseracingnation" in u:
+                    tags, reason, is_new = ["FLD", "ODDS", "DIST"], "Free US entries with morning line.", True
+                elif "racing.com" in u:
+                    tags, reason, is_new = ["FLD", "ODDS", "DIST", "PURSE"], "Victorian (AUS) specific racing data.", True
+
+                return tags, fmt, reason, is_new
+
             # Group links by Tier (v3.3.0 Optimized Sort)
             tiers = [
-                {"id": 1, "label": "Tier 1", "title": "JSON & API Feeds — Save directly, parse immediately", "desc": "No rendering required · Highest data density per minute", "range": (86, 100), "links": []},
-                {"id": 2, "label": "Tier 2", "title": "Structured Pages — Good odds data, manageable HTML", "desc": "Save as HTML · Field sizes and odds visible in page source", "range": (65, 85), "links": []},
+                {"id": 1, "label": "Tier 1", "title": "JSON & API Feeds — Save directly, parse immediately", "desc": "Highest data density per minute of effort", "range": (86, 100), "links": []},
+                {"id": 2, "label": "Tier 2", "title": "Structured Pages — Good data, manageable HTML", "desc": "Save as complete HTML · Data visible in source", "range": (65, 85), "links": []},
                 {"id": 3, "label": "Tier 3", "title": "High-Value but Difficult — JS-heavy or auth-gated", "desc": "Consider DevTools Network tab over Save Page", "range": (38, 64), "links": []},
-                {"id": 4, "label": "Tier 4", "title": "Regional & Supplemental — Specific jurisdictions", "desc": "Worth fetching when target jurisdiction is active", "range": (20, 37), "links": []},
-                {"id": 5, "label": "Tier 5", "title": "Low Yield — Fallback and homepage URLs", "desc": "Only fetch if higher tiers fail for a specific source", "range": (1, 19), "links": []},
+                {"id": 4, "label": "Tier 4", "title": "Regional & Supplemental — Specific jurisdictions", "desc": "Fetch when target jurisdiction is active", "range": (20, 37), "links": []},
+                {"id": 5, "label": "Tier 5", "title": "Fallback Hubs — Undated landing pages", "desc": "Only fetch if higher tiers fail · Used for sessions", "range": (1, 19), "links": []},
             ]
 
+            # Disciplines to collapse
+            other_disc = []
+
             for lnk in final_links:
+                u = lnk["url"].lower()
+                if any(x in u for x in ["greyhound", "harness"]):
+                    other_disc.append(lnk)
+                    continue
+
                 for t in tiers:
                     if t["range"][0] <= lnk["val"] <= t["range"][1]:
                         t["links"].append(lnk)
                         break
 
             with open(html_path, "w") as f:
-                f.write("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>Fortuna Manual Discovery</title>")
+                f.write("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>")
+                f.write("<title>Fortuna Manual Discovery Links v2</title>")
                 f.write("<link rel='preconnect' href='https://fonts.googleapis.com'>")
                 f.write("<link href='https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap' rel='stylesheet'>")
                 f.write("<style>")
-                f.write(":root { --bg: #0d0f0e; --bg2: #141614; --bg3: #1c1f1c; --border: #2a2e2a; --gold: #c8a84b; --green: #3ddc84; --blue: #5ba3e0; --amber: #e8a030; --text: #d0d4d0; --text-dim: #707870; --text-bright: #eef0ee; }")
-                f.write("body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 10px; line-height: 1.5; padding: 24px; min-height: 100vh; }")
-                f.write(".header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }")
-                f.write("h1 { font-size: 16px; font-weight: 600; color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }")
-                f.write(".meta { color: var(--text-dim); font-size: 9px; }")
-                f.write(".section { margin-bottom: 28px; }")
-                f.write(".section-header { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; margin-bottom: 2px; border-left: 3px solid; }")
-                f.write(".tier-label { font-size: 9px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }")
-                f.write(".tier-title { font-size: 11px; font-weight: 500; color: var(--text-bright); }")
-                f.write(".tier-desc { font-size: 9px; color: var(--text-dim); margin-left: auto; }")
+                f.write(":root { --bg: #0d0f0e; --bg2: #141614; --bg3: #1c1f1c; --border: #2a2e2a; --gold: #c8a84b; --gold-dim: #7a6530; --green: #3ddc84; --green-dim: #1e6b40; --amber: #e8a030; --amber-dim: #7a5018; --red: #e05050; --red-dim: #6a2020; --blue: #5ba3e0; --blue-dim: #2a4e70; --text: #d0d4d0; --text-dim: #707870; --text-bright: #eef0ee; --magenta: #d070d0; }")
+                f.write("* { box-sizing: border-box; margin: 0; padding: 0; }")
+                f.write("body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.5; padding: 32px 24px 60px; min-height: 100vh; }")
+                f.write(".header { border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 12px; }")
+                f.write("h1 { font-size: 18px; font-weight: 600; color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 6px; }")
+                f.write(".date-control { display: flex; align-items: center; gap: 12px; margin: 14px 0 8px; padding: 10px 14px; background: var(--bg2); border: 1px solid var(--border); border-radius: 3px; }")
+                f.write(".date-control label { font-size: 11px; font-weight: 600; color: var(--gold); text-transform: uppercase; }")
+                f.write(".date-control input { background: var(--bg3); color: var(--text-bright); border: 1px solid var(--border); padding: 5px 10px; font-family: inherit; font-size: 13px; border-radius: 3px; cursor: pointer; }")
+                f.write("#active-date { font-size: 13px; font-weight: 600; color: var(--green); }")
+                f.write(".workflow { margin: 16px 0 24px; padding: 14px 16px; background: var(--bg2); border: 1px solid var(--border); border-left: 3px solid var(--gold); border-radius: 3px; }")
+                f.write(".workflow h2 { font-size: 11px; font-weight: 600; color: var(--gold); text-transform: uppercase; margin-bottom: 8px; }")
+                f.write(".workflow ol { margin-left: 20px; font-size: 11px; line-height: 1.8; }")
+                f.write(".legend { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 24px; padding: 14px 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: 3px; }")
+                f.write(".legend-item { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-dim); }")
+                f.write(".tier-dot { width: 8px; height: 8px; border-radius: 50%; }")
+                f.write(".section { margin-bottom: 32px; }")
+                f.write(".section-header { display: flex; align-items: baseline; gap: 12px; padding: 8px 12px; margin-bottom: 2px; border-left: 3px solid; }")
+                f.write(".tier-label { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }")
+                f.write(".tier-title { font-size: 13px; font-weight: 500; color: var(--text-bright); }")
+                f.write(".tier-desc { font-size: 10px; color: var(--text-dim); margin-left: auto; }")
                 f.write(".t1 { border-color: var(--green); background: rgba(61,220,132,0.04); } .t1 .tier-label { color: var(--green); }")
                 f.write(".t2 { border-color: var(--blue); background: rgba(91,163,224,0.04); } .t2 .tier-label { color: var(--blue); }")
                 f.write(".t3 { border-color: var(--amber); background: rgba(232,160,48,0.04); } .t3 .tier-label { color: var(--amber); }")
-                f.write(".t4 { border-color: var(--gold); background: rgba(200,168,75,0.03); } .t4 .tier-label { color: var(--gold); }")
+                f.write(".t4 { border-color: var(--gold-dim); background: rgba(200,168,75,0.03); } .t4 .tier-label { color: var(--gold-dim); }")
                 f.write(".t5 { border-color: #3a3e3a; background: rgba(255,255,255,0.02); } .t5 .tier-label { color: var(--text-dim); }")
                 f.write("table { width: 100%; border-collapse: collapse; } thead tr { background: var(--bg3); border-bottom: 1px solid var(--border); }")
-                f.write("th { padding: 6px 10px; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); text-align: left; }")
-                f.write("td { padding: 6px 10px; border-bottom: 1px solid #1a1e1a; vertical-align: top; }")
-                f.write(".p-cell { font-weight: 600; color: var(--gold); text-align: center; }")
-                f.write(".url-cell a { color: var(--blue); text-decoration: none; word-break: break-all; } .url-cell a:hover { color: var(--gold); }")
-                f.write(".filename { color: var(--green); background: rgba(61,220,132,0.06); padding: 1px 4px; border-radius: 2px; display: inline-block; margin-top: 3px; font-size: 9px; }")
+                f.write("th { padding: 7px 10px; font-size: 10px; font-weight: 600; color: var(--text-dim); text-align: left; text-transform: uppercase; }")
+                f.write("td { padding: 7px 10px; border-bottom: 1px solid #1a1e1a; vertical-align: top; }")
+                f.write(".url-cell a { color: var(--blue); text-decoration: none; font-size: 11px; word-break: break-all; } .url-cell a:hover { color: var(--gold); }")
+                f.write(".filename { color: var(--green-dim); font-size: 10px; background: rgba(61,220,132,0.06); padding: 1px 4px; border-radius: 2px; display: inline-block; margin-top: 3px; }")
+                f.write(".tag { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 2px; text-transform: uppercase; margin-right: 3px; }")
+                f.write(".tag-json { background: rgba(61,220,132,0.15); color: var(--green); } .tag-ajax { background: rgba(91,163,224,0.15); color: var(--blue); } .tag-struct { background: rgba(200,168,75,0.15); color: var(--gold); }")
+                f.write(".ft { font-size: 8px; font-weight: 600; padding: 1px 4px; border-radius: 2px; background: rgba(255,255,255,0.05); color: var(--text-dim); margin-right: 2px; text-transform: uppercase; }")
+                f.write(".badge-new { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 2px; background: rgba(208,112,208,0.20); color: var(--magenta); margin-left: 6px; }")
+                f.write("details { margin-top: 32px; border: 1px solid var(--border); background: var(--bg2); border-radius: 3px; }")
+                f.write("summary { padding: 10px 14px; cursor: pointer; font-weight: 600; font-size: 11px; color: var(--text-dim); }")
                 f.write("</style></head><body>")
 
-                f.write("<div class='header'><h1>🔗 Fortuna Manual Discovery</h1>")
-                f.write(f"<div class='meta'>Generated: {datetime.now().strftime('%y%m%d %H:%M')} &nbsp;·&nbsp; {len(final_links)} URLs &nbsp;·&nbsp; Capped at top 50</div></div>")
+                f.write("<div class='header'><h1>🔗 Fortuna Manual Discovery — Link Dashboard v2</h1>")
+                f.write("<div class='date-control'><label for='race-date'>Race Date:</label><input type='date' id='race-date'><span id='active-date'></span><span id='date-status' style='margin-left:auto;font-size:10px;color:var(--text-dim);'>All dated URLs update automatically</span></div>")
+                f.write(f"<div class='meta'>{len(final_links)} URLs &nbsp;·&nbsp; 5 tiers &nbsp;·&nbsp; Sort: data format > US coverage > schema completeness</div></div>")
+
+                f.write("<div class='workflow'><h2>Daily Workflow (10–15 min)</h2><ol>")
+                f.write("<li>Open this page — all dated URLs auto-update. Change the date picker above for historical fetches.</li>")
+                f.write("<li><strong>Tier 1 (JSON):</strong> Right-click each link → Save Link As → save as <code>.json</code>. For AJAX endpoints, copy Response from DevTools Network tab.</li>")
+                f.write("<li><strong>Tier 2 (HTML):</strong> Click to open → Save as 'Webpage, Complete'.</li>")
+                f.write("<li>Place all saved files in: <code>manual_fetch/</code></li></ol></div>")
+
+                f.write("<div class='legend'>")
+                f.write("<div class='legend-item'><div class='tier-dot' style='background:var(--green)'></div>Tier 1 — JSON/API, machine-readable</div>")
+                f.write("<div class='legend-item'><div class='tier-dot' style='background:var(--blue)'></div>Tier 2 — Structured HTML, good data</div>")
+                f.write("<div class='legend-item'><div class='tier-dot' style='background:var(--amber)'></div>Tier 3 — JS-heavy or auth-gated</div>")
+                f.write("<div class='legend-item'><div class='tier-dot' style='background:var(--gold-dim)'></div>Tier 4 — Regional / supplemental</div>")
+                f.write("<div class='legend-item'><div class='tier-dot' style='background:#3a3e3a'></div>Tier 5 — Fallback hubs</div>")
+                f.write("<div class='legend-item'><span class='badge-new'>🆕 NEW</span>Added in v2</div>")
+                f.write("</div>")
 
                 for t in tiers:
                     if not t["links"]: continue
@@ -9870,12 +9970,58 @@ async def main_all_in_one():
                     f.write(f"<span class='tier-label'>{t['label']}</span>")
                     f.write(f"<span class='tier-title'>{t['title']}</span>")
                     f.write(f"<span class='tier-desc'>{t['desc']}</span></div>")
-                    f.write("<table><thead><tr><th style='width:40px'>P</th><th>URL + Filename</th></tr></thead><tbody>")
+                    f.write("<table><thead><tr><th style='width:42px'>P</th><th>URL + Filename</th><th>Fmt</th><th>Notes / Schema Fields</th></tr></thead><tbody>")
                     for lnk in t["links"]:
-                        f.write(f"<tr><td class='p-cell'>{lnk['val']}</td>")
-                        f.write(f"<td class='url-cell'><a href='{lnk['url']}' target='_blank'>{lnk['url']}</a><br>")
-                        f.write(f"<span class='filename'>{lnk['filename'].replace('manual_fetch/', '')}</span></td></tr>")
+                        tags, fmt, reason, is_new = get_link_meta(lnk["url"])
+                        pattern = lnk["url"]
+                        today = datetime.now()
+                        pattern = pattern.replace(today.strftime("%Y-%m-%d"), "{YYYY-MM-DD}")
+                        pattern = pattern.replace(today.strftime("%Y/%m/%d"), "{YYYY/MM/DD}")
+                        pattern = pattern.replace(today.strftime("%d-%m-%Y"), "{DD-MM-YYYY}")
+                        pattern = pattern.replace(today.strftime("%y%m%d"), "{YYMMDD}")
+                        pattern = pattern.replace(str(today.year), "{YYYY}")
+                        pattern = pattern.replace(f"{today.month:02d}", "{MM}")
+                        pattern = pattern.replace(f"{today.day:02d}", "{DD}")
+                        pattern = pattern.replace(str(today.month), "{M}")
+                        pattern = pattern.replace(str(today.day), "{D}")
+
+                        f.write(f"<tr><td class='p-new' style='color:var(--gold)'>{lnk['val']}</td>")
+                        f.write(f"<td class='url-cell'><a href='{lnk['url']}' data-pattern='{pattern}' target='_blank'>{lnk['url']}</a>")
+                        if is_new: f.write("<span class='badge-new'>🆕 NEW</span>")
+                        f.write(f"<br><span class='filename'>{lnk['filename'].replace('manual_fetch/', '')}</span></td>")
+                        f.write(f"<td><span class='tag tag-{fmt}'>{fmt}</span></td>")
+                        f.write(f"<td class='reason'>{reason}<div style='margin-top:4px;'>")
+                        for tag in tags: f.write(f"<span class='ft'>{tag}</span>")
+                        f.write("</div></td></tr>")
                     f.write("</tbody></table></div>")
+
+                if other_disc:
+                    f.write("<details class='other-disciplines'><summary>▸ Other Disciplines — Greyhounds & Harness (" + str(len(other_disc)) + " URLs, collapsed)</summary><div style='padding:0 14px 14px;'><table>")
+                    for lnk in other_disc:
+                        f.write(f"<tr><td style='width:42px'>{lnk['val']}</td><td><a href='{lnk['url']}' style='color:var(--blue);text-decoration:none;'>{lnk['url']}</a></td></tr>")
+                    f.write("</table></div></details>")
+
+                f.write("<div style='margin-top:40px;padding-top:16px;border-top:1px solid var(--border);font-size:10px;color:var(--text-dim);line-height:1.7;'>")
+                f.write("<strong style='color:var(--text)'>v2 Changes from v1</strong><br>")
+                f.write("• <span style='color:var(--magenta)'>+8 new sources</span>: Equibase entries (+100) · Equibase charts (+99) · DRF entries (+73) · DRF results (+67) · TrackInfo (+70) · TVG (+54) · Horse Racing Nation (+38) · Racing.com AU (+30)<br>")
+                f.write("• <span style='color:var(--green)'>JavaScript date picker</span>: all dated URLs now auto-update. No more manual date substitution.<br>")
+                f.write("• <span style='color:var(--gold)'>Schema field tags</span>: each source now shows which analytical fields (FLD, ODDS, DIST, PURSE, PAYS) it provides.<br>")
+                f.write("<br><strong style='color:var(--text)'>Critical gap filled</strong>: v2 adds US canonical sources — covering entries AND results (with exotic payouts) across all US tracks referenced in the dataset.<br>")
+                f.write(f"<br>Generated: {datetime.now().strftime('%y%m%d')} · {len(final_links)} URLs across 5 tiers</div>")
+
+                # JS for date picker v2 (Full logic)
+                f.write("<script>document.addEventListener('DOMContentLoaded', () => {")
+                f.write("const p = document.getElementById('race-date'); const d = document.getElementById('active-date'); const s = document.getElementById('date-status');")
+                f.write("const n = new Date(); p.value = n.toISOString().split('T')[0];")
+                f.write("function update() { const val = p.value; const dt = new Date(val + 'T12:00:00'); if(isNaN(dt.getTime())) return;")
+                f.write("const Y = dt.getFullYear(); const M = String(dt.getMonth()+1).padStart(2,'0'); const D = String(dt.getDate()).padStart(2,'0');")
+                f.write("const Mno = String(dt.getMonth()+1); const Dno = String(dt.getDate()); const YY = String(Y).slice(2);")
+                f.write("const dayName = dt.toLocaleDateString('en-US', { weekday: 'long' }); d.textContent = `${Y}-${M}-${D} (${dayName})`;")
+                f.write("let count = 0; document.querySelectorAll('a[data-pattern]').forEach(a => {")
+                f.write("let h = a.getAttribute('data-pattern'); h = h.split('{YYYY-MM-DD}').join(`${Y}-${M}-${D}`).split('{YYYY/MM/DD}').join(`${Y}/${M}/${D}`).split('{DD-MM-YYYY}').join(`${D}-${M}-${Y}`);")
+                f.write("h = h.split('{YYMMDD}').join(`${YY}${M}${D}`).split('{YYYY}').join(Y).split('{MM}').join(M).split('{DD}').join(D).split('{M}').join(Mno).split('{D}').join(Dno);")
+                f.write("a.href = h; a.textContent = h; count++; }); s.textContent = `${count} dated URLs updated`; }")
+                f.write("p.addEventListener('change', update); update(); });</script>")
                 f.write("</body></html>")
 
         print("\n=== DISCOVERY COMPLETE ===")
