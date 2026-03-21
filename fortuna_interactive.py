@@ -9719,13 +9719,58 @@ async def main_all_in_one():
 
         links_found = []
 
-        # Data density priority mapping (higher = more runners/odds)
-        PRIORITY = {
-            "racingpost": 100, "skyracingworld": 95, "twinspires": 90,
-            "sportinglife": 85, "attheraces": 80, "oddschecker": 75,
-            "timeform": 70, "skysports": 65, "equibase": 60, "nyrabets": 55,
-            "hkjc": 50, "japanracing": 45, "tab.com": 40
-        }
+        # Advanced priority mapping based on 5-Tier system (Capability Improvement)
+        def get_url_priority(url: str) -> int:
+            u = url.lower().rstrip('/')
+            # Tier 1 (86-100): APIs/JSON
+            if "tab.com.au/v1" in u: return 100
+            if "api.nyrabets.com" in u: return 95
+            if "racingandsports.com.au/todays-racing-json-v2" in u: return 92
+            if "backend-us-racecards.widget.rpb2b.com" in u: return 90
+            if "attheraces.com/ajax/marketmovers/tabs/international" in u: return 88
+            if "attheraces.com/ajax/marketmovers/tabs/uk-ire" in u: return 86
+
+            # Tier 2 (65-85): Structured Pages
+            if "racing.hkjc.com" in u and "racecard.aspx" in u: return 85
+            if "racing.hkjc.com" in u and "localresults.aspx" in u: return 82
+            if "sportinglife.com/racing/racecards/20" in u: return 78
+            if "skysports.com/racing/racecards/" in u: return 75
+            if "nyrabets.com/betting" in u: return 72
+            if "attheraces.com/racecards/20" in u: return 68
+            if "greyhounds.attheraces.com" in u: return 65
+
+            # Tier 3 (40-64): JS-heavy / Auth
+            if "racingpost.com/racecards/20" in u: return 60
+            if "racingpost.com/racecards/international/20" in u: return 58
+            if u.endswith("racingpost.com"): return 55
+            if "racingpost.com/racecards/20" in u and u.endswith("international"): return 52
+            if "timeform.com" in u and "/racecards/20" in u: return 50
+            if "skyracingworld.com" in u and "/form-guide/thoroughbred/20" in u: return 48
+            if "oddschecker.com" in u and "/horse-racing/20" in u: return 45
+            if "twinspires.com" in u and "thoroughbred" in u and "region=int" in u: return 42
+            if "twinspires.com" in u and "harness" in u and "region=int" in u: return 40
+            if "twinspires.com" in u and "greyhound" in u and "region=int" in u: return 38
+
+            # Tier 4 (20-39): Supplemental
+            if "japanracing.jp/en/racing/go_racing" in u: return 35
+            if "japanracing.jp/racing/calendar" in u: return 33
+            if u.endswith("attheraces.com"): return 30
+            if "attheraces.com/market-movers/international" in u: return 28
+            if "racingandsports.com.au/form-guide/20" in u: return 25
+
+            # Tier 5 (1-19): Low yield / Homepages
+            if u.endswith("timeform.com/horse-racing/racecards"): return 15
+            if u.endswith("timeform.com/horse-racing"): return 12
+            if u.endswith("oddschecker.com/horse-racing"): return 10
+            if u.endswith("skyracingworld.com"): return 8
+            if u.endswith("skyracingworld.com/form-guide"): return 7
+            if u.endswith("skyracingworld.com/form-guide/thoroughbred"): return 5
+            if "twinspires.com/bet/todays-races/time" in u: return 4
+            if u.endswith("attheraces.com/racecards"): return 3
+            if u.endswith("attheraces.com/market-movers"): return 2
+            if u.endswith("racingandsports.com.au"): return 1
+
+            return 10 # Default
 
         # We need to monkeypatch BaseAdapterV3.make_request temporarily to just log and skip
         original_make_request = BaseAdapterV3.make_request
@@ -9741,12 +9786,7 @@ async def main_all_in_one():
                 slug = slug[:180]
             filename = f"manual_fetch/{slug}.html"
 
-            # Determine priority
-            val = 10 # Default
-            for k, v in PRIORITY.items():
-                if k in domain:
-                    val = v
-                    break
+            val = get_url_priority(full_url)
 
             print(f"[LINK] {full_url} (Priority: {val})")
             links_found.append({"url": full_url, "filename": filename, "val": val})
@@ -9775,25 +9815,68 @@ async def main_all_in_one():
             # 3. Crop at 50 rows
             final_links = final_links[:50]
 
-            # Capability Improvement: Single HTML artifact for better JB UX (v3.3.0+)
+            # Capability Improvement: Stylized HTML artifact for better JB UX (v3.3.0+)
             html_path = "manual_links.html"
+
+            # Group links by Tier (v3.3.0 Optimized Sort)
+            tiers = [
+                {"id": 1, "label": "Tier 1", "title": "JSON & API Feeds — Save directly, parse immediately", "desc": "No rendering required · Highest data density per minute", "range": (86, 100), "links": []},
+                {"id": 2, "label": "Tier 2", "title": "Structured Pages — Good odds data, manageable HTML", "desc": "Save as HTML · Field sizes and odds visible in page source", "range": (65, 85), "links": []},
+                {"id": 3, "label": "Tier 3", "title": "High-Value but Difficult — JS-heavy or auth-gated", "desc": "Consider DevTools Network tab over Save Page", "range": (38, 64), "links": []},
+                {"id": 4, "label": "Tier 4", "title": "Regional & Supplemental — Specific jurisdictions", "desc": "Worth fetching when target jurisdiction is active", "range": (20, 37), "links": []},
+                {"id": 5, "label": "Tier 5", "title": "Low Yield — Fallback and homepage URLs", "desc": "Only fetch if higher tiers fail for a specific source", "range": (1, 19), "links": []},
+            ]
+
+            for lnk in final_links:
+                for t in tiers:
+                    if t["range"][0] <= lnk["val"] <= t["range"][1]:
+                        t["links"].append(lnk)
+                        break
+
             with open(html_path, "w") as f:
-                f.write("<!DOCTYPE html><html><head><title>Fortuna Manual Discovery</title>")
-                # Tiny monospace font requested by JB for efficiency
-                f.write("<style>body{font-family:monospace;font-size:10px;background:#1a1a1a;color:#eee;padding:20px;}")
-                f.write("table{width:100%;border-collapse:collapse;margin-top:20px;}")
-                f.write("th,td{padding:4px 8px;text-align:left;border-bottom:1px solid #444;}")
-                f.write("th{background:#333;color:#ffd700;border-top:2px solid #ffd700;} tr:hover{background:#252525;}")
-                f.write("code{font-family:monospace;background:#000;padding:1px 3px;border-radius:2px;color:#00ff41;}")
-                f.write(".priority{font-weight:bold;color:#ffa500;} a{text-decoration:none;}</style></head><body>")
-                f.write("<h1>🔗 Manual Discovery: URLs to Fetch</h1>")
-                f.write(f"<p>Sorted by data density. Capped at top 50 rows. Generated: {datetime.now().strftime('%y%m%d %H:%M')}</p>")
-                f.write("<table><thead><tr><th>Priority</th><th>Target URL</th><th>Expected Filename (manual_fetch/)</th></tr></thead><tbody>")
-                for lnk in final_links:
-                    f.write(f"<tr><td class='priority'>{lnk['val']}</td>")
-                    f.write(f"<td><a href='{lnk['url']}' target='_blank' style='color:#3498db;'>{lnk['url']}</a></td>")
-                    f.write(f"<td><code>{lnk['filename'].replace('manual_fetch/', '')}</code></td></tr>")
-                f.write("</tbody></table></body></html>")
+                f.write("<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><title>Fortuna Manual Discovery</title>")
+                f.write("<link rel='preconnect' href='https://fonts.googleapis.com'>")
+                f.write("<link href='https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap' rel='stylesheet'>")
+                f.write("<style>")
+                f.write(":root { --bg: #0d0f0e; --bg2: #141614; --bg3: #1c1f1c; --border: #2a2e2a; --gold: #c8a84b; --green: #3ddc84; --blue: #5ba3e0; --amber: #e8a030; --text: #d0d4d0; --text-dim: #707870; --text-bright: #eef0ee; }")
+                f.write("body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 10px; line-height: 1.5; padding: 24px; min-height: 100vh; }")
+                f.write(".header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }")
+                f.write("h1 { font-size: 16px; font-weight: 600; color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }")
+                f.write(".meta { color: var(--text-dim); font-size: 9px; }")
+                f.write(".section { margin-bottom: 28px; }")
+                f.write(".section-header { display: flex; align-items: baseline; gap: 10px; padding: 6px 10px; margin-bottom: 2px; border-left: 3px solid; }")
+                f.write(".tier-label { font-size: 9px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }")
+                f.write(".tier-title { font-size: 11px; font-weight: 500; color: var(--text-bright); }")
+                f.write(".tier-desc { font-size: 9px; color: var(--text-dim); margin-left: auto; }")
+                f.write(".t1 { border-color: var(--green); background: rgba(61,220,132,0.04); } .t1 .tier-label { color: var(--green); }")
+                f.write(".t2 { border-color: var(--blue); background: rgba(91,163,224,0.04); } .t2 .tier-label { color: var(--blue); }")
+                f.write(".t3 { border-color: var(--amber); background: rgba(232,160,48,0.04); } .t3 .tier-label { color: var(--amber); }")
+                f.write(".t4 { border-color: var(--gold); background: rgba(200,168,75,0.03); } .t4 .tier-label { color: var(--gold); }")
+                f.write(".t5 { border-color: #3a3e3a; background: rgba(255,255,255,0.02); } .t5 .tier-label { color: var(--text-dim); }")
+                f.write("table { width: 100%; border-collapse: collapse; } thead tr { background: var(--bg3); border-bottom: 1px solid var(--border); }")
+                f.write("th { padding: 6px 10px; font-size: 9px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); text-align: left; }")
+                f.write("td { padding: 6px 10px; border-bottom: 1px solid #1a1e1a; vertical-align: top; }")
+                f.write(".p-cell { font-weight: 600; color: var(--gold); text-align: center; }")
+                f.write(".url-cell a { color: var(--blue); text-decoration: none; word-break: break-all; } .url-cell a:hover { color: var(--gold); }")
+                f.write(".filename { color: var(--green); background: rgba(61,220,132,0.06); padding: 1px 4px; border-radius: 2px; display: inline-block; margin-top: 3px; font-size: 9px; }")
+                f.write("</style></head><body>")
+
+                f.write("<div class='header'><h1>🔗 Fortuna Manual Discovery</h1>")
+                f.write(f"<div class='meta'>Generated: {datetime.now().strftime('%y%m%d %H:%M')} &nbsp;·&nbsp; {len(final_links)} URLs &nbsp;·&nbsp; Capped at top 50</div></div>")
+
+                for t in tiers:
+                    if not t["links"]: continue
+                    f.write(f"<div class='section'><div class='section-header t{t['id']}'>")
+                    f.write(f"<span class='tier-label'>{t['label']}</span>")
+                    f.write(f"<span class='tier-title'>{t['title']}</span>")
+                    f.write(f"<span class='tier-desc'>{t['desc']}</span></div>")
+                    f.write("<table><thead><tr><th style='width:40px'>P</th><th>URL + Filename</th></tr></thead><tbody>")
+                    for lnk in t["links"]:
+                        f.write(f"<tr><td class='p-cell'>{lnk['val']}</td>")
+                        f.write(f"<td class='url-cell'><a href='{lnk['url']}' target='_blank'>{lnk['url']}</a><br>")
+                        f.write(f"<span class='filename'>{lnk['filename'].replace('manual_fetch/', '')}</span></td></tr>")
+                    f.write("</tbody></table></div>")
+                f.write("</body></html>")
 
         print("\n=== DISCOVERY COMPLETE ===")
         print(f"Found {len(final_links)} unique links. Details saved to {html_path}")
