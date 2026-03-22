@@ -9985,8 +9985,17 @@ async def main_all_in_one():
                         pattern = pattern.replace(str(today.month), "{M}")
                         pattern = pattern.replace(str(today.day), "{D}")
 
+                        # New Constraint: TAB.COM links are plain text (avoid American blocks)
+                        is_tab = "tab.com.au" in lnk["url"].lower()
+
                         f.write(f"<tr><td class='p-new' style='color:var(--gold)'>{lnk['val']}</td>")
-                        f.write(f"<td class='url-cell'><a href='{lnk['url']}' data-pattern='{pattern}' target='_blank'>{lnk['url']}</a>")
+                        f.write("<td class='url-cell'>")
+                        if is_tab:
+                            f.write(f"<span style='color:var(--text-dim);' data-pattern='{pattern}'>{lnk['url']}</span>")
+                            f.write(" <small>(Links disabled — use VPN/Proxy)</small>")
+                        else:
+                            f.write(f"<a href='{lnk['url']}' data-pattern='{pattern}' target='_blank'>{lnk['url']}</a>")
+
                         if is_new: f.write("<span class='badge-new'>🆕 NEW</span>")
                         f.write(f"<br><span class='filename'>{lnk['filename'].replace('manual_fetch/', '')}</span></td>")
                         f.write(f"<td><span class='tag tag-{fmt}'>{fmt}</span></td>")
@@ -10017,10 +10026,10 @@ async def main_all_in_one():
                 f.write("const Y = dt.getFullYear(); const M = String(dt.getMonth()+1).padStart(2,'0'); const D = String(dt.getDate()).padStart(2,'0');")
                 f.write("const Mno = String(dt.getMonth()+1); const Dno = String(dt.getDate()); const YY = String(Y).slice(2);")
                 f.write("const dayName = dt.toLocaleDateString('en-US', { weekday: 'long' }); d.textContent = `${Y}-${M}-${D} (${dayName})`;")
-                f.write("let count = 0; document.querySelectorAll('a[data-pattern]').forEach(a => {")
-                f.write("let h = a.getAttribute('data-pattern'); h = h.split('{YYYY-MM-DD}').join(`${Y}-${M}-${D}`).split('{YYYY/MM/DD}').join(`${Y}/${M}/${D}`).split('{DD-MM-YYYY}').join(`${D}-${M}-${Y}`);")
+                f.write("let count = 0; document.querySelectorAll('[data-pattern]').forEach(el => {")
+                f.write("let h = el.getAttribute('data-pattern'); h = h.split('{YYYY-MM-DD}').join(`${Y}-${M}-${D}`).split('{YYYY/MM/DD}').join(`${Y}/${M}/${D}`).split('{DD-MM-YYYY}').join(`${D}-${M}-${Y}`);")
                 f.write("h = h.split('{YYMMDD}').join(`${YY}${M}${D}`).split('{YYYY}').join(Y).split('{MM}').join(M).split('{DD}').join(D).split('{M}').join(Mno).split('{D}').join(Dno);")
-                f.write("a.href = h; a.textContent = h; count++; }); s.textContent = `${count} dated URLs updated`; }")
+                f.write("if(el.tagName === 'A') { el.href = h; } el.textContent = h; count++; }); s.textContent = `${count} dated URLs updated`; }")
                 f.write("p.addEventListener('change', update); update(); });</script>")
                 f.write("</body></html>")
 

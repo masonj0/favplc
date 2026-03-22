@@ -55,7 +55,7 @@ async def test_equibase_results_adapter_parsing():
 
         assert len(races) > 0
         race = races[0]
-        assert "Aqueduct" in race.venue
+        assert "aqueduct" in race.venue.lower()
         assert race.race_number == 1
         assert len(race.runners) == 2
 

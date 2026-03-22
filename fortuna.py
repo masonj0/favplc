@@ -2242,8 +2242,24 @@ class BaseAdapterV3(ABC):
         raise_for_status = kwargs.pop("raise_for_status", True)
         update_status = kwargs.pop("update_status", True)
 
-        # Apply host-based rate limiting to prevent 429s (Fix 13)
+        # Capability Improvement: Interactive / Manual Ingest Mode (Phase A1)
+        # Check if manual_fetch directory has a file matching this URL slug
         from urllib.parse import urlparse
+        p = urlparse(full_url)
+        domain = p.netloc.lower()
+        # Include query string in slug to differentiate indices (Fix-Manual-Ingest)
+        raw_slug = domain + p.path + (f"?{p.query}" if p.query else "")
+        slug = re.sub(r'[^a-z0-9]', '_', raw_slug.lower()).strip('_')
+        if len(slug) > 180: slug = slug[:180]
+        filepath = Path("manual_fetch") / f"{slug}.html"
+        if filepath.exists():
+            content = filepath.read_text(encoding="utf-8", errors="replace")
+            # Log hit for audit transparency
+            self.logger.info("manual_fetch_hit", file=str(filepath))
+            if update_status: self.last_response_status = 200
+            return UnifiedResponse(text=content, status=200, status_code=200, url=full_url)
+
+        # Apply host-based rate limiting to prevent 429s (Fix 13)
         host = urlparse(full_url).netloc
         if host:
             limiter = await GlobalResourceManager.get_host_limiter(host)
