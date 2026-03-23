@@ -1,0 +1,44 @@
+name: "📊 FortunaDB to Excel Export"
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 22 * * *' # Daily at 10 PM ET
+
+jobs:
+  export-excel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.16'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl
+
+      - name: Restore Master Database
+        uses: actions/cache/restore@v4
+        with:
+          path: fortuna.db
+          key: fortuna-db-v4-master-
+          restore-keys: fortuna-db-v4-master-
+
+      - name: Run Excel Export
+        run: |
+          if [ -f fortuna.db ]; then
+            python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_data.xlsx
+          else
+            echo "Database not found, creating empty placeholder"
+            touch fortuna_data.xlsx
+          fi
+
+      - name: Upload Excel Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fortuna-excel-export
+          path: fortuna_data.xlsx
+          retention-days: 7
