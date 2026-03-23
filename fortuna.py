@@ -476,7 +476,7 @@ OFFICIAL_DISCOVERY_ADAPTERS: Final[set] = {
 GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
-    "RacingAndSports", "HKJC", "JRA",
+    "RacingAndSports", "HKJC", "JRA", "DRF",
     "TwinSpires", "NYRABets", "RacingPostB2B" # US sources for 24/7 global coverage
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
@@ -2714,6 +2714,42 @@ class OfficialDownRoyalAdapter(OfficialTrackAdapter):
     SOURCE_NAME = "Official_DownRoyal"
     def __init__(self, config=None): super().__init__("Down Royal", "https://www.downroyal.com", config=config)
 
+class DRFAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for Daily Racing Form (DRF) entries.
+    Provides canonical US thoroughbred data.
+    """
+    SOURCE_NAME: ClassVar[str] = "DRF"
+    PROVIDES_ODDS: ClassVar[bool] = True
+    BASE_URL: ClassVar[str] = "https://www.drf.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return scraping_fetch_strategy(network_idle=True)
+
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.drf.com")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        # Hardening Fix: Establish session on the home page first
+        try:
+            await self.make_request("GET", "https://www.drf.com/", timeout=20, raise_for_status=False, update_status=False)
+            await asyncio.sleep(1)
+        except Exception: pass
+
+        url = "/race-entries"
+        resp = await self.make_request("GET", url, headers=self._get_headers())
+        if not resp or not resp.text: return None
+
+        self._save_debug_snapshot(resp.text, f"drf_entries_{date}")
+        return {"html": resp.text, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("html"): return []
+        return []
+
 class JRAAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
     """
     Adapter for Japan Racing Association (JRA).
@@ -2859,6 +2895,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         except Exception: pass
 
         # 1. Primary: Use the structured JSON endpoint for speed and stability
+        # Note: This often returns a minimal list of meetings with FormGuideUrls.
         url = "https://www.racingandsports.com.au/todays-racing-json-v2"
         try:
             resp = await self.make_request("GET", url, headers=self._get_headers(), raise_for_status=False)
@@ -2866,6 +2903,27 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                 try:
                     data = json.loads(resp.text)
                     if isinstance(data, (dict, list)) and data:
+                        # Extract race links from JSON to fetch full data
+                        metadata = []
+                        if isinstance(data, list):
+                            for disc_data in data:
+                                for country_data in disc_data.get("Countries", []):
+                                    for meeting in country_data.get("Meetings", []):
+                                        if url := meeting.get("FormGuideUrl"):
+                                            metadata.append({"url": url})
+                        elif isinstance(data, dict):
+                            for m in data.get("meetings", []):
+                                for r in m.get("races", []):
+                                    if url := r.get("formGuideUrl") or m.get("formGuideUrl"):
+                                        metadata.append({"url": url})
+
+                        if metadata:
+                            metadata = list({m['url']: m for m in metadata}.values())
+                            self.logger.info("ras_json_links_discovered", count=len(metadata))
+                            pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers(), semaphore_limit=5)
+                            if pages:
+                                return {"pages": pages, "date": date}
+
                         self.logger.info("ras_json_fetch_success", meeting_count=len(data.get('meetings', [])) if isinstance(data, dict) else len(data))
                         return {"json_data": data, "date": date}
                 except Exception as e:
@@ -2939,66 +2997,77 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
         if not raw_data.get("json_data"): return []
         data = raw_data["json_data"]
-        if isinstance(data, list):
-            # Sometimes RAS returns a raw list of meetings instead of a dict with 'meetings' key
-            data = {"meetings": data}
         try:
             race_date = parse_date_string(raw_data["date"]).date()
         except Exception:
             race_date = now_eastern().date()
 
         races = []
+
         # RAS JSON v2 structure: data['meetings'] -> list of meetings
-        meetings = data.get('meetings', [])
+        # OR data as a list: list of Disciplines -> Countries -> Meetings
+        meetings = []
+        if isinstance(data, dict):
+            meetings = data.get('meetings', [])
+        elif isinstance(data, list):
+            # Complex nested structure: list of disciplines
+            for disc_data in data:
+                assigned_discipline = disc_data.get("DisciplineFullText")
+                for country_data in disc_data.get("Countries", []):
+                    country_name = country_data.get("CountryName")
+                    for meeting in country_data.get("Meetings", []):
+                        # Ensure meeting has discipline and country for downstream filters
+                        meeting["assigned_discipline"] = assigned_discipline
+                        meeting["country"] = country_name
+                        meetings.append(meeting)
+
         self.logger.info("parsing_ras_json", meeting_count=len(meetings))
         for m in meetings:
-            venue_raw = m.get('venueName') or m.get('venue')
+            venue_raw = m.get('venueName') or m.get('venue') or m.get('Course')
             if not venue_raw: continue
             venue = normalize_venue_name(venue_raw)
 
             # Filter by region if set in config
             target_region = self.config.get('region')
-            country = m.get('country', '').upper()
+            # Normalize country name for filtering (Standardize to ISO-ish or common names)
+            country = (m.get('country') or m.get('countryCode') or '').upper()
             if target_region == 'USA' and country not in ['US', 'USA', 'CAN']: continue
             if target_region == 'INT' and country in ['US', 'USA', 'CAN']: continue
 
-            for r_idx, r in enumerate(m.get('races', []), 1):
+            # If JSON provides race list, parse them directly
+            ras_races = m.get('races', [])
+            if not ras_races and m.get('RaceNumber'):
+                # Single race summary, often with links
+                ras_races = [m]
+
+            for r_idx, r in enumerate(ras_races, 1):
                 try:
-                    race_num = int(r.get('raceNumber') or r_idx)
+                    race_num = int(r.get('raceNumber') or r.get('RaceNumber') or r_idx)
 
                     # Start time
                     time_str = r.get('raceTime') # e.g. "12:30"
                     if time_str:
-                        # Assuming meetings are local time, but for discovery we'll treat as ET
-                        # and let normalization handle it if needed.
                         start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
                     else:
                         start_time = datetime.combine(race_date, datetime.min.time())
 
                     runners = []
-                    # In some versions of this JSON, runners are under 'runners' key
                     for run_data in r.get('runners', []):
                         name = run_data.get('horseName') or run_data.get('name')
                         if not name: continue
-
                         num = int(run_data.get('tabNo') or run_data.get('number') or 0)
-
-                        # Odds
                         win_odds = parse_odds_to_decimal(run_data.get('winOdds') or run_data.get('fixedOdds'))
-
                         odds_data = {}
                         if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                             odds_data[self.SOURCE_NAME] = ov
-
-                        runners.append(Runner(
-                            name=name,
-                            number=num,
-                            odds=odds_data,
-                            win_odds=win_odds,
-                            odds_source="extracted" if win_odds else None
-                        ))
+                        runners.append(Runner(name=name, number=num, odds=odds_data, win_odds=win_odds, odds_source="extracted" if win_odds else None))
 
                     if not runners: continue
+
+                    # Standardize discipline names (e.g. THOROUGHBRED -> Thoroughbred)
+                    assigned_disc = m.get("assigned_discipline")
+                    if assigned_disc:
+                        assigned_disc = assigned_disc.title()
 
                     races.append(Race(
                         id=generate_race_id("ras", venue, start_time, race_num),
@@ -3007,7 +3076,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                         start_time=ensure_eastern(start_time),
                         runners=runners,
                         source=self.SOURCE_NAME,
-                        discipline=detect_discipline(str(r))
+                        discipline=assigned_disc or detect_discipline(str(r))
                     ))
                 except Exception:
                     continue

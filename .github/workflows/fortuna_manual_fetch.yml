@@ -93,6 +93,11 @@ jobs:
           # Audit results from the last 7 days
           python fortuna_analytics.py --days 7
 
+      - name: Export to Excel
+        if: always()
+        run: |
+          python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_manual_data.xlsx
+
       - name: Generate GHA Summary
         if: always()
         run: |
@@ -117,4 +122,5 @@ jobs:
             fortuna_report.html
             fortuna.db
             manual_links.html
+            fortuna_manual_data.xlsx
             snapshots/*.json
