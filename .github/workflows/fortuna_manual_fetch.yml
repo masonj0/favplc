@@ -12,9 +12,9 @@ on:
       mode:
         description: 'Execution Mode'
         required: true
-        default: 'list-links'
+        default: 'ingest-and-score'
         type: choice
-        options: [list-links, ingest-and-score, audit-only]
+        options: [ingest-and-score, audit-only]
       region:
         description: 'Region Filter'
         required: true
@@ -55,18 +55,6 @@ jobs:
           restore-keys: |
             fortuna-db-v3-
 
-      - name: List Links (Discovery)
-        if: ${{ github.event.inputs.mode == 'list-links' }}
-        run: |
-          python fortuna_interactive.py --region ${{ github.event.inputs.region }} --daypart ${{ github.event.inputs.daypart }} --list-links
-          if [ -f manual_links.html ]; then
-            echo "## 🔗 Manual Discovery Complete" >> $GITHUB_STEP_SUMMARY
-            echo "Link list generated as HTML artifact. Download it from the run results below." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## ⚠️ Discovery Failed" >> $GITHUB_STEP_SUMMARY
-            echo "No links discovered. Check if the daypart is active for the selected region." >> $GITHUB_STEP_SUMMARY
-          fi
-
       - name: Verify Manual Files
         if: ${{ github.event.inputs.mode == 'ingest-and-score' }}
         run: |
@@ -93,10 +81,10 @@ jobs:
           # Audit results from the last 7 days
           python fortuna_analytics.py --days 7
 
-      - name: Export to Excel
+      - name: Export to CSV/TSV
         if: always()
         run: |
-          python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_manual_data.xlsx
+          python3 scripts/fortuna_export.py fortuna.db --output-dir db_export --format both
 
       - name: Generate GHA Summary
         if: always()
@@ -121,6 +109,5 @@ jobs:
             goldmine_report.txt
             fortuna_report.html
             fortuna.db
-            manual_links.html
-            fortuna_manual_data.xlsx
+            db_export/
             snapshots/*.json
