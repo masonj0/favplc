@@ -1,4 +1,4 @@
-name: "📊 FortunaDB to Excel Export"
+name: "📊 FortunaDB to CSV/TSV Export"
 
 on:
   workflow_dispatch:
@@ -27,18 +27,18 @@ jobs:
           key: fortuna-db-v4-master-
           restore-keys: fortuna-db-v4-master-
 
-      - name: Run Excel Export
+      - name: Run CSV/TSV Export
         run: |
           if [ -f fortuna.db ]; then
-            python3 scripts/fortuna_to_excel.py fortuna.db --output fortuna_data.xlsx
+            python3 scripts/fortuna_export.py fortuna.db --output-dir db_export --format both
           else
-            echo "Database not found, creating empty placeholder"
-            touch fortuna_data.xlsx
+            echo "Database not found, creating empty directory"
+            mkdir -p db_export
           fi
 
-      - name: Upload Excel Artifact
+      - name: Upload Export Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: fortuna-excel-export
-          path: fortuna_data.xlsx
+          name: fortuna-db-export
+          path: db_export/
           retention-days: 7
