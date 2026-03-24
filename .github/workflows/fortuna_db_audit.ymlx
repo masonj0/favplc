@@ -801,11 +801,10 @@ jobs:
             python3 scripts/generate_gha_summary.py || true
           fi
 
-      - name: Export to CSV & Excel
+      - name: Export to CSV & TSV
         if: always()
         run: |
-          python3 scripts/fortuna_to_csv.py fortuna.db --output db_audit_export
-          python3 scripts/fortuna_to_excel.py fortuna.db --output db_audit_export/fortuna_audit_data.xlsx
+          python3 scripts/fortuna_export.py fortuna.db --output-dir db_audit_export --format both
 
       - name: Upload Audit Snapshots
         if: always()
