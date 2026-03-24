@@ -5803,6 +5803,14 @@ def generate_goldmine_report(races: List[Any], all_races: Optional[List[Any]] = 
     def render_races(races_to_render, label, description=None):
         if not races_to_render:
             return
+
+        # JB's Best Bets Sort: Best 2nd-favorite odds (gap_abs) descending (v3.3.1)
+        races_to_render = sorted(
+            races_to_render,
+            key=lambda x: get_field(x, 'metadata', {}).get('gap_abs', 0.0),
+            reverse=True
+        )
+
         report_lines.append(f"--- {label.upper()} ---")
         if description:
             report_lines.append(f"({description})")
@@ -6398,14 +6406,21 @@ def generate_summary_grid(races: List[Any], all_races: Optional[List[Any]] = Non
             'key': '[K]' if get_field(race, 'metadata', {}).get('is_superfecta_key') else ''
         })
 
-    # Sort by MTP
+    # Standard sort by MTP
     table_races.sort(key=lambda x: x['mtp'])
+
+    # JB's Preferred Sort (v3.3.1): Goldmines with best 2nd-fav odds first
+    goldmines = [tr for tr in table_races if tr['gold']]
+    goldmines.sort(key=lambda x: x['gap'], reverse=True)
+    non_goldmines = [tr for tr in table_races if not tr['gold']]
+
+    table_races = goldmines + non_goldmines
 
     if not table_races:
         return "No upcoming races in the next 18 hours."
 
     lines = [
-        "| MTP | CAT | TRACK | R# | FLD | TOP 5 | GAP | | |",
+        "| MTP | CAT | TRACK | R# | FLD | TOP 5 | 2nd-ODDS | | |",
         "|:---:|:---:|:---|:---:|:---:|:---|:---:|:---:|:---:|"
     ]
     for tr in table_races:
