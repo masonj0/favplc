@@ -106,7 +106,7 @@ def parse_sl_hard(filepath):
             "PostTime": time_et,
             "FieldSize": str(runners_match.group(1)) if runners_match else "?",
             "Distance": dist_match.group(1) if dist_match else "?",
-            "RaceNum": "?", # Will be assigned by meeting counter
+            "RaceNum": "?",
             "Location": location
         })
 
@@ -166,42 +166,46 @@ def main():
         for r in races:
             r['RaceNum'] = time_to_num[r['PostTime']]
 
-    # 2. Merging Subroutine: Group by Canonical Location and RaceNumber
+    # 2. Merging Subroutine
     merged_map = {}
-
     for r in all_raw_races:
-        if r['Location'] == "Unknown": continue
+        if r['Location'] == "Unknown" or r['PostTime'] == "Unknown": continue
 
-        canon_loc = get_canonical_venue(r['Location'])
         # User requested merging if PostTime, FieldSize, and RaceNum are identical.
-        # Key: (Canonical Venue, RaceNumber)
-        key = (canon_loc, r['RaceNum'])
+        key = (r['PostTime'], r['FieldSize'], r['RaceNum'])
 
         if key not in merged_map:
             merged_map[key] = r
         else:
             existing = merged_map[key]
-
-            # User noted that if PostTime, FieldSize, and RaceNum match, it's the same race.
-            # Some sources have slightly different FieldSize (late scratches).
-            # We will merge if the RaceNum and CanonLoc match.
-
-            # Prefer more descriptive location
+            # Use longer location name if they aren't the same
             if len(r['Location']) > len(existing['Location']):
                 existing['Location'] = r['Location']
-
             # Merge distance
             if (existing['Distance'] == "?" or len(r['Distance']) > len(existing['Distance'])) and r['Distance'] != "?":
                 existing['Distance'] = r['Distance']
 
-            # Field size
+    # 3. Handle identical tracks (CanonLoc + Num) that might have slight data differences
+    final_merged = {}
+    for r in merged_map.values():
+        canon_loc = get_canonical_venue(r['Location'])
+        key = (canon_loc, r['RaceNum'])
+
+        if key not in final_merged:
+            final_merged[key] = r
+        else:
+            existing = final_merged[key]
+            if len(r['Location']) > len(existing['Location']):
+                existing['Location'] = r['Location']
+            if (existing['Distance'] == "?" or len(r['Distance']) > len(existing['Distance'])) and r['Distance'] != "?":
+                existing['Distance'] = r['Distance']
             if (existing['FieldSize'] == "?" or existing['FieldSize'] == "0") and r['FieldSize'] != "?":
                 existing['FieldSize'] = r['FieldSize']
+            # Times might differ across feeds; prefer earliest ET if both valid
+            if r['PostTime'] < existing['PostTime'] and r['PostTime'] != "Unknown":
+                 existing['PostTime'] = r['PostTime']
 
-            # PostTime merging: Prefer the one already set (usually RPB2B if US)
-            # If they differ by a lot, it might be a different race, but we trust the Race# + CanonLoc merge.
-
-    final_list = list(merged_map.values())
+    final_list = list(final_merged.values())
 
     # Sort primarily by post time, then by location
     final_list.sort(key=lambda x: (x['PostTime'], x['Location']))
@@ -214,12 +218,27 @@ def main():
             final_list.append(r)
             existing_canonical.add(canon)
 
+    # Extra Credit: Marker for races happening soon
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    now_et = datetime.now(et_tz)
+
     if final_list:
         grid_lines = []
-        grid_lines.append(f"{'PostTime (ET)':<13} | {'Field':<5} | {'Distance':<15} | {'Location':<30} | {'Race#'}")
-        grid_lines.append("-" * 85)
+        grid_lines.append(f"{'PostTime (ET)':<14} | {'Field':<5} | {'Distance':<15} | {'Location':<30} | {'Race#'}")
+        grid_lines.append("-" * 88)
         for r in final_list:
-            grid_lines.append(f"{r['PostTime']:<13} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {r['Location']:<30} | {r['RaceNum']}")
+            display_time = r['PostTime']
+            marker = "  "
+
+            try:
+                # Assuming current date 2026-03-26 for marker logic
+                race_time = datetime.strptime("2026-03-26 " + r['PostTime'], "%Y-%m-%d %H:%M").replace(tzinfo=et_tz)
+                # If race is in the next 15 minutes or was in the last 5 minutes
+                if now_et - timedelta(minutes=5) <= race_time <= now_et + timedelta(minutes=15):
+                    marker = ">>"
+            except: pass
+
+            grid_lines.append(f"{marker}{display_time:<12} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {r['Location']:<30} | {r['RaceNum']}")
 
         grid_text = "\n".join(grid_lines)
         print(grid_text)

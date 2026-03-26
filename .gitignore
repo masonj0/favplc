@@ -83,6 +83,8 @@ ras_*.json
 sportinglife_*.html
 hkjc_*.html
 jra_*.html
+tf_*.html
+drf_*.html
 
 # Database
 *.db
