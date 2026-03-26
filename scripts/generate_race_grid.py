@@ -2,26 +2,54 @@ import json
 import os
 import re
 import glob
-from datetime import datetime
+from datetime import datetime, timedelta
 import zoneinfo
 
+def get_tz_for_country(country_name, location=""):
+    """Returns a ZoneInfo object for the given country name."""
+    c = country_name.lower()
+    if "united states" in c or "usa" in c:
+        return zoneinfo.ZoneInfo("America/New_York")
+    if "england" in c or "wales" in c or "united kingdom" in c or "scotland" in c:
+        return zoneinfo.ZoneInfo("Europe/London")
+    if "eire" in c or "ireland" in c:
+        return zoneinfo.ZoneInfo("Europe/Dublin")
+    if "france" in c:
+        return zoneinfo.ZoneInfo("Europe/Paris")
+    if "south africa" in c or "saf" in c:
+        return zoneinfo.ZoneInfo("Africa/Johannesburg")
+    if "turkey" in c:
+        return zoneinfo.ZoneInfo("Europe/Istanbul")
+    if "australia" in c:
+        return zoneinfo.ZoneInfo("Australia/Sydney")
+    if "new zealand" in c:
+        return zoneinfo.ZoneInfo("Pacific/Auckland")
+    if "japan" in c:
+        return zoneinfo.ZoneInfo("Asia/Tokyo")
+    if "hong kong" in c:
+        return zoneinfo.ZoneInfo("Asia/Hong_Kong")
+    if "south korea" in c:
+        return zoneinfo.ZoneInfo("Asia/Seoul")
+
+    return zoneinfo.ZoneInfo("UTC")
+
 def parse_rpb2b_json(filepath):
-    """Parses US race data from RPB2B JSON export."""
+    """Parses US race data from RPB2B JSON export and converts to ET."""
     if not os.path.exists(filepath): return []
     try:
         with open(filepath, 'r') as f:
             data = json.load(f)
     except: return []
 
-    eastern = zoneinfo.ZoneInfo("America/New_York")
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
     races = []
     for meeting in data:
         location = meeting.get('name', 'Unknown')
         for race in meeting.get("races", []):
             try:
                 dt_utc = datetime.fromisoformat(race.get("datetimeUtc").replace('Z', '+00:00'))
-                dt_et = dt_utc.astimezone(eastern)
-                time_str = dt_et.strftime('%H:%M ET')
+                dt_et = dt_utc.astimezone(et_tz)
+                time_str = dt_et.strftime('%H:%M')
             except:
                 time_str = "Unknown"
 
@@ -29,19 +57,20 @@ def parse_rpb2b_json(filepath):
                 "PostTime": time_str,
                 "FieldSize": race.get("numberOfRunners", "?"),
                 "Distance": "?",
-                "Purse": "?",
+                "RaceNum": race.get("raceNumber", "?"),
                 "Location": location
             })
     return races
 
 def parse_sl_hard(filepath):
-    """Parses international race data from Sporting Life HTML using regex on the embedded JSON."""
+    """Parses international race data from Sporting Life HTML and converts to ET."""
     if not os.path.exists(filepath): return []
     try:
         with open(filepath, 'r') as f:
             content = f.read()
     except: return []
 
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
     time_matches = list(re.finditer(r'"time":"([^"]+)"', content))
 
     races = []
@@ -54,24 +83,32 @@ def parse_sl_hard(filepath):
         course_matches = re.findall(r'"course_name":"([^"]+)"', look_back)
         location = course_matches[-1] if course_matches else "Unknown"
 
+        # Look back for country
+        country_match = re.search(r'"long_name":"([^"]+)"', look_back)
+        country = country_match.group(1) if country_match else "Unknown"
+
         # Look forward for race details
         look_forward = content[pos:pos+1500]
         runners_match = re.search(r'"ride_count":(\d+)', look_forward)
         if not runners_match:
             runners_match = re.search(r'"number_of_runners":(\d+)', look_forward)
-
         dist_match = re.search(r'"distance":"([^"]+)"', look_forward)
-        purse_match = re.search(r'"purse":"([^"]+)"', look_forward)
-        if not purse_match:
-            purse_match = re.search(r'"prize_money":"([^"]+)"', look_forward)
-        if not purse_match:
-            purse_match = re.search(r'"value":"([^"]+)"', look_forward)
+
+        # Adjust Time to ET
+        try:
+            local_tz = get_tz_for_country(country, location)
+            # Use fixed date 2026-03-26 for testing conversion
+            dt_local = datetime.strptime("2026-03-26 " + time_str, "%Y-%m-%d %H:%M").replace(tzinfo=local_tz)
+            dt_et = dt_local.astimezone(et_tz)
+            time_et = dt_et.strftime('%H:%M')
+        except:
+            time_et = time_str
 
         races.append({
-            "PostTime": time_str,
+            "PostTime": time_et,
             "FieldSize": runners_match.group(1) if runners_match else "?",
             "Distance": dist_match.group(1) if dist_match else "?",
-            "Purse": purse_match.group(1).replace('\\u00a3', '£') if purse_match else "?",
+            "RaceNum": "?",
             "Location": location
         })
 
@@ -95,16 +132,15 @@ def parse_ras_simple(filepath):
                     "PostTime": "See Guide",
                     "FieldSize": "?",
                     "Distance": "?",
-                    "Purse": "?",
+                    "RaceNum": meeting.get("RaceNumber", "?"),
                     "Location": loc
                 })
     return races
 
 def main():
-    """Aggregates and displays a worldwide race grid from cached data files."""
+    """Aggregates and displays a worldwide race grid with all times in US Eastern Time."""
     all_races = []
 
-    # Find all relevant data files in current directory
     rpb2b_files = glob.glob('rpb2b_*.json')
     for f in rpb2b_files:
         all_races.extend(parse_rpb2b_json(f))
@@ -120,8 +156,16 @@ def main():
 
     seen = set()
     final_list = []
+    sl_counters = {}
+
     for r in all_races:
         if r['Location'] == "Unknown": continue
+
+        if r['RaceNum'] == "?":
+            loc = r['Location']
+            sl_counters[loc] = sl_counters.get(loc, 0) + 1
+            r['RaceNum'] = sl_counters[loc]
+
         key = (r['PostTime'], r['Location'])
         if key not in seen:
             seen.add(key)
@@ -139,10 +183,10 @@ def main():
             existing_locs.add(track_only)
 
     if final_list:
-        print(f"{'PostTime':<12} | {'Field':<5} | {'Distance':<15} | {'Purse':<15} | {'Location'}")
-        print("-" * 100)
+        print(f"{'PostTime (ET)':<13} | {'Field':<5} | {'Distance':<15} | {'Location':<30} | {'Race#'}")
+        print("-" * 85)
         for r in final_list:
-            print(f"{r['PostTime']:<12} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {str(r['Purse']):<15} | {r['Location']}")
+            print(f"{r['PostTime']:<13} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {r['Location']:<30} | {r['RaceNum']}")
     else:
         print("No race data files found (expecting rpb2b_*.json, sportinglife_*.html, ras_*.json)")
 
