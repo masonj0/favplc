@@ -1,0 +1,251 @@
+PostTime     | Field | Distance        | Purse           | Location
+----------------------------------------------------------------------------------------------------
+00:10        | 7     | 1m              | ?               | Penn National
+00:25        | 5     | 6f 110y         | ?               | Charles Town
+00:25        | 11    | 1m              | ?               | Turfway Park
+00:39        | 9     | 1f 110y         | ?               | Penn National
+00:53        | 7     | 6f 110y         | ?               | Charles Town
+00:55        | 12    | 6f              | ?               | Turfway Park
+01:21        | 6     | 6f 110y         | ?               | Charles Town
+01:25        | 11    | 1m              | ?               | Turfway Park
+01:49        | 7     | 4f 110y         | ?               | Charles Town
+01:55        | 11    | 6f 110y         | ?               | Turfway Park
+02:17        | 7     | 1m              | ?               | Charles Town
+02:25        | 13    | 4f 214y         | ?               | Turfway Park
+10:35        | 8     | 4f 214y         | ?               | Vaal
+11:10        | 7     | 7f 46y          | ?               | Vaal
+11:23        | 11    | 1m 5f 120y      | ?               | Lisieux
+11:45        | 7     | 7f 46y          | ?               | Vaal
+11:55        | 14    | 1m 2f 96y       | ?               | Lisieux
+12:15 ET     | 6     | ?               | ?               | Mahoning Valley
+12:20        | 9     | 1m 3f 205y      | ?               | Vaal
+12:27        | 14    | 1m 5f 120y      | ?               | Lisieux
+12:43 ET     | 5     | ?               | ?               | Mahoning Valley
+12:50 ET     | 8     | ?               | ?               | Gulfstream Park
+12:55        | 16    | 1m 1f 97y       | ?               | Chantilly
+12:55        | 12    | 1m 209y         | ?               | Vaal
+13:11 ET     | 6     | ?               | ?               | Mahoning Valley
+13:12        | 18    | 1m 5f 120y      | ?               | Lisieux
+13:21 ET     | 9     | ?               | ?               | Gulfstream Park
+13:30        | 8     | 1m 1f 97y       | ?               | Chantilly
+13:30        | 9     | 1m 209y         | ?               | Vaal
+13:30 ET     | 9     | ?               | ?               | Oaklawn Park
+13:39 ET     | 6     | ?               | ?               | Mahoning Valley
+13:47        | 18    | 1m 5f 120y      | ?               | Lisieux
+13:52 ET     | 7     | ?               | ?               | Gulfstream Park
+14:03 ET     | 9     | ?               | ?               | Oaklawn Park
+14:05        | 8     | 1m 1f 97y       | ?               | Chantilly
+14:05        | 12    | 1m 209y         | ?               | Vaal
+14:07        | 12    | 1m 6f 21y       | ?               | Southwell
+14:07 ET     | 7     | ?               | ?               | Mahoning Valley
+14:18        | 7     | 2m 7f 136y      | ?               | Chepstow
+14:22        | 17    | 1m 2f 96y       | ?               | Lisieux
+14:23 ET     | 7     | ?               | ?               | Gulfstream Park
+14:28        | 3     | 3m 2f           | ?               | Warwick
+14:34 ET     | 7     | ?               | ?               | Oaklawn Park
+14:35 ET     | 7     | ?               | ?               | Mahoning Valley
+14:35 ET     | 7     | ?               | ?               | Louisiana Downs
+14:37        | 4     | 1m 13y          | ?               | Southwell
+14:40        | 13    | 6f 211y         | ?               | Chantilly
+14:40        | 9     | 1m 1f 97y       | ?               | Vaal
+14:42        | 6     | 2m              | ?               | Clonmel
+14:50        | 10    | 2m 16y          | ?               | Chepstow
+14:54 ET     | 8     | ?               | ?               | Gulfstream Park
+14:57        | 14    | 1m 2f 96y       | ?               | Lisieux
+14:58        | 7     | 2m 4f           | ?               | Warwick
+15:03 ET     | 6     | ?               | ?               | Mahoning Valley
+15:06 ET     | 8     | ?               | ?               | Oaklawn Park
+15:07        | 11    | 1m 13y          | ?               | Southwell
+15:12        | 8     | 2m 7f 122y      | ?               | Clonmel
+15:15        | 14    | 6f 211y         | ?               | Chantilly
+15:20        | 7     | 3m 6f 136y      | ?               | Chepstow
+15:25 ET     | 7     | ?               | ?               | Gulfstream Park
+15:28        | 9     | 2m              | ?               | Warwick
+15:30        | 14    | 1m 6f 146y      | ?               | Lisieux
+15:30 ET     | 10    | ?               | ?               | Louisiana Downs
+15:31 ET     | 7     | ?               | ?               | Mahoning Valley
+15:37        | 11    | 7f 14y          | ?               | Southwell
+15:38 ET     | 10    | ?               | ?               | Oaklawn Park
+15:42        | 14    | 2m              | ?               | Clonmel
+15:45        | 13    | 1m 6f 146y      | ?               | Toulouse
+15:50        | 9     | 2m 3f 100y      | ?               | Chepstow
+15:55 ET     | 8     | ?               | ?               | Gulfstream Park
+15:55 ET     | 10    | ?               | ?               | Louisiana Downs
+15:58        | 6     | 3m              | ?               | Warwick
+16:00        | 15    | 6f 211y         | ?               | Chantilly
+16:07        | 12    | 6f 16y          | ?               | Southwell
+16:12        | 16    | 2m 2f 188y      | ?               | Clonmel
+16:12 ET     | 10    | ?               | ?               | Oaklawn Park
+16:15        | 6     | 5f 110y         | ?               | Mahoning Valley
+16:15 ET     | 10    | ?               | ?               | Turf Paradise
+16:17        | 12    | 1m 5f 147y      | ?               | Toulouse
+16:20        | 11    | 2m 7f 131y      | ?               | Chepstow
+16:20 ET     | 8     | ?               | ?               | Louisiana Downs
+16:25 ET     | 6     | ?               | ?               | Gulfstream Park
+16:30        | 8     | 2m              | ?               | Warwick
+16:35        | 14    | 6f 211y         | ?               | Chantilly
+16:37        | 7     | 6f 16y          | ?               | Southwell
+16:42        | 12    | 2m 2f 188y      | ?               | Clonmel
+16:43        | 5     | 6f              | ?               | Mahoning Valley
+16:45 ET     | 9     | ?               | ?               | Oaklawn Park
+16:45 ET     | 10    | ?               | ?               | Louisiana Downs
+16:49 ET     | 7     | ?               | ?               | Turf Paradise
+16:50        | 15    | 2m 16y          | ?               | Chepstow
+16:50        | 8     | 6f              | ?               | Gulfstream
+16:52        | 16    | 1m 5f 147y      | ?               | Toulouse
+16:55 ET     | 7     | ?               | ?               | Gulfstream Park
+17:00        | 11    | ?               | ?               | Warwick
+17:07        | 10    | ?               | ?               | Southwell
+17:10        | 15    | 1m 5f 120y      | ?               | Chantilly
+17:10 ET     | 10    | ?               | ?               | Louisiana Downs
+17:11        | 6     | 1m              | ?               | Mahoning Valley
+17:12        | 16    | 2m 2f 188y      | ?               | Clonmel
+17:19 ET     | 7     | ?               | ?               | Oaklawn Park
+17:20        | 10    | 4f 214y         | ?               | Chepstow
+17:21        | 9     | 6f              | ?               | Gulfstream
+17:22 ET     | 7     | ?               | ?               | Turf Paradise
+17:25 ET     | 9     | ?               | ?               | Gulfstream Park
+17:30        | 11    | 6f              | ?               | Chelmsford City
+17:30        | 16    | 1m 6f 146y      | ?               | Toulouse
+17:30        | 9     | 6f              | ?               | Oaklawn Park
+17:35 ET     | 10    | ?               | ?               | Louisiana Downs
+17:39        | 6     | 6f              | ?               | Mahoning Valley
+17:42        | 15    | 2m              | ?               | Clonmel
+17:45 ET     | 7     | ?               | ?               | Penn National
+17:52        | 7     | 5f 110y         | ?               | Gulfstream
+17:52 ET     | 10    | ?               | ?               | Oaklawn Park
+17:55 ET     | 8     | ?               | ?               | Turf Paradise
+17:55 ET     | 12    | ?               | ?               | Turfway Park
+18:00        | 9     | 6f              | ?               | Chelmsford City
+18:03        | 9     | 1m 110y         | ?               | Oaklawn Park
+18:05        | 15    | 1m 6f 146y      | ?               | Toulouse
+18:07        | 7     | 6f              | ?               | Mahoning Valley
+18:12        | 8     | ?               | ?               | Clonmel
+18:14 ET     | 6     | ?               | ?               | Penn National
+18:23        | 7     | 6f              | ?               | Gulfstream
+18:23 ET     | 11    | ?               | ?               | Turf Paradise
+18:25 ET     | 12    | ?               | ?               | Turfway Park
+18:30        | 9     | 1m 5f 66y       | ?               | Chelmsford City
+18:34        | 7     | 1m              | ?               | Oaklawn Park
+18:35        | 7     | 6f              | ?               | Mahoning Valley
+18:37        | 16    | 1m 6f 146y      | ?               | Toulouse
+18:43 ET     | 7     | ?               | ?               | Penn National
+18:51 ET     | 8     | ?               | ?               | Turf Paradise
+18:54        | 8     | 1m              | ?               | Gulfstream
+18:55 ET     | 8     | ?               | ?               | Turfway Park
+19:00        | 8     | 5f              | ?               | Chelmsford City
+19:00 ET     | 10    | ?               | ?               | Remington Park
+19:00 ET     | 6     | ?               | ?               | Charles Town
+19:03        | 6     | 6f              | ?               | Mahoning Valley
+19:06        | 8     | 1m 110y         | ?               | Oaklawn Park
+19:09        | 11    | 1m 6f 146y      | ?               | Toulouse
+19:12 ET     | 6     | ?               | ?               | Penn National
+19:19 ET     | 10    | ?               | ?               | Turf Paradise
+19:25        | 7     | 6f              | ?               | Gulfstream
+19:25 ET     | 11    | ?               | ?               | Turfway Park
+19:27 ET     | 10    | ?               | ?               | Remington Park
+19:30        | 7     | 7f              | ?               | Chelmsford City
+19:30 ET     | 6     | ?               | ?               | Charles Town
+19:31        | 7     | 6f              | ?               | Mahoning Valley
+19:38        | 10    | 1m 110y         | ?               | Oaklawn Park
+19:41        | 14    | 6f 110y         | ?               | Toulouse
+19:41 ET     | 6     | ?               | ?               | Penn National
+19:52 ET     | 8     | ?               | ?               | Turf Paradise
+19:54 ET     | 10    | ?               | ?               | Remington Park
+19:55        | 8     | 6f              | ?               | Gulfstream
+19:55 ET     | 12    | ?               | ?               | Turfway Park
+19:57 ET     | 6     | ?               | ?               | Charles Town
+20:00        | 11    | 1m 2f           | ?               | Chelmsford City
+20:10 ET     | 7     | ?               | ?               | Penn National
+20:12        | 10    | 1m 110y         | ?               | Oaklawn Park
+20:15        | 10    | 1m              | ?               | Turf Paradise
+20:21 ET     | 10    | ?               | ?               | Remington Park
+20:25        | 6     | 7f              | ?               | Gulfstream
+20:25 ET     | 11    | ?               | ?               | Turfway Park
+20:25 ET     | 5     | ?               | ?               | Charles Town
+20:30        | 6     | 2m 4f 63y       | ?               | Chelmsford City
+20:39 ET     | 9     | ?               | ?               | Penn National
+20:45        | 9     | 1m              | ?               | Oaklawn Park
+20:48 ET     | 10    | ?               | ?               | Remington Park
+20:49        | 7     | 1m              | ?               | Turf Paradise
+20:53 ET     | 7     | ?               | ?               | Charles Town
+20:55        | 7     | 1m              | ?               | Gulfstream
+20:55 ET     | 12    | ?               | ?               | Turfway Park
+21:15 ET     | 10    | ?               | ?               | Remington Park
+21:19        | 7     | 1m              | ?               | Oaklawn Park
+21:21 ET     | 6     | ?               | ?               | Charles Town
+21:22        | 7     | 6f 110y         | ?               | Turf Paradise
+21:25        | 9     | 5f 110y         | ?               | Gulfstream
+21:25 ET     | 11    | ?               | ?               | Turfway Park
+21:42 ET     | 10    | ?               | ?               | Remington Park
+21:45        | 7     | 6f              | ?               | Penn National
+21:49 ET     | 7     | ?               | ?               | Charles Town
+21:52        | 10    | 6f              | ?               | Oaklawn Park
+21:55        | 8     | 1m              | ?               | Turf Paradise
+21:55        | 13    | 5f              | ?               | Turfway Park
+21:55 ET     | 11    | ?               | ?               | Turfway Park
+22:09 ET     | 10    | ?               | ?               | Remington Park
+22:14        | 6     | 6f              | ?               | Penn National
+22:17 ET     | 7     | ?               | ?               | Charles Town
+22:23        | 11    | 6f              | ?               | Turf Paradise
+22:25        | 14    | 6f 110y         | ?               | Turfway Park
+22:25 ET     | 12    | ?               | ?               | Turfway Park
+22:36 ET     | 9     | ?               | ?               | Remington Park
+22:43        | 7     | 1m              | ?               | Penn National
+22:51        | 8     | 1m              | ?               | Turf Paradise
+22:55        | 8     | 1m              | ?               | Turfway Park
+23:00        | 6     | 7f              | ?               | Charles Town
+23:03 ET     | 9     | ?               | ?               | Remington Park
+23:12        | 6     | 1m              | ?               | Penn National
+23:19        | 11    | 5f              | ?               | Turf Paradise
+23:25        | 11    | 6f              | ?               | Turfway Park
+23:30        | 6     | 4f 110y         | ?               | Charles Town
+23:41        | 6     | 6f              | ?               | Penn National
+23:52        | 8     | 6f              | ?               | Turf Paradise
+23:55        | 14    | 6f              | ?               | Turfway Park
+23:57        | 6     | 4f 110y         | ?               | Charles Town
+See Guide    | ?     | ?               | ?               | Muswellbrook (Australia)
+See Guide    | ?     | ?               | ?               | Bendigo (Australia)
+See Guide    | ?     | ?               | ?               | Darwin (Australia)
+See Guide    | ?     | ?               | ?               | Toowoomba (Australia)
+See Guide    | ?     | ?               | ?               | Launceston (Australia)
+See Guide    | ?     | ?               | ?               | Cranbourne (Australia)
+See Guide    | ?     | ?               | ?               | Sirinyer (Turkey)
+See Guide    | ?     | ?               | ?               | Bordeaux (France)
+See Guide    | ?     | ?               | ?               | Compiegne (France)
+See Guide    | ?     | ?               | ?               | Fairview Aw (South Africa)
+See Guide    | ?     | ?               | ?               | Chelmsford (United Kingdom)
+See Guide    | ?     | ?               | ?               | Wingatui (New Zealand)
+See Guide    | ?     | ?               | ?               | Busan (South Korea)
+See Guide    | ?     | ?               | ?               | Ohi (Japan)
+See Guide    | ?     | ?               | ?               | Riverina Paceway (Australia)
+See Guide    | ?     | ?               | ?               | Bathurst (Australia)
+See Guide    | ?     | ?               | ?               | Mildura (Australia)
+See Guide    | ?     | ?               | ?               | Terang (Australia)
+See Guide    | ?     | ?               | ?               | Menangle (Australia)
+See Guide    | ?     | ?               | ?               | Albion Park (Australia)
+See Guide    | ?     | ?               | ?               | Gloucester Park (Australia)
+See Guide    | ?     | ?               | ?               | Wagin (Australia)
+See Guide    | ?     | ?               | ?               | Marseille-Borely (France)
+See Guide    | ?     | ?               | ?               | Alexandra Park (New Zealand)
+See Guide    | ?     | ?               | ?               | Addington (New Zealand)
+See Guide    | ?     | ?               | ?               | Healesville (Australia)
+See Guide    | ?     | ?               | ?               | Murray Bridge (Australia)
+See Guide    | ?     | ?               | ?               | Goulburn (Australia)
+See Guide    | ?     | ?               | ?               | Townsville (Australia)
+See Guide    | ?     | ?               | ?               | Q Lakeside (Australia)
+See Guide    | ?     | ?               | ?               | Warragul (Australia)
+See Guide    | ?     | ?               | ?               | The Gardens (Australia)
+See Guide    | ?     | ?               | ?               | Broken Hill (Australia)
+See Guide    | ?     | ?               | ?               | Geelong (Australia)
+See Guide    | ?     | ?               | ?               | Bendigo (Australia)
+See Guide    | ?     | ?               | ?               | Wagga (Australia)
+See Guide    | ?     | ?               | ?               | Mandurah (Australia)
+See Guide    | ?     | ?               | ?               | Waterford (Ireland)
+See Guide    | ?     | ?               | ?               | Limerick (Ireland)
+See Guide    | ?     | ?               | ?               | Galway (Ireland)
+See Guide    | ?     | ?               | ?               | Enniscorthy (Ireland)
+See Guide    | ?     | ?               | ?               | Mullingar (Ireland)
+See Guide    | ?     | ?               | ?               | Dunstall Park (United Kingdom)
+See Guide    | ?     | ?               | ?               | Addington (New Zealand)
+See Guide    | ?     | ?               | ?               | Manawatu (New Zealand)
