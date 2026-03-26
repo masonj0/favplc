@@ -85,6 +85,7 @@ hkjc_*.html
 jra_*.html
 tf_*.html
 drf_*.html
+timef*.html
 
 # Database
 *.db

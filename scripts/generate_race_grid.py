@@ -4,7 +4,7 @@ import re
 import glob
 from datetime import datetime, timedelta
 import zoneinfo
-from fortuna_utils import get_canonical_venue
+from fortuna_utils import get_canonical_venue, detect_discipline
 
 def get_tz_for_country(country_name, location=""):
     """Returns a ZoneInfo object for the given country name."""
@@ -46,6 +46,8 @@ def parse_rpb2b_json(filepath):
     races = []
     for meeting in data:
         location = meeting.get('name', 'Unknown')
+        # RPB2B for US is almost exclusively Thoroughbred
+        disc = "T"
         for race in meeting.get("races", []):
             try:
                 dt_utc = datetime.fromisoformat(race.get("datetimeUtc").replace('Z', '+00:00'))
@@ -59,7 +61,8 @@ def parse_rpb2b_json(filepath):
                 "FieldSize": str(race.get("numberOfRunners", "?")),
                 "Distance": "?",
                 "RaceNum": str(race.get("raceNumber", "?")),
-                "Location": location
+                "Location": location,
+                "Discipline": disc
             })
     return races
 
@@ -87,13 +90,22 @@ def parse_sl_hard(filepath):
         country_match = re.search(r'"long_name":"([^"]+)"', look_back)
         country = country_match.group(1) if country_match else "Unknown"
 
+        # Look forward for race details
         look_forward = content[pos:pos+1500]
         runners_match = re.search(r'"ride_count":(\d+)', look_forward)
         if not runners_match:
             runners_match = re.search(r'"number_of_runners":(\d+)', look_forward)
         dist_match = re.search(r'"distance":"([^"]+)"', look_forward)
 
-        # Adjust Time to ET
+        # Detect discipline
+        disc = detect_discipline(look_forward[:2000]) # Use a window around the race
+        if not disc or disc == "Unknown":
+             # Try a wider window or meeting level
+             disc = detect_discipline(look_back + look_forward)
+
+        # Normalize to one char
+        d_code = disc[0].upper() if disc else "T"
+
         try:
             local_tz = get_tz_for_country(country, location)
             dt_local = datetime.strptime("2026-03-26 " + time_str, "%Y-%m-%d %H:%M").replace(tzinfo=local_tz)
@@ -107,7 +119,8 @@ def parse_sl_hard(filepath):
             "FieldSize": str(runners_match.group(1)) if runners_match else "?",
             "Distance": dist_match.group(1) if dist_match else "?",
             "RaceNum": "?",
-            "Location": location
+            "Location": location,
+            "Discipline": d_code
         })
 
     return races
@@ -121,8 +134,11 @@ def parse_ras_simple(filepath):
     except: return []
 
     races = []
-    for disc in data:
-        for country in disc.get("Countries", []):
+    for disc_data in data:
+        disc_full = disc_data.get("DisciplineFullText", "Thoroughbred")
+        d_code = disc_full[0].upper() if disc_full else "T"
+
+        for country in disc_data.get("Countries", []):
             cname = country.get("CountryName", "")
             for meeting in country.get("Meetings", []):
                 loc = f"{meeting.get('Course')} ({cname})"
@@ -131,7 +147,8 @@ def parse_ras_simple(filepath):
                     "FieldSize": "?",
                     "Distance": "?",
                     "RaceNum": str(meeting.get("RaceNumber", "?")),
-                    "Location": loc
+                    "Location": loc,
+                    "Discipline": d_code
                 })
     return races
 
@@ -171,46 +188,40 @@ def main():
     for r in all_raw_races:
         if r['Location'] == "Unknown" or r['PostTime'] == "Unknown": continue
 
-        # User requested merging if PostTime, FieldSize, and RaceNum are identical.
-        key = (r['PostTime'], r['FieldSize'], r['RaceNum'])
+        canon_loc = get_canonical_venue(r['Location'])
+        key = (canon_loc, r['RaceNum'])
 
         if key not in merged_map:
             merged_map[key] = r
         else:
             existing = merged_map[key]
-            # Use longer location name if they aren't the same
-            if len(r['Location']) > len(existing['Location']):
-                existing['Location'] = r['Location']
-            # Merge distance
-            if (existing['Distance'] == "?" or len(r['Distance']) > len(existing['Distance'])) and r['Distance'] != "?":
-                existing['Distance'] = r['Distance']
-
-    # 3. Handle identical tracks (CanonLoc + Num) that might have slight data differences
-    final_merged = {}
-    for r in merged_map.values():
-        canon_loc = get_canonical_venue(r['Location'])
-        key = (canon_loc, r['RaceNum'])
-
-        if key not in final_merged:
-            final_merged[key] = r
-        else:
-            existing = final_merged[key]
             if len(r['Location']) > len(existing['Location']):
                 existing['Location'] = r['Location']
             if (existing['Distance'] == "?" or len(r['Distance']) > len(existing['Distance'])) and r['Distance'] != "?":
                 existing['Distance'] = r['Distance']
             if (existing['FieldSize'] == "?" or existing['FieldSize'] == "0") and r['FieldSize'] != "?":
                 existing['FieldSize'] = r['FieldSize']
-            # Times might differ across feeds; prefer earliest ET if both valid
             if r['PostTime'] < existing['PostTime'] and r['PostTime'] != "Unknown":
                  existing['PostTime'] = r['PostTime']
 
-    final_list = list(final_merged.values())
+    # 3. Final consolidation by User Core Identity (Time, Field, Num)
+    user_merged = {}
+    for r in merged_map.values():
+        if r['PostTime'] == "See Guide": continue
+        ukey = (r['PostTime'], r['FieldSize'], r['RaceNum'])
 
-    # Sort primarily by post time, then by location
+        if ukey not in user_merged:
+            user_merged[ukey] = r
+        else:
+            existing = user_merged[ukey]
+            if len(r['Location']) > len(existing['Location']):
+                existing['Location'] = r['Location']
+            if existing['Distance'] == "?" and r['Distance'] != "?":
+                existing['Distance'] = r['Distance']
+
+    final_list = list(user_merged.values())
     final_list.sort(key=lambda x: (x['PostTime'], x['Location']))
 
-    # Add unique locations from RAS that weren't in the others
     existing_canonical = {get_canonical_venue(x['Location']) for x in final_list}
     for r in ras_simple:
         canon = get_canonical_venue(r['Location'])
@@ -218,33 +229,30 @@ def main():
             final_list.append(r)
             existing_canonical.add(canon)
 
-    # Extra Credit: Marker for races happening soon
     et_tz = zoneinfo.ZoneInfo("America/New_York")
     now_et = datetime.now(et_tz)
 
     if final_list:
         grid_lines = []
-        grid_lines.append(f"{'PostTime (ET)':<14} | {'Field':<5} | {'Distance':<15} | {'Location':<30} | {'Race#'}")
-        grid_lines.append("-" * 88)
+        # User requested: Discipline code between Location and Race#
+        grid_lines.append(f"{'PostTime (ET)':<14} | {'Field':<5} | {'Distance':<15} | {'Location':<30} | {'D'} | {'Race#'}")
+        grid_lines.append("-" * 95)
         for r in final_list:
             display_time = r['PostTime']
             marker = "  "
-
             try:
-                # Assuming current date 2026-03-26 for marker logic
                 race_time = datetime.strptime("2026-03-26 " + r['PostTime'], "%Y-%m-%d %H:%M").replace(tzinfo=et_tz)
-                # If race is in the next 15 minutes or was in the last 5 minutes
                 if now_et - timedelta(minutes=5) <= race_time <= now_et + timedelta(minutes=15):
                     marker = ">>"
             except: pass
 
-            grid_lines.append(f"{marker}{display_time:<12} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {r['Location']:<30} | {r['RaceNum']}")
+            grid_lines.append(f"{marker}{display_time:<12} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {r['Location']:<30} | {r.get('Discipline', 'T')} | {r['RaceNum']}")
 
         grid_text = "\n".join(grid_lines)
         print(grid_text)
         return grid_text
     else:
-        msg = "No race data files found (expecting rpb2b_*.json, sportinglife_*.html, ras_*.json)"
+        msg = "No race data files found"
         print(msg)
         return msg
 
