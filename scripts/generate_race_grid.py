@@ -46,18 +46,19 @@ def parse_rpb2b_json(filepath):
     races = []
     for meeting in data:
         location = meeting.get('name', 'Unknown')
-        # RPB2B for US is almost exclusively Thoroughbred
         disc = "T"
         for race in meeting.get("races", []):
             try:
                 dt_utc = datetime.fromisoformat(race.get("datetimeUtc").replace('Z', '+00:00'))
                 dt_et = dt_utc.astimezone(et_tz)
-                time_str = dt_et.strftime('%H:%M')
+                # Keep full datetime for sorting and marker
+                time_val = dt_et
             except:
-                time_str = "Unknown"
+                time_val = None
 
             races.append({
-                "PostTime": time_str,
+                "DateTime": time_val,
+                "PostTime": time_val.strftime('%H:%M') if time_val else "Unknown",
                 "FieldSize": str(race.get("numberOfRunners", "?")),
                 "Distance": "?",
                 "RaceNum": str(race.get("raceNumber", "?")),
@@ -90,6 +91,10 @@ def parse_sl_hard(filepath):
         country_match = re.search(r'"long_name":"([^"]+)"', look_back)
         country = country_match.group(1) if country_match else "Unknown"
 
+        # Look for date
+        date_match = re.search(r'"date":"([^"]+)"', look_back)
+        date_str = date_match.group(1) if date_match else "2026-03-26"
+
         # Look forward for race details
         look_forward = content[pos:pos+1500]
         runners_match = re.search(r'"ride_count":(\d+)', look_forward)
@@ -97,25 +102,22 @@ def parse_sl_hard(filepath):
             runners_match = re.search(r'"number_of_runners":(\d+)', look_forward)
         dist_match = re.search(r'"distance":"([^"]+)"', look_forward)
 
-        # Detect discipline
-        disc = detect_discipline(look_forward[:2000]) # Use a window around the race
+        disc = detect_discipline(look_forward[:2000])
         if not disc or disc == "Unknown":
-             # Try a wider window or meeting level
              disc = detect_discipline(look_back + look_forward)
-
-        # Normalize to one char
         d_code = disc[0].upper() if disc else "T"
 
         try:
             local_tz = get_tz_for_country(country, location)
-            dt_local = datetime.strptime("2026-03-26 " + time_str, "%Y-%m-%d %H:%M").replace(tzinfo=local_tz)
+            dt_local = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=local_tz)
             dt_et = dt_local.astimezone(et_tz)
-            time_et = dt_et.strftime('%H:%M')
+            time_val = dt_et
         except:
-            time_et = time_str
+            time_val = None
 
         races.append({
-            "PostTime": time_et,
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
             "FieldSize": str(runners_match.group(1)) if runners_match else "?",
             "Distance": dist_match.group(1) if dist_match else "?",
             "RaceNum": "?",
@@ -143,6 +145,7 @@ def parse_ras_simple(filepath):
             for meeting in country.get("Meetings", []):
                 loc = f"{meeting.get('Course')} ({cname})"
                 races.append({
+                    "DateTime": None,
                     "PostTime": "See Guide",
                     "FieldSize": "?",
                     "Distance": "?",
@@ -178,16 +181,21 @@ def main():
             meetings_data[loc].append(r)
 
     for loc, races in meetings_data.items():
-        unique_times = sorted(list(set(r['PostTime'] for r in races)))
-        time_to_num = {t: str(i + 1) for i, t in enumerate(unique_times)}
+        # Sort by DateTime if available, else PostTime
+        races.sort(key=lambda x: (x['DateTime'] if x['DateTime'] else datetime.min.replace(tzinfo=zoneinfo.ZoneInfo("UTC"))))
+        time_to_num = {}
+        counter = 1
         for r in races:
-            r['RaceNum'] = time_to_num[r['PostTime']]
+            t_key = r['DateTime'] or r['PostTime']
+            if t_key not in time_to_num:
+                time_to_num[t_key] = str(counter)
+                counter += 1
+            r['RaceNum'] = time_to_num[t_key]
 
     # 2. Merging Subroutine
     merged_map = {}
     for r in all_raw_races:
-        if r['Location'] == "Unknown" or r['PostTime'] == "Unknown": continue
-
+        if r['Location'] == "Unknown": continue
         canon_loc = get_canonical_venue(r['Location'])
         key = (canon_loc, r['RaceNum'])
 
@@ -201,14 +209,17 @@ def main():
                 existing['Distance'] = r['Distance']
             if (existing['FieldSize'] == "?" or existing['FieldSize'] == "0") and r['FieldSize'] != "?":
                 existing['FieldSize'] = r['FieldSize']
-            if r['PostTime'] < existing['PostTime'] and r['PostTime'] != "Unknown":
+            # Prefer DateTime from RPB2B/better source
+            if not existing['DateTime'] and r['DateTime']:
+                 existing['DateTime'] = r['DateTime']
                  existing['PostTime'] = r['PostTime']
 
-    # 3. Final consolidation by User Core Identity (Time, Field, Num)
+    # 3. Final consolidation by User Core Identity (DateTime, Field, Num)
     user_merged = {}
     for r in merged_map.values():
         if r['PostTime'] == "See Guide": continue
-        ukey = (r['PostTime'], r['FieldSize'], r['RaceNum'])
+        # Use DateTime if available for precision
+        ukey = (r['DateTime'] if r['DateTime'] else r['PostTime'], r['FieldSize'], r['RaceNum'])
 
         if ukey not in user_merged:
             user_merged[ukey] = r
@@ -220,7 +231,8 @@ def main():
                 existing['Distance'] = r['Distance']
 
     final_list = list(user_merged.values())
-    final_list.sort(key=lambda x: (x['PostTime'], x['Location']))
+    # Sort primarily by DateTime
+    final_list.sort(key=lambda x: (x['DateTime'] if x['DateTime'] else datetime.max.replace(tzinfo=zoneinfo.ZoneInfo("UTC")), x['Location']))
 
     existing_canonical = {get_canonical_venue(x['Location']) for x in final_list}
     for r in ras_simple:
@@ -234,17 +246,16 @@ def main():
 
     if final_list:
         grid_lines = []
-        # User requested: Discipline code between Location and Race#
         grid_lines.append(f"{'PostTime (ET)':<14} | {'Field':<5} | {'Distance':<15} | {'Location':<30} | {'D'} | {'Race#'}")
         grid_lines.append("-" * 95)
         for r in final_list:
             display_time = r['PostTime']
             marker = "  "
-            try:
-                race_time = datetime.strptime("2026-03-26 " + r['PostTime'], "%Y-%m-%d %H:%M").replace(tzinfo=et_tz)
-                if now_et - timedelta(minutes=5) <= race_time <= now_et + timedelta(minutes=15):
+
+            if r['DateTime']:
+                # Correct comparison using full date context
+                if now_et - timedelta(minutes=5) <= r['DateTime'] <= now_et + timedelta(minutes=15):
                     marker = ">>"
-            except: pass
 
             grid_lines.append(f"{marker}{display_time:<12} | {str(r['FieldSize']):<5} | {str(r['Distance']):<15} | {r['Location']:<30} | {r.get('Discipline', 'T')} | {r['RaceNum']}")
 
