@@ -86,6 +86,7 @@ jra_*.html
 tf_*.html
 drf_*.html
 timef*.html
+skysports_*.html
 
 # Database
 *.db
