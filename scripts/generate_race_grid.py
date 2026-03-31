@@ -132,20 +132,420 @@ def parse_sl_hard(filepath):
     return races
 
 def parse_equibase_html(filepath):
-    """Placeholder for Equibase HTML parsing."""
+    """Parses US race data from Equibase Summary HTML."""
     if not os.path.exists(filepath): return []
-    # Basic logic to extract tables or rows if possible
-    return []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except: return []
 
-def parse_drf_html(filepath):
-    """Placeholder for DRF HTML parsing."""
-    if not os.path.exists(filepath): return []
-    return []
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    races = []
 
-def parse_hkjc_html(filepath):
-    """Placeholder for HKJC HTML parsing."""
+    # Extract Venue
+    venue_match = re.search(r'<h3>([^<]+)</h3>', content)
+    location = venue_match.group(1).strip() if venue_match else "Unknown"
+
+    # Find all tables which represent races
+    tables = re.findall(r'<table[^>]*>(.*?)</table>', content, re.DOTALL)
+    for table in tables:
+        # Extract Race Number and Date
+        header_match = re.search(r'Race (\d+) - ([^<]+)', table)
+        if not header_match: continue
+
+        race_num = header_match.group(1)
+        date_str = header_match.group(2).strip()
+
+        # Count rows in tbody to get field size
+        tbody_match = re.search(r'<tbody>(.*?)</tbody>', table, re.DOTALL)
+        field_size = 0
+        if tbody_match:
+            field_size = len(re.findall(r'<tr>', tbody_match.group(1)))
+
+        try:
+            # We don't have time in the summary table usually, just date.
+            # Default to 12:00 PM if time is missing
+            dt = datetime.strptime(date_str, "%B %d, %Y").replace(hour=12, minute=0, tzinfo=et_tz)
+            time_val = dt
+        except:
+            time_val = None
+
+        races.append({
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else "12:00",
+            "FieldSize": str(field_size) if field_size > 0 else "?",
+            "Distance": "?",
+            "RaceNum": race_num,
+            "Location": location,
+            "Discipline": "T"
+        })
+    return races
+
+def parse_drf_html(filepath, target_date):
+    """Parses US race data from DRF HTML."""
     if not os.path.exists(filepath): return []
-    return []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except: return []
+
+    races = []
+    # Extract entries from DRF structured tables or JSON-LD if present
+    # Venue name usually in <h1> or specific class
+    venue_match = re.search(r'<h1[^>]*>([^<]+)</h1>', content)
+    location = venue_match.group(1).strip() if venue_match else "Unknown"
+
+    # Heuristic for DRF race cards
+    race_blocks = re.findall(r'<div[^>]*class="[^"]*race-card[^"]*"[^>]*>(.*?)</div>', content, re.DOTALL)
+    if not race_blocks:
+        race_blocks = re.findall(r'<div[^>]*class="[^"]*race-header[^"]*"[^>]*>(.*?)</div>', content, re.DOTALL)
+
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+
+    for i, block in enumerate(race_blocks):
+        race_num = str(i + 1)
+        num_match = re.search(r'Race\s+(\d+)', block)
+        if num_match: race_num = num_match.group(1)
+
+        time_match = re.search(r'(\d{1,2}:\d{2}\s*[APM]*)', block)
+        time_str = time_match.group(1).strip() if time_match else "12:00"
+
+        runners = re.findall(r'<tr[^>]*class="[^"]*horse-row[^"]*"', block)
+        field_size = len(runners)
+
+        time_val = None
+        try:
+            # DRF is US based
+            dt_str = f"{target_date} {time_str}"
+            if "PM" in time_str.upper() and not time_str.startswith("12"):
+                dt = datetime.strptime(dt_str.replace("PM", "").strip(), "%Y-%m-%d %H:%M")
+                dt = dt.replace(hour=dt.hour + 12)
+            else:
+                dt = datetime.strptime(time_str.replace("AM", "").replace("PM", "").strip(), "%H:%M")
+                dt = dt.replace(year=int(target_date[:4]), month=int(target_date[5:7]), day=int(target_date[8:]))
+
+            time_val = dt.replace(tzinfo=et_tz)
+        except:
+            pass
+
+        races.append({
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+            "FieldSize": str(field_size) if field_size > 0 else "?",
+            "Distance": "?",
+            "RaceNum": race_num,
+            "Location": location,
+            "Discipline": "T"
+        })
+    return races
+
+def parse_ras_json(filepath):
+    """Parses international race data from Racing & Sports JSON."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+    except: return []
+
+    races = []
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+
+    # RAS v2 structure: list of disciplines
+    if isinstance(data, list):
+        for disc_item in data:
+            disc_code = disc_item.get("Discipline", "T")[0].upper()
+            for country in disc_item.get("Countries", []):
+                country_name = country.get("Country", "Unknown")
+                local_tz = get_tz_for_country(country_name)
+                for meeting in country.get("Meetings", []):
+                    location = meeting.get("Meeting", "Unknown")
+                    for race in meeting.get("Races", []):
+                        time_str = race.get("StartTime", "00:00")
+                        date_str = race.get("Date", "") # Usually ISO
+
+                        time_val = None
+                        try:
+                            # StartTime is often just HH:MM
+                            if len(time_str) == 5:
+                                dt_local = datetime.strptime(f"{date_str[:10]} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=local_tz)
+                            else:
+                                dt_local = datetime.fromisoformat(time_str).astimezone(local_tz)
+                            time_val = dt_local.astimezone(et_tz)
+                        except:
+                            pass
+
+                        races.append({
+                            "DateTime": time_val,
+                            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+                            "FieldSize": str(race.get("Runners", "?")),
+                            "Distance": str(race.get("Distance", "?")),
+                            "RaceNum": str(race.get("RaceNo", "?")),
+                            "Location": location,
+                            "Discipline": disc_code
+                        })
+    return races
+
+def parse_jra_html(filepath, target_date):
+    """Parses Japan race data from JRA HTML."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r') as f:
+            content = f.read()
+    except: return []
+
+    races = []
+    venue = "Japan"
+    venue_match = re.search(r'class="course">([^<]+)', content)
+    if venue_match: venue = venue_match.group(1).strip()
+
+    # JRA race table
+    tables = re.findall(r'<table[^>]*class="[^"]*race_table[^"]*"[^>]*>(.*?)</table>', content, re.DOTALL)
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    jp_tz = zoneinfo.ZoneInfo("Asia/Tokyo")
+
+    for i, table in enumerate(tables):
+        race_num = str(i + 1)
+        time_match = re.search(r'(\d{1,2}:\d{2})', content) # Often near the table
+        time_str = time_match.group(1) if time_match else "00:00"
+
+        runners = re.findall(r'<tr>\s*<td[^>]*class="num"', table)
+        field_size = len(runners)
+
+        time_val = None
+        try:
+            dt_jp = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=jp_tz)
+            time_val = dt_jp.astimezone(et_tz)
+        except:
+            pass
+
+        races.append({
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+            "FieldSize": str(field_size) if field_size > 0 else "?",
+            "Distance": "?",
+            "RaceNum": race_num,
+            "Location": venue,
+            "Discipline": "T"
+        })
+    return races
+
+def parse_tf_html(filepath, target_date):
+    """Parses international race data from Timeform HTML."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r') as f:
+            content = f.read()
+    except: return []
+
+    races = []
+    # Timeform venue
+    venue_match = re.search(r'class="rp-course-name">([^<]+)', content)
+    if not venue_match:
+        venue_match = re.search(r'class="course-name">([^<]+)', content)
+    location = venue_match.group(1).strip() if venue_match else "Unknown"
+
+    time_match = re.search(r'class="rp-race-time">(\d{1,2}:\d{2})', content)
+    time_str = time_match.group(1) if time_match else "00:00"
+
+    runners = re.findall(r'class="rp-horse-name"', content)
+    field_size = len(runners)
+
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    uk_tz = zoneinfo.ZoneInfo("Europe/London")
+
+    time_val = None
+    try:
+        dt_uk = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=uk_tz)
+        time_val = dt_uk.astimezone(et_tz)
+    except:
+        pass
+
+    if location != "Unknown":
+        races.append({
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+            "FieldSize": str(field_size) if field_size > 0 else "?",
+            "Distance": "?",
+            "RaceNum": "?",
+            "Location": location,
+            "Discipline": "T"
+        })
+    return races
+
+def parse_skysports_html(filepath, target_date):
+    """Parses international race data from Sky Sports HTML."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r') as f:
+            content = f.read()
+    except: return []
+
+    races = []
+    # Sky Sports often has meetings in blocks
+    meetings = re.findall(r'<div[^>]*class="[^"]*racing-meeting[^"]*"[^>]*>(.*?)</div>\s*</div>', content, re.DOTALL)
+
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    uk_tz = zoneinfo.ZoneInfo("Europe/London")
+
+    for meeting in meetings:
+        venue_match = re.search(r'<h3[^>]*>([^<]+)</h3>', meeting)
+        location = venue_match.group(1).strip() if venue_match else "Unknown"
+
+        race_rows = re.findall(r'<li[^>]*class="[^"]*racing-race[^"]*"[^>]*>(.*?)</li>', meeting, re.DOTALL)
+        for i, race in enumerate(race_rows):
+            time_match = re.search(r'class="[^"]*race-time[^"]*">([^<]+)', race)
+            time_str = time_match.group(1).strip() if time_match else "00:00"
+
+            time_val = None
+            try:
+                dt_uk = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=uk_tz)
+                time_val = dt_uk.astimezone(et_tz)
+            except:
+                pass
+
+            races.append({
+                "DateTime": time_val,
+                "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+                "FieldSize": "?",
+                "Distance": "?",
+                "RaceNum": str(i + 1),
+                "Location": location,
+                "Discipline": "T"
+            })
+    return races
+
+def parse_hkjc_html(filepath, target_date):
+    """Parses Hong Kong race data from HKJC HTML."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except: return []
+
+    races = []
+    # HKJC venue
+    venue = "Hong Kong"
+    if "Sha Tin" in content: venue = "Sha Tin"
+    elif "Happy Valley" in content: venue = "Happy Valley"
+
+    # Race number
+    race_match = re.search(r'Race (\d+)', content)
+    race_num = race_match.group(1) if race_match else "?"
+
+    # Time
+    time_match = re.search(r'(\d{1,2}:\d{2})', content)
+    time_str = time_match.group(1) if time_match else "00:00"
+
+    # Runners
+    runners = re.findall(r'<tr[^>]*>\s*<td>(\d+)</td>', content)
+    field_size = len(runners)
+
+    time_val = None
+    try:
+        hk_tz = zoneinfo.ZoneInfo("Asia/Hong_Kong")
+        et_tz = zoneinfo.ZoneInfo("America/New_York")
+        dt_hk = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=hk_tz)
+        time_val = dt_hk.astimezone(et_tz)
+    except:
+        pass
+
+    if field_size > 0 or race_num != "?":
+        races.append({
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+            "FieldSize": str(field_size) if field_size > 0 else "?",
+            "Distance": "?",
+            "RaceNum": race_num,
+            "Location": venue,
+            "Discipline": "T"
+        })
+
+    return races
+
+def parse_rp_html(filepath, target_date):
+    """Parses international race data from Racing Post HTML."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except: return []
+
+    races = []
+    # Venue
+    venue_match = re.search(r'data-test-selector="RC-courseHeader__name"[^>]*>([^<]+)', content)
+    if not venue_match:
+        venue_match = re.search(r'class="RC-courseHeader__name"[^>]*>([^<]+)', content)
+
+    location = venue_match.group(1).strip() if venue_match else "Unknown"
+
+    # Race time
+    time_match = re.search(r'data-test-selector="RC-courseHeader__time"[^>]*>([^<]+)', content)
+    time_str = time_match.group(1).strip() if time_match else "00:00"
+
+    # Runners
+    runners = re.findall(r'data-test-selector="RC-runnerCard"', content)
+    field_size = len(runners)
+
+    time_val = None
+    try:
+        uk_tz = zoneinfo.ZoneInfo("Europe/London")
+        et_tz = zoneinfo.ZoneInfo("America/New_York")
+        dt_uk = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=uk_tz)
+        time_val = dt_uk.astimezone(et_tz)
+    except:
+        pass
+
+    if location != "Unknown":
+        races.append({
+            "DateTime": time_val,
+            "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
+            "FieldSize": str(field_size) if field_size > 0 else "?",
+            "Distance": "?",
+            "RaceNum": "?",
+            "Location": location,
+            "Discipline": "T"
+        })
+
+    return races
+
+def find_files(pattern, target_date, date_suffix):
+    """Finds files matching pattern in root or manual_fetch."""
+    files = glob.glob(pattern.replace('{SUFFIX}', date_suffix))
+    files += glob.glob(pattern.replace('{SUFFIX}', target_date))
+
+    # Also look in manual_fetch
+    manual_pattern = os.path.join('manual_fetch', '*' + pattern.replace('{SUFFIX}', date_suffix))
+    files += glob.glob(manual_pattern)
+    manual_pattern_date = os.path.join('manual_fetch', '*' + pattern.replace('{SUFFIX}', target_date))
+    files += glob.glob(manual_pattern_date)
+
+    # Special handling for sources with long slugs in manual_fetch
+    if 'equibase' in pattern:
+        # Example: www_equibase_com_static_chart_summary_gp032126sum_html.html
+        # Extract MMDDYY from target_date YYYY-MM-DD
+        try:
+            dt = datetime.strptime(target_date, "%Y-%m-%d")
+            mmddyy = dt.strftime("%m%d%y")
+            files += glob.glob(os.path.join('manual_fetch', f'*equibase*{mmddyy}sum*.html'))
+        except:
+            pass
+    elif 'hkjc' in pattern:
+        # Example: racing_hkjc_com_racing_information_English_racing_RaceCard_aspx_RaceDate_2026_03_23.html
+        try:
+            date_part = target_date.replace('-', '_')
+            files += glob.glob(os.path.join('manual_fetch', f'*hkjc*{date_part}*.html'))
+        except:
+            pass
+    elif 'skysports' in pattern:
+        # Example: www_skysports_com_racing_racecards_23_03_2026.html
+        try:
+            dt = datetime.strptime(target_date, "%Y-%m-%d")
+            date_part = dt.strftime("%d_%m_%Y")
+            files += glob.glob(os.path.join('manual_fetch', f'*skysports*{date_part}*.html'))
+        except:
+            pass
+
+    return list(set(files))
 
 def main():
     parser = argparse.ArgumentParser(description="Worldwide Race Grid Generator")
@@ -158,29 +558,58 @@ def main():
     all_raw_races = []
 
     # RPB2B
-    for f in glob.glob(f'rpb2b_{date_suffix}.json') + glob.glob(f'rpb2b_{target_date}.json'):
+    for f in find_files('rpb2b_{SUFFIX}.json', target_date, date_suffix):
         all_raw_races.extend(parse_rpb2b_json(f))
 
     # Sporting Life
-    for f in glob.glob(f'sportinglife_{date_suffix}.html') + glob.glob(f'sportinglife_{target_date}.html'):
+    for f in find_files('sportinglife_{SUFFIX}.html', target_date, date_suffix):
         all_raw_races.extend(parse_sl_hard(f))
 
     # Equibase
-    for f in glob.glob(f'equibase_{date_suffix}.html') + glob.glob(f'equibase_{target_date}.html'):
+    for f in find_files('equibase_{SUFFIX}.html', target_date, date_suffix):
         all_raw_races.extend(parse_equibase_html(f))
 
     # DRF
-    for f in glob.glob(f'drf_{date_suffix}.html') + glob.glob(f'drf_{target_date}.html'):
-        all_raw_races.extend(parse_drf_html(f))
+    for f in find_files('drf_{SUFFIX}.html', target_date, date_suffix):
+        all_raw_races.extend(parse_drf_html(f, target_date))
 
     # HKJC
-    for f in glob.glob(f'hkjc_{date_suffix}.html') + glob.glob(f'hkjc_{target_date}.html'):
-        all_raw_races.extend(parse_hkjc_html(f))
+    for f in find_files('hkjc_{SUFFIX}.html', target_date, date_suffix):
+        all_raw_races.extend(parse_hkjc_html(f, target_date))
+
+    # Racing Post
+    for f in find_files('racingpost_{SUFFIX}.html', target_date, date_suffix):
+        all_raw_races.extend(parse_rp_html(f, target_date))
+
+    # RAS
+    for f in find_files('ras_{SUFFIX}.json', target_date, date_suffix):
+        all_raw_races.extend(parse_ras_json(f))
+
+    # JRA
+    for f in find_files('jra_{SUFFIX}.html', target_date, date_suffix):
+        all_raw_races.extend(parse_jra_html(f, target_date))
+
+    # Timeform
+    for f in find_files('tf_{SUFFIX}.html', target_date, date_suffix) + find_files('timeform_{SUFFIX}.html', target_date, date_suffix):
+        all_raw_races.extend(parse_tf_html(f, target_date))
+
+    # Sky Sports
+    for f in find_files('skysports_{SUFFIX}.html', target_date, date_suffix):
+        all_raw_races.extend(parse_skysports_html(f, target_date))
 
     if not all_raw_races:
         # Try any available files if target date yielded nothing
-        for f in glob.glob('rpb2b_*.json'): all_raw_races.extend(parse_rpb2b_json(f))
-        for f in glob.glob('sportinglife_*.html'): all_raw_races.extend(parse_sl_hard(f))
+        # But filter by date suffix if possible to avoid excessive noise
+        for f in glob.glob(f'rpb2b_*{date_suffix}.json'): all_raw_races.extend(parse_rpb2b_json(f))
+        for f in glob.glob(f'sportinglife_*{date_suffix}.html'): all_raw_races.extend(parse_sl_hard(f))
+        for f in glob.glob(f'manual_fetch/*equibase*{date_suffix}*.html'): all_raw_races.extend(parse_equibase_html(f))
+        for f in glob.glob(f'manual_fetch/*hkjc*{date_suffix}*.html'): all_raw_races.extend(parse_hkjc_html(f, target_date))
+        for f in glob.glob(f'manual_fetch/*racingpost*{date_suffix}*.html'): all_raw_races.extend(parse_rp_html(f, target_date))
+        for f in glob.glob(f'ras_*{date_suffix}.json'): all_raw_races.extend(parse_ras_json(f))
+        for f in glob.glob(f'jra_*{date_suffix}.html'): all_raw_races.extend(parse_jra_html(f, target_date))
+        for f in glob.glob(f'tf_*{date_suffix}.html'): all_raw_races.extend(parse_tf_html(f, target_date))
+        for f in glob.glob(f'timeform_*{date_suffix}.html'): all_raw_races.extend(parse_tf_html(f, target_date))
+        for f in glob.glob(f'skysports_*{date_suffix}.html'): all_raw_races.extend(parse_skysports_html(f, target_date))
 
     # Assign Race Numbers for Sporting Life
     meetings_data = {}
