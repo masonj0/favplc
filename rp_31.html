@@ -1,0 +1,186 @@
+
+<!DOCTYPE html>
+  <html lang="en">
+  <head>
+      <meta charset="UTF-8">
+      <meta http-equiv="X-UA-Compatible" content="IE=edge">
+      <meta name="viewport" content="initial-scale=1.0, width=device-width">
+      <style>
+  html {
+    height: 100%;
+  }
+  .ui-wrapper {
+    margin: 0;
+    height: 100%;
+  }
+  .ui-canvas {
+    position: relative;
+    height: calc(100vh - 60px);
+    margin: 0 auto;
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center;
+  }
+  .ui-canvas.error-403 {
+    background-image: url(https://www.rp-assets.com/errorpages/img/403-desktop.jpg);
+  }
+  .ui-canvas.error-404 {
+    background-image: url(https://www.rp-assets.com/errorpages/img/404-desktop.jpg);
+  }
+  .ui-canvas.error-500 {
+    background-image: url(https://www.rp-assets.com/errorpages/img/500-desktop.jpg);
+  }
+  .ui-canvas.error-502 {
+    background-image: url(https://www.rp-assets.com/errorpages/img/502-desktop.jpg);
+  }
+  .text-wrapper {
+    height: 100%;
+    min-width: 306px;
+    width: 25%;
+    background: linear-gradient(to right, black 14%, rgba(0, 0, 0, 0.4) 100%);
+    filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#000000', endColorstr='#66000000',GradientType=1 );
+    padding-top: 57px;
+    box-sizing: border-box;
+  }
+  .text-wrapper .logo-wrapper {
+    height: 56px;
+    width: 100%;
+    padding: 16px 20px 16px 60px;
+    background-color: #fff;
+    box-sizing: border-box;
+  }
+  .text-wrapper .logo-wrapper .logo {
+    width: 226px;
+  }
+  .text-wrapper .message {
+    min-width: 180px;
+    width: 75%;
+    margin: 32px 60px 34px;
+    color: #fff;
+    font: 16px/19px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: bold;
+  }
+  .text-wrapper .back-button {
+    display: inline-block;
+    margin-left: 60px;
+    height: 40px;
+    padding: 0 12px;
+    font: 16px/19px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: bold;
+    line-height: 40px;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 4px;
+    background-color: #0072dd;
+    cursor: pointer;
+  }
+  .ui-footer {
+    height: 60px;
+    padding: 24px 8px;
+    box-sizing: border-box;
+    text-align: center;
+    background-color: #000000;
+    color: #7f7f7f;
+    font: 12px/17px "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+  .debug {
+    position: fixed;
+    width: 25%;
+	bottom: 60px;
+	left: 0;
+	color: #999;
+	font: 10px/13px "Helvetica Neue", Helvetica, Arial, sans-serif;
+  }
+
+  @media (max-width: 719px) {
+    .ui-canvas {
+      height: calc(100vh - 67px);
+    }
+    .ui-canvas.error-403 {
+      background-image: url(https://www.rp-assets.com/errorpages/img/403-mobile.jpg);
+      background-position-x: right;
+    }
+    .ui-canvas.error-404 {
+      background-image: url(https://www.rp-assets.com/errorpages/img/404-mobile.jpg);
+    }
+    .ui-canvas.error-500 {
+      background-image: url(https://www.rp-assets.com/errorpages/img/500-mobile.jpg);
+    }
+    .ui-canvas.error-502 {
+      background-image: url(https://www.rp-assets.com/errorpages/img/502-mobile.jpg);
+      background-position-x: right;
+    }
+
+    .text-wrapper {
+      min-width: 140px;
+      padding-top: 44px;
+      background: linear-gradient(to right, black 0%, rgba(0, 0, 0, 0.4) 100%);
+      filter: progid:DXImageTransform.Microsoft.gradient( startColorstr='#000000', endColorstr='#66000000',GradientType=1 );
+    }
+    .text-wrapper .logo-wrapper {
+      height: 34px;
+      line-height: 10px;
+      padding: 12px 16px;
+    }
+    .text-wrapper .logo-wrapper .logo {
+      width: 96px;
+    }
+    .text-wrapper .message {
+      margin: 20px 16px 24px;
+      font-size: 13px;
+      line-height: 17px;
+      min-width: 100px;
+    }
+    .text-wrapper .back-button {
+      cursor: pointer;
+      height: 28px;
+      padding: 0 10px;
+      margin-left: 16px;
+      font-size: 10px;
+      line-height: 28px;
+    }
+    .ui-footer {
+      height: 67px;
+      padding: 6px 40px;
+      font: 10px/13px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+    .debug {
+      position: fixed;
+	  width: 25%;
+	  min-width: 140px;
+	  bottom: 67px;
+	  left: 0;
+	  color: #999;
+	  font: 10px/13px "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+  }
+
+    </style>
+  </head>
+  <body class="ui-wrapper">
+      <main>
+          <div class="ui-canvas error-502 ">
+              <div class="text-wrapper">
+                  <div class="logo-wrapper">
+                      <img class="logo" src="https://www.rp-assets.com/errorpages/img/RP_logo-black.png" alt="">
+                  </div>
+                  <div class="message"> Sorry, our website is currently not available.<br />We are working to restore service as soon as possible. </div>
+                  <a onclick="location.reload();" class="back-button" >Try Again</a>
+              </div>
+          </div>
+          <div class="debug">
+			Support Information<br />
+			time: 2026-03-31 12:47:02<br />
+			status: 406<br />
+			path: /racecards/2026-03-31<br />
+			origin: 3x33vm6mcx2d0S7DRJ8zJV--F_sigsci_waf<br />
+			host: rp1-cards<br />
+			ip: 34.134.215.5<br />
+			msg: Not Acceptable
+          </div>
+      </main>
+      <footer class="ui-footer">
+          Copyright © 2026 Spotlight Sports Group limited or its licensors, all rights reserved.
+      </footer>
+    </body>
+    </html>
