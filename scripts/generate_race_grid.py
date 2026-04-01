@@ -54,9 +54,14 @@ def parse_rpb2b_json(filepath):
 
     et_tz = zoneinfo.ZoneInfo("America/New_York")
     races = []
-    for meeting in data:
-        location = meeting.get('name', 'Unknown')
-        disc = "T"
+
+    # RPB2B can be a dict with 'meetings' or a list of meetings
+    meetings = data.get('meetings') if isinstance(data, dict) else data
+    if not meetings: return []
+
+    for meeting in meetings:
+        location = meeting.get('name') or meeting.get('CourseName', 'Unknown')
+        disc = meeting.get('Discipline', 'T')[0].upper()
         for race in meeting.get("races", []):
             try:
                 dt_utc = datetime.fromisoformat(race.get("datetimeUtc").replace('Z', '+00:00'))
@@ -68,9 +73,9 @@ def parse_rpb2b_json(filepath):
             races.append({
                 "DateTime": time_val,
                 "PostTime": time_val.strftime('%H:%M') if time_val else "Unknown",
-                "FieldSize": str(race.get("numberOfRunners", "?")),
+                "FieldSize": str(race.get("numberOfRunners") or race.get("Runners", "?")),
                 "Distance": "?",
-                "RaceNum": str(race.get("raceNumber", "?")),
+                "RaceNum": str(race.get("raceNumber") or race.get("RaceNo", "?")),
                 "Location": location,
                 "Discipline": disc
             })
@@ -253,19 +258,46 @@ def parse_ras_json(filepath):
     # RAS v2 structure: list of disciplines
     if isinstance(data, list):
         for disc_item in data:
-            disc_code = disc_item.get("Discipline", "T")[0].upper()
-            for country in disc_item.get("Countries", []):
-                country_name = country.get("Country", "Unknown")
+            disc_raw = disc_item.get("Discipline", "T")
+            disc_code = disc_raw[0].upper() if disc_raw else "T"
+
+            # Handle potential alternate key names
+            countries = disc_item.get("Countries") or disc_item.get("countries", [])
+            for country in countries:
+                country_name = country.get("Country") or country.get("CountryName", "Unknown")
                 local_tz = get_tz_for_country(country_name)
-                for meeting in country.get("Meetings", []):
-                    location = meeting.get("Meeting", "Unknown")
-                    for race in meeting.get("Races", []):
-                        time_str = race.get("StartTime", "00:00")
-                        date_str = race.get("Date", "") # Usually ISO
+
+                meetings = country.get("Meetings") or country.get("meetings", [])
+                for meeting in meetings:
+                    location = meeting.get("Meeting") or meeting.get("Course", "Unknown")
+
+                    # Some RAS files have 'Races' list, some just summary info
+                    race_list = meeting.get("Races") or meeting.get("races", [])
+                    if not race_list:
+                        # Attempt to extract time from Meeting properties if available
+                        time_str = meeting.get("StartTime") or "00:00"
+
+                        # Fallback: create a single entry if summary info exists
+                        max_race = meeting.get("RaceNumber") or meeting.get("MaxRaceNo", 1)
+                        for r_num in range(1, int(max_race) + 1):
+                            races.append({
+                                "DateTime": None,
+                                "PostTime": time_str,
+                                "FieldSize": "?",
+                                "Distance": "?",
+                                "RaceNum": str(r_num),
+                                "Location": location,
+                                "Discipline": disc_code
+                            })
+                        continue
+
+                    for race in race_list:
+                        time_str = race.get("StartTime") or race.get("startTime", "00:00")
+                        date_str = race.get("Date") or race.get("date", "")
 
                         time_val = None
                         try:
-                            # StartTime is often just HH:MM
+                            # StartTime is often just HH:MM or ISO
                             if len(time_str) == 5:
                                 dt_local = datetime.strptime(f"{date_str[:10]} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=local_tz)
                             else:
@@ -277,9 +309,9 @@ def parse_ras_json(filepath):
                         races.append({
                             "DateTime": time_val,
                             "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
-                            "FieldSize": str(race.get("Runners", "?")),
-                            "Distance": str(race.get("Distance", "?")),
-                            "RaceNum": str(race.get("RaceNo", "?")),
+                            "FieldSize": str(race.get("Runners") or race.get("runners", "?")),
+                            "Distance": str(race.get("Distance") or race.get("distance", "?")),
+                            "RaceNum": str(race.get("RaceNo") or race.get("raceNumber", "?")),
                             "Location": location,
                             "Discipline": disc_code
                         })
@@ -381,23 +413,43 @@ def parse_skysports_html(filepath, target_date):
     except: return []
 
     races = []
-    # Sky Sports often has meetings in blocks
-    meetings = re.findall(r'<div[^>]*class="[^"]*racing-meeting[^"]*"[^>]*>(.*?)</div>\s*</div>', content, re.DOTALL)
-
     et_tz = zoneinfo.ZoneInfo("America/New_York")
     uk_tz = zoneinfo.ZoneInfo("Europe/London")
 
-    for meeting in meetings:
-        venue_match = re.search(r'<h3[^>]*>([^<]+)</h3>', meeting)
-        location = venue_match.group(1).strip() if venue_match else "Unknown"
+    # Sky Sports meetings are often grouped in concertina blocks
+    meeting_sections = re.split(r'class="sdc-site-concertina-block__header"', content)[1:]
 
-        race_rows = re.findall(r'<li[^>]*class="[^"]*racing-race[^"]*"[^>]*>(.*?)</li>', meeting, re.DOTALL)
-        for i, race in enumerate(race_rows):
-            time_match = re.search(r'class="[^"]*race-time[^"]*">([^<]+)', race)
+    for section in meeting_sections:
+        venue_match = re.search(r'class="sdc-site-concertina-block__title"[^>]*>([^<]+)</span>', section)
+        if not venue_match:
+             venue_match = re.search(r'<h3[^>]*>([^<]+)</h3>', section)
+
+        location = venue_match.group(1).strip() if venue_match else "Unknown"
+        # Strip (IRE), (SAF), etc.
+        location = re.sub(r'\s*\([^)]+\)', '', location).strip()
+
+        # Individual race events
+        events = re.findall(r'class="sdc-site-racing-meetings__event"(.*?)</a>', section, re.DOTALL)
+        for i, event in enumerate(events):
+            time_match = re.search(r'class="sdc-site-racing-meetings__event-time">(\d{1,2}:\d{2})', event)
             time_str = time_match.group(1).strip() if time_match else "00:00"
+
+            # Details: (3yo+, Class , 5f 212y, 17 runners)
+            details_match = re.search(r'class="sdc-site-racing-meetings__event-details">\(([^)]+)\)', event)
+            details = details_match.group(1) if details_match else ""
+
+            field_size = "?"
+            fs_match = re.search(r'(\d+)\s*runners', details)
+            if fs_match: field_size = fs_match.group(1)
+
+            distance = "?"
+            # Heuristic for distance in details
+            dist_match = re.search(r'(\d+[fmky]\s*\d*[ymk]*)', details)
+            if dist_match: distance = dist_match.group(1).strip()
 
             time_val = None
             try:
+                # Assuming UK time for Sky Sports unless otherwise specified
                 dt_uk = datetime.strptime(f"{target_date} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=uk_tz)
                 time_val = dt_uk.astimezone(et_tz)
             except:
@@ -406,8 +458,8 @@ def parse_skysports_html(filepath, target_date):
             races.append({
                 "DateTime": time_val,
                 "PostTime": time_val.strftime('%H:%M') if time_val else time_str,
-                "FieldSize": "?",
-                "Distance": "?",
+                "FieldSize": field_size,
+                "Distance": distance,
                 "RaceNum": str(i + 1),
                 "Location": location,
                 "Discipline": "T"

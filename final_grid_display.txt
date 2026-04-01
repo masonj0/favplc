@@ -1,0 +1,292 @@
+PostTime (ET)  | Field | Distance        | Location                       | D | Race#
+-----------------------------------------------------------------------------------------------
+  03:05        | 6     | 7f 209y         | Nantes                         | T | 1
+  03:35        | 11    | 6f 211y         | Nantes                         | T | 2
+  03:51        | 14    | 1m 6f 36y       | Lyon-Parilly                   | T | 1
+  04:23        | 10    | 1m 1f 207y      | Lyon-Parilly                   | T | 2
+  05:55        | 16    | 5f 212y         | Fontainebleau                  | T | 1
+  06:07        | 10    | 1m 3f 204y      | Nantes                         | T | 3
+  06:30        | 8     | 5f 102y         | Fontainebleau                  | T | 2
+  06:39        | 11    | 2m 1f 87y       | Nantes                         | T | 4
+  06:55        | 12    | 1m 1f 207y      | Lyon-Parilly                   | T | 3
+  07:11        | 12    | 2m 1f 87y       | Nantes                         | T | 5
+  07:15        | ?     | ?               | Vaal                           | T | 3
+  07:27        | 15    | 1m 6f 36y       | Lyon-Parilly                   | T | 4
+  07:43        | 10    | 2m 2f 195y      | Nantes                         | T | 6
+  07:50        | ?     | ?               | Vaal                           | T | 4
+  08:12        | 13    | 1m 1f 207y      | Lyon-Parilly                   | T | 5
+  08:15        | 7     | 2m 7f 32y       | Bangor-on-Dee                  | T | 1
+  08:15        | 9     | 1m 5f 92y       | Nantes                         | T | 7
+  08:25        | ?     | ?               | Vaal                           | T | 5
+  08:30        | 8     | 2m 4f 62y       | Newcastle                      | T | 1
+  08:32        | 13    | 1m 5f 92y       | Vincennes                      | T | 1
+>>08:47        | 14    | 1m 6f 36y       | Lyon-Parilly                   | T | 6
+>>09:00        | 11    | ?               | Vaal                           | T | 1
+>>09:00        | ?     | ?               | Vaal                           | T | 6
+>>09:05        | 9     | 1m 2f 205y      | Fontainebleau                  | T | 3
+  09:07        | 8     | 1m 5f 92y       | Vincennes                      | T | 2
+  09:15        | 7     | ?               | Bangor-on-Dee                  | T | 2
+  09:22        | 16    | 1m 1f 207y      | Lyon-Parilly                   | T | 7
+  09:30        | 8     | ?               | Newcastle                      | T | 2
+  09:35        | 11    | ?               | Vaal                           | T | 2
+  09:35        | ?     | ?               | Vaal                           | T | 7
+  09:40        | 11    | 1m 1f 207y      | Fontainebleau                  | T | 4
+  09:45        | 8     | 2m 145y         | Bangor-on-Dee                  | T | 3
+  09:57        | 13    | 1m 7f 90y       | Lyon-Parilly                   | T | 8
+  10:00        | 8     | 2m 7f 91y       | Newcastle                      | T | 3
+  10:10        | 11    | 2m              | Limerick                       | T | 1
+  10:10        | ?     | ?               | Vaal                           | T | 8
+  10:15        | 7     | 2m 4f 72y       | Bangor-on-Dee                  | T | 4
+  10:15        | 11    | 6f 211y         | Fontainebleau                  | T | 5
+  10:30        | 6     | 2m 4f 62y       | Newcastle                      | T | 4
+  10:45        | ?     | ?               | Vaal                           | T | 9
+  10:50        | 10    | 3m 30y          | Bangor-on-Dee                  | T | 5
+  10:50        | 15    | 6f 211y         | Fontainebleau                  | T | 6
+  11:00        | 6     | 2m 4f 19y       | Newcastle                      | T | 5
+  11:20        | 10    | 2m 3f 123y      | Bangor-on-Dee                  | T | 6
+  11:25        | 14    | 1m 6f 200y      | Fontainebleau                  | T | 7
+  11:30        | 10    | 2m 4f 62y       | Newcastle                      | T | 6
+  11:30        | 6     | 1m 142y         | Wolverhampton                  | T | 1
+  11:40        | 11    | 2m              | Limerick                       | T | 2
+  11:42        | 13    | 1m 5f 92y       | Vincennes                      | T | 3
+  11:50        | 7     | ?               | Bangor-on-Dee                  | T | 7
+  12:00        | 16    | 1m 6f 36y       | Fontainebleau                  | T | 8
+  12:00        | 9     | 2m 190y         | Newcastle                      | T | 7
+  12:10        | 12    | 2m 5f 70y       | Limerick                       | T | 3
+  12:15        | 6     | 1m 70y          | Mahoning Valley                | T | 1
+  12:20        | 14    | 1m 5f 92y       | Vincennes                      | T | 4
+  12:35        | 13    | ?               | Newcastle                      | G | 8
+  12:40        | 12    | ?               | Parx                           | T | 1
+  12:42        | 15    | 2m 3f 128y      | Limerick                       | T | 4
+  12:43        | 5     | 6f              | Mahoning Valley                | T | 2
+  12:55        | 14    | 1m 5f 92y       | Vincennes                      | T | 5
+  13:00        | 4     | 7f 36y          | Wolverhampton                  | T | 2
+  13:07        | 8     | ?               | Parx                           | T | 2
+  13:11        | 6     | 6f              | Mahoning Valley                | T | 3
+  13:12        | 12    | 2m 1f 200y      | Limerick                       | T | 5
+  13:27        | 7     | 1m 5f 92y       | Vincennes                      | T | 6
+  13:30        | 12    | 1m 1f 104y      | Wolverhampton                  | T | 3
+  13:34        | 7     | ?               | Parx                           | T | 3
+  13:39        | 7     | 1m              | Mahoning Valley                | T | 4
+  13:42        | 6     | 2m 3f           | Limerick                       | T | 6
+  13:59        | 9     | 1m 6f 36y       | Vincennes                      | T | 7
+  14:00        | 10    | 5f 21y          | Wolverhampton                  | T | 4
+  14:01        | 10    | ?               | Parx                           | T | 4
+  14:07        | 9     | 6f              | Mahoning Valley                | T | 5
+  14:12        | 11    | ?               | Limerick                       | T | 7
+  14:28        | 9     | ?               | Parx                           | T | 5
+  14:30        | 8     | 1m 5f 219y      | Wolverhampton                  | T | 5
+  14:31        | 13    | 6f              | Vincennes                      | T | 8
+  14:35        | 7     | 1f 80y          | Mahoning Valley                | T | 6
+  14:55        | 6     | ?               | Parx                           | T | 6
+  15:00        | 10    | 6f 20y          | Wolverhampton                  | T | 6
+  15:03        | 8     | 6f              | Mahoning Valley                | T | 7
+  15:22        | 8     | ?               | Parx                           | T | 7
+  15:30        | 8     | ?               | Wolverhampton                  | T | 7
+  15:31        | 9     | 1m              | Mahoning Valley                | T | 8
+  15:49        | 10    | ?               | Parx                           | T | 8
+  16:15        | 7     | 7f 110y         | Turf Paradise                  | T | 1
+  16:16        | 7     | ?               | Parx                           | T | 9
+  16:42        | 7     | 6f              | Turf Paradise                  | T | 2
+  16:43        | 8     | ?               | Parx                           | T | 10
+  17:10        | 11    | ?               | Parx                           | T | 11
+  17:11        | 7     | 1m              | Turf Paradise                  | T | 3
+  17:40        | 7     | 4f 110y         | Turf Paradise                  | T | 4
+  18:09        | 8     | 6f 110y         | Turf Paradise                  | T | 5
+  18:38        | 8     | 1m 1f 207y      | Turf Paradise                  | T | 6
+  19:07        | 8     | 4f 110y         | Turf Paradise                  | T | 7
+  19:41        | 9     | 6f              | Turf Paradise                  | T | 8
+  00:00        | ?     | ?               | Albion Park                    | H | 1
+  00:00        | ?     | ?               | Albion Park                    | H | 2
+  00:00        | ?     | ?               | Albion Park                    | H | 3
+  00:00        | ?     | ?               | Albion Park                    | H | 4
+  00:00        | ?     | ?               | Albion Park                    | H | 5
+  00:00        | ?     | ?               | Albion Park                    | H | 6
+  00:00        | ?     | ?               | Albion Park                    | H | 7
+  00:00        | ?     | ?               | Albion Park                    | H | 8
+  00:00        | ?     | ?               | Angle Park                     | G | 1
+  00:00        | ?     | ?               | Angle Park                     | G | 2
+  00:00        | ?     | ?               | Angle Park                     | G | 3
+  00:00        | ?     | ?               | Angle Park                     | G | 4
+  00:00        | ?     | ?               | Angle Park                     | G | 5
+  00:00        | ?     | ?               | Angle Park                     | G | 6
+  00:00        | ?     | ?               | Angle Park                     | G | 7
+  00:00        | ?     | ?               | Angle Park                     | G | 8
+  00:00        | ?     | ?               | Angle Park                     | G | 9
+  00:00        | ?     | ?               | Angle Park                     | G | 10
+  00:00        | ?     | ?               | Angle Park                     | G | 11
+  00:00        | ?     | ?               | Angle Park                     | G | 12
+  00:00        | ?     | ?               | Antalya                        | T | 1
+  00:00        | ?     | ?               | Ascot Park                     | G | 1
+  00:00        | ?     | ?               | Ascot Park                     | G | 2
+  00:00        | ?     | ?               | Ascot Park                     | G | 3
+  00:00        | ?     | ?               | Ascot Park                     | G | 4
+  00:00        | ?     | ?               | Ascot Park                     | G | 5
+  00:00        | ?     | ?               | Ascot Park                     | G | 6
+  00:00        | ?     | ?               | Ascot Park                     | G | 7
+  00:00        | ?     | ?               | Ascot Park                     | G | 8
+  00:00        | ?     | ?               | Ascot Park                     | G | 9
+  00:00        | ?     | ?               | Ascot Park                     | G | 10
+  00:00        | ?     | ?               | Ascot Park                     | G | 11
+  00:00        | ?     | ?               | Ascot Park                     | G | 12
+  00:00        | ?     | ?               | Bulli                          | G | 1
+  00:00        | ?     | ?               | Bulli                          | G | 2
+  00:00        | ?     | ?               | Bulli                          | G | 3
+  00:00        | ?     | ?               | Bulli                          | G | 4
+  00:00        | ?     | ?               | Bulli                          | G | 5
+  00:00        | ?     | ?               | Bulli                          | G | 6
+  00:00        | ?     | ?               | Bulli                          | G | 7
+  00:00        | ?     | ?               | Bulli                          | G | 8
+  00:00        | ?     | ?               | Bulli                          | G | 9
+  00:00        | ?     | ?               | Bulli                          | G | 10
+  00:00        | ?     | ?               | Central Park                   | G | 1
+  00:00        | ?     | ?               | Funabashi                      | T | 1
+  00:00        | ?     | ?               | Funabashi                      | T | 2
+  00:00        | ?     | ?               | Funabashi                      | T | 3
+  00:00        | ?     | ?               | Funabashi                      | T | 4
+  00:00        | ?     | ?               | Funabashi                      | T | 5
+  00:00        | ?     | ?               | Funabashi                      | T | 6
+  00:00        | ?     | ?               | Funabashi                      | T | 7
+  00:00        | ?     | ?               | Funabashi                      | T | 8
+  00:00        | ?     | ?               | Funabashi                      | T | 9
+  00:00        | ?     | ?               | Funabashi                      | T | 10
+  00:00        | ?     | ?               | Funabashi                      | T | 11
+  00:00        | ?     | ?               | Funabashi                      | T | 12
+  00:00        | ?     | ?               | Gloucester Park                | H | 1
+  00:00        | ?     | ?               | Gloucester Park                | H | 2
+  00:00        | ?     | ?               | Gloucester Park                | H | 3
+  00:00        | ?     | ?               | Gloucester Park                | H | 4
+  00:00        | ?     | ?               | Gloucester Park                | H | 5
+  00:00        | ?     | ?               | Gloucester Park                | H | 6
+  00:00        | ?     | ?               | Gloucester Park                | H | 7
+  00:00        | ?     | ?               | Gosford                        | G | 1
+  00:00        | ?     | ?               | Gosford                        | G | 2
+  00:00        | ?     | ?               | Gosford                        | G | 3
+  00:00        | ?     | ?               | Gosford                        | G | 4
+  00:00        | ?     | ?               | Gosford                        | G | 5
+  00:00        | ?     | ?               | Gosford                        | G | 6
+  00:00        | ?     | ?               | Gosford                        | G | 7
+  00:00        | ?     | ?               | Gosford                        | G | 8
+  00:00        | ?     | ?               | Gosford                        | G | 9
+  00:00        | ?     | ?               | Gosford                        | G | 10
+  00:00        | ?     | ?               | Gosford                        | G | 11
+  00:00        | ?     | ?               | Gosford                        | G | 12
+  00:00        | ?     | ?               | Junee                          | H | 1
+  00:00        | ?     | ?               | Junee                          | H | 2
+  00:00        | ?     | ?               | Junee                          | H | 3
+  00:00        | ?     | ?               | Junee                          | H | 4
+  00:00        | ?     | ?               | Junee                          | H | 5
+  00:00        | ?     | ?               | Junee                          | H | 6
+  00:00        | ?     | ?               | Junee                          | H | 7
+  00:00        | ?     | ?               | Junee                          | H | 8
+  00:00        | ?     | ?               | Junee                          | H | 9
+  00:00        | ?     | ?               | Kilmore                        | T | 1
+  00:00        | ?     | ?               | Kilmore                        | T | 2
+  00:00        | ?     | ?               | Kilmore                        | T | 3
+  00:00        | ?     | ?               | Kilmore                        | T | 4
+  00:00        | ?     | ?               | Kilmore                        | T | 5
+  00:00        | ?     | ?               | Kilmore                        | T | 6
+  00:00        | ?     | ?               | Kilmore                        | T | 7
+  00:00        | ?     | ?               | Kilmore                        | T | 8
+  00:00        | ?     | ?               | Manawatu                       | H | 1
+  00:00        | ?     | ?               | Manawatu                       | H | 2
+  00:00        | ?     | ?               | Manawatu                       | H | 3
+  00:00        | ?     | ?               | Manawatu                       | H | 4
+  00:00        | ?     | ?               | Manawatu                       | H | 5
+  00:00        | ?     | ?               | Manawatu                       | H | 6
+  00:00        | ?     | ?               | Mandurah                       | G | 1
+  00:00        | ?     | ?               | Mandurah                       | G | 2
+  00:00        | ?     | ?               | Mandurah                       | G | 3
+  00:00        | ?     | ?               | Mandurah                       | G | 4
+  00:00        | ?     | ?               | Mandurah                       | G | 5
+  00:00        | ?     | ?               | Mandurah                       | G | 6
+  00:00        | ?     | ?               | Mandurah                       | G | 7
+  00:00        | ?     | ?               | Mandurah                       | G | 8
+  00:00        | ?     | ?               | Mandurah                       | G | 9
+  00:00        | ?     | ?               | Menangle                       | H | 1
+  00:00        | ?     | ?               | Menangle                       | H | 2
+  00:00        | ?     | ?               | Menangle                       | H | 3
+  00:00        | ?     | ?               | Menangle                       | H | 4
+  00:00        | ?     | ?               | Menangle                       | H | 5
+  00:00        | ?     | ?               | Menangle                       | H | 6
+  00:00        | ?     | ?               | Menangle                       | H | 7
+  00:00        | ?     | ?               | Menangle                       | H | 8
+  00:00        | ?     | ?               | Monmore                        | G | 1
+  00:00        | ?     | ?               | Newcastle                      | G | 9
+  00:00        | ?     | ?               | Oxford                         | G | 1
+  00:00        | ?     | ?               | Port Pirie                     | H | 1
+  00:00        | ?     | ?               | Port Pirie                     | H | 2
+  00:00        | ?     | ?               | Port Pirie                     | H | 3
+  00:00        | ?     | ?               | Port Pirie                     | H | 4
+  00:00        | ?     | ?               | Port Pirie                     | H | 5
+  00:00        | ?     | ?               | Q Lakeside                     | G | 1
+  00:00        | ?     | ?               | Q Lakeside                     | G | 2
+  00:00        | ?     | ?               | Q Lakeside                     | G | 3
+  00:00        | ?     | ?               | Q Lakeside                     | G | 4
+  00:00        | ?     | ?               | Q Lakeside                     | G | 5
+  00:00        | ?     | ?               | Q Lakeside                     | G | 6
+  00:00        | ?     | ?               | Q Lakeside                     | G | 7
+  00:00        | ?     | ?               | Q Lakeside                     | G | 8
+  00:00        | ?     | ?               | Q Lakeside                     | G | 9
+  00:00        | ?     | ?               | Q Lakeside                     | G | 10
+  00:00        | ?     | ?               | Q Lakeside                     | G | 11
+  00:00        | ?     | ?               | Q Lakeside                     | G | 12
+  00:00        | ?     | ?               | Q Lakeside                     | G | 13
+  00:00        | ?     | ?               | Romford                        | G | 1
+  00:00        | ?     | ?               | Sheffield                      | G | 1
+  00:00        | ?     | ?               | Sheffield                      | G | 2
+  00:00        | ?     | ?               | Sheffield                      | G | 3
+  00:00        | ?     | ?               | Sheffield                      | G | 4
+  00:00        | ?     | ?               | Sheffield                      | G | 5
+  00:00        | ?     | ?               | Sheffield                      | G | 6
+  00:00        | ?     | ?               | Sheffield                      | G | 7
+  00:00        | ?     | ?               | Sheffield                      | G | 8
+  00:00        | ?     | ?               | Sheffield                      | G | 9
+  00:00        | ?     | ?               | Sheffield                      | G | 10
+  00:00        | ?     | ?               | Shelbourne Park                | G | 1
+  00:00        | ?     | ?               | Star Pelaw                     | G | 1
+  00:00        | ?     | ?               | Suffolk Downs                  | G | 1
+  00:00        | ?     | ?               | Sunderland                     | G | 1
+  00:00        | ?     | ?               | Swan Hill                      | H | 1
+  00:00        | ?     | ?               | Swan Hill                      | H | 2
+  00:00        | ?     | ?               | Swan Hill                      | H | 3
+  00:00        | ?     | ?               | Swan Hill                      | H | 4
+  00:00        | ?     | ?               | Swan Hill                      | H | 5
+  00:00        | ?     | ?               | Swan Hill                      | H | 6
+  00:00        | ?     | ?               | Swan Hill                      | H | 7
+  00:00        | ?     | ?               | Towcester                      | G | 1
+  00:00        | ?     | ?               | Townsville                     | T | 1
+  00:00        | ?     | ?               | Townsville                     | T | 2
+  00:00        | ?     | ?               | Townsville                     | T | 3
+  00:00        | ?     | ?               | Townsville                     | T | 4
+  00:00        | ?     | ?               | Townsville                     | T | 5
+  00:00        | ?     | ?               | Townsville                     | T | 6
+  00:00        | ?     | ?               | Townsville                     | T | 7
+  00:00        | ?     | ?               | Townsville                     | G | 8
+  00:00        | ?     | ?               | Townsville                     | G | 9
+  00:00        | ?     | ?               | Townsville                     | G | 10
+  00:00        | ?     | ?               | Townsville                     | G | 11
+  00:00        | ?     | ?               | Townsville                     | G | 12
+  00:00        | ?     | ?               | Tralee                         | G | 1
+  00:00        | ?     | ?               | Tralee                         | G | 2
+  00:00        | ?     | ?               | Tralee                         | G | 3
+  00:00        | ?     | ?               | Tralee                         | G | 4
+  00:00        | ?     | ?               | Tralee                         | G | 5
+  00:00        | ?     | ?               | Tralee                         | G | 6
+  00:00        | ?     | ?               | Tralee                         | G | 7
+  00:00        | ?     | ?               | Tralee                         | G | 8
+  00:00        | ?     | ?               | Tralee                         | G | 9
+  00:00        | ?     | ?               | Warragul                       | G | 1
+  00:00        | ?     | ?               | Warragul                       | G | 2
+  00:00        | ?     | ?               | Warragul                       | G | 3
+  00:00        | ?     | ?               | Warragul                       | G | 4
+  00:00        | ?     | ?               | Warragul                       | G | 5
+  00:00        | ?     | ?               | Warragul                       | G | 6
+  00:00        | ?     | ?               | Warragul                       | G | 7
+  00:00        | ?     | ?               | Warragul                       | G | 8
+  00:00        | ?     | ?               | Warragul                       | G | 9
+  00:00        | ?     | ?               | Warragul                       | G | 10
+  00:00        | ?     | ?               | Warragul                       | G | 11
+  00:00        | ?     | ?               | Warragul                       | G | 12
+  00:00        | ?     | ?               | Yesiloba                       | T | 1
+  00:00        | ?     | ?               | Yesiloba                       | T | 2
