@@ -77,6 +77,16 @@ analytics_report.txt
 discovery_harvest.json
 results_harvest.json
 
+# Retrieval data files (cached for grid generation)
+rpb2b_*.json
+ras_*.json
+sportinglife_*.html
+hkjc_*.html
+jra_*.html
+tf_*.html
+drf_*.html
+timef*.html
+
 # Database
 *.db
 *.db-shm

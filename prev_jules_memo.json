@@ -1,0 +1,33 @@
+{
+  "memo_from": "Prev Jules",
+  "memo_to": "New Jules",
+  "subject": "Replication of Worldwide Race Grid Generation (v2)",
+  "staging_process": {
+    "step_1_data_ingest": "Manually fetch current race data using curl or browser. The grid generator script relies on local files that are excluded from the repository by .gitignore.",
+    "step_2_naming_conventions": {
+      "Root_Files": {
+        "RPB2B": "rpb2b_{DD}.json or rpb2b_{YYYY-MM-DD}.json",
+        "SportingLife": "sportinglife_{DD}.html or sportinglife_{YYYY-MM-DD}.html",
+        "RAS": "ras_{DD}.json or ras_{YYYY-MM-DD}.json"
+      },
+      "Manual_Fetch_Slugs": {
+        "Note": "The script also looks in the 'manual_fetch/' directory for specific source-based naming patterns.",
+        "Equibase": "*equibase*MMDDYYsum*.html (Matches MMDDYY from target date)",
+        "HKJC": "*hkjc*YYYY_MM_DD*.html (Matches underscore-delimited date)",
+        "SkySports": "*skysports*DD_MM_YYYY*.html",
+        "Other_Sources": "*source_{DD}.html or *source_{YYYY-MM-DD}.html"
+      }
+    },
+    "step_3_environment": "Run the script from the repository root with 'export PYTHONPATH=.' to ensure 'fortuna_utils' is correctly resolved.",
+    "step_4_execution": "Use 'python3 scripts/generate_race_grid.py --date YYYY-MM-DD'. The script uses 'find_files' to search root and 'manual_fetch/' simultaneously.",
+    "merging_logic_notes": "The script merges US data and International data using 'get_canonical_venue' and Race Number. It handles custom parsing for Equibase, DRF, HKJC, Racing Post, RAS, JRA, Timeform, and Sky Sports."
+  },
+  "verified_active_urls_2026_03_26": [
+    "https://backend-us-racecards.widget.rpb2b.com/v2/racecards/daily/2026-03-26",
+    "https://www.sportinglife.com/racing/racecards/2026-03-26/",
+    "https://www.racingandsports.com.au/todays-racing-json-v2",
+    "https://www.equibase.com/static/entry/index.html",
+    "https://racing.hkjc.com/racing/information/English/racing/RaceCard.aspx",
+    "https://www.drf.com/entries"
+  ]
+}
