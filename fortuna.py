@@ -1530,9 +1530,8 @@ class SmartFetcher:
                         GlobalEngineHealthRegistry.record_failure(engine, penalty=0.4)
                         raise FetchError("Rate limited (429)", response=response, category=ErrorCategory.RATE_LIMIT)
                     if sc in (403, 503):
+                        # Don't raise yet, check body for specific challenge keywords first (P0 Resilience)
                         self.logger.warning("http_block_status", engine=engine.value, status=sc, url=url)
-                        GlobalEngineHealthRegistry.record_failure(engine, penalty=0.3)
-                        raise FetchError(f"HTTP {sc}", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 if response and hasattr(response, "text") and response.text:
                     body_lower = response.text.lower()
@@ -1560,6 +1559,11 @@ class SmartFetcher:
                                 if engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
                                     await self._invalidate_session(engine)
                                 raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
+
+                # Final check: if status code was 403/503 and we didn't find a keyword or solve it, we must fail
+                if response and hasattr(response, "status_code") and response.status_code in (403, 503):
+                    GlobalEngineHealthRegistry.record_failure(engine, penalty=0.3)
+                    raise FetchError(f"HTTP {response.status_code}", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 GlobalEngineHealthRegistry.record_success(engine)
                 self.last_engine = engine.value
