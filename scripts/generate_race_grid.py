@@ -327,6 +327,52 @@ def parse_trackinfo_csv(filepath):
         return races
     except: return []
 
+def parse_snapshot_json(filepath, target_date):
+    """Parses race data from Fortuna snapshot JSON."""
+    if not os.path.exists(filepath): return []
+    try:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        races = []
+        et_tz = zoneinfo.ZoneInfo("America/New_York")
+        for r in data:
+            st = r.get('start_time')
+            dt = None
+            if st:
+                try:
+                    # Format is YYMMDDTHH:MM:SS
+                    dt = datetime.strptime(st, "%y%m%dT%H:%M:%S").replace(tzinfo=et_tz)
+                except: pass
+
+            # Extract ML from runners
+            ml_str = "?"
+            runners = r.get('runners', [])
+            if runners:
+                odds_list = []
+                for runner in runners:
+                    wo = runner.get('win_odds')
+                    if wo: odds_list.append(wo)
+                if odds_list:
+                    odds_list.sort()
+                    if len(odds_list) >= 2:
+                        ml_str = f"{odds_list[0]}, {odds_list[1]}"
+                    else:
+                        ml_str = f"{odds_list[0]}"
+
+            races.append({
+                "DateTime": dt,
+                "PostTime": dt.strftime('%H:%M') if dt else "00:00",
+                "FieldSize": str(len(runners)) if runners else "?",
+                "Distance": parse_distance_to_miles(r.get('distance', '?')),
+                "RaceNum": str(r.get('race_number', '?')),
+                "Location": r.get('venue', 'Unknown'),
+                "Discipline": r.get('discipline', 'T')[0].upper(),
+                "Purse": format_purse(r.get('metadata', {}).get('purse', '?')),
+                "ML": ml_str
+            })
+        return races
+    except: return []
+
 def parse_drf_html(filepath, target_date):
     """Parses US race data from DRF HTML."""
     if not os.path.exists(filepath): return []
@@ -647,6 +693,11 @@ def find_files(pattern, target_date, date_suffix):
         files += glob.glob('TrackInfo_Entries.csv')
         files += glob.glob(os.path.join('manual_fetch', 'TrackInfo_Entries.csv'))
 
+    # Snapshot search
+    if 'races.json' in pattern:
+        yymmdd = target_date[2:].replace('-', '')
+        files += glob.glob(f'snapshots/*_{yymmdd}_races.json')
+
     return list(set(files))
 
 def main():
@@ -669,11 +720,12 @@ def main():
     for f in find_files('tf_{SUFFIX}.html', target_date, date_suffix): all_raw_races.extend(parse_tf_html(f, target_date))
     for f in find_files('skysports_{SUFFIX}.html', target_date, date_suffix): all_raw_races.extend(parse_skysports_html(f, target_date))
     for f in find_files('TrackInfo_Entries.csv', target_date, date_suffix): all_raw_races.extend(parse_trackinfo_csv(f))
+    for f in find_files('_races.json', target_date, date_suffix): all_raw_races.extend(parse_snapshot_json(f, target_date))
 
-    # Assign Race Numbers for Sporting Life if missing
+    # Assign Race Numbers if missing
     meetings_data = {}
     for r in all_raw_races:
-        if r['RaceNum'] == "?":
+        if r['RaceNum'] == "?" or r['RaceNum'] == "0":
             loc = r['Location']
             if loc not in meetings_data: meetings_data[loc] = []
             meetings_data[loc].append(r)

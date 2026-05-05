@@ -1683,7 +1683,7 @@ class SmartFetcher:
         SCRAPLING_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "stealth_mode",
             "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params",
-            "follow_redirects", "allow_redirects"
+            "cookies", "follow_redirects", "allow_redirects"
         ]
 
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
