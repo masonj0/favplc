@@ -4384,7 +4384,8 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=300.0, rate_limit=5.0)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, max_retries=3, timeout=20)
+        # Success Strategy: RPB2B API sometimes requires browser-like headers to avoid empty 200s (P0 US Coverage)
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, impersonate="chrome124", enable_js=False, max_retries=3, timeout=20)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         dt = parse_date_string(date)
@@ -4393,9 +4394,17 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         resp = await self.make_request("GET", endpoint)
         if not resp: return None
         try: data = resp.json()
-        except Exception: return None
-        if not isinstance(data, list): return None
-        return {"venues": data, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
+        except Exception:
+            self.logger.error("RPB2B JSON decode failed", text=resp.text[:500])
+            return None
+
+        # API can return a list or a dict with a 'meetings' key
+        venues = data if isinstance(data, list) else data.get('meetings', [])
+        if not venues:
+            self.logger.warning("RPB2B returned no venues", data_keys=list(data.keys()) if isinstance(data, dict) else "list")
+            return None
+
+        return {"venues": venues, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
@@ -4423,6 +4432,11 @@ class RacingPostB2BAdapter(BaseAdapterV3):
                 name = run_data.get("name") or f"Runner {i+1}"
                 num = run_data.get("number") or i + 1
                 runners.append(Runner(number=num, name=name))
+        elif nr > 0:
+            # P0 USA Resilience: If runners list is missing but count is > 0,
+            # create placeholder runners so the race is at least discovered.
+            for i in range(1, nr + 1):
+                runners.append(Runner(number=i, name=f"Runner {i}"))
 
         if not runners:
             return None
