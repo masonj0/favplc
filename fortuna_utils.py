@@ -423,30 +423,34 @@ def normalize_venue_name(name: Optional[str]) -> str:
 
     upper_track = track_part.upper()
 
+    # Helper to enforce Proper Casing (e.g. 'Belmont Park')
+    def proper(s: str) -> str:
+        return s.replace("-", " ").title()
+
     # 3. High-Confidence Mapping — direct match
     if upper_track in VENUE_MAP:
-        return VENUE_MAP[upper_track]
+        return proper(VENUE_MAP[upper_track])
 
     # 4. Word-boundary prefix match (longest known venue first)
     track_words = upper_track.split()
     for end in range(len(track_words), 0, -1):
         candidate = " ".join(track_words[:end])
         if candidate in VENUE_MAP:
-            return VENUE_MAP[candidate]
+            return proper(VENUE_MAP[candidate])
 
     # 5. Same approach on the full (unstripped) cleaned name
     full_words = upper_name.split()
     for end in range(min(len(full_words), 4), 0, -1):  # max 4-word venue names
         candidate = " ".join(full_words[:end])
         if candidate in VENUE_MAP:
-            return VENUE_MAP[candidate]
+            return proper(VENUE_MAP[candidate])
 
     # 6. Legacy prefix match (substring-based, for backward compat)
     for known_track in sorted(VENUE_MAP.keys(), key=len, reverse=True):
         if upper_name.startswith(known_track + " ") or upper_name == known_track:
-            return VENUE_MAP[known_track]
+            return proper(VENUE_MAP[known_track])
 
-    return track_part.title()
+    return proper(track_part)
 
 def parse_odds_to_decimal(odds_str: Any) -> Optional[float]:
     """
