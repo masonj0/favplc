@@ -477,7 +477,8 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports", "HKJC", "JRA", "DRF",
-    "TwinSpires", "NYRABets", "RacingPostB2B" # US sources for 24/7 global coverage
+    "TwinSpires", "NYRABets", "RacingPostB2B",
+    "SportingLifeGreyhound" # Global multi-discipline expansion
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
 USA_RESULTS_ADAPTERS: Final[set] = {
@@ -1530,9 +1531,8 @@ class SmartFetcher:
                         GlobalEngineHealthRegistry.record_failure(engine, penalty=0.4)
                         raise FetchError("Rate limited (429)", response=response, category=ErrorCategory.RATE_LIMIT)
                     if sc in (403, 503):
+                        # Don't raise yet, check body for specific challenge keywords first (P0 Resilience)
                         self.logger.warning("http_block_status", engine=engine.value, status=sc, url=url)
-                        GlobalEngineHealthRegistry.record_failure(engine, penalty=0.3)
-                        raise FetchError(f"HTTP {sc}", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 if response and hasattr(response, "text") and response.text:
                     body_lower = response.text.lower()
@@ -1560,6 +1560,11 @@ class SmartFetcher:
                                 if engine in (BrowserEngine.PLAYWRIGHT, BrowserEngine.CAMOUFOX):
                                     await self._invalidate_session(engine)
                                 raise FetchError(f"Bot challenge detected ({kw})", response=response, category=ErrorCategory.BOT_DETECTION)
+
+                # Final check: if status code was 403/503 and we didn't find a keyword or solve it, we must fail
+                if response and hasattr(response, "status_code") and response.status_code in (403, 503):
+                    GlobalEngineHealthRegistry.record_failure(engine, penalty=0.3)
+                    raise FetchError(f"HTTP {response.status_code}", response=response, category=ErrorCategory.BOT_DETECTION)
 
                 GlobalEngineHealthRegistry.record_success(engine)
                 self.last_engine = engine.value
@@ -1679,7 +1684,7 @@ class SmartFetcher:
         SCRAPLING_KWARGS = [
             "network_idle", "wait_selector", "wait_until", "stealth_mode",
             "block_resources", "timeout", "headers", "extra_headers", "proxy", "data", "json", "params",
-            "follow_redirects", "allow_redirects"
+            "cookies", "follow_redirects", "allow_redirects"
         ]
 
         scrapling_kwargs = {k: v for k, v in kwargs.items() if k in SCRAPLING_KWARGS}
@@ -2891,6 +2896,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
         # Success Strategy: Always bootstrap session on the homepage
         try:
             await self.make_request("GET", "https://www.racingandsports.com.au", timeout=30, raise_for_status=False)
+            await self.make_request("GET", "/racing", timeout=20, raise_for_status=False)
             await asyncio.sleep(1)
         except Exception: pass
 
@@ -2991,7 +2997,12 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                         if r_match:
                             race_num = int(r_match.group(1))
 
-                    race = self._parse_single_race(p["html"], url, race_date, normalize_venue_name(venue), race_num)
+                    # Try to extract discipline from URL
+                    disc = "Thoroughbred"
+                    if "harness" in url.lower(): disc = "Harness"
+                    elif "greyhound" in url.lower(): disc = "Greyhound"
+
+                    race = self._parse_single_race(p["html"], url, race_date, normalize_venue_name(venue), race_num, disc)
                     if race: races.append(race)
             return races
 
@@ -3070,7 +3081,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                         assigned_disc = assigned_disc.title()
 
                     races.append(Race(
-                        id=generate_race_id("ras", venue, start_time, race_num),
+                        id=generate_race_id("ras", venue, start_time, race_num, assigned_disc or detect_discipline(str(r))),
                         venue=venue,
                         race_number=race_num,
                         start_time=ensure_eastern(start_time),
@@ -3082,7 +3093,7 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                     continue
         return races
 
-    def _parse_single_race(self, html_content: str, url: str, race_date: date, venue: str, race_num: int) -> Optional[Race]:
+    def _parse_single_race(self, html_content: str, url: str, race_date: date, venue: str, race_num: int, discipline_fallback: Optional[str] = None) -> Optional[Race]:
         tree = HTMLParser(html_content)
 
         runners = []
@@ -3121,12 +3132,13 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
             except Exception: pass
 
         return Race(
-            id=generate_race_id("ras", venue, start_time, race_num),
+            id=generate_race_id("ras", venue, start_time, race_num, discipline_fallback or detect_discipline(html_content)),
             venue=venue,
             race_number=race_num,
             start_time=ensure_eastern(start_time),
             runners=runners,
             source=self.SOURCE_NAME,
+            discipline=discipline_fallback or detect_discipline(html_content),
             available_bets=scrape_available_bets(html_content)
         )
 
@@ -3153,77 +3165,75 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
         # Index for the day
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
-        # Standard URL for SRW form guide
-        index_url = f"/form-guide/thoroughbred/{date_iso}"
 
         # Success Strategy: Bootstrap session on the form guide root first
         try:
             # FIX-CR-SRW: Establish session on the home page first
             await self.make_request("GET", "https://www.skyracingworld.com/", timeout=20, raise_for_status=False, update_status=False)
             await self.make_request("GET", "/form-guide", timeout=20, raise_for_status=False, update_status=False)
-            await self.make_request("GET", "/form-guide/thoroughbred", timeout=20, raise_for_status=False, update_status=False)
             # FIX: Additional delay to satisfy SRW's rate limiters during bootstrap
             await asyncio.sleep(2)
         except Exception: pass
 
-        # Success Strategy: Try both dated and generic index (Fix redirects)
-        index_urls = [index_url, "/form-guide/thoroughbred", "/form-guide"]
-        resp = None
-        for u in index_urls:
-            try:
-                # FIX-CR-SRW: Follow redirects explicitly
-                resp = await self.make_request("GET", u, headers=self._get_headers(), follow_redirects=True)
-                if resp and resp.text:
-                    # Check if the page actually contains race links for the target date
-                    if date_iso in resp.text or "/R" in resp.text:
-                        break
-            except Exception:
+        # Multi-Discipline Success Strategy (Council Requirement)
+        disciplines = ["thoroughbred", "harness", "greyhound"]
+        all_metadata = []
+
+        for disc in disciplines:
+            index_url = f"/form-guide/{disc}/{date_iso}"
+            index_urls = [index_url, f"/form-guide/{disc}", "/form-guide"]
+            resp = None
+            for u in index_urls:
+                try:
+                    # FIX-CR-SRW: Follow redirects explicitly
+                    resp = await self.make_request("GET", u, headers=self._get_headers(), follow_redirects=True)
+                    if resp and resp.text:
+                        # Check if the page actually contains race links for the target date
+                        if date_iso in resp.text or "/R" in resp.text:
+                            break
+                except Exception:
+                    continue
+
+            if not resp or not resp.text:
                 continue
 
-        if not resp or not resp.text:
-            if resp: self.logger.warning("Unexpected status", status=getattr(resp, 'status', 'unknown'), url=index_url)
-            return None
-        self._save_debug_snapshot(resp.text, f"skyracing_index_{date}")
+            self._save_debug_snapshot(resp.text, f"skyracing_index_{disc}_{date}")
+            parser = HTMLParser(resp.text)
+            track_links = defaultdict(list)
+            now = now_eastern()
+            today_str = now.strftime(DATE_FORMAT)
 
-        parser = HTMLParser(resp.text)
-        track_links = defaultdict(list)
-        now = now_eastern()
-        today_str = now.strftime(DATE_FORMAT)
+            # Optimization: If it's late in ET, skip countries that are finished
+            skip_finished_countries = (now.hour >= 18 or now.hour < 6) and (date == today_str)
+            finished_keywords = ["turkey", "south-africa", "united-kingdom", "france", "germany", "dubai", "bahrain"]
 
-        # Optimization: If it's late in ET, skip countries that are finished
-        # Europe/Turkey/SA usually finished by 18:00 ET
-        skip_finished_countries = (now.hour >= 18 or now.hour < 6) and (date == today_str)
-        finished_keywords = ["turkey", "south-africa", "united-kingdom", "france", "germany", "dubai", "bahrain"]
+            # Broaden selectors for race links (Fix 15)
+            for link in parser.css("a.fg-race-link, a[href*='/form-guide/'][href*='/R']"):
+                url = link.attributes.get("href")
+                if url:
+                    if not url.startswith("http"):
+                        url = self.BASE_URL + url
 
-        # Broaden selectors for race links (Fix 15)
-        for link in parser.css("a.fg-race-link, a[href*='/form-guide/'][href*='/R']"):
-            url = link.attributes.get("href")
-            if url:
-                if not url.startswith("http"):
-                    url = self.BASE_URL + url
+                    if skip_finished_countries:
+                        if any(kw in url.lower() for kw in finished_keywords):
+                            continue
 
-                if skip_finished_countries:
-                    if any(kw in url.lower() for kw in finished_keywords):
-                        continue
+                    # Group by track (everything before R#)
+                    track_key = re.sub(r'/R\d+$', '', url)
+                    track_links[track_key].append(url)
 
-                # Group by track (everything before R#)
-                track_key = re.sub(r'/R\d+$', '', url)
-                track_links[track_key].append(url)
+            for t_url in track_links:
+                if track_links[t_url]:
+                    # Include discipline in metadata for parser
+                    all_metadata.append({"url": track_links[t_url][0], "discipline": disc.title()})
 
-        metadata = []
-        for t_url in track_links:
-            # For discovery, we usually only care about upcoming races.
-            # Without times in index, we pick R1 as a guess, but if we have multiple,
-            # R1 might be in the past. However, picking R1 is the safest if we want "one per track".
-            if track_links[t_url]:
-                metadata.append({"url": track_links[t_url][0]})
-
-        if not metadata:
-            self.logger.warning("No metadata found", context="SRW Index Parsing", url=index_url)
+        if not all_metadata:
+            self.logger.warning("No metadata found across disciplines", context="SRW Index Parsing", url="/form-guide")
             self.metrics.record_parse_warning()
             return None
-        # Limit to first 50 to avoid hammering
-        pages = await self._fetch_race_pages_concurrent(metadata[:50], self._get_headers(), semaphore_limit=5)
+
+        # Limit to avoid hammering
+        pages = await self._fetch_race_pages_concurrent(all_metadata[:60], self._get_headers(), semaphore_limit=5)
         return {"pages": pages, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
@@ -3235,13 +3245,13 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             html_content = item.get("html")
             if not html_content: continue
             try:
-                race = self._parse_single_race(html_content, item.get("url", ""), race_date)
+                race = self._parse_single_race(html_content, item.get("url", ""), race_date, item.get("discipline"))
                 if race: races.append(race)
             except Exception:
                 self.metrics.record_parse_error()
         return races
 
-    def _parse_single_race(self, html_content: str, url: str, race_date: date) -> Optional[Race]:
+    def _parse_single_race(self, html_content: str, url: str, race_date: date, discipline_fallback: Optional[str] = None) -> Optional[Race]:
         parser = HTMLParser(html_content)
 
         # Extract venue and time from header
@@ -3251,14 +3261,16 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
 
         header_text = clean_text(node_text(header))
 
-        # Strategy 0: Extract track name from URL if possible (most reliable)
-        # URL usually /form-guide/australia/wyong/2026-02-17/R1
+        # Strategy 0: Extract track name and discipline from URL if possible (most reliable)
+        # URL usually /form-guide/thoroughbred/australia/wyong/2026-02-17/R1
         venue = None
+        discipline = discipline_fallback or "Thoroughbred"
         url_parts = url.lower().split("/")
         if "form-guide" in url_parts:
             idx = url_parts.index("form-guide")
             # Skip discipline if present (thoroughbred, harness, greyhound)
             if len(url_parts) > idx + 1 and url_parts[idx+1] in ["thoroughbred", "harness", "greyhound"]:
+                discipline = url_parts[idx+1].title()
                 idx += 1
             if len(url_parts) > idx + 2:
                 # idx+1 is country, idx+2 is track
@@ -4174,6 +4186,138 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_number_fallback or 1, start_time=start_time, runners=runners, distance=clean_text(node_text(dn)) if dn else None, race_type=race_type, source=self.source_name, available_bets=scrape_available_bets(html_content))
 
 # ----------------------------------------
+# SportingLifeGreyhoundAdapter
+# ----------------------------------------
+class SportingLifeGreyhoundAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
+    """
+    Adapter for Sporting Life Greyhounds.
+    Broadens discovery to global greyhound tracks.
+    """
+    SOURCE_NAME: ClassVar[str] = "SportingLifeGreyhound"
+    PROVIDES_ODDS: ClassVar[bool] = True
+    BASE_URL: ClassVar[str] = "https://www.sportinglife.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config)
+
+    def _configure_fetch_strategy(self) -> FetchStrategy:
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, stealth_mode="camouflage", timeout=30, impersonate="chrome124")
+
+    def _get_headers(self) -> Dict[str, str]:
+        return self._get_browser_headers(host="www.sportinglife.com", referer="https://www.sportinglife.com/greyhounds/racecards")
+
+    async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
+        dt = parse_date_string(date)
+        date_iso = dt.strftime("%Y-%m-%d")
+        index_url = f"/greyhounds/racecards/{date_iso}"
+        resp = await self.make_request("GET", index_url, headers=self._get_headers(), follow_redirects=True, raise_for_status=False)
+        if not resp or not resp.text or resp.status == 404:
+            self.logger.info("Dated SL greyhound index failed, trying current", date=date_iso)
+            index_url = "/greyhounds/racecards"
+            resp = await self.make_request("GET", index_url, headers=self._get_headers(), follow_redirects=True, raise_for_status=False)
+        if not resp or not resp.text: return None
+
+        self._save_debug_snapshot(resp.text, f"sl_greyhound_index_{date}")
+        parser = HTMLParser(resp.text)
+        data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SL Greyhound Index")
+        if not data: return None
+
+        metadata = []
+        # Discovery Improvement: Global SL Greyhound cards often use /greyhounds/racecards/{date}/{course}/racecard/{id}
+        for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
+            course_slug = meeting.get("meeting_summary", {}).get("course", {}).get("name", "").lower().replace(" ", "-")
+            for i, race in enumerate(meeting.get("races", []), 1):
+                url = race.get("racecard_url") or race.get("url")
+                if not url:
+                    # Construct URL from metadata if missing (Fix for new SL structure)
+                    rid = race.get("race_summary_reference", {}).get("id")
+                    rdate = race.get("date")
+                    if rid and rdate and course_slug:
+                        url = f"/greyhounds/racecards/{rdate}/{course_slug}/racecard/{rid}"
+
+                if url:
+                    metadata.append({"url": url, "race_number": i})
+
+        if not metadata:
+            # Fallback to HTML parsing if JSON structure is different
+            for link in parser.css('a[href*="/greyhounds/racecards/"]'):
+                if url := link.attributes.get("href"):
+                    if "/racecard/" in url:
+                        metadata.append({"url": url})
+
+        if not metadata: return None
+        pages = await self._fetch_race_pages_concurrent(metadata[:40], self._get_headers(), semaphore_limit=5)
+        return {"pages": pages, "date": date}
+
+    def _parse_races(self, raw_data: Any) -> List[Race]:
+        if not raw_data or not raw_data.get("pages"): return []
+        try: race_date = parse_date_string(raw_data["date"]).date()
+        except Exception: return []
+        races: List[Race] = []
+        for item in raw_data["pages"]:
+            if html := item.get("html"):
+                try:
+                    parser = HTMLParser(html)
+                    race = self._parse_single_race(parser, race_date, html, item.get("url", ""), item.get("race_number"))
+                    if race: races.append(race)
+                except Exception: pass
+        return races
+
+    def _parse_single_race(self, parser: HTMLParser, race_date: date, html: str, url: str, race_number_fallback: Optional[int] = None) -> Optional[Race]:
+        data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SL Greyhound Race")
+        if not data: return None
+        ri = data.get("props", {}).get("pageProps", {}).get("race")
+        if not ri: return None
+        summ = ri.get("race_summary") or {}
+
+        vn = normalize_venue_name(summ.get("course_name") or ri.get("meeting_name") or "Unknown")
+        rt = ri.get("time") or summ.get("time")
+        if not rt: return None
+        try: st = datetime.combine(race_date, datetime.strptime(rt, "%H:%M").time())
+        except Exception: return None
+
+        runners = []
+        # Greyhounds structure: 'runs' or 'runners'
+        raw_runners = ri.get("runs") or ri.get("runners") or ri.get("rides") or []
+        for rd in raw_runners:
+            # Greyhound name is often nested: rd['greyhound']['name']
+            gh = rd.get("greyhound") or {}
+            name = clean_text(gh.get("name") or rd.get("greyhound_name") or rd.get("name") or "")
+
+            # Skip if name is a venue or time
+            if not name or name.upper() in ["HORSE", "NAME"] or re.match(r"^\d{1,2}:\d{2}", name): continue
+
+            num = rd.get("cloth_number") or rd.get("trap_number") or rd.get("saddle_cloth_number") or 0
+
+            # Broaden odds extraction for Greyhounds
+            betting = rd.get("betting") or {}
+            wo = parse_odds_to_decimal(
+                betting.get("current_odds") or
+                betting.get("current_price") or
+                rd.get("forecast_odds") or
+                rd.get("odds") or
+                ""
+            )
+
+            # If still missing, check 'previous_results' (for auditing/historical)
+            if wo is None and (pr := rd.get("previous_results")):
+                if isinstance(pr, list) and len(pr) > 0:
+                    wo = parse_odds_to_decimal(pr[0].get("odds"))
+
+            if wo is None: wo = SmartOddsExtractor.extract_from_text(str(rd))
+
+            od = {}
+            if ov := create_odds_data(self.source_name, wo): od[self.source_name] = ov
+            runners.append(Runner(number=num, name=name, scratched=rd.get("is_non_runner") or rd.get("run_status") == "NON_RUNNER", odds=od, win_odds=wo))
+
+        if not runners: return None
+        # P0 Accuracy: Ensure race number is captured from index if missing in race-page JSON
+        rn = ri.get("race_number") or summ.get("race_number") or race_number_fallback or 1
+        # Extract distance from summary or metadata
+        dist = str(summ.get("distance") or ri.get("distance") or "")
+        return Race(id=generate_race_id("slg", vn, st, rn, "Greyhound"), venue=vn, race_number=rn, start_time=ensure_eastern(st), runners=runners, distance=dist, source=self.source_name, discipline="Greyhound")
+
+# ----------------------------------------
 # SkySportsAdapter
 # ----------------------------------------
 class SkySportsAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, BaseAdapterV3):
@@ -4380,7 +4524,8 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=300.0, rate_limit=5.0)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return FetchStrategy(primary_engine=BrowserEngine.HTTPX, enable_js=False, max_retries=3, timeout=20)
+        # Success Strategy: RPB2B API sometimes requires browser-like headers to avoid empty 200s (P0 US Coverage)
+        return FetchStrategy(primary_engine=BrowserEngine.CURL_CFFI, impersonate="chrome124", enable_js=False, max_retries=3, timeout=20)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         dt = parse_date_string(date)
@@ -4389,9 +4534,17 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         resp = await self.make_request("GET", endpoint)
         if not resp: return None
         try: data = resp.json()
-        except Exception: return None
-        if not isinstance(data, list): return None
-        return {"venues": data, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
+        except Exception:
+            self.logger.error("RPB2B JSON decode failed", text=resp.text[:500])
+            return None
+
+        # API can return a list or a dict with a 'meetings' key
+        venues = data if isinstance(data, list) else data.get('meetings', [])
+        if not venues:
+            self.logger.warning("RPB2B returned no venues", data_keys=list(data.keys()) if isinstance(data, dict) else "list")
+            return None
+
+        return {"venues": venues, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
         if not raw_data or not raw_data.get("venues"): return []
@@ -4419,6 +4572,11 @@ class RacingPostB2BAdapter(BaseAdapterV3):
                 name = run_data.get("name") or f"Runner {i+1}"
                 num = run_data.get("number") or i + 1
                 runners.append(Runner(number=num, name=name))
+        elif nr > 0:
+            # P0 USA Resilience: If runners list is missing but count is > 0,
+            # create placeholder runners so the race is at least discovered.
+            for i in range(1, nr + 1):
+                runners.append(Runner(number=i, name=f"Runner {i}"))
 
         if not runners:
             return None
@@ -4601,18 +4759,28 @@ class TabAdapter(BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, rate_limit=2.0)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        return api_fetch_strategy(timeout=45)
+        # P0 Geoblocking Bypass: Upgrade to scraping strategy to bypass local restrictions
+        return scraping_fetch_strategy(timeout=60)
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         dt = parse_date_string(date)
         date_iso = dt.strftime("%Y-%m-%d")
+        # P0 Geoblocking Bypass Strategy
+        # The API endpoints are often blocked by geolocation, but the web-frontend-derived
+        # requests via a stealth browser might succeed if session cookies are established.
+        try:
+            # Bootstrap session on the racing home page
+            await self.make_request("GET", "https://www.tab.com.au/racing", wait_until="networkidle", timeout=30, raise_for_status=False)
+            await asyncio.sleep(2)
+        except Exception: pass
+
         url = f"{self.base_url}/dates/{date_iso}/meetings"
-        resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
+        resp = await self.make_request("GET", url, headers={"Accept": "application/json"})
 
         if not resp or resp.status != 200:
             self.logger.info("Falling back to STABLE TAB API")
             url = f"{self.BASE_URL_STABLE}/dates/{date_iso}/meetings"
-            resp = await self.make_request("GET", url, headers={"Accept": "application/json", "User-Agent": CHROME_USER_AGENT})
+            resp = await self.make_request("GET", url, headers={"Accept": "application/json"})
 
         if not resp: return None
         try: data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
