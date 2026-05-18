@@ -774,9 +774,9 @@ def main():
         print("-" * len(header))
         for r in races_list:
             p_time = r['PostTime']
-            marker = "  "
+            marker = "   "
             if r['DateTime'] and now_et - timedelta(minutes=5) <= r['DateTime'] <= now_et + timedelta(minutes=15):
-                marker = ">>"
+                marker = ">>>"
             fs = str(r.get('FieldSize', '?'))
             dst = str(r.get('Distance', '?'))
             prs = str(r.get('Purse', '?'))

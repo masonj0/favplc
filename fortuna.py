@@ -3359,7 +3359,7 @@ class SkyRacingWorldAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixi
             id=generate_race_id("srw", venue, start_time, race_num, disc),
             venue=venue,
             race_number=race_num,
-            start_time=start_time,
+            start_time=ensure_eastern(start_time),
             runners=runners,
             discipline=disc,
             race_type=race_type,
