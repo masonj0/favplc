@@ -309,19 +309,26 @@ async def test_sky_racing_world_adapter_parsing():
             self.status_code = status
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        mock_fetch.side_effect = [
-            MockResponse("bootstrap home", 200),
-            MockResponse("bootstrap fg", 200),
-            MockResponse("bootstrap thoroughbred", 200),
-            MockResponse(index_html, 200),
-            MockResponse(race_html, 200)
-        ]
+        def side_effect(*args, **kwargs):
+            # args[0] is SmartFetcher instance
+            # args[1] is URL
+            url = str(args[1]) if len(args) > 1 else str(args[0])
+            if "2026-02-07" in url and "/form-guide/thoroughbred" in url:
+                return MockResponse(index_html, 200)
+            if "2026-02-07" in url and ("/form-guide/harness" in url or "/form-guide/greyhound" in url):
+                return MockResponse("no links here", 200)
+            if "/R1" in url:
+                return MockResponse(race_html, 200)
+            return MockResponse("bootstrap", 200)
+
+        mock_fetch.side_effect = side_effect
 
         races = await adapter.get_races("2026-02-07")
 
         assert len(races) > 0
         race = races[0]
-        assert "Randwick" in race.venue
+        # normalize_venue_name("RANDWICK") -> "Randwick"
+        assert race.venue == "Randwick"
         assert len(race.runners) == 2
         assert race.runners[0].win_odds == 6.0
         assert race.runners[1].win_odds == 11.0
