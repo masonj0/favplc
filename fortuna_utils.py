@@ -646,7 +646,10 @@ def get_daypart_tag(args: Optional[Any] = None) -> str:
     Used for snapshot file naming and database keys.
     """
     dp = resolve_daypart(args)
-    date_str = now_eastern().strftime(DATE_FORMAT)
+    if args and getattr(args, "date", None):
+        date_str = args.date
+    else:
+        date_str = now_eastern().strftime(DATE_FORMAT)
     return f"{dp}_{date_str}"
 
 def to_eastern(dt: datetime) -> datetime:

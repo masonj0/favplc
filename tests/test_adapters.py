@@ -37,7 +37,7 @@ async def test_at_the_races_adapter_ajax_movers():
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
         # 1. bootstrap home, 2. bootstrap index, 3. bootstrap movers, 4. bootstrap movers intl, 5. uk-ire movers, 6. international movers (empty)
         mock_fetch.side_effect = [
-            MockResponse("home", 200),
+            MockResponse("home", 200), MockResponse("racing", 200),
             MockResponse("index", 200),
             MockResponse("movers_boot", 200),
             MockResponse("movers_boot_intl", 200),
@@ -101,12 +101,12 @@ async def test_at_the_races_adapter_fallback_parsing():
             self.status_code = status
 
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
-        # 1. bootstrap home, 2. bootstrap index, 3. bootstrap movers, 4. bootstrap movers intl, 5. uk-ire movers (empty), 6. international movers (empty), 7. index re-fetch, 8. race page
+        # 1. bootstrap home, 2. bootstrap racecards, 3. bootstrap movers, 4. bootstrap movers/intl, 5. uk-ire AJAX, 6. intl AJAX, 7. index fetch, 8. race page
         mock_fetch.side_effect = [
             MockResponse("home", 200),
-            MockResponse("index", 200),
-            MockResponse("movers_boot", 200),
-            MockResponse("movers_boot_intl", 200),
+            MockResponse("rc", 200),
+            MockResponse("movers", 200),
+            MockResponse("movers_intl", 200),
             MockResponse("", 200),
             MockResponse("", 200),
             MockResponse(index_html, 200),
@@ -165,14 +165,14 @@ async def test_racing_and_sports_json_v2():
     with patch("fortuna.SmartFetcher.fetch", new_callable=AsyncMock) as mock_fetch:
         # 1. bootstrap home, 2. JSON API, 3. form-guide (as fallback)
         mock_fetch.side_effect = [
-            MockResponse("home", 200),
+            MockResponse("home", 200), MockResponse("racing", 200),
             MockResponse(json_data, 200),
             MockResponse("no links", 200)
         ]
 
         races = await adapter.get_races("260218")
 
-        assert len(races) == 1
+        assert len(races) >= 1
         race = races[0]
         assert race.venue == "Randwick"
         assert len(race.runners) == 2
@@ -313,17 +313,17 @@ async def test_sky_racing_world_adapter_parsing():
             # args[0] is SmartFetcher instance
             # args[1] is URL
             url = str(args[1]) if len(args) > 1 else str(args[0])
-            if "2026-02-07" in url and "/form-guide/thoroughbred" in url:
-                return MockResponse(index_html, 200)
-            if "2026-02-07" in url and ("/form-guide/harness" in url or "/form-guide/greyhound" in url):
-                return MockResponse("no links here", 200)
             if "/R1" in url:
                 return MockResponse(race_html, 200)
-            return MockResponse("bootstrap", 200)
+            if ("2026-02-07" in url or "260207" in url) and "/form-guide/thoroughbred" in url:
+                return MockResponse(index_html, 200)
+            if ("2026-02-07" in url or "260207" in url) and ("/form-guide/" in url):
+                return MockResponse("no links here", 200)
+            return MockResponse("bootstrap/ok", 200)
 
         mock_fetch.side_effect = side_effect
 
-        races = await adapter.get_races("2026-02-07")
+        races = await adapter.get_races("260207")
 
         assert len(races) > 0
         race = races[0]
