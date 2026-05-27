@@ -1479,7 +1479,8 @@ class SmartFetcher:
             "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
             "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
             "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
-            "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
+            "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com",
+            "racingandsports.com.au"
         ]
         if any(d in url for d in protected_domains):
             self.logger.debug("Prioritizing browser engines for protected domain", url=url)
@@ -3034,20 +3035,20 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
         self.logger.info("parsing_ras_json", meeting_count=len(meetings))
         for m in meetings:
-            venue_raw = m.get('venueName') or m.get('venue') or m.get('Course')
+            venue_raw = m.get('venueName') or m.get('venue') or m.get('Course') or m.get('Venue')
             if not venue_raw: continue
             venue = normalize_venue_name(venue_raw)
 
             # Filter by region if set in config
             target_region = self.config.get('region')
             # Normalize country name for filtering (Standardize to ISO-ish or common names)
-            country = (m.get('country') or m.get('countryCode') or '').upper()
+            country = (m.get('country') or m.get('countryCode') or m.get('CountryCode') or '').upper()
             if target_region == 'USA' and country not in ['US', 'USA', 'CAN']: continue
             if target_region == 'INT' and country in ['US', 'USA', 'CAN']: continue
 
             # If JSON provides race list, parse them directly
-            ras_races = m.get('races', [])
-            if not ras_races and m.get('RaceNumber'):
+            ras_races = m.get('races') or m.get('Races') or []
+            if not ras_races and (m.get('RaceNumber') or m.get('raceNumber')):
                 # Single race summary, often with links
                 ras_races = [m]
 
@@ -3056,18 +3057,24 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                     race_num = int(r.get('raceNumber') or r.get('RaceNumber') or r_idx)
 
                     # Start time
-                    time_str = r.get('raceTime') # e.g. "12:30"
+                    time_str = r.get('raceTime') or r.get('RaceTime') # e.g. "12:30"
                     if time_str:
-                        start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
+                        # Some formats include ' AM' or ' PM'
+                        time_str = time_str.strip()
+                        if ' ' in time_str:
+                            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%I:%M %p").time())
+                        else:
+                            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
                     else:
                         start_time = datetime.combine(race_date, datetime.min.time())
 
                     runners = []
-                    for run_data in r.get('runners', []):
-                        name = run_data.get('horseName') or run_data.get('name')
+                    runners_list = r.get('runners') or r.get('Runners') or []
+                    for run_data in runners_list:
+                        name = run_data.get('horseName') or run_data.get('name') or run_data.get('HorseName')
                         if not name: continue
-                        num = int(run_data.get('tabNo') or run_data.get('number') or 0)
-                        win_odds = parse_odds_to_decimal(run_data.get('winOdds') or run_data.get('fixedOdds'))
+                        num = int(run_data.get('tabNo') or run_data.get('number') or run_data.get('TabNo') or 0)
+                        win_odds = parse_odds_to_decimal(run_data.get('winOdds') or run_data.get('fixedOdds') or run_data.get('WinOdds'))
                         odds_data = {}
                         if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                             odds_data[self.SOURCE_NAME] = ov
@@ -5030,8 +5037,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             if not resp or not resp.text: return None
             list_races_data = json.loads(resp.text)
             all_races = list_races_data.get("races", [])
-            # Filter US/AU/NZ races for discovery efficiency (Fix: Include AUS/NZ for coverage)
-            target_countries = {"US", "AU", "NZ"}
+            # Filter US/AU/NZ/ZA races for discovery efficiency (Fix: Include ZAF for coverage)
+            target_countries = {"US", "AU", "NZ", "ZA"}
             target_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") in target_countries]
             if not target_race_ids:
                 self.metrics.record_parse_warning()
