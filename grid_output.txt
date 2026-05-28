@@ -1,0 +1,88 @@
+
+=== WORLDWIDE RACE GRID ===
+Post (ET)  | Field | Dist (mi)  | Purse  | ML (1/2)   | Location                  | D | R#
+------------------------------------------------------------------------------------------
+   12:20    | 7     | ?          | ?      | ?          | Delaware                  | T | 1
+   12:35    | 5     | ?          | ?      | ?          | Belterra Park             | T | 1
+   12:40    | 9     | ?          | ?      | ?          | Parx                      | T | 1
+   12:50    | 6     | ?          | ?      | ?          | Thistledown               | T | 1
+   12:52    | 7     | ?          | ?      | ?          | Delaware                  | T | 2
+   12:55    | 6     | ?          | ?      | ?          | Finger Lakes              | T | 1
+>>>13:05    | 5     | ?          | ?      | ?          | Belterra Park             | T | 2
+>>>13:07    | 7     | ?          | ?      | ?          | Parx                      | T | 2
+>>>13:20    | 6     | ?          | ?      | ?          | Thistledown               | T | 2
+   13:24    | 8     | ?          | ?      | ?          | Delaware                  | T | 3
+   13:24    | 6     | ?          | ?      | ?          | Finger Lakes              | T | 2
+   13:34    | 6     | ?          | ?      | ?          | Parx                      | T | 3
+   13:50    | 5     | ?          | ?      | ?          | Thistledown               | T | 3
+   13:56    | 10    | ?          | ?      | ?          | Delaware                  | T | 4
+   14:01    | 6     | ?          | ?      | ?          | Parx                      | T | 4
+   14:10    | 8     | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 1
+   14:20    | 5     | ?          | ?      | ?          | Thistledown               | T | 4
+   14:28    | 6     | ?          | ?      | ?          | Delaware                  | T | 5
+   14:28    | 7     | ?          | ?      | ?          | Parx                      | T | 5
+   14:41    | 7     | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 2
+   14:51    | 8     | ?          | ?      | ?          | Finger Lakes              | T | 5
+   14:55    | 8     | ?          | ?      | ?          | Parx                      | T | 6
+   15:00    | 10    | ?          | ?      | ?          | Delaware                  | T | 6
+   15:05    | 7     | ?          | ?      | ?          | Belterra Park             | T | 6
+   15:12    | 6     | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 3
+   15:30    | 5     | ?          | ?      | ?          | Ajax                      | T | 1
+   15:30    | 7     | ?          | ?      | ?          | Presque Isle              | T | 1
+   15:35    | 6     | ?          | ?      | ?          | Belterra Park             | T | 7
+   15:43    | 12    | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 4
+   15:55    | 6     | ?          | ?      | ?          | Ajax                      | T | 2
+   15:57    | 6     | ?          | ?      | ?          | Presque Isle              | T | 2
+   16:04    | 6     | ?          | ?      | ?          | Delaware                  | T | 8
+   16:05    | 8     | ?          | ?      | ?          | Belterra Park             | T | 8
+   16:14    | 8     | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 5
+   16:16    | 10    | ?          | ?      | ?          | Parx                      | T | 9
+   16:20    | 6     | ?          | ?      | ?          | Ajax                      | T | 3
+   16:20    | 7     | ?          | ?      | ?          | Thistledown               | T | 8
+   16:24    | 5     | ?          | ?      | ?          | Presque Isle              | T | 3
+   16:45    | 12    | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 6
+   16:47    | 7     | ?          | ?      | ?          | Finger Lakes              | T | 9
+   16:51    | 6     | ?          | ?      | ?          | Presque Isle              | T | 4
+   17:35    | 5     | ?          | ?      | ?          | Ajax                      | T | 6
+   18:12    | 7     | ?          | ?      | ?          | Presque Isle              | T | 7
+   18:15    | 10    | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 9
+   19:15    | 10    | ?          | ?      | ?          | Delta Downs               | T | 1
+   19:40    | 6     | ?          | ?      | ?          | Delta Downs               | T | 2
+   20:05    | 9     | ?          | ?      | ?          | Delta Downs               | T | 3
+   20:30    | 6     | ?          | ?      | ?          | Assiniboia                | T | 1
+   20:30    | 9     | ?          | ?      | ?          | Delta Downs               | T | 4
+   20:55    | 8     | ?          | ?      | ?          | Delta Downs               | T | 5
+   21:00    | 6     | ?          | ?      | ?          | Assiniboia                | T | 2
+   21:20    | 10    | ?          | ?      | ?          | Delta Downs               | T | 6
+   21:50    | 7     | ?          | ?      | ?          | Assiniboia                | T | 4
+   22:15    | 7     | ?          | ?      | ?          | Assiniboia                | T | 5
+   22:40    | 8     | ?          | ?      | ?          | Assiniboia                | T | 6
+   23:05    | 8     | ?          | ?      | ?          | Assiniboia                | T | 7
+
+=== CONCENTRATED GRID (Field < 7) ===
+Post (ET)  | Field | Dist (mi)  | Purse  | ML (1/2)   | Location                  | D | R#
+------------------------------------------------------------------------------------------
+   12:35    | 5     | ?          | ?      | ?          | Belterra Park             | T | 1
+   12:50    | 6     | ?          | ?      | ?          | Thistledown               | T | 1
+   12:55    | 6     | ?          | ?      | ?          | Finger Lakes              | T | 1
+>>>13:05    | 5     | ?          | ?      | ?          | Belterra Park             | T | 2
+>>>13:20    | 6     | ?          | ?      | ?          | Thistledown               | T | 2
+   13:24    | 6     | ?          | ?      | ?          | Finger Lakes              | T | 2
+   13:34    | 6     | ?          | ?      | ?          | Parx                      | T | 3
+   13:50    | 5     | ?          | ?      | ?          | Thistledown               | T | 3
+   14:01    | 6     | ?          | ?      | ?          | Parx                      | T | 4
+   14:20    | 5     | ?          | ?      | ?          | Thistledown               | T | 4
+   14:28    | 6     | ?          | ?      | ?          | Delaware                  | T | 5
+   15:12    | 6     | ?          | ?      | ?          | Horseshoe Indianapolis    | T | 3
+   15:30    | 5     | ?          | ?      | ?          | Ajax                      | T | 1
+   15:35    | 6     | ?          | ?      | ?          | Belterra Park             | T | 7
+   15:55    | 6     | ?          | ?      | ?          | Ajax                      | T | 2
+   15:57    | 6     | ?          | ?      | ?          | Presque Isle              | T | 2
+   16:04    | 6     | ?          | ?      | ?          | Delaware                  | T | 8
+   16:20    | 6     | ?          | ?      | ?          | Ajax                      | T | 3
+   16:24    | 5     | ?          | ?      | ?          | Presque Isle              | T | 3
+   16:51    | 6     | ?          | ?      | ?          | Presque Isle              | T | 4
+   17:35    | 5     | ?          | ?      | ?          | Ajax                      | T | 6
+   19:40    | 6     | ?          | ?      | ?          | Delta Downs               | T | 2
+   20:30    | 6     | ?          | ?      | ?          | Assiniboia                | T | 1
+   21:00    | 6     | ?          | ?      | ?          | Assiniboia                | T | 2
