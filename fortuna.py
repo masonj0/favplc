@@ -4022,6 +4022,10 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
                 # Broaden window to capture multiple races
                 races = meeting.get("races", [])
+                meeting_summary = meeting.get("meeting_summary") or {}
+                course = meeting_summary.get("course") or {}
+                course_slug = course.get("name", "").lower().replace(" ", "-")
+
                 for i, race in enumerate(races):
                     r_time_str = race.get("time") # Usually HH:MM
                     if r_time_str:
@@ -4033,7 +4037,19 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                             if not (-45 < diff <= 1080):
                                 continue
 
-                            if url := race.get("racecard_url"):
+                            url = race.get("racecard_url")
+                            if not url:
+                                # Construct URL from summary ref and name
+                                ref = race.get("race_summary_reference")
+                                if isinstance(ref, dict):
+                                    rid = ref.get("id")
+                                else:
+                                    rid = ref
+                                name_slug = race.get("name", "").lower().replace(" ", "-")
+                                if rid and course_slug:
+                                    url = f"/racing/racecards/{target_date.strftime('%Y-%m-%d')}/{course_slug}/racecard/{rid}/{name_slug}"
+
+                            if url:
                                 meta.append({"url": url, "race_number": i + 1})
                         except Exception: pass
         if not meta:
@@ -4138,7 +4154,29 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         race_type_raw = summary.get("race_title") or summary.get("race_name") or ""
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition)', race_type_raw, re.I)
         race_type = rt_match.group(1) if rt_match else ("Handicap" if is_handicap else None)
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, is_handicap=is_handicap, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+
+        purse = summary.get("purse") or summary.get("prize")
+        if not purse:
+            prizes = race_info.get("prizes", {})
+            if isinstance(prizes, dict):
+                p_list = prizes.get("prize", [])
+                if p_list:
+                    purse = p_list[0].get("prize")
+
+        return Race(
+            id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1),
+            venue=track_name or "Unknown",
+            race_number=race_info.get("race_number") or race_number_fallback or 1,
+            start_time=start_time,
+            runners=runners,
+            distance=summary.get("distance") or race_info.get("distance"),
+            race_type=race_type,
+            is_handicap=is_handicap,
+            source=self.source_name,
+            discipline="Thoroughbred",
+            available_bets=scrape_available_bets(html_content),
+            metadata={"purse": purse}
+        )
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -4551,11 +4589,75 @@ class RacingPostB2BAdapter(BaseAdapterV3):
             self.logger.warning("RPB2B returned no venues", data_keys=list(data.keys()) if isinstance(data, dict) else "list")
             return None
 
-        return {"venues": venues, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
+        # Deep fetch race details to get runners, distance, and purse (Council Requirement)
+        all_races_metadata = []
+        for v in venues:
+            for r in v.get("races", []):
+                all_races_metadata.append({
+                    "race_id": r['id'],
+                    "venue_name": v.get("name"),
+                    "country_code": v.get("countryCode"),
+                    "datetimeUtc": r.get("datetimeUtc"),
+                    "raceNumber": r.get("raceNumber"),
+                    "numberOfRunners": r.get("numberOfRunners")
+                })
+
+        # Concurrency-limited deep fetch (Fix P0 Resilience)
+        sem = asyncio.Semaphore(10)
+        async def fetch_detail(item):
+            async with sem:
+                try:
+                    r_resp = await self.make_request("GET", f"/v2/racecards/{item['race_id']}", raise_for_status=False)
+                    if r_resp and r_resp.status == 200:
+                        detail = r_resp.json()
+                        # Merge metadata back in
+                        detail["id"] = item["race_id"]
+                        detail["venue_name"] = item["venue_name"]
+                        detail["country_code"] = item["country_code"]
+                        detail["datetimeUtc"] = item["datetimeUtc"]
+                        detail["raceNumber"] = item["raceNumber"]
+                        detail["numberOfRunners"] = item["numberOfRunners"]
+                        return detail
+                except Exception as e:
+                    self.logger.warning("RPB2B detail fetch failed", race_id=item["race_id"], error=str(e))
+            return None
+
+        # Fetch up to 100 races, but keep structural metadata as fallback
+        tasks = [fetch_detail(m) for m in all_races_metadata[:100]]
+        detailed_results = await asyncio.gather(*tasks)
+
+        final_detailed = [dr for dr in detailed_results if dr]
+        detailed_ids = {dr['id'] for dr in final_detailed}
+
+        # Fallback Strategy: If deep fetch failed, use structural metadata so race isn't lost (Fix P0 Fallback)
+        for m in all_races_metadata:
+            if m['race_id'] not in detailed_ids:
+                final_detailed.append({
+                    "id": m['race_id'],
+                    "venue_name": m['venue_name'],
+                    "country_code": m['country_code'],
+                    "datetimeUtc": m['datetimeUtc'],
+                    "raceNumber": m['raceNumber'],
+                    "numberOfRunners": m['numberOfRunners']
+                })
+
+        return {
+            "detailed_races": final_detailed,
+            "date": date,
+            "fetched_at": to_storage_format(datetime.now(EASTERN))
+        }
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
-        if not raw_data or not raw_data.get("venues"): return []
+        if not raw_data: return []
         races: List[Race] = []
+
+        if "detailed_races" in raw_data:
+            for dr in raw_data["detailed_races"]:
+                parsed = self._parse_single_race(dr, dr.get("venue_name"), dr.get("country_code"))
+                if parsed: races.append(parsed)
+            return races
+
+        if not raw_data.get("venues"): return []
         target_countries = {"USA", "CAN", "AUS", "NZL", "GBR", "IRL", "ZAF"}
         for vd in raw_data["venues"]:
             if vd.get("isAbandoned"): continue
@@ -4572,13 +4674,28 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         if not all([rid, rnum, dts]): return None
         try: st = from_storage_format(dts.replace("Z", "+00:00"))
         except Exception: return None
+
+        # Map RPB2B detailed fields
+        dist = rd.get("distance") or rd.get("distanceYard")
+        if dist and str(dist).isdigit():
+            dist = f"{dist}y" # Suffix with 'y' for generate_race_grid parser
+
+        purse = rd.get("purse") or rd.get("stakes")
+
         # Only return race if we have real runners (avoid placeholder generic runners)
         runners = []
         if runners_raw := rd.get("runners"):
             for i, run_data in enumerate(runners_raw):
                 name = run_data.get("name") or f"Runner {i+1}"
                 num = run_data.get("number") or i + 1
-                runners.append(Runner(number=num, name=name))
+
+                # Extract morning line/odds
+                wo = parse_odds_to_decimal(run_data.get("morningLine") or run_data.get("odds"))
+                od = {}
+                if ov := create_odds_data(self.SOURCE_NAME, wo):
+                    od[self.SOURCE_NAME] = ov
+
+                runners.append(Runner(number=num, name=name, win_odds=wo, odds=od))
         elif nr > 0:
             # P0 USA Resilience: If runners list is missing but count is > 0,
             # create placeholder runners so the race is at least discovered.
@@ -4588,7 +4705,22 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         if not runners:
             return None
 
-        return Race(discipline="Thoroughbred", id=f"rpb2b_{rid.replace('-', '')[:16]}", venue=normalize_venue_name(vn), race_number=rnum, start_time=st, runners=runners, source=self.source_name, metadata={"original_race_id": rid, "country_code": cc, "num_runners": nr})
+        return Race(
+            discipline="Thoroughbred",
+            id=f"rpb2b_{rid.replace('-', '')[:16]}",
+            venue=normalize_venue_name(vn),
+            race_number=rnum,
+            start_time=st,
+            runners=runners,
+            distance=dist,
+            source=self.source_name,
+            metadata={
+                "original_race_id": rid,
+                "country_code": cc,
+                "num_runners": nr,
+                "purse": purse
+            }
+        )
 
 
 # ----------------------------------------
