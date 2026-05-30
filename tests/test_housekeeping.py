@@ -18,8 +18,17 @@ async def test_hot_tips_tracker_24h_limit(tmp_path):
         race_number=1,
         start_time=now + timedelta(minutes=10),
         source="Test",
-        runners=[],
-            metadata={"is_best_bet": True, "gap_abs": 1.5, "predicted_2nd_fav_odds": 4.5}
+        runners=[
+            Runner(name="H1", odds={"Test": {"win": 2.0, "source": "Test"}}, metadata={"odds_source_trustworthy": True}),
+            Runner(name="H2", odds={"Test": {"win": 5.0, "source": "Test"}}, metadata={"odds_source_trustworthy": True})
+        ],
+        metadata={
+            "is_best_bet": True,
+            "gap_abs": 1.5,
+            "predicted_2nd_fav_odds": 4.5,
+            "qualification_grade": "A",
+            "provides_odds": True
+        }
     )
 
     # 2. Race in 25 hours (should be rejected - current limit is 24h)
@@ -29,8 +38,17 @@ async def test_hot_tips_tracker_24h_limit(tmp_path):
         race_number=2,
         start_time=now + timedelta(hours=25),
         source="Test",
-        runners=[],
-            metadata={"is_best_bet": True, "gap_abs": 2.0, "predicted_2nd_fav_odds": 5.0}
+        runners=[
+            Runner(name="H1", odds={"Test": {"win": 2.0, "source": "Test"}}, metadata={"odds_source_trustworthy": True}),
+            Runner(name="H2", odds={"Test": {"win": 5.0, "source": "Test"}}, metadata={"odds_source_trustworthy": True})
+        ],
+        metadata={
+            "is_best_bet": True,
+            "gap_abs": 2.0,
+            "predicted_2nd_fav_odds": 5.0,
+            "qualification_grade": "A",
+            "provides_odds": True
+        }
     )
 
     await tracker.log_tips([race_ok, race_too_far])
