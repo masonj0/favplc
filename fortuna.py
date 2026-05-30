@@ -4084,14 +4084,14 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if not html_content: continue
             try:
                 parser = HTMLParser(html_content)
-                race = self._parse_from_next_data(parser, race_date, item.get("race_number"), html_content)
+                race = self._parse_from_next_data(parser, race_date, item.get("race_number"), html_content, url_path=item.get("url", ""))
                 if not race:
-                    race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content, item.get("url", ""))
+                    race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content, url=item.get("url", ""))
                 if race: races.append(race)
             except Exception: pass
         return races
 
-    def _parse_from_next_data(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
+    def _parse_from_next_data(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url_path: str = "") -> Optional[Race]:
         data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Race")
         if not data: return None
         race_info = data.get("props", {}).get("pageProps", {}).get("race")
@@ -4175,7 +4175,7 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             source=self.source_name,
             discipline="Thoroughbred",
             available_bets=scrape_available_bets(html_content),
-            metadata={"purse": purse}
+            metadata={"purse": purse, "url": url_path}
         )
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
