@@ -36,7 +36,7 @@ MIN_VALID_ODDS: Final[float] = 1.01
 # 2.75 is chosen as a conservative implied place-odds estimate (approx 7/4)
 # for runners where real odds are missing during discovery.
 DEFAULT_ODDS_FALLBACK: Final[float] = 2.75
-COMMON_PLACEHOLDERS: Final[set] = set()
+COMMON_PLACEHOLDERS: Final[set] = {2.75, 1.75}
 
 VENUE_MAP = {
 "ABU DHABI": "abu-dhabi",
@@ -262,6 +262,9 @@ VENUE_MAP = {
 "MAUQUENCHY": "mauquenchy",
 "TRALEE": "tralee",
 "VAAL": "vaal",
+"KENILWORTH": "kenilworth",
+"DURBANVILLE": "durbanville",
+"FAIRVIEW": "fairview",
 "WINCANTON": "wincanton",
 "SANDOWN PARK": "sandown-park",
 "CHELMSFORD CITY": "chelmsford",

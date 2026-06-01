@@ -141,7 +141,7 @@ def parse_rpb2b_json(filepath):
                 "Location": location,
                 "Discipline": disc,
                 "Purse": format_purse(purse),
-                "ML": "?"
+                "ML": "?", "URL": race.get("url")
             })
     return races
 
@@ -213,7 +213,7 @@ def parse_sl_hard(filepath):
                         "Location": loc,
                         "Discipline": detect_discipline(str(r))[0].upper(),
                         "Purse": format_purse(purse),
-                        "ML": ml_str
+                        "ML": ml_str, "URL": r.get("racecard_url") or r.get("url")
                     })
             if all_parsed_races: return all_parsed_races
         except: pass
@@ -254,7 +254,7 @@ def parse_sl_hard(filepath):
             "Location": location,
             "Discipline": detect_discipline(look_forward[:2000])[0].upper(),
             "Purse": format_purse(purse_match.group(1) if purse_match else "?"),
-            "ML": "?"
+            "ML": "?", "URL": None
         })
     return races
 
@@ -301,7 +301,7 @@ def parse_equibase_html(filepath):
             "Location": location,
             "Discipline": "T",
             "Purse": format_purse(purse),
-            "ML": "?"
+            "ML": "?", "URL": None
         })
     return races
 
@@ -368,7 +368,8 @@ def parse_snapshot_json(filepath, target_date):
                 "Location": r.get('venue', 'Unknown'),
                 "Discipline": r.get('discipline', 'T')[0].upper(),
                 "Purse": format_purse(r.get('metadata', {}).get('purse', '?')),
-                "ML": ml_str
+                "ML": ml_str,
+                "URL": r.get('metadata', {}).get('url')
             })
         return races
     except: return []
@@ -421,7 +422,7 @@ def parse_drf_html(filepath, target_date):
             "Location": location,
             "Discipline": "T",
             "Purse": format_purse(purse),
-            "ML": "?"
+            "ML": "?", "URL": r.get("metadata", {}).get("url")
         })
     return races
 
@@ -466,7 +467,7 @@ def parse_ras_json(filepath):
                             "Location": location,
                             "Discipline": disc_code,
                             "Purse": "?",
-                            "ML": "?"
+                            "ML": "?", "URL": r.get("metadata", {}).get("url")
                         })
     return races
 
@@ -504,7 +505,7 @@ def parse_jra_html(filepath, target_date):
             "Location": venue,
             "Discipline": "T",
             "Purse": "?",
-            "ML": "?"
+            "ML": "?", "URL": r.get("metadata", {}).get("url")
         })
     return races
 
@@ -541,7 +542,7 @@ def parse_tf_html(filepath, target_date):
             "Location": location,
             "Discipline": "T",
             "Purse": "?",
-            "ML": "?"
+            "ML": "?", "URL": r.get("metadata", {}).get("url")
         })
     return races
 
@@ -585,7 +586,7 @@ def parse_skysports_html(filepath, target_date):
                 "Location": location,
                 "Discipline": "T",
                 "Purse": "?",
-                "ML": "?"
+                "ML": "?", "URL": r.get("metadata", {}).get("url")
             })
     return races
 
@@ -623,7 +624,7 @@ def parse_hkjc_html(filepath, target_date):
             "Location": venue,
             "Discipline": "T",
             "Purse": "?",
-            "ML": "?"
+            "ML": "?", "URL": r.get("metadata", {}).get("url")
         })
     return races
 
@@ -659,7 +660,7 @@ def parse_rp_html(filepath, target_date):
             "Location": location,
             "Discipline": "T",
             "Purse": "?",
-            "ML": "?"
+            "ML": "?", "URL": r.get("metadata", {}).get("url")
         })
     return races
 
@@ -753,7 +754,7 @@ def main():
                 existing['PostTime'] = r['PostTime']
             if existing['Purse'] == "?" and r['Purse'] != "?": existing['Purse'] = r['Purse']
             if existing['ML'] == "?" and r['ML'] != "?": existing['ML'] = r['ML']
-
+            if not existing.get('URL') and r.get('URL'): existing['URL'] = r['URL']
     final_list = list(merged_map.values())
     final_list.sort(key=lambda x: (x['DateTime'] if x['DateTime'] else datetime.max.replace(tzinfo=zoneinfo.ZoneInfo("UTC")), x['Location']))
 
@@ -786,11 +787,57 @@ def main():
             rn = str(r.get('RaceNum', '?'))
             print(f"{marker}{p_time:<8} | {fs:<5} | {dst:<10} | {prs:<6} | {ml:<10} | {loc:<25} | {disc} | {rn}")
 
+    def export_html(title, races_list, filename):
+        if not races_list: return
+        html = f"<html><head><title>{title}</title><style>body {{ font-family: monospace; white-space: pre; background: #121212; color: #e0e0e0; }} a {{ color: #4fc3f7; text-decoration: none; }} a:hover {{ text-decoration: underline; }} .marker {{ color: #ffeb3b; font-weight: bold; }}</style></head><body>"
+        html += f"=== {title} ===\n"
+        header = f"{'Post (ET)':<10} | {'Field':<5} | {'Dist (mi)':<10} | {'Purse':<6} | {'ML (1/2)':<10} | {'Location':<25} | {'D'} | {'R#'}"
+        html += header + "\n"
+        html += "-" * len(header) + "\n"
+        for r in races_list:
+            p_time = r['PostTime']
+            marker = "   "
+            m_class = ""
+            if r['DateTime'] and now_et - timedelta(minutes=5) <= r['DateTime'] <= now_et + timedelta(minutes=15):
+                marker = ">>>"
+                m_class = ' class="marker"'
+
+            fs = str(r.get('FieldSize', '?'))
+            dst = str(r.get('Distance', '?'))
+            prs = str(r.get('Purse', '?'))
+            ml = str(r.get('ML', '?'))
+            loc_raw = str(r.get('Location', 'Unknown'))[:25]
+
+            url = r.get('URL')
+            if url:
+                if not url.startswith('http'):
+                    if 'sportinglife.com' in url or url.startswith('/racing/'):
+                        url = 'https://www.sportinglife.com' + url
+                    elif 'attheraces.com' in url or url.startswith('/racecard/'):
+                        url = 'https://www.attheraces.com' + url
+                loc = f'<a href="{url}" target="_blank">{loc_raw:<25}</a>'
+            else:
+                loc = f"{loc_raw:<25}"
+
+            disc = str(r.get('Discipline', 'T'))[0]
+            rn = str(r.get('RaceNum', '?'))
+
+            line = f'<span{m_class}>{marker}</span>{p_time:<8} | {fs:<5} | {dst:<10} | {prs:<6} | {ml:<10} | {loc} | {disc} | {rn}\n'
+            html += line
+
+        html += "</body></html>"
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(html)
+        print(f"HTML grid exported to: {filename}")
+
     if final_list:
         print_grid("WORLDWIDE RACE GRID", final_list)
+        export_html("WORLDWIDE RACE GRID", final_list, f"race_grid_{target_date}.html")
+
         concentrated = [r for r in final_list if r['FieldSize'] != "?" and r['FieldSize'].isdigit() and int(r['FieldSize']) < 7]
         if concentrated:
             print_grid("CONCENTRATED GRID (Field < 7)", concentrated)
+            export_html("CONCENTRATED GRID (Field < 7)", concentrated, f"concentrated_grid_{target_date}.html")
     else:
         print("No race data found for date:", target_date)
 
