@@ -93,6 +93,12 @@ def evaluate_rules(race, rules):
         "approved_strategies": []
     }
 
+    # Extract retired strategies array from JSON if it exists
+    # Hardcoded fallback array based on Claude4's audit to protect the system immediately
+    retired_strategies = rules.get('retired_strategies', {}).get('failed_2026_out_of_sample', [
+        "XC12", "Tri123", "Tri322", "Tri321", "Tri132", "TriA22", "Tri1S2", "Tri2L1", "Trif333"
+    ])
+
     fs = race['FieldSize']
     purse_val = 0
     try:
@@ -115,7 +121,7 @@ def evaluate_rules(race, rules):
     elif ppr > 10.0: ppr_cat = "6_High"
     elif ppr > 5.0: ppr_cat = "5_AboveMedium"
 
-    # Universal Gates
+    # 1. Evaluate Universal Gates
     gates = rules['live_bot_config']['universal_gates']['conditions']
     universal_si_floor = 2.0
     for cond in gates:
@@ -135,7 +141,7 @@ def evaluate_rules(race, rules):
         if field == "SI" and op == ">=":
             universal_si_floor = max(universal_si_floor, val)
 
-    # Execution Routing
+    # 2. Evaluate Execution Routing
     routing = rules['live_bot_config']['execution_routing']
     for route in routing:
         match = True
@@ -164,9 +170,6 @@ def evaluate_rules(race, rules):
                 elif op == ">" and purse_val <= val: match = False
                 elif purse_val == 0: match = False
             elif field == "PPR_Half":
-                # PPR_Half usually means Purse / 2 / Runners or similar?
-                # Actually in GUM PPR_Half refers to (Purse/1000) / (Runners/2)?
-                # Or just PPR? Let's assume it's just PPR check.
                 if op == "<=" and ppr > val: match = False
             elif field == "PPR_Categ":
                 if op == "==" and ppr_cat != val: match = False
@@ -176,6 +179,12 @@ def evaluate_rules(race, rules):
 
         if match:
             for strat in route['approved_strategies']:
+                strat_name = strat['strategy']
+
+                # RETIREMENT ENFORCEMENT: Loudly drop it if blacklisted
+                if strat_name in retired_strategies:
+                    continue
+
                 strat_match = True
                 strat_chalk_req = route_chalk_req
 
@@ -199,7 +208,7 @@ def evaluate_rules(race, rules):
 
                 if strat_match:
                     results["approved_strategies"].append({
-                        "name": strat['strategy'],
+                        "name": strat_name,
                         "cost": strat.get('ticket_cost', '?'),
                         "note": strat.get('note', ''),
                         "si_floor": route_si_floor,
