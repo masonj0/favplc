@@ -12,48 +12,16 @@ from collections import defaultdict
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 try:
-    from fortuna_utils import get_canonical_venue, detect_discipline, parse_odds_to_decimal
+    from fortuna_utils import (
+        get_canonical_venue, detect_discipline, parse_odds_to_decimal,
+        parse_distance_to_miles, format_purse
+    )
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-    from fortuna_utils import get_canonical_venue, detect_discipline, parse_odds_to_decimal
-
-def parse_distance_to_miles(dist_str):
-    if not dist_str or dist_str == "?": return "?"
-    s = str(dist_str).lower().strip()
-    total_yards = 0.0
-    found = False
-    m_match = re.search(r'^(\d+)\s*m$', s)
-    if m_match:
-        val = float(m_match.group(1))
-        if val > 100:
-            total_yards = val * 1.09361
-            found = True
-    if not found:
-        parts = re.findall(r'(\d+\.?\d*)\s*([mfyk])', s)
-        for val, unit in parts:
-            try:
-                v = float(val)
-                if unit == 'm':
-                    if v < 10: total_yards += v * 1760
-                    else: total_yards += v * 1.09361
-                    found = True
-                elif unit == 'f': total_yards += v * 220; found = True
-                elif unit == 'y': total_yards += v; found = True
-                elif unit == 'k': total_yards += v * 1093.61; found = True
-            except: continue
-    if not found: return dist_str
-    if total_yards == 0: return dist_str
-    return f"{total_yards / 1760.0:.3f}"
-
-def format_purse(purse_str):
-    if not purse_str or purse_str == "?": return "?"
-    try:
-        val = re.sub(r'[^\d.]', '', str(purse_str))
-        if not val: return purse_str
-        f_val = float(val)
-        if f_val >= 1000: return f"{int(f_val/1000)}K"
-        return str(int(f_val))
-    except: return purse_str
+    from fortuna_utils import (
+        get_canonical_venue, detect_discipline, parse_odds_to_decimal,
+        parse_distance_to_miles, format_purse
+    )
 
 def parse_snapshot_json(filepath):
     if not os.path.exists(filepath): return []

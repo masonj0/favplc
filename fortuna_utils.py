@@ -693,3 +693,71 @@ def get_places_paid(field_size: int, is_handicap: Optional[bool] = None) -> int:
     if is_handicap is True:
         return 4
     return 3
+
+def parse_distance_to_miles(dist_str: Any) -> str:
+    """Standardizes race distances to Miles in decimal format (3 decimal places)."""
+    if not dist_str or dist_str == "?": return "?"
+    s = str(dist_str).lower().strip()
+
+    # Special handling for greyhound/metric: treat raw numbers > 100 as meters
+    if s.isdigit():
+        val = float(s)
+        if val > 100:
+            return f"{val * 1.09361 / 1760.0:.3f}"
+        # Small digits like '1', '2' often refer to miles in horse racing
+        return f"{val:.3f}"
+
+    total_yards = 0.0
+    found = False
+
+    # Try meters first if it ends in 'm' and is a large number
+    m_match = re.search(r'^(\d+)\s*m$', s)
+    if m_match:
+        val = float(m_match.group(1))
+        if val > 100: # 1000m, 1200m etc
+            total_yards = val * 1.09361
+            found = True
+
+    if not found:
+        # Standard parts
+        parts = re.findall(r'(\d+\.?\d*)\s*([mfyk])', s)
+        for val, unit in parts:
+            try:
+                v = float(val)
+                if unit == 'm':
+                    if v < 10: # Miles are rarely > 4
+                        total_yards += v * 1760
+                    else:
+                        total_yards += v * 1.09361
+                    found = True
+                elif unit == 'f':
+                    total_yards += v * 220
+                    found = True
+                elif unit == 'y':
+                    total_yards += v
+                    found = True
+                elif unit == 'k':
+                    total_yards += v * 1093.61
+                    found = True
+            except: continue
+
+    if not found:
+        return str(dist_str)
+
+    if total_yards == 0: return str(dist_str)
+    miles = total_yards / 1760.0
+    return f"{miles:.3f}"
+
+def format_purse(purse_str: Any) -> str:
+    """Formats purse string to K format (e.g. 50000 -> 50K)."""
+    if not purse_str or purse_str == "?": return "?"
+    try:
+        # Strip currency and commas
+        val = re.sub(r'[^\d.]', '', str(purse_str))
+        if not val: return str(purse_str)
+        f_val = float(val)
+        if f_val >= 1000:
+            return f"{int(f_val/1000)}K"
+        return str(int(f_val))
+    except:
+        return str(purse_str)
