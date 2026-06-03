@@ -11,7 +11,7 @@ def test_hourly_trigger_sheet_execution():
     )
     assert result.returncode == 0
     assert "HOURLY TRIGGER SHEET" in result.stdout
-    assert "Skip 1?" in result.stdout
+    assert "Skip 2?" in result.stdout
 
 def test_ruleset_loading():
     """Test that the consensus ruleset file exists and is valid JSON."""

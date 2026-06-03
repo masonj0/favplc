@@ -1,184 +1,50 @@
 {
   "_meta": {
-    "title": "Definitive Consensus Ruleset: Dual-Engine Barbell Strategy",
-    "version": "3.0-velocity",
-    "description": "Production-ready automated execution schema. Integrates Engine A (Chalk Eater) for structural velocity/liquidity and Engine B (Sniper) for volatility/outlier extraction. Gates expanded for higher frequency execution and action volume.",
-    "generated": "2026-06-01",
-    "skew_data_source": "Strategy_Skew_Summary.json",
-    "evidence_sources": [
-      "Discovery_Splits_2025_2026.json",
-      "Grand_Unified_Memo.txt",
-      "Excluded_Races_Forensic_Audit.csv",
-      "Positive_Strategies_by_Runners.txt",
-      "gauntlet_results.txt",
-      "Strategy_Skew_Summary.json"
-    ]
-  },
-
-  "core_truth": {
-    "on_normal_mean": "ZERO strategies have a positive normal mean excluding top-1% wins. All profitability in Engine B is outlier-driven. The edge is structural.",
-    "on_bankroll_velocity": "Psychology dictates execution. Waiting exclusively for Engine B outliers induces operator fatigue. Engine A exists to harvest micro-value, churn tickets, and fund Engine B variance.",
-    "on_the_mission": "Identify the pool environment first. If the public is correct (Chalk), extract velocity with Engine A. If the public is wrong (Chaos), absorb the distribution swings and hunt the whale with Engine B."
+    "title": "The Sniper Ruleset: High-Conviction Targets Only",
+    "version": "1.0",
+    "description": "Stripped down to only the 5 strategies that survived the V2.1 Equity Visualizer with positive, upward-trending curves. All Chalk, Large Field, and high-drawdown strategies have been purged.",
+    "generated": "2026-06-02"
   },
 
   "live_bot_config": {
-    "description": "Multi-tier evaluation engine: Universal Gates (Ecosystem Integrity) -> Route Triggers (Engine Assignment) -> Strategy Gates (Tactical Viability).",
-
     "universal_gates": {
-      "description": "Ecosystem Integrity Layer. Must evaluate to TRUE before any routing or strategy analysis occurs.",
       "conditions": [
-        {
-          "field": "WhichRace",
-          "operator": ">=",
-          "value": 2,
-          "note": "Expanded to capture R2; R1 remains highly unstable."
-        },
-        {
-          "field": "WowSuperWow",
-          "operator": "!=",
-          "value": "X",
-          "note": "Extreme distributional outliers that fundamentally distort pool math."
-        },
-        {
-          "field": "Runners",
-          "operator": "<=",
-          "value": 14,
-          "note": "Expanded to 14 to capture maximum-capacity field volatility."
-        },
-        {
-          "field": "SI",
-          "operator": "<",
-          "value": 8.5,
-          "note": "Chaos threshold raised. SI 8.5+ signifies complete black holes."
-        },
-        {
-          "field": "Purse",
-          "operator": ">=",
-          "value": 3000,
-          "note": "EFFICIENCY FLOOR lowered to capture smaller track inefficiencies."
-        },
-        {
-          "field": "Purse",
-          "operator": "<=",
-          "value": 200000,
-          "note": "EFFICIENCY CEILING raised to capture major stakes pools."
-        }
+        { "field": "WhichRace", "operator": ">=", "value": 3 },
+        { "field": "Runners", "operator": "<=", "value": 8, "note": "Max field size capped at 8. R9+ is toxic." },
+        { "field": "Purse", "operator": ">=", "value": 5000 },
+        { "field": "Purse", "operator": "<=", "value": 150000 }
       ]
     },
 
     "execution_routing": [
       {
-        "id": "ROUTE-A1",
-        "engine": "ENGINE A: CHALK EATER",
-        "label": "The Base Hit",
+        "id": "MID-FIELD-FAUCET",
+        "engine": "R5-R6 GRIND",
         "trigger_conditions": [
-          { "field": "ChalkYN", "operator": "==", "value": "Y" },
-          { "field": "SI", "operator": "<", "value": 4.0, "note": "Threshold increased to capture more volume in manageable public-consensus pools." }
+          { "field": "Runners", "operator": "in", "value": [5, 6] },
+          { "field": "SI", "operator": ">=", "value": 3.0 }
         ],
         "approved_strategies": [
-          {
-            "strategy": "Quin12",
-            "ticket_cost": 2,
-            "note": "IMMUNE TO FLIP-FLOPS. Order-independent quinella; 100% human-executable even if 1GAP2 <= 0.5.",
-            "skew": {
-              "overall_mean": -0.19,
-              "upside_skew_pct": 71,
-              "skew_note": "Lowest upside skew. Velocity play only."
-            }
-          },
-          {
-            "strategy": "XC12",
-            "ticket_cost": 2,
-            "strategy_specific_gates": [
-              { "field": "Fight", "operator": "==", "value": "fghtN" }
-            ],
-            "note": "EXECUTION CONSTRAINT: Blocked in fghtY — true '1' unknown until pools lock.",
-            "skew": {
-              "overall_mean": -0.21,
-              "upside_skew_pct": 77,
-              "skew_note": "Low-spread exacta. Consistent micro-positive velocity."
-            }
-          },
-          {
-            "strategy": "Tri123",
-            "ticket_cost": 2,
-            "strategy_specific_gates": [
-              { "field": "Fight", "operator": "==", "value": "fghtN" }
-            ],
-            "note": "EXECUTION CONSTRAINT: Disabled in fghtY due to post-time favorite instability.",
-            "skew": {
-              "overall_mean": -0.20,
-              "upside_skew_pct": 85,
-              "skew_note": "Clean 85% upside skew at a $2 ticket. Monitor carefully out-of-sample."
-            }
-          }
+          { "strategy": "Sup3214", "ticket_cost": 2, "chalk_override": { "field": "Runners", "operator": "==", "value": 6, "action": "allow_chalk" } },
+          { "strategy": "Sup3225", "ticket_cost": 8 }
         ]
       },
       {
-        "id": "ROUTE-A2",
-        "engine": "ENGINE A: CHALK EATER",
-        "label": "Favorite-Anchored Super",
-        "trigger_conditions": [
-          { "field": "ChalkYN", "operator": "==", "value": "Y" },
-          { "field": "Runners", "operator": "in", "value": [6, 7, 8] }
-        ],
-        "approved_strategies": [
-          {
-            "strategy": "Sup1234",
-            "ticket_cost": 2,
-            "strategy_specific_gates": [
-              { "field": "Fight", "operator": "==", "value": "fghtN" }
-            ],
-            "note": "EXECUTION CONSTRAINT: Order-dependent straight favorite superfectas blocked under fghtY.",
-            "skew": {
-              "overall_mean": -0.17,
-              "upside_skew_pct": 98,
-              "skew_note": "Outstanding structural cleanliness."
-            }
-          },
-          {
-            "strategy": "Sup12A3",
-            "ticket_cost": 12,
-            "strategy_specific_gates": [
-              { "field": "Fight", "operator": "==", "value": "fghtN" }
-            ],
-            "note": "EXECUTION CONSTRAINT: Anchors positions 1 and 2. Blocked if 1GAP2 <= 0.5.",
-            "skew": {
-              "overall_mean": -0.48,
-              "upside_skew_pct": 95,
-              "skew_note": "Genuine whale potential but drawdown sequences are deeper."
-            }
-          }
-        ]
-      },
-      {
-        "id": "ROUTE-B1",
-        "engine": "ENGINE B: SNIPER",
-        "label": "R4 Exploit",
+        "id": "SNIPER-01",
+        "engine": "R4 EXPLOIT",
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 4 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
           { "field": "SI", "operator": ">=", "value": 3.0 }
         ],
         "approved_strategies": [
-          {
-            "strategy": "Sup3444",
-            "ticket_cost": 36,
-            "note": "Pre-deployment manual verification required.",
-            "skew": { "overall_mean": -6.23, "upside_skew_pct": 89 }
-          },
-          {
-            "strategy": "Supr4444",
-            "ticket_cost": 48,
-            "note": "Pre-deployment manual verification required.",
-            "skew": { "overall_mean": -9.43, "upside_skew_pct": 87 }
-          }
+          { "strategy": "Supr4444", "ticket_cost": 48 },
+          { "strategy": "Sup3444", "ticket_cost": 36 }
         ]
       },
       {
-        "id": "ROUTE-B2",
-        "engine": "ENGINE B: SNIPER",
-        "label": "Mid-Field Engine",
+        "id": "SNIPER-02",
+        "engine": "MID-FIELD GRIND",
         "trigger_conditions": [
           { "field": "Runners", "operator": "in", "value": [5, 6] },
           { "field": "SI", "operator": ">=", "value": 3.0 }
@@ -187,32 +53,13 @@
           {
             "strategy": "Sup3214",
             "ticket_cost": 2,
-            "chalk_override": { "field": "Runners", "operator": "==", "value": 6, "action": "allow_chalk" },
-            "note": "Cornerstone portfolio play. Uniquely profits from chalk inclusion strictly at the 6-runner threshold."
-          },
-          {
-            "strategy": "Sup2143",
-            "ticket_cost": 2,
-            "strategy_specific_gates": [
-              { "field": "ChalkYN", "operator": "==", "value": "N" }
-            ],
-            "note": "Volume anchor. Absorbs extended losing sequences."
-          },
-          {
-            "strategy": "Supr1444",
-            "ticket_cost": 16,
-            "strategy_specific_gates": [
-              { "field": "ChalkYN", "operator": "==", "value": "N" },
-              { "field": "Purse", "operator": "<=", "value": 32000 }
-            ],
-            "note": "EFFICIENCY CAP strictly maintained to avoid R6 critical losses."
+            "chalk_override": { "field": "Runners", "operator": "==", "value": 6, "action": "allow_chalk" }
           }
         ]
       },
       {
-        "id": "ROUTE-B3",
-        "engine": "ENGINE B: SNIPER",
-        "label": "R7 Ultra-Thin",
+        "id": "SNIPER-03",
+        "engine": "R7 ULTRA-THIN",
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 7 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
@@ -220,67 +67,24 @@
           { "field": "SI", "operator": ">=", "value": 2.5 }
         ],
         "approved_strategies": [
-          {
-            "strategy": "Supr1445",
-            "ticket_cost": 24,
-            "note": "Confirmed out-of-sample accelerating performer."
-          }
+          { "strategy": "Supr1445", "ticket_cost": 24 }
         ]
       },
       {
-        "id": "ROUTE-B4",
-        "engine": "ENGINE B: SNIPER",
-        "label": "Large-Field High-SI (Whale Hunter)",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "in", "value": [10, 11, 12, 13, 14] },
-          { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "SI", "operator": ">=", "value": 5.0 }
-        ],
-        "approved_strategies": [
-          {
-            "strategy": "Sup2266",
-            "ticket_cost": 48,
-            "note": "Highest absolute payout pocket. Strict non-chalk execution only."
-          },
-          {
-            "strategy": "Supr1555",
-            "ticket_cost": 48,
-            "note": "High-performing large-field anchor asset."
-          }
-        ]
-      },
-      {
-        "id": "ROUTE-B5",
-        "engine": "ENGINE B: SNIPER",
-        "label": "R8 Tier 1 Anchor",
+        "id": "SNIPER-04",
+        "engine": "R8 TIER 1",
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 8 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "SI", "operator": ">=", "value": 2.0 },
-          { "field": "PPR_Target", "operator": "not_in", "value": ["7_VeryHigh", "8_Highest"] }
+          { "field": "SI", "operator": ">=", "value": 2.0 }
         ],
         "approved_strategies": [
           {
             "strategy": "Supr4144",
             "ticket_cost": 16,
-            "strategy_specific_gates": [
-              { "field": "Purse", "operator": "<=", "value": 25000 }
-            ],
-            "note": "Efficiency cap expanded to $25k to improve volume execution."
+            "strategy_specific_gates": [{ "field": "Purse", "operator": "<=", "value": 18000 }]
           }
         ]
-      }
-    ]
-  },
-
-  "retired_strategies": {
-    "description": "Strategies permanently blacklisted from production deployment due to mathematical invalidity, out-of-sample failure, or unmanageable risk profiles.",
-    "track_takeout_victims": ["FvP", "FvS", "FvW", "FvPS", "FvWP", "Top2P", "Top2W", "Top3S", "Top3W"],
-    "failed_2026_out_of_sample": ["Tri132", "Tri321", "Tri213", "Tri223", "Tri1S2", "Tri2L1", "Tri322", "TriA22", "Trif333", "Tri233", "Sup3335"],
-    "catastrophic_exposure": [
-      {
-        "strategy": "Sup2244",
-        "reason": "Demands strict localized sub-$32k purse caps at R6 and R7 to mitigate severe -$15,405 drawdowns. Permanently retired to enforce cleaner pipeline routing."
       }
     ]
   }

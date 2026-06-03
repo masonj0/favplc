@@ -99,7 +99,8 @@ def evaluate_rules(race, rules):
                 return results
         if field == "Runners":
             if op == "<=" and fs > val:
-                results["abort_reason"] = f"ABORT: Combinatorial Black Hole ({fs} runners)"
+                note = cond.get('note', f"{fs} runners")
+                results["abort_reason"] = f"ABORT: {note}"
                 return results
         if field == "Purse":
             if op == ">=" and purse_val > 0 and purse_val < val:
