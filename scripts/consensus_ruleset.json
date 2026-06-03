@@ -1,0 +1,91 @@
+{
+  "_meta": {
+    "title": "The Sniper Ruleset: High-Conviction Targets Only",
+    "version": "1.0",
+    "description": "Stripped down to only the 5 strategies that survived the V2.1 Equity Visualizer with positive, upward-trending curves. All Chalk, Large Field, and high-drawdown strategies have been purged.",
+    "generated": "2026-06-02"
+  },
+
+  "live_bot_config": {
+    "universal_gates": {
+      "conditions": [
+        { "field": "WhichRace", "operator": ">=", "value": 3 },
+        { "field": "Runners", "operator": "<=", "value": 8, "note": "Max field size capped at 8. R9+ is toxic." },
+        { "field": "Purse", "operator": ">=", "value": 5000 },
+        { "field": "Purse", "operator": "<=", "value": 150000 }
+      ]
+    },
+
+    "execution_routing": [
+      {
+        "id": "MID-FIELD-FAUCET",
+        "engine": "R5-R6 GRIND",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "in", "value": [5, 6] },
+          { "field": "SI", "operator": ">=", "value": 3.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Sup3214", "ticket_cost": 2, "chalk_override": { "field": "Runners", "operator": "==", "value": 6, "action": "allow_chalk" } },
+          { "strategy": "Sup3225", "ticket_cost": 8 }
+        ]
+      },
+      {
+        "id": "SNIPER-01",
+        "engine": "R4 EXPLOIT",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 4 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "SI", "operator": ">=", "value": 3.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr4444", "ticket_cost": 48 },
+          { "strategy": "Sup3444", "ticket_cost": 36 }
+        ]
+      },
+      {
+        "id": "SNIPER-02",
+        "engine": "MID-FIELD GRIND",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "in", "value": [5, 6] },
+          { "field": "SI", "operator": ">=", "value": 3.0 }
+        ],
+        "approved_strategies": [
+          {
+            "strategy": "Sup3214",
+            "ticket_cost": 2,
+            "chalk_override": { "field": "Runners", "operator": "==", "value": 6, "action": "allow_chalk" }
+          }
+        ]
+      },
+      {
+        "id": "SNIPER-03",
+        "engine": "R7 ULTRA-THIN",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 7 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "PPR_Half", "operator": "<=", "value": 4.0 },
+          { "field": "SI", "operator": ">=", "value": 2.5 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr1445", "ticket_cost": 24 }
+        ]
+      },
+      {
+        "id": "SNIPER-04",
+        "engine": "R8 TIER 1",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 8 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "SI", "operator": ">=", "value": 2.0 }
+        ],
+        "approved_strategies": [
+          {
+            "strategy": "Supr4144",
+            "ticket_cost": 16,
+            "strategy_specific_gates": [{ "field": "Purse", "operator": "<=", "value": 18000 }]
+          }
+        ]
+      }
+    ]
+  }
+}

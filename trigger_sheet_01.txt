@@ -1,0 +1,485 @@
+
+================================================================================
+====================== HOURLY TRIGGER SHEET - 2026-06-01 =======================
+========== (Grouped by Hour | Evaluation via Consensus Ruleset v1.5) ===========
+================================================================================
+
+
+--- 12 PM ---------------------------------------------------------------------
+  12:40 | Parx                 | R1  | Field:6  | Purse:21K
+    >>> Skip 1 and 2? (Race 1)
+
+  12:50 | Thistledown          | R1  | Field:11 | Purse:21K
+    >>> Skip 1 and 2? (Race 1)
+
+
+--- 01 PM ---------------------------------------------------------------------
+  13:00 | Finger Lakes         | R1  | Field:7  | Purse:26K
+    >>> Skip 1 and 2? (Race 1)
+
+  13:07 | Lingfield Park       | R1  | Field:12 | Purse:4K
+    >>> Skip 1 and 2? (Race 1)
+
+  13:07 | Parx                 | R2  | Field:6  | Purse:40K
+    >>> Skip 1 and 2? (Race 2)
+
+  13:15 | Newbury              | R1  | Field:12 | Purse:6K
+    >>> Skip 1 and 2? (Race 1)
+
+  13:20 | Thistledown          | R2  | Field:7  | Purse:20K
+    >>> Skip 1 and 2? (Race 2)
+
+  13:22 | Cholet               | R7  | Field:12 | Purse:12K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  13:22 | Listowel             | R2  | Field:10 | Purse:7K
+    >>> Skip 1 and 2? (Race 2)
+
+  13:29 | Finger Lakes         | R2  | Field:7  | Purse:14K
+    >>> Skip 1 and 2? (Race 2)
+
+  13:34 | Gowran               | R3  | Field:19 | Purse:9K
+    (No matching strategies)
+
+  13:40 | Vichy                | R7  | Field:14 | Purse:19K
+    (No matching strategies)
+
+  13:42 | Lingfield Park       | R2  | Field:10 | Purse:3K
+    >>> Skip 1 and 2? (Race 2)
+
+  13:50 | Newbury              | R2  | Field:12 | Purse:7K
+    >>> Skip 1 and 2? (Race 2)
+
+  13:50 | Thistledown          | R3  | Field:5  | Purse:29K
+    [ ] Sup3214    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+  13:57 | Cholet               | R8  | Field:11 | Purse:8K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  13:57 | Listowel             | R3  | Field:9  | Purse:15K
+    (No matching strategies)
+
+  13:58 | Finger Lakes         | R3  | Field:6  | Purse:29K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+
+--- 02 PM ---------------------------------------------------------------------
+  14:09 | Gowran               | R4  | Field:8  | Purse:18K
+    (No matching strategies)
+
+  14:15 | Vichy                | R8  | Field:10 | Purse:35K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  14:17 | Lingfield Park       | R3  | Field:5  | Purse:5K
+    [ ] Sup3214    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+
+  14:20 | Thistledown          | R4  | Field:6  | Purse:12K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+  14:25 | Newbury              | R3  | Field:7  | Purse:6K
+    (No matching strategies)
+
+  14:28 | Parx                 | R5  | Field:8  | Purse:19K
+    (No matching strategies)
+
+  14:32 | Listowel             | R4  | Field:7  | Purse:7K
+    (No matching strategies)
+
+  14:35 | Dieppe               | R1  | Field:10 | Purse:21K
+    >>> Skip 1 and 2? (Race 1)
+
+  14:44 | Gowran               | R5  | Field:20 | Purse:110K
+    (No matching strategies)
+
+  14:50 | Thistledown          | R5  | Field:6  | Purse:12K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+  14:52 | Lingfield Park       | R4  | Field:9  | Purse:20K
+    (No matching strategies)
+
+  14:52 | Nantes               | R1  | Field:13 | Purse:15K
+    >>> Skip 1 and 2? (Race 1)
+
+  14:55 | Parx                 | R6  | Field:8  | Purse:26K
+    (No matching strategies)
+
+  14:56 | Finger Lakes         | R5  | Field:12 | Purse:13K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+
+--- 03 PM ---------------------------------------------------------------------
+  15:00 | Newbury              | R4  | Field:8  | Purse:5K
+    (No matching strategies)
+
+  15:07 | Listowel             | R5  | Field:6  | Purse:10K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+
+  15:10 | Dieppe               | R2  | Field:12 | Purse:21K
+    >>> Skip 1 and 2? (Race 2)
+
+  15:19 | Gowran               | R6  | Field:17 | Purse:7K
+    (No matching strategies)
+
+  15:20 | Thistledown          | R6  | Field:5  | Purse:34K
+    [ ] Sup3214    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+
+  15:25 | Finger Lakes         | R6  | Field:11 | Purse:32K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  15:27 | Lingfield Park       | R5  | Field:8  | Purse:4K
+    (No matching strategies)
+
+  15:27 | Nantes               | R2  | Field:14 | Purse:15K
+    >>> Skip 1 and 2? (Race 2)
+
+  15:30 | Presque Isle         | R1  | Field:7  | Purse:16K
+    >>> Skip 1 and 2? (Race 1)
+
+  15:35 | Newbury              | R5  | Field:8  | Purse:7K
+    (No matching strategies)
+
+  15:42 | Listowel             | R6  | Field:11 | Purse:6K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  15:45 | Dieppe               | R3  | Field:15 | Purse:20K
+    (No matching strategies)
+
+  15:49 | Parx                 | R8  | Field:7  | Purse:26K
+    [ ] Supr1445   ($24) [ ] Chalk=N   [ ] SI >= 2.5
+        Note: Confirmed accelerating play (2026 P&L > 2025 P&L).
+
+  15:54 | Finger Lakes         | R7  | Field:8  | Purse:27K
+    (No matching strategies)
+
+  15:54 | Gowran               | R7  | Field:14 | Purse:6K
+    (No matching strategies)
+
+  15:57 | Presque Isle         | R2  | Field:8  | Purse:16K
+    >>> Skip 1 and 2? (Race 2)
+
+
+--- 04 PM ---------------------------------------------------------------------
+  16:00 | Lingfield Park       | R6  | Field:9  | Purse:3K
+    (No matching strategies)
+
+  16:03 | Nantes               | R3  | Field:14 | Purse:15K
+    (No matching strategies)
+
+  16:05 | Windsor              | R1  | Field:8  | Purse:5K
+    >>> Skip 1 and 2? (Race 1)
+
+  16:10 | Newbury              | R6  | Field:9  | Purse:7K
+    (No matching strategies)
+
+  16:20 | Dieppe               | R4  | Field:10 | Purse:24K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  16:20 | Thistledown          | R8  | Field:8  | Purse:35K
+    (No matching strategies)
+
+  16:23 | Finger Lakes         | R8  | Field:8  | Purse:13K
+    [ ] Supr4144   ($16) [ ] Chalk=N   [ ] SI >= 2.0
+        Note: GUM Tier 1 validated. +$7,739 (2025) / +$708 (2026). The only kno...
+
+  16:24 | Presque Isle         | R3  | Field:7  | Purse:22K
+    [ ] Supr1445   ($24) [ ] Chalk=N   [ ] SI >= 2.5
+        Note: Confirmed accelerating play (2026 P&L > 2025 P&L).
+
+  16:29 | Gowran               | R8  | Field:15 | Purse:6K
+    (No matching strategies)
+
+  16:37 | Nantes               | R4  | Field:11 | Purse:18K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  16:40 | Windsor              | R2  | Field:10 | Purse:4K
+    >>> Skip 1 and 2? (Race 2)
+
+  16:51 | Presque Isle         | R4  | Field:8  | Purse:20K
+    (No matching strategies)
+
+  16:55 | Dieppe               | R5  | Field:7  | Purse:20K
+    (No matching strategies)
+
+
+--- 05 PM ---------------------------------------------------------------------
+  17:00 | Prairie Meadows      | R1  | Field:6  | Purse:17K
+    >>> Skip 1 and 2? (Race 1)
+
+  17:00 | Wolverhampton        | R1  | Field:12 | Purse:4K
+    >>> Skip 1 and 2? (Race 1)
+
+  17:05 | Louisiana            | R1  | Field:7  | Purse:14K
+    >>> Skip 1 and 2? (Race 1)
+
+  17:11 | Nantes               | R5  | Field:12 | Purse:10K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  17:15 | Windsor              | R3  | Field:10 | Purse:4K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  17:27 | Dieppe               | R6  | Field:7  | Purse:21K
+    (No matching strategies)
+
+  17:27 | Prairie Meadows      | R2  | Field:6  | Purse:35K
+    >>> Skip 1 and 2? (Race 2)
+
+  17:30 | Wolverhampton        | R2  | Field:11 | Purse:3K
+    >>> Skip 1 and 2? (Race 2)
+
+  17:33 | Louisiana            | R2  | Field:6  | Purse:7K
+    >>> Skip 1 and 2? (Race 2)
+
+  17:43 | Nantes               | R6  | Field:13 | Purse:13K
+    (No matching strategies)
+
+  17:45 | Windsor              | R4  | Field:10 | Purse:5K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  17:54 | Prairie Meadows      | R3  | Field:7  | Purse:14K
+    [ ] Supr1445   ($24) [ ] Chalk=N   [ ] SI >= 2.5
+        Note: Confirmed accelerating play (2026 P&L > 2025 P&L).
+
+  17:59 | Dieppe               | R7  | Field:6  | Purse:23K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+
+
+--- 06 PM ---------------------------------------------------------------------
+  18:00 | Wolverhampton        | R3  | Field:13 | Purse:4K
+    (No matching strategies)
+
+  18:01 | Louisiana            | R3  | Field:6  | Purse:8K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+  18:12 | Presque Isle         | R7  | Field:9  | Purse:33K
+    (No matching strategies)
+
+  18:15 | Nantes               | R7  | Field:8  | Purse:9K
+    (No matching strategies)
+
+  18:15 | Windsor              | R5  | Field:11 | Purse:10K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  18:27 | Finger Lakes         | R4  | Field:7  | Purse:11K
+    (No matching strategies)
+
+  18:29 | Louisiana            | R4  | Field:8  | Purse:12K
+    [ ] Supr4144   ($16) [ ] Chalk=N   [ ] SI >= 2.0
+        Note: GUM Tier 1 validated. +$7,739 (2025) / +$708 (2026). The only kno...
+
+  18:30 | Wolverhampton        | R4  | Field:11 | Purse:5K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  18:39 | Presque Isle         | R8  | Field:9  | Purse:14K
+    [ ] Sup223A    ($? ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Min_JK 0.86 and Tier A. Second-strongest non-Supr1445 Tier A entr...
+
+  18:40 | Nantes               | R8  | Field:13 | Purse:10K
+    (No matching strategies)
+
+  18:45 | Windsor              | R6  | Field:11 | Purse:3K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  18:48 | Prairie Meadows      | R5  | Field:7  | Purse:35K
+    (No matching strategies)
+
+  18:57 | Louisiana            | R5  | Field:8  | Purse:8K
+    [ ] Supr4144   ($16) [ ] Chalk=N   [ ] SI >= 2.0
+        Note: GUM Tier 1 validated. +$7,739 (2025) / +$708 (2026). The only kno...
+
+
+--- 07 PM ---------------------------------------------------------------------
+  19:00 | Mountaineer          | R1  | Field:8  | Purse:22K
+    >>> Skip 1 and 2? (Race 1)
+
+  19:00 | Wolverhampton        | R5  | Field:11 | Purse:5K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  19:15 | Windsor              | R7  | Field:12 | Purse:3K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  19:25 | Mountaineer          | R2  | Field:9  | Purse:9K
+    >>> Skip 1 and 2? (Race 2)
+
+  19:30 | Wolverhampton        | R6  | Field:11 | Purse:3K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  19:42 | Prairie Meadows      | R7  | Field:9  | Purse:22K
+    (No matching strategies)
+
+  19:45 | Windsor              | R8  | Field:10 | Purse:4K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  19:50 | Mountaineer          | R3  | Field:11 | Purse:21K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  19:50 | Thistledown          | R7  | Field:6  | Purse:25K
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+
+  19:53 | Louisiana            | R7  | Field:10 | Purse:26K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+
+--- 08 PM ---------------------------------------------------------------------
+  20:00 | Wolverhampton        | R7  | Field:13 | Purse:3K
+    (No matching strategies)
+
+  20:15 | Mountaineer          | R4  | Field:10 | Purse:19K
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+  20:30 | Assiniboia           | R1  | Field:5  | Purse:?
+    >>> Skip 1 and 2? (Race 1)
+
+
+--- 09 PM ---------------------------------------------------------------------
+  21:00 | Assiniboia           | R2  | Field:5  | Purse:?
+    >>> Skip 1 and 2? (Race 2)
+
+  21:05 | Mountaineer          | R6  | Field:7  | Purse:12K
+    [ ] Supr1445   ($24) [ ] Chalk=N   [ ] SI >= 2.5
+        Note: Confirmed accelerating play (2026 P&L > 2025 P&L).
+
+  21:18 | Presque Isle         | R5  | Field:8  | Purse:7K
+    (No matching strategies)
+
+  21:25 | Assiniboia           | R3  | Field:6  | Purse:?
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+  21:30 | Mountaineer          | R7  | Field:9  | Purse:14K
+    [ ] Sup223A    ($? ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Min_JK 0.86 and Tier A. Second-strongest non-Supr1445 Tier A entr...
+
+  21:45 | Presque Isle         | R6  | Field:7  | Purse:22K
+    (No matching strategies)
+
+  21:50 | Assiniboia           | R4  | Field:6  | Purse:?
+    [ ] Sup3214    ($2 ) [ ] Chalk=Any [ ] SI >= 3.0
+        Note: Cornerstone $2 ticket. Uniquely benefits from chalk inclusion at ...
+    [ ] Sup2143    ($2 ) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: Volume anchor. Absorbs losing streaks without catastrophic drawdo...
+    [ ] Supr1444   ($16) [ ] Chalk=N   [ ] SI >= 3.0
+        Note: MANDATORY PURSE CAP. Without <=32k cap, R6 exposure is catastroph...
+
+
+--- 10 PM ---------------------------------------------------------------------
+  22:15 | Assiniboia           | R5  | Field:7  | Purse:?
+    [ ] Supr1445   ($24) [ ] Chalk=N   [ ] SI >= 2.5
+        Note: Confirmed accelerating play (2026 P&L > 2025 P&L).
+
+  22:40 | Assiniboia           | R6  | Field:10 | Purse:?
+    [ ] Sup2266    ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Highest absolute payout pocket. Best cell = +$16,815.
+    [ ] Supr1555   ($48) [ ] Chalk=N   [ ] SI >= 5.0
+        Note: Strong large-field player. R10 at $9-12k PPR is its confirmed zon...
+
+
+--- 11 PM ---------------------------------------------------------------------
+  23:05 | Assiniboia           | R7  | Field:8  | Purse:?
+    (No matching strategies)
