@@ -4,7 +4,7 @@ import re
 import glob
 import sys
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 import zoneinfo
 from collections import defaultdict
 
@@ -19,8 +19,7 @@ try:
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
     from fortuna_utils import (
-        get_canonical_venue, detect_discipline, parse_odds_to_decimal,
-        parse_distance_to_miles, format_purse
+        get_canonical_venue, parse_distance_to_miles, format_purse
     )
 
 def parse_snapshot_json(filepath):

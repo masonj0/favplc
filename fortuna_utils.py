@@ -1,5 +1,4 @@
 import re
-import structlog
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
