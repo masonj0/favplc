@@ -61,13 +61,14 @@ def evaluate_rules(race, rules):
         "approved_strategies": []
     }
 
-    # RETIREMENT ENFORCEMENT
-    retired_strategies = rules.get('retired_strategies', {}).get('failed_2026_out_of_sample', [])
-    for item in rules.get('retired_strategies', {}).get('catastrophic_exposure', []):
-        retired_strategies.append(item['strategy'])
-    retired_strategies = list(set(retired_strategies))
-
     fs = race['FieldSize']
+    dist_val = race['Distance']
+    u7f = False
+    try:
+        if dist_val != "?":
+            u7f = float(dist_val) < 0.875
+    except: pass
+
     purse_val = 0
     try:
         p_match = re.sub(r'[^\d]', '', str(race['Purse']))
@@ -75,14 +76,7 @@ def evaluate_rules(race, rules):
     except: pass
 
     ppr = (purse_val / 1000.0 / fs) if fs > 0 else 0
-    ppr_cat = "4_Medium"
-    if ppr < 1.0: ppr_cat = "1_Lowest"
-    elif ppr < 2.5: ppr_cat = "2_VeryLow"
-    elif ppr < 5.0: ppr_cat = "3_Low"
-    elif ppr > 20.0: ppr_cat = "8_Highest"
-    elif ppr > 15.0: ppr_cat = "7_VeryHigh"
-    elif ppr > 10.0: ppr_cat = "6_High"
-    elif ppr > 5.0: ppr_cat = "5_AboveMedium"
+    ppr_half = ppr / 2.0
 
     # 1. Evaluate Universal Gates
     gates = rules['live_bot_config']['universal_gates']['conditions']
@@ -119,6 +113,8 @@ def evaluate_rules(race, rules):
         route_si_cap = 99.0
         route_chalk_req = "N"
         engine = route.get('engine', 'Unknown')
+        family = route.get('family', 'Unknown')
+        multiplier = route.get('multiplier', 1.0)
 
         for cond in route['trigger_conditions']:
             field = cond.get('field')
@@ -140,21 +136,18 @@ def evaluate_rules(race, rules):
             elif field == "Purse":
                 if op == "<=" and purse_val > val: match = False
             elif field == "PPR_Half":
-                if op == "<=" and ppr > val: match = False
-            elif field in ["PPR_Target", "PPR_Categ"]:
-                if op == "==" and ppr_cat != val: match = False
-                elif op == "not_in" and ppr_cat in val: match = False
+                if op == "<=" and ppr_half > val: match = False
+            elif field == "u7f":
+                if op == "==" and u7f != val: match = False
 
             if not match: break
 
         if match:
             for strat in route['approved_strategies']:
                 strat_name = strat['strategy']
-                if strat_name in retired_strategies: continue
-
                 strat_match = True
                 strat_chalk_req = route_chalk_req
-                strat_fght_req = "Any"
+
                 if 'chalk_override' in strat:
                     ov = strat['chalk_override']
                     if ov['field'] == "Runners" and fs == ov['value'] and ov['action'] == "allow_chalk":
@@ -166,19 +159,17 @@ def evaluate_rules(race, rules):
                     o = s_gate.get('operator')
                     if f == "Purse" and o == "<=" and purse_val > v: strat_match = False
                     elif f == "ChalkYN": strat_chalk_req = v
-                    elif f == "Fight": strat_fght_req = v
 
                 if strat_match:
                     results["approved_strategies"].append({
+                        "family": family,
+                        "multiplier": multiplier,
                         "engine": engine,
                         "name": strat_name,
                         "cost": strat.get('ticket_cost', '?'),
-                        "note": strat.get('note', ''),
                         "si_floor": route_si_floor,
                         "si_cap": route_si_cap,
                         "chalk_req": strat_chalk_req,
-                        "fght_req": strat_fght_req,
-                        "skew": strat.get('skew')
                     })
 
     return results
@@ -216,45 +207,40 @@ def main():
         else:
             hourly["Unknown Time"].append(r)
 
-    print(f"\n{'='*80}")
-    print(f" HOURLY TRIGGER SHEET - {target_date} ".center(80, '='))
-    print(f" (Barbell Strategy | Dual-Engine Evaluation v{rules['_meta']['version']}) ".center(80, '='))
-    print(f"{'='*80}\n")
+    print(f"\n{'='*95}")
+    print(f" HOURLY TRIGGER SHEET - {target_date} ".center(95, '='))
+    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(95, '='))
+    print(f"{'='*95}\n")
 
     sorted_hours = sorted(hourly.keys(), key=lambda x: datetime.strptime(x, "%I %p") if x != "Unknown Time" else datetime.max)
 
     for hour in sorted_hours:
-        print(f"\n--- {hour} " + "-" * (74 - len(hour)))
+        print(f"\n--- {hour} " + "-" * (89 - len(hour)))
         for race in hourly[hour]:
             res = evaluate_rules(race, rules)
             p_time = race['PostTime']
             loc = race['Location'][:20]
             rnum = race['RaceNum']
             fs = race['FieldSize']
-            line = f"  {p_time} | {loc:<20} | R{rnum:<2} | Field:{fs:<2} | Purse:{race['PurseFormatted']:<5}"
+            dist = race['Distance']
+            line = f"  {p_time} | {loc:<20} | R{rnum:<2} | Field:{fs:<2} | Dist:{dist:<5} | Purse:{race['PurseFormatted']:<5}"
             print(line)
 
             if res['abort_reason']: print(f"    !!! {res['abort_reason']}")
             elif res['skip_reason']: print(f"    >>> {res['skip_reason']}")
             elif res['approved_strategies']:
-                by_engine = defaultdict(list)
-                for s in res['approved_strategies']: by_engine[s['engine']].append(s)
-                for eng in sorted(by_engine.keys()):
-                    print(f"    >> {eng}")
-                    for strat in by_engine[eng]:
+                by_family = defaultdict(list)
+                for s in res['approved_strategies']: by_family[s['family']].append(s)
+                for fam in sorted(by_family.keys()):
+                    mult = by_family[fam][0]['multiplier']
+                    eng = by_family[fam][0]['engine']
+                    print(f"    >> {fam} ({eng}) | Multiplier: {mult}x")
+                    for strat in by_family[fam]:
                         chalk_box = f"Chalk={strat['chalk_req']}"
                         si_box = f"SI >= {strat['si_floor']:.1f}"
                         if strat['si_cap'] < 90: si_box = f"SI {strat['si_floor']:.1f}-{strat['si_cap']:.1f}"
-                        fght_box = f"Fght={strat['fght_req']}"
 
-                        print(f"      [ ] {strat['name']:<10} (${strat['cost']:<2}) [ ] {chalk_box:<9} [ ] {fght_box:<8} [ ] {si_box}")
-                        if strat['skew']:
-                            s = strat['skew']
-                            print(f"          Skew: Mean={s['overall_mean']:+.2f} | Upside={s['upside_skew_pct']}% | {s.get('skew_note', '')}")
-                        if strat['note']:
-                            note = strat['note']
-                            if len(note) > 65: print(f"          Note: {note[:65]}...")
-                            else: print(f"          Note: {note}")
+                        print(f"      [ ] {strat['name']:<12} (${strat['cost']:<2}) [ ] {chalk_box:<9} [ ] {si_box}")
             else: print("    (No matching strategies)")
             print()
 
