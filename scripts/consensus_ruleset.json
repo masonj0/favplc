@@ -1,73 +1,117 @@
 {
   "_meta": {
-    "title": "V3 Portfolio Grinder — Post Deep Dive Edition",
-    "version": "3.0",
-    "description": "Strategies partitioned into three families (Group A, B, C) based on field size and distance profile. Includes multiplier gates and u7f sprint filters.",
-    "generated": "2026-06-03"
+    "title": "V3 Portfolio Grinder — June 05 Edition",
+    "version": "3.1",
+    "description": "Comprehensive portfolio matching the fine-tuned approval list.",
+    "generated": "2026-06-05"
   },
-
   "live_bot_config": {
     "universal_gates": {
       "conditions": [
         { "field": "WhichRace", "operator": ">=", "value": 3 },
-        { "field": "Runners", "operator": "<=", "value": 11, "note": "Max field size for V3 is 11." },
-        { "field": "Purse", "operator": ">=", "value": 4000 },
-        { "field": "Purse", "operator": "<=", "value": 250000 }
+        { "field": "Purse", "operator": ">=", "value": 3000 },
+        { "field": "Fight", "operator": "==", "value": "fghtN" }
       ]
     },
-
     "execution_routing": [
       {
-        "id": "GROUP-A-R4-ANTICHALK",
+        "id": "GROUP-A",
         "family": "Group A",
         "multiplier": 1.0,
-        "engine": "R4 AntiChalk",
+        "engine": "R4 Guarantee Family",
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 4 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "SI", "operator": ">=", "value": 3.0 }
+          { "field": "SI", "operator": ">=", "value": 3.0 },
+          { "field": "SI", "operator": "<=", "value": 14.4 },
+          { "field": "PPR_Half", "operator": ">=", "value": 4.0 }
         ],
         "approved_strategies": [
-          { "strategy": "Sup2444", "ticket_cost": 48 },
-          { "strategy": "Sup3444", "ticket_cost": 36 },
-          { "strategy": "Supr4444", "ticket_cost": 48 }
+          { "strategy": "A1_Supr4444", "ticket_cost": 48, "multiplier_override": 0.10 },
+          { "strategy": "A2_Supr4444_Fav2gte3", "ticket_cost": 48, "multiplier_override": 0.20, "strategy_specific_gates": [{ "field": "Fav2Exact", "operator": ">=", "value": 3.0 }] },
+          { "strategy": "A3_Supr4444_Fav2gte2p5", "ticket_cost": 48, "multiplier_override": 0.25, "strategy_specific_gates": [{ "field": "Fav2Exact", "operator": ">=", "value": 2.5 }] },
+          { "strategy": "A4_Sup3444_Fav2gte3", "ticket_cost": 36, "multiplier_override": 0.20, "strategy_specific_gates": [{ "field": "Fav2Exact", "operator": ">=", "value": 3.0 }] },
+          { "strategy": "A5_Sup3444", "ticket_cost": 36, "multiplier_override": 0.10 },
+          { "strategy": "A6_Sup2444_Fav2gte3", "ticket_cost": 24, "multiplier_override": 0.30, "strategy_specific_gates": [{ "field": "Fav2Exact", "operator": ">=", "value": 3.0 }] },
+          { "strategy": "A7_Sup2444", "ticket_cost": 24, "multiplier_override": 0.20 },
+          { "strategy": "A8_Supr4444_Gap2gte2", "ticket_cost": 48, "multiplier_override": 0.10, "strategy_specific_gates": [{ "field": "1GAP2", "operator": ">=", "value": 2.0 }] },
+          { "strategy": "A9_Supr4444_Gap2gte1p5", "ticket_cost": 48, "multiplier_override": 0.15, "strategy_specific_gates": [{ "field": "1GAP2", "operator": ">=", "value": 1.5 }] },
+          { "strategy": "A10_Supr4444_NoJuv", "ticket_cost": 48, "multiplier_override": 0.10, "strategy_specific_gates": [{ "field": "JuvYN", "operator": "==", "value": "N" }] },
+          { "strategy": "A11_Sup2L13_R4_ChalkN_SI", "ticket_cost": 4, "multiplier_override": 0.10 }
         ]
       },
       {
-        "id": "GROUP-B-SPRINT-THIN-POOL",
+        "id": "GROUP-B",
         "family": "Group B",
-        "multiplier": 0.5,
-        "engine": "R7/R8 Sprint Thin-Pool",
+        "multiplier": 1.0,
+        "engine": "Thin-Pool Grinders",
         "trigger_conditions": [
-          { "field": "Runners", "operator": "in", "value": [7, 8] },
-          { "field": "u7f", "operator": "==", "value": true, "note": "Sprint only: Under 7 Furlongs" },
-          { "field": "PPR_Half", "operator": "<=", "value": 5.0 },
-          { "field": "SI", "operator": ">=", "value": 2.5 }
+          { "field": "Runners", "operator": "==", "value": 7 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "SI", "operator": ">=", "value": 1.5 },
+          { "field": "SI", "operator": "<=", "value": 4.0 },
+          { "field": "PPR_Half", "operator": "<=", "value": 1.0 }
         ],
         "approved_strategies": [
-          { "strategy": "Sup2255", "ticket_cost": 8 },
-          { "strategy": "Sup223A_R8", "ticket_cost": 12 },
-          { "strategy": "Sup2245", "ticket_cost": 8 },
-          { "strategy": "Sup223A", "ticket_cost": 12 },
-          { "strategy": "Sup224A", "ticket_cost": 12 }
+          { "strategy": "B1_Sup2245", "ticket_cost": 16, "multiplier_override": 0.25 }
         ]
       },
       {
-        "id": "GROUP-C-ROUTE-THIN-POOL",
+        "id": "GROUP-C",
         "family": "Group C",
-        "multiplier": 0.25,
-        "engine": "R9/R6 Route Thin-Pool",
+        "multiplier": 1.0,
+        "engine": "Route Giant Hunters",
         "trigger_conditions": [
-          { "field": "Runners", "operator": "in", "value": [6, 9] },
-          { "field": "u7f", "operator": "==", "value": false, "note": "Route only: 7 Furlongs or over" },
-          { "field": "PPR_Half", "operator": "<=", "value": 4.0 },
-          { "field": "SI", "operator": ">=", "value": 2.5 }
+          { "field": "Runners", "operator": "==", "value": 6 }
         ],
         "approved_strategies": [
-          { "strategy": "Sup2143_R8", "ticket_cost": 16 },
-          { "strategy": "Sup3214_R6", "ticket_cost": 2 },
-          { "strategy": "Sup2143", "ticket_cost": 16 },
-          { "strategy": "Sup3214", "ticket_cost": 2 }
+          {
+            "strategy": "C1_Sup3214_R6", "ticket_cost": 2, "multiplier_override": 0.50,
+            "strategy_specific_gates": [
+              { "field": "u7f", "operator": "==", "value": false },
+              { "field": "SI", "operator": ">=", "value": 1.5 },
+              { "field": "SI", "operator": "<=", "value": 4.0 },
+              { "field": "PPR_Half", "operator": "<=", "value": 1.0 }
+            ]
+          },
+          {
+            "strategy": "C2_Sup3214_R6_OpenGates", "ticket_cost": 2, "multiplier_override": 0.10,
+            "strategy_specific_gates": [
+              { "field": "SI", "operator": ">=", "value": 0.3 }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "GROUP-E",
+        "family": "Group E",
+        "multiplier": 1.0,
+        "engine": "Canaries",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 4 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "SI", "operator": ">=", "value": 3.0 },
+          { "field": "SI", "operator": "<=", "value": 14.4 },
+          { "field": "PPR_Half", "operator": ">=", "value": 4.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "E1_Supr4444_Gap2gte3", "ticket_cost": 48, "multiplier_override": 0.05, "strategy_specific_gates": [{ "field": "1GAP2", "operator": ">=", "value": 3.0 }] },
+          { "strategy": "E4_XC22_R4_canary", "ticket_cost": 4, "multiplier_override": 0.05 }
+        ]
+      },
+      {
+        "id": "GROUP-F",
+        "family": "Group F",
+        "multiplier": 1.0,
+        "engine": "R3 Trifecta Family",
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 3 },
+          { "field": "SI", "operator": ">=", "value": 0.3 }
+        ],
+        "approved_strategies": [
+          { "strategy": "F5_Tri123_R3", "ticket_cost": 2, "multiplier_override": 0.25 },
+          { "strategy": "F6_Trif333_R3", "ticket_cost": 6, "multiplier_override": 0.25 },
+          { "strategy": "F7_Tri233_R3", "ticket_cost": 6, "multiplier_override": 0.25 }
         ]
       }
     ]

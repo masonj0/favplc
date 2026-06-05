@@ -1,0 +1,883 @@
+
+=========================================================================================================
+=================================== HOURLY TRIGGER SHEET - 2026-06-05 ===================================
+==================== (V3 Portfolio Grinder | V3 Portfolio Grinder — June 05 Edition) ====================
+=========================================================================================================
+
+
+--- 12 AM ----------------------------------------------------------------------------------------------
+  00:15 | Emerald              | R6  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  00:41 | Emerald              | R7  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 09 AM ----------------------------------------------------------------------------------------------
+  09:32 | Harlow               | R1  | F:6  | D:0.148 | P:?     | SI: 4.8 | F2: 2.8 | G2: 0.8 | G
+    >>> Skip 2? (Race 1)
+
+  09:48 | Harlow               | R2  | F:6  | D:0.258 | P:?     | SI: 6.8 | F2: 4.0 | G2: 1.2 | G
+    >>> Skip 2? (Race 2)
+
+
+--- 10 AM ----------------------------------------------------------------------------------------------
+  10:04 | Harlow               | R3  | F:6  | D:0.148 | P:?     | SI: 5.2 | F2: 2.8 | G2: 0.2 | G
+    !!! ABORT: Purse 0 < 3000
+
+  10:21 | Harlow               | R4  | F:6  | D:0.148 | P:?     | SI: 6.1 | F2: 4.0 | G2: 1.9 | G
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 11 AM ----------------------------------------------------------------------------------------------
+  11:45 | Saratoga             | R1  | F:9  | D:1.125 | P:115K  | SI: 7.9 | F2: 5.5 | G2: 3.1 | T
+    >>> Skip 2? (Race 1)
+
+
+--- 12 PM ----------------------------------------------------------------------------------------------
+  12:00 | Fairview             | R2  | F:8  | D:?     | P:?     | SI: 5.0 | F2: 2.9 | G2: 0.8 | T
+    >>> Skip 2? (Race 2)
+
+  12:00 | Laurel Park          | R1  | F:16 | D:1.062 | P:24K   | SI: 9.5 | F2: 6.0 | G2: 2.5 | T
+    >>> Skip 2? (Race 1)
+
+  12:05 | Nancy                | R5  | F:13 | D:?     | P:?     | SI: 6.0 | F2: 3.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  12:19 | Saratoga             | R2  | F:8  | D:0.750 | P:110K  | SI: 8.5 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  12:22 | Toulouse             | R5  | F:16 | D:?     | P:?     | SI: 5.5 | F2: 2.8 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  12:34 | Laurel Park          | R2  | F:6  | D:0.875 | P:47K   | SI: 4.8 | F2: 2.8 | G2: 0.8 | T
+    >>> Skip 2? (Race 2)
+
+  12:35 | Belterra Park        | R1  | F:5  | D:1.000 | P:14K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  12:35 | Fairview             | R3  | F:9  | D:?     | P:?     | SI: 3.7 | F2: 1.9 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  12:39 | Nancy                | R6  | F:12 | D:?     | P:?     | SI: 3.3 | F2: 1.7 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  12:45 | Churchill Downs      | R1  | F:6  | D:1.000 | P:67K   | SI: 6.5 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  12:50 | Gulfstream Park      | R1  | F:9  | D:0.688 | P:33K   | SI: 7.5 | F2: 4.5 | G2: 1.5 | T
+    >>> Skip 2? (Race 1)
+
+  12:54 | Saratoga             | R3  | F:11 | D:0.812 | P:115K  | SI: 9.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  12:56 | Toulouse             | R6  | F:10 | D:?     | P:?     | SI: 7.0 | F2: 4.0 | G2: 1.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 01 PM ----------------------------------------------------------------------------------------------
+  13:00 | Woodbine             | R1  | F:6  | D:0.688 | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    >>> Skip 2? (Race 1)
+
+  13:05 | Belterra Park        | R2  | F:6  | D:0.688 | P:9K    | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:09 | Laurel Park          | R3  | F:8  | D:1.000 | P:22K   | SI: 7.5 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  13:10 | Fairview             | R4  | F:11 | D:?     | P:?     | SI: 3.4 | F2: 1.9 | G2: 0.4 | T
+    !!! ABORT: Purse 0 < 3000
+
+  13:12 | Nancy                | R7  | F:8  | D:?     | P:?     | SI: 3.5 | F2: 1.7 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  13:13 | Compiegne            | R1  | F:11 | D:?     | P:?     | SI: 3.4 | F2: 1.7 | G2: 0.1 | T
+    >>> Skip 2? (Race 1)
+
+  13:14 | Churchill Downs      | R2  | F:7  | D:0.812 | P:78K   | SI: 7.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:22 | Gulfstream Park      | R2  | F:7  | D:0.625 | P:65K   | SI: 6.1 | F2: 3.5 | G2: 0.9 | T
+    >>> Skip 2? (Race 2)
+
+  13:28 | Woodbine             | R2  | F:8  | D:0.688 | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    >>> Skip 2? (Race 2)
+
+  13:29 | Saratoga             | R4  | F:6  | D:0.875 | P:300K  | SI: 4.2 | F2: 2.2 | G2: 0.2 | T
+    >> Group C (Route Giant Hunters) | Mult: 0.1x
+      [ ] C2_Sup3214_R6_OpenGates   ($2 ) [ ] Chalk=N [ ] Juv=N
+
+  13:30 | Epsom                | R1  | F:19 | D:?     | P:?     | SI: 3.0 | F2: 1.7 | G2: 0.3 | T
+    >>> Skip 2? (Race 1)
+
+  13:30 | Toulouse             | R7  | F:12 | D:?     | P:?     | SI:12.0 | F2: 7.0 | G2: 2.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  13:35 | Belterra Park        | R3  | F:5  | D:0.750 | P:8K    | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  13:40 | Thirsk               | R1  | F:13 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  13:43 | Churchill Downs      | R3  | F:6  | D:1.062 | P:49K   | SI: 6.7 | F2: 4.5 | G2: 2.3 | T
+    >> Group C (Route Giant Hunters) | Mult: 0.1x
+      [ ] C2_Sup3214_R6_OpenGates   ($2 ) [ ] Chalk=N [ ] Juv=N
+
+  13:44 | Nancy                | R8  | F:6  | D:?     | P:?     | SI: 5.5 | F2: 3.2 | G2: 1.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  13:45 | Fairview             | R5  | F:10 | D:?     | P:?     | SI: 2.6 | F2: 1.4 | G2: 0.2 | T
+    !!! ABORT: Purse 0 < 3000
+
+  13:48 | Compiegne            | R2  | F:9  | D:?     | P:?     | SI: 2.8 | F2: 1.6 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  13:49 | Laurel Park          | R4  | F:6  | D:0.688 | P:49K   | SI: 5.7 | F2: 3.5 | G2: 1.3 | T
+    >> Group C (Route Giant Hunters) | Mult: 0.1x
+      [ ] C2_Sup3214_R6_OpenGates   ($2 ) [ ] Chalk=N [ ] Juv=N
+
+  13:50 | Musselburgh          | R1  | F:5  | D:?     | P:?     | SI: 6.0 | F2: 3.5 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  13:54 | Gulfstream Park      | R3  | F:7  | D:0.625 | P:37K   | SI: 7.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  13:58 | Woodbine             | R3  | F:6  | D:0.875 | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 02 PM ----------------------------------------------------------------------------------------------
+  14:04 | Saratoga             | R5  | F:15 | D:0.688 | P:120K  | SI: 6.5 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  14:05 | Belterra Park        | R4  | F:6  | D:0.625 | P:14K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:05 | Epsom                | R2  | F:16 | D:?     | P:?     | SI: 3.5 | F2: 1.7 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  14:05 | Toulouse             | R8  | F:11 | D:?     | P:?     | SI: 7.5 | F2: 6.0 | G2: 4.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  14:13 | Churchill Downs      | R4  | F:16 | D:0.688 | P:120K  | SI: 8.0 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  14:15 | Thirsk               | R2  | F:11 | D:?     | P:?     | SI: 3.1 | F2: 1.6 | G2: 0.1 | T
+    >>> Skip 2? (Race 2)
+
+  14:20 | Fairview             | R6  | F:7  | D:?     | P:?     | SI: 3.0 | F2: 1.8 | G2: 0.6 | T
+    !!! ABORT: Purse 0 < 3000
+
+  14:22 | Laurel Park          | R5  | F:11 | D:1.062 | P:29K   | SI:10.5 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  14:23 | Compiegne            | R3  | F:10 | D:?     | P:?     | SI: 7.2 | F2: 5.5 | G2: 3.8 | T
+    !!! ABORT: Purse 0 < 3000
+
+  14:25 | Musselburgh          | R2  | F:6  | D:?     | P:?     | SI: 3.6 | F2: 2.0 | G2: 0.4 | T
+    >>> Skip 2? (Race 2)
+
+  14:31 | Woodbine             | R4  | F:8  | D:0.875 | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  14:38 | Le Lion Dangers      | R1  | F:9  | D:?     | P:?     | SI: 3.0 | F2: 1.8 | G2: 0.6 | T
+    >>> Skip 2? (Race 1)
+
+  14:40 | Epsom                | R3  | F:11 | D:?     | P:?     | SI: 4.0 | F2: 2.5 | G2: 1.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  14:40 | Saratoga             | R6  | F:16 | D:1.062 | P:115K  | SI: 8.0 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  14:45 | Churchill Downs      | R5  | F:8  | D:0.625 | P:67K   | SI: 6.8 | F2: 4.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  14:50 | Thirsk               | R3  | F:15 | D:?     | P:?     | SI: 3.5 | F2: 1.9 | G2: 0.3 | T
+    !!! ABORT: Purse 0 < 3000
+
+  14:55 | Fairview             | R7  | F:12 | D:?     | P:?     | SI: 3.0 | F2: 1.8 | G2: 0.6 | T
+    !!! ABORT: Purse 0 < 3000
+
+  14:58 | Compiegne            | R4  | F:11 | D:?     | P:?     | SI: 7.2 | F2: 5.5 | G2: 3.8 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 03 PM ----------------------------------------------------------------------------------------------
+  15:00 | Musselburgh          | R3  | F:10 | D:?     | P:?     | SI: 3.5 | F2: 2.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:05 | Belterra Park        | R6  | F:7  | D:1.000 | P:13K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  15:08 | Laurel Park          | R6  | F:12 | D:0.688 | P:47K   | SI: 7.5 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  15:14 | Le Lion Dangers      | R2  | F:13 | D:?     | P:?     | SI: 3.2 | F2: 1.8 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  15:15 | Epsom                | R4  | F:19 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:16 | Saratoga             | R7  | F:10 | D:1.125 | P:130K  | SI: 8.5 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:18 | Churchill Downs      | R6  | F:7  | D:1.062 | P:49K   | SI: 7.1 | F2: 4.5 | G2: 1.9 | T
+    (No matching strategies)
+
+  15:30 | Thirsk               | R4  | F:14 | D:?     | P:?     | SI: 3.7 | F2: 2.0 | G2: 0.3 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:31 | Gulfstream Park      | R6  | F:6  | D:0.688 | P:72K   | SI: 5.0 | F2: 3.5 | G2: 2.0 | T
+    >> Group C (Route Giant Hunters) | Mult: 0.1x
+      [ ] C2_Sup3214_R6_OpenGates   ($2 ) [ ] Chalk=N [ ] Juv=N
+
+  15:32 | Compiegne            | R5  | F:16 | D:?     | P:?     | SI: 2.7 | F2: 1.6 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:35 | Fairview             | R8  | F:12 | D:?     | P:?     | SI: 3.5 | F2: 1.7 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:37 | Woodbine             | R6  | F:7  | D:0.625 | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  15:40 | Musselburgh          | R4  | F:8  | D:?     | P:?     | SI: 4.0 | F2: 2.5 | G2: 1.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:42 | Laurel Park          | R7  | F:7  | D:0.750 | P:49K   | SI: 7.3 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  15:48 | Le Lion Dangers      | R3  | F:10 | D:?     | P:?     | SI: 4.2 | F2: 2.2 | G2: 0.2 | T
+    !!! ABORT: Purse 0 < 3000
+
+  15:50 | Churchill Downs      | R7  | F:11 | D:1.000 | P:127K  | SI: 9.5 | F2: 5.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  15:52 | Saratoga             | R8  | F:15 | D:0.688 | P:125K  | SI: 7.5 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+
+--- 04 PM ----------------------------------------------------------------------------------------------
+  16:00 | Epsom                | R5  | F:12 | D:?     | P:?     | SI: 2.7 | F2: 1.3 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:00 | Santa Anita          | R1  | F:7  | D:1.000 | P:35K   | SI: 6.8 | F2: 4.0 | G2: 1.2 | T
+    >>> Skip 2? (Race 1)
+
+  16:04 | Gulfstream Park      | R7  | F:9  | D:1.062 | P:26K   | SI: 6.4 | F2: 4.0 | G2: 1.6 | T
+    (No matching strategies)
+
+  16:05 | Belterra Park        | R8  | F:11 | D:0.625 | P:9K    | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  16:10 | Thirsk               | R5  | F:6  | D:?     | P:?     | SI: 4.3 | F2: 2.5 | G2: 0.7 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:14 | Laurel Park          | R8  | F:11 | D:0.688 | P:49K   | SI: 7.9 | F2: 5.5 | G2: 3.1 | T
+    (No matching strategies)
+
+  16:15 | Musselburgh          | R5  | F:7  | D:?     | P:?     | SI: 5.5 | F2: 3.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:17 | Compiegne            | R6  | F:14 | D:?     | P:?     | SI: 3.2 | F2: 1.6 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:20 | Fairyhouse           | R1  | F:10 | D:?     | P:?     | SI: 4.3 | F2: 2.8 | G2: 1.3 | T
+    >>> Skip 2? (Race 1)
+
+  16:20 | Thirsk               | R7  | F:13 | D:0.750 | P:4K    | SI: 9.8 | F2: 5.5 | G2: 1.2 | T
+    (No matching strategies)
+
+  16:22 | Churchill Downs      | R8  | F:8  | D:1.000 | P:83K   | SI: 7.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  16:24 | Vincennes            | R1  | F:12 | D:1.770 | P:37K   | SI:10.0 | F2: 5.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  16:28 | Saratoga             | R9  | F:9  | D:1.062 | P:300K  | SI: 4.6 | F2: 2.6 | G2: 0.6 | T
+    (No matching strategies)
+
+  16:32 | Le Lion Dangers      | R4  | F:16 | D:?     | P:?     | SI: 3.2 | F2: 1.7 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:32 | Santa Anita          | R2  | F:6  | D:1.000 | P:26K   | SI: 4.7 | F2: 2.5 | G2: 0.3 | T
+    >>> Skip 2? (Race 2)
+
+  16:40 | Epsom                | R6  | F:21 | D:?     | P:?     | SI: 2.6 | F2: 1.5 | G2: 0.4 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:43 | Woodbine             | R8  | F:12 | D:1.000 | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  16:45 | Thirsk               | R6  | F:14 | D:?     | P:?     | SI: 5.0 | F2: 2.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:46 | Laurel Park          | R9  | F:7  | D:0.750 | P:22K   | SI: 6.3 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  16:50 | Compiegne            | R7  | F:12 | D:?     | P:?     | SI: 2.2 | F2: 1.1 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:50 | Musselburgh          | R6  | F:6  | D:?     | P:?     | SI: 8.5 | F2: 4.5 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:55 | Fairyhouse           | R2  | F:17 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  16:58 | Vincennes            | R2  | F:15 | D:1.677 | P:28K   | SI:12.0 | F2: 7.0 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 05 PM ----------------------------------------------------------------------------------------------
+  17:00 | Bath                 | R1  | F:10 | D:?     | P:?     | SI: 3.8 | F2: 2.2 | G2: 0.8 | T
+    >>> Skip 2? (Race 1)
+
+  17:00 | Woodbine             | R1  | F:6  | D:0.688 | P:18K   | SI: 6.1 | F2: 3.5 | G2: 0.9 | T
+    >>> Skip 2? (Race 1)
+
+  17:00 | Wyoming              | R1  | F:9  | D:0.125 | P:12K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  17:02 | Santa Anita          | R3  | F:5  | D:1.000 | P:36K   | SI: 5.8 | F2: 4.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  17:05 | Clonmel              | R1  | F:18 | D:?     | P:?     | SI: 3.5 | F2: 1.8 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  17:06 | Le Lion Dangers      | R5  | F:15 | D:?     | P:?     | SI: 3.4 | F2: 1.7 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  17:08 | Nottingham           | R1  | F:6  | D:0.311 | P:?     | SI:61.0 | F2:30.5 | G2: 0.1 | G
+    >>> Skip 2? (Race 1)
+
+  17:08 | Saratoga             | R10 | F:5  | D:1.125 | P:500K  | SI: 5.8 | F2: 4.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  17:10 | Doncaster            | R1  | F:9  | D:?     | P:?     | SI: 3.3 | F2: 1.8 | G2: 0.3 | T
+    >>> Skip 2? (Race 1)
+
+  17:15 | Epsom                | R7  | F:11 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  17:20 | Thirsk               | R7  | F:16 | D:?     | P:?     | SI: 2.9 | F2: 1.5 | G2: 0.1 | H
+    !!! ABORT: Purse 0 < 3000
+
+  17:23 | Sunderland           | R1  | F:6  | D:0.280 | P:?     | SI:55.9 | F2:28.0 | G2: 0.1 | G
+    >>> Skip 2? (Race 1)
+
+  17:24 | Vincennes            | R1  | F:12 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    >>> Skip 2? (Race 1)
+
+  17:25 | Goodwood             | R1  | F:11 | D:?     | P:?     | SI: 3.1 | F2: 1.9 | G2: 0.7 | T
+    >>> Skip 2? (Race 1)
+
+  17:25 | Wyoming              | R2  | F:9  | D:0.199 | P:5K    | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  17:28 | Nottingham           | R2  | F:6  | D:0.311 | P:?     | SI:60.7 | F2:30.4 | G2: 0.0 | G
+    >>> Skip 2? (Race 2)
+
+  17:28 | Woodbine             | R2  | F:8  | D:0.688 | P:20K   | SI: 7.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:30 | Fairyhouse           | R3  | F:7  | D:?     | P:?     | SI: 3.5 | F2: 2.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  17:32 | Santa Anita          | R4  | F:8  | D:0.750 | P:65K   | SI: 7.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:33 | Romford              | R1  | F:6  | D:0.249 | P:?     | SI:48.3 | F2:24.2 | G2: 0.1 | G
+    >>> Skip 2? (Race 1)
+
+  17:33 | Vincennes            | R3  | F:9  | D:1.677 | P:37K   | SI: 9.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:35 | Bath                 | R2  | F:13 | D:?     | P:?     | SI: 3.8 | F2: 2.3 | G2: 0.8 | T
+    >>> Skip 2? (Race 2)
+
+  17:40 | Clonmel              | R2  | F:17 | D:?     | P:?     | SI: 4.0 | F2: 2.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  17:40 | Le Lion Dangers      | R6  | F:9  | D:?     | P:?     | SI: 2.9 | F2: 1.7 | G2: 0.6 | T
+    !!! ABORT: Purse 0 < 3000
+
+  17:43 | Sunderland           | R2  | F:5  | D:0.280 | P:?     | SI:55.6 | F2:27.9 | G2: 0.2 | G
+    >>> Skip 2? (Race 2)
+
+  17:45 | Doncaster            | R2  | F:9  | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  17:46 | Saratoga             | R11 | F:9  | D:1.188 | P:750K  | SI: 7.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:48 | Nottingham           | R3  | F:6  | D:0.190 | P:?     | SI:36.2 | F2:18.1 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  17:50 | Epsom                | R8  | F:19 | D:?     | P:?     | SI: 2.7 | F2: 1.4 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  17:53 | Romford              | R2  | F:6  | D:0.357 | P:?     | SI:70.6 | F2:35.5 | G2: 0.4 | G
+    >>> Skip 2? (Race 2)
+
+  17:55 | Goodwood             | R2  | F:8  | D:?     | P:?     | SI: 3.8 | F2: 2.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 2)
+
+  17:58 | Vincennes            | R2  | F:15 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    >>> Skip 2? (Race 2)
+
+  17:58 | Woodbine             | R3  | F:6  | D:0.875 | P:18K   | SI: 5.6 | F2: 3.0 | G2: 0.4 | T
+    >> Group C (Route Giant Hunters) | Mult: 0.1x
+      [ ] C2_Sup3214_R6_OpenGates   ($2 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 06 PM ----------------------------------------------------------------------------------------------
+  18:00 | Fairyhouse           | R4  | F:10 | D:?     | P:?     | SI: 3.6 | F2: 1.8 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:02 | Santa Anita          | R5  | F:8  | D:1.000 | P:40K   | SI: 7.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:03 | Sunderland           | R3  | F:5  | D:0.280 | P:?     | SI:10.3 | F2: 5.7 | G2: 1.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:05 | Bath                 | R3  | F:11 | D:?     | P:?     | SI: 4.0 | F2: 2.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:08 | Nottingham           | R4  | F:6  | D:0.311 | P:?     | SI:61.9 | F2:31.0 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:10 | Clonmel              | R3  | F:16 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:13 | Romford              | R3  | F:6  | D:0.249 | P:?     | SI:47.9 | F2:24.0 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:15 | Le Lion Dangers      | R7  | F:7  | D:?     | P:?     | SI: 3.3 | F2: 1.7 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:15 | Vincennes            | R4  | F:16 | D:1.305 | P:37K   | SI: 9.5 | F2: 6.0 | G2: 2.5 | T
+    (No matching strategies)
+
+  18:15 | Wyoming              | R4  | F:10 | D:0.199 | P:5K    | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  18:20 | Doncaster            | R3  | F:8  | D:?     | P:?     | SI: 3.4 | F2: 2.0 | G2: 0.6 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:23 | Sunderland           | R4  | F:6  | D:0.162 | P:?     | SI:20.1 | F2:15.0 | G2: 9.9 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:25 | Saratoga             | R12 | F:6  | D:1.125 | P:500K  | SI: 5.9 | F2: 3.5 | G2: 1.1 | T
+    >> Group C (Route Giant Hunters) | Mult: 0.1x
+      [ ] C2_Sup3214_R6_OpenGates   ($2 ) [ ] Chalk=N [ ] Juv=N
+
+  18:26 | Gulfstream Park      | R4  | F:7  | D:1.062 | P:18K   | SI: 6.5 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:27 | Goodwood             | R3  | F:12 | D:?     | P:?     | SI: 3.7 | F2: 2.0 | G2: 0.3 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:28 | Nottingham           | R5  | F:6  | D:0.311 | P:?     | SI:60.1 | F2:30.1 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:30 | Evangeline           | R1  | F:10 | D:0.875 | P:15K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  18:31 | Woodbine             | R4  | F:8  | D:0.875 | P:22K   | SI: 7.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:32 | Santa Anita          | R6  | F:8  | D:1.000 | P:16K   | SI: 6.5 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:33 | Romford              | R4  | F:6  | D:0.249 | P:?     | SI:47.8 | F2:23.9 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:33 | Vincennes            | R3  | F:9  | D:?     | P:?     | SI: 6.2 | F2: 4.3 | G2: 2.4 | H
+    !!! ABORT: Purse 0 < 3000
+
+  18:34 | Fairyhouse           | R5  | F:19 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:40 | Bath                 | R4  | F:10 | D:?     | P:?     | SI: 3.9 | F2: 2.0 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:43 | Sunderland           | R5  | F:5  | D:0.280 | P:?     | SI:54.6 | F2:27.3 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:45 | Clonmel              | R4  | F:15 | D:?     | P:?     | SI: 3.5 | F2: 2.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:45 | Vincennes            | R5  | F:14 | D:1.770 | P:28K   | SI:13.0 | F2: 7.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:48 | Nottingham           | R6  | F:6  | D:0.311 | P:?     | SI:61.6 | F2:31.0 | G2: 0.3 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:50 | Le Lion Dangers      | R8  | F:7  | D:?     | P:?     | SI: 6.7 | F2: 4.3 | G2: 1.9 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:53 | Romford              | R5  | F:6  | D:0.357 | P:?     | SI: 8.5 | F2: 4.6 | G2: 0.7 | G
+    !!! ABORT: Purse 0 < 3000
+
+  18:55 | Doncaster            | R4  | F:12 | D:?     | P:?     | SI: 3.7 | F2: 2.0 | G2: 0.3 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:57 | Evangeline           | R2  | F:9  | D:0.750 | P:11K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  18:58 | Gulfstream Park      | R5  | F:7  | D:1.000 | P:17K   | SI: 7.3 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+
+--- 07 PM ----------------------------------------------------------------------------------------------
+  19:00 | Charles Town         | R1  | F:7  | D:0.562 | P:15K   | SI: 5.8 | F2: 3.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 1)
+
+  19:00 | Fair Meadows         | R1  | F:5  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  19:00 | Prairie Meadows      | R1  | F:6  | D:0.750 | P:14K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  19:02 | Goodwood             | R4  | F:12 | D:?     | P:?     | SI: 5.0 | F2: 3.5 | G2: 2.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:02 | Santa Anita          | R7  | F:11 | D:1.000 | P:68K   | SI: 9.5 | F2: 5.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  19:03 | Sunderland           | R6  | F:6  | D:0.280 | P:?     | SI:32.0 | F2:27.5 | G2:23.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:04 | Woodbine             | R5  | F:8  | D:0.812 | P:18K   | SI: 7.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:08 | Nottingham           | R7  | F:6  | D:0.311 | P:?     | SI:61.9 | F2:31.2 | G2: 0.6 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:09 | Fairyhouse           | R6  | F:14 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:13 | Romford              | R6  | F:6  | D:0.357 | P:?     | SI: 6.1 | F2: 3.1 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:15 | Bath                 | R5  | F:10 | D:?     | P:?     | SI: 3.5 | F2: 2.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:15 | Delta Downs          | R1  | F:9  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  19:15 | Vincennes            | R4  | F:16 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  19:15 | Vincennes            | R6  | F:14 | D:1.677 | P:44K   | SI:10.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  19:20 | Clonmel              | R5  | F:6  | D:?     | P:?     | SI: 5.6 | F2: 2.8 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:23 | Sunderland           | R7  | F:6  | D:0.280 | P:?     | SI:54.7 | F2:27.3 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:24 | Evangeline           | R3  | F:7  | D:0.750 | P:11K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:25 | Fair Meadows         | R2  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  19:27 | Prairie Meadows      | R2  | F:7  | D:0.750 | P:27K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  19:28 | Nottingham           | R8  | F:6  | D:0.311 | P:?     | SI:61.5 | F2:30.7 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:30 | Doncaster            | R5  | F:10 | D:?     | P:?     | SI: 4.0 | F2: 2.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:30 | Sam Houston          | R1  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  19:32 | Charles Town         | R2  | F:7  | D:0.562 | P:34K   | SI: 5.8 | F2: 3.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 2)
+
+  19:33 | Romford              | R7  | F:6  | D:0.249 | P:?     | SI:47.8 | F2:23.9 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:35 | Lone Star            | R1  | F:9  | D:?     | P:?     | SI: 7.3 | F2: 4.5 | G2: 1.7 | T
+    >>> Skip 2? (Race 1)
+
+  19:37 | Goodwood             | R5  | F:11 | D:?     | P:?     | SI: 2.6 | F2: 1.5 | G2: 0.4 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:37 | Woodbine             | R6  | F:7  | D:0.625 | P:72K   | SI: 5.5 | F2: 3.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  19:40 | Delta Downs          | R2  | F:9  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  19:43 | Sunderland           | R8  | F:6  | D:0.280 | P:?     | SI:41.9 | F2:27.0 | G2:12.2 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:44 | Fairyhouse           | R7  | F:15 | D:?     | P:?     | SI: 3.6 | F2: 1.9 | G2: 0.2 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:45 | Vincennes            | R5  | F:14 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  19:45 | Vincennes            | R7  | F:13 | D:1.677 | P:44K   | SI: 8.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  19:48 | Nottingham           | R9  | F:6  | D:0.311 | P:?     | SI:60.6 | F2:30.3 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:50 | Bath                 | R6  | F:10 | D:?     | P:?     | SI: 4.0 | F2: 2.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:50 | Fair Meadows         | R3  | F:5  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:51 | Evangeline           | R4  | F:10 | D:1.000 | P:10K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:53 | Romford              | R8  | F:6  | D:0.249 | P:?     | SI:47.7 | F2:23.9 | G2: 0.2 | G
+    !!! ABORT: Purse 0 < 3000
+
+  19:54 | Prairie Meadows      | R3  | F:6  | D:1.000 | P:21K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:55 | Clonmel              | R6  | F:17 | D:?     | P:?     | SI: 3.9 | F2: 2.0 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  19:55 | Wyoming              | R8  | F:10 | D:0.199 | P:12K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:56 | Sam Houston          | R2  | F:9  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 08 PM ----------------------------------------------------------------------------------------------
+  20:02 | Charles Town         | R3  | F:8  | D:1.062 | P:16K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:02 | Lone Star            | R2  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  20:02 | Santa Anita          | R9  | F:9  | D:1.125 | P:35K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:03 | Sunderland           | R9  | F:6  | D:0.280 | P:?     | SI:54.2 | F2:27.1 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:05 | Albuquerque          | R1  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  20:05 | Doncaster            | R6  | F:16 | D:?     | P:?     | SI: 3.5 | F2: 2.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:08 | Nottingham           | R10 | F:6  | D:0.190 | P:?     | SI:36.5 | F2:18.2 | G2: 0.0 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:10 | Woodbine             | R7  | F:8  | D:0.750 | P:40K   | SI: 7.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:12 | Goodwood             | R6  | F:12 | D:?     | P:?     | SI: 3.9 | F2: 2.0 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:13 | Romford              | R9  | F:6  | D:0.357 | P:?     | SI:70.5 | F2:35.4 | G2: 0.3 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:13 | Vincennes            | R8  | F:11 | D:1.770 | P:28K   | SI: 8.0 | F2: 4.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:15 | Century              | R1  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  20:15 | Vincennes            | R6  | F:14 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  20:18 | Evangeline           | R5  | F:9  | D:1.000 | P:19K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:19 | Fairyhouse           | R8  | F:16 | D:?     | P:?     | SI: 3.1 | F2: 1.6 | G2: 0.1 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:21 | Prairie Meadows      | R4  | F:7  | D:1.040 | P:23K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:22 | Sam Houston          | R3  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:23 | Sunderland           | R10 | F:5  | D:0.280 | P:?     | SI:43.5 | F2:27.6 | G2:11.6 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:25 | Bath                 | R7  | F:14 | D:?     | P:?     | SI: 2.6 | F2: 1.5 | G2: 0.4 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:28 | Nottingham           | R11 | F:6  | D:0.311 | P:?     | SI:61.8 | F2:31.0 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:29 | Lone Star            | R3  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:30 | Albuquerque          | R2  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  20:30 | Clonmel              | R7  | F:16 | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:30 | Delta Downs          | R4  | F:7  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:32 | Charles Town         | R4  | F:9  | D:0.812 | P:14K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:33 | Romford              | R10 | F:6  | D:0.466 | P:?     | SI:26.2 | F2:13.3 | G2: 0.4 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:34 | Gulfstream Park      | R8  | F:7  | D:0.688 | P:23K   | SI: 6.5 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:40 | Doncaster            | R7  | F:7  | D:?     | P:?     | SI: 3.0 | F2: 1.5 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:40 | Fair Meadows         | R5  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:43 | Sunderland           | R11 | F:5  | D:0.162 | P:?     | SI:31.2 | F2:15.6 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:43 | Woodbine             | R8  | F:13 | D:1.000 | P:30K   | SI: 9.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:45 | Century              | R2  | F:5  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  20:45 | Vincennes            | R7  | F:13 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  20:46 | Evangeline           | R6  | F:7  | D:0.875 | P:34K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:48 | Nottingham           | R12 | F:6  | D:0.311 | P:?     | SI:60.7 | F2:30.4 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:48 | Prairie Meadows      | R5  | F:8  | D:1.000 | P:18K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:53 | Romford              | R11 | F:6  | D:0.249 | P:?     | SI:28.7 | F2:23.9 | G2:19.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  20:55 | Albuquerque          | R3  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:55 | Churchill Downs      | R9  | F:13 | D:1.062 | P:84K   | SI: 8.0 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:55 | Delta Downs          | R5  | F:7  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  20:56 | Lone Star            | R4  | F:9  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 09 PM ----------------------------------------------------------------------------------------------
+  21:00 | Bath                 | R8  | F:11 | D:?     | P:?     | SI: 3.5 | F2: 2.0 | G2: 0.5 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:02 | Charles Town         | R5  | F:9  | D:0.562 | P:24K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:03 | Sunderland           | R12 | F:6  | D:0.280 | P:?     | SI:32.8 | F2:27.2 | G2:21.6 | G
+    !!! ABORT: Purse 0 < 3000
+
+  21:04 | Gulfstream Park      | R9  | F:7  | D:0.688 | P:42K   | SI: 6.1 | F2: 3.5 | G2: 0.9 | T
+    (No matching strategies)
+
+  21:05 | Fair Meadows         | R6  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:13 | Evangeline           | R7  | F:8  | D:1.000 | P:40K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:13 | Romford              | R12 | F:6  | D:0.357 | P:?     | SI:70.1 | F2:35.1 | G2: 0.1 | G
+    !!! ABORT: Purse 0 < 3000
+
+  21:13 | Vincennes            | R8  | F:11 | D:?     | P:?     | SI:11.0 | F2: 5.5 | G2: 0.0 | H
+    !!! ABORT: Purse 0 < 3000
+
+  21:15 | Century              | R3  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:20 | Albuquerque          | R4  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:20 | Delta Downs          | R6  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:23 | Lone Star            | R5  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:30 | Fair Meadows         | R7  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:32 | Charles Town         | R6  | F:8  | D:0.812 | P:34K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:42 | Prairie Meadows      | R7  | F:9  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:45 | Delta Downs          | R7  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 10 PM ----------------------------------------------------------------------------------------------
+  22:00 | Emerald              | R1  | F:6  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  22:07 | Evangeline           | R9  | F:12 | D:0.750 | P:10K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  22:15 | Century              | R5  | F:7  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  22:17 | Lone Star            | R7  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  22:27 | Emerald              | R2  | F:7  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  22:32 | Sam Houston          | R8  | F:9  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  22:35 | Delta Downs          | R9  | F:10 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  22:45 | Century              | R6  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  22:54 | Emerald              | R3  | F:5  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 11 PM ----------------------------------------------------------------------------------------------
+  23:02 | Charles Town         | R9  | F:10 | D:0.812 | P:14K   | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  23:04 | Saratoga             | R13 | F:11 | D:0.875 | P:66K   | SI: 7.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:15 | Century              | R7  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  23:21 | Emerald              | R4  | F:5  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  23:32 | Santa Anita          | R8  | F:8  | D:1.000 | P:42K   | SI: 7.8 | F2: 5.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  23:43 | Saratoga             | R14 | F:16 | D:1.000 | P:72K   | SI:10.0 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  23:45 | Century              | R8  | F:12 | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  23:48 | Emerald              | R5  | F:8  | D:?     | P:?     | SI: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000

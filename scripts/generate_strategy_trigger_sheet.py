@@ -33,7 +33,9 @@ def main():
     yymmdd = target_date[2:].replace('-', '')
 
     rules_path = os.path.join('scripts', 'consensus_ruleset.json')
-    if not os.path.exists(rules_path): return
+    if not os.path.exists(rules_path):
+        print(f"Error: Ruleset not found at {rules_path}")
+        return
     with open(rules_path, 'r') as f:
         rules = json.load(f)
 
@@ -41,9 +43,13 @@ def main():
     all_races = []
     for s in snapshots: all_races.extend(parse_snapshot_json(s))
 
+    if not all_races:
+        print(f"No races found for {target_date} in snapshots/")
+        return
+
     merged = {}
     for r in all_races:
-        key = (get_canonical_venue(r['Location']), r['RaceNum'])
+        key = (get_canonical_venue(r['Location']), r['RaceNum'], r['Discipline'])
         if key not in merged or (not merged[key]['DateTime'] and r['DateTime']):
             merged[key] = r
 
@@ -61,10 +67,10 @@ def main():
                     "strat_details": strat
                 })
 
-    print(f"\n{'='*95}")
-    print(f" STRATEGY-FIRST TRIGGER SHEET - {target_date} ".center(95, '='))
-    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(95, '='))
-    print(f"{'='*95}\n")
+    print(f"\n{'='*105}")
+    print(f" STRATEGY-FIRST TRIGGER SHEET - {target_date} ".center(105, '='))
+    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(105, '='))
+    print(f"{'='*105}\n")
 
     sorted_strategies = sorted(by_strategy.keys())
 
@@ -74,8 +80,8 @@ def main():
         mult = matches[0]['strat_details']['multiplier']
         cost = matches[0]['strat_details']['cost']
 
-        print(f"\n>>> STRATEGY: {strat_name} ({family}) | Multiplier: {mult}x | Base Cost: ${cost}")
-        print("-" * 95)
+        print(f"\n>>> STRATEGY: {strat_name} ({family}) | Multiplier: {mult}x | Ticket: ${cost}")
+        print("-" * 105)
 
         # Sort matches by time
         matches.sort(key=lambda x: x['race']['DateTime'] if x['race']['DateTime'] else datetime.max.replace(tzinfo=zoneinfo.ZoneInfo("UTC")))
@@ -90,11 +96,8 @@ def main():
             dist = race['Distance']
             purse = race['PurseFormatted']
 
-            si_box = f"SI >= {sd['si_floor']:.1f}"
-            if sd['si_cap'] < 90: si_box = f"SI {sd['si_floor']:.1f}-{sd['si_cap']:.1f}"
-            chalk_box = f"Chalk={sd['chalk_req']}"
-
-            print(f"  [ ] {p_time} | {loc:<20} | R{rnum:<2} | Field:{fs:<2} | Dist:{dist:<5} | Purse:{purse:<5} | {chalk_box:<9} | {si_box}")
+            line = f"  [ ] {p_time} | {loc:<20} | R{rnum:<2} | F:{fs:<2} | D:{dist:<5} | P:{purse:<5} | SI:{race['SI']:>4.1f} | F2:{race['Fav2Exact']:>4.1f} | G2:{race['1GAP2']:>4.1f} | {race['Discipline']}"
+            print(line)
         print()
 
 if __name__ == "__main__":
