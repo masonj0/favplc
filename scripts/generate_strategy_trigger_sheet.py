@@ -60,17 +60,19 @@ def main():
 
     for race in final_races:
         res = evaluate_rules(race, rules)
-        if res['approved_strategies']:
-            for strat in res['approved_strategies']:
-                by_strategy[strat['name']].append({
-                    "race": race,
-                    "strat_details": strat
-                })
+        # Use key matches or approved_strategies based on evaluate_rules output
+        strategies = res.get('approved_strategies', [])
+        if strategies:
+            strat = strategies[0]
+            by_strategy[strat['name']].append({
+                "race": race,
+                "strat_details": strat
+            })
 
-    print(f"\n{'='*105}")
-    print(f" STRATEGY-FIRST TRIGGER SHEET - {target_date} ".center(105, '='))
-    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(105, '='))
-    print(f"{'='*105}\n")
+    print(f"\n{'='*115}")
+    print(f" STRATEGY-FIRST TRIGGER SHEET - {target_date} ".center(115, '='))
+    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(115, '='))
+    print(f"{'='*115}\n")
 
     sorted_strategies = sorted(by_strategy.keys())
 
@@ -81,14 +83,13 @@ def main():
         cost = matches[0]['strat_details']['cost']
 
         print(f"\n>>> STRATEGY: {strat_name} ({family}) | Multiplier: {mult}x | Ticket: ${cost}")
-        print("-" * 105)
+        print("-" * 115)
 
         # Sort matches by time
         matches.sort(key=lambda x: x['race']['DateTime'] if x['race']['DateTime'] else datetime.max.replace(tzinfo=zoneinfo.ZoneInfo("UTC")))
 
         for m in matches:
             race = m['race']
-            sd = m['strat_details']
             p_time = race['PostTime']
             loc = race['Location'][:20]
             rnum = race['RaceNum']
@@ -96,11 +97,10 @@ def main():
             dist = race['Distance']
             purse = race['PurseFormatted']
 
-            line = f"  [ ] {p_time} | {loc:<20} | R{rnum:<2} | F:{fs:<2} | D:{dist:<5} | P:{purse:<5} | SI:{race['SI']:>4.1f} | F2:{race['Fav2Exact']:>4.1f} | G2:{race['1GAP2']:>4.1f} | {race['Discipline']}"
+            line = f"  [ ] {p_time} | {loc:<20} | R{rnum:<2} | F:{fs:<2} | D:{dist:<5} | P:{purse:<5} | SI:{race['SI']:>4.1f} | F1:{race['FavExact']:>4.1f} | F2:{race['Fav2Exact']:>4.1f} | G2:{race['1GAP2']:>4.1f} | {race['Discipline']}"
             print(line)
         print()
 
 if __name__ == "__main__":
-    # Add scripts to path so we can import from generate_hourly_trigger_sheet
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '.')))
     main()

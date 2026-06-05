@@ -24,18 +24,15 @@ except ImportError:
 
 def _get_best_win_odds(runner):
     """Helper to get win odds from runner object or dict."""
-    # If it's a dict (from JSON)
     if isinstance(runner, dict):
         if runner.get('win_odds') is not None:
             return float(runner['win_odds'])
-        # Check nested odds
         odds_dict = runner.get('odds', {})
         for src, data in odds_dict.items():
             val = data.get('win') if isinstance(data, dict) else getattr(data, 'win', None)
             if val: return float(val)
         return None
 
-    # If it's a Runner object
     if hasattr(runner, 'win_odds') and runner.win_odds is not None:
         return float(runner.win_odds)
     if hasattr(runner, 'odds') and runner.odds:
@@ -56,17 +53,14 @@ def parse_snapshot_json(filepath):
             dt = None
             if st:
                 try:
-                    # Handle YYMMDDTHH:MM:SS
                     dt = datetime.strptime(st, "%y%m%dT%H:%M:%S").replace(tzinfo=et_tz)
                 except:
                     try:
-                        # Handle ISO
                         dt = datetime.fromisoformat(st.replace('Z', '+00:00')).astimezone(et_tz)
                     except: pass
 
             purse_raw = r.get('metadata', {}).get('purse') or r.get('metadata', {}).get('Purse') or "?"
 
-            # Extract runners and sort by odds
             runners = r.get('runners', [])
             active_runners = [run for run in runners if not run.get('scratched', False)]
 
@@ -85,7 +79,7 @@ def parse_snapshot_json(filepath):
             gap2 = (sec_fav_odds - fav_odds) if fav_odds and sec_fav_odds else 0.0
 
             chalk_yn = "N"
-            if fav_odds and fav_odds < 0.90: # Consistent with SimplySuccessAnalyzer
+            if fav_odds and fav_odds < 0.90:
                 chalk_yn = "Y"
 
             juv_yn = "N"
@@ -95,7 +89,6 @@ def parse_snapshot_json(filepath):
 
             fight = r.get('metadata', {}).get('fight') or "fghtN"
 
-            # Derived fields
             fs = len(active_runners)
             dist_val = parse_distance_to_miles(r.get('distance', '?'))
             u7f = False
@@ -111,8 +104,7 @@ def parse_snapshot_json(filepath):
                 if p_match: purse_val = float(p_match)
             except: pass
 
-            ppr = (purse_val / 1000.0 / fs) if fs > 0 else 0
-            ppr_half = ppr / 2.0
+            ppr_half = (purse_val / 1000.0 / fs) / 2.0 if fs > 0 else 0
 
             races.append({
                 "DateTime": dt,
@@ -129,6 +121,7 @@ def parse_snapshot_json(filepath):
                 "PurseFormatted": format_purse(purse_raw),
                 "URL": r.get('metadata', {}).get('url'),
                 "SI": si,
+                "FavExact": fav_odds or 0.0,
                 "Fav2Exact": sec_fav_odds or 0.0,
                 "1GAP2": gap2,
                 "ChalkYN": chalk_yn,
@@ -144,7 +137,7 @@ def evaluate_rules(race, rules):
     results = {
         "skip_reason": None,
         "abort_reason": None,
-        "approved_strategies": []
+        "matches": []
     }
 
     # 1. Evaluate Universal Gates
@@ -210,7 +203,6 @@ def evaluate_rules(race, rules):
                 strat_name = strat['strategy']
                 strat_match = True
 
-                # Apply strategy-specific gates
                 for s_gate in strat.get('strategy_specific_gates', []):
                     f = s_gate.get('field')
                     v = s_gate.get('value')
@@ -231,20 +223,32 @@ def evaluate_rules(race, rules):
                     if not strat_match: break
 
                 if strat_match:
-                    # Final multiplier: route * override
                     mult = route_multiplier * strat.get('multiplier_override', 1.0)
-                    results["approved_strategies"].append({
+                    results["matches"].append({
+                        "id": route.get('id', '?'),
                         "family": route.get('family', 'Unknown'),
+                        "group": route.get('group', route.get('id', '?')[0:1]), # Fallback to first char of ID if group missing
+                        "priority": route.get('priority', 99),
                         "multiplier": round(mult, 3),
-                        "engine": route.get('engine', 'Unknown'),
-                        "name": strat_name,
+                        "engine": route.get('engine', route.get('name', 'Unknown')),
+                        "name": route.get('name', strat_name),
                         "cost": strat.get('ticket_cost', '?'),
                         "si": race['SI'],
+                        "fav": race['FavExact'],
                         "fav2": race['Fav2Exact'],
                         "gap2": race['1GAP2'],
                         "chalk": race['ChalkYN'],
                         "juv": race['JuvYN']
                     })
+
+    if results["matches"]:
+        # Implement Deduplication Logic: Group Priority first, then internal Priority
+        group_rank = {'A': 1, 'B': 2, 'C': 3, 'E': 4, 'F': 5}
+        results["matches"].sort(key=lambda x: (group_rank.get(x['group'], 99), x['priority']))
+        # Keep only the best match
+        results["approved_strategies"] = [results["matches"][0]]
+    else:
+        results["approved_strategies"] = []
 
     return results
 
@@ -273,7 +277,6 @@ def main():
 
     merged = {}
     for r in all_races:
-        # Use canonical venue and discipline for key
         key = (get_canonical_venue(r['Location']), r['RaceNum'], r['Discipline'])
         if key not in merged or (not merged[key]['DateTime'] and r['DateTime']):
             merged[key] = r
@@ -288,15 +291,15 @@ def main():
         else:
             hourly["Unknown Time"].append(r)
 
-    print(f"\n{'='*105}")
-    print(f" HOURLY TRIGGER SHEET - {target_date} ".center(105, '='))
-    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(105, '='))
-    print(f"{'='*105}\n")
+    print(f"\n{'='*115}")
+    print(f" HOURLY TRIGGER SHEET - {target_date} ".center(115, '='))
+    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(115, '='))
+    print(f"{'='*115}\n")
 
     sorted_hours = sorted(hourly.keys(), key=lambda x: datetime.strptime(x, "%I %p") if x != "Unknown Time" else datetime.max)
 
     for hour in sorted_hours:
-        print(f"\n--- {hour} " + "-" * (99 - len(hour)))
+        print(f"\n--- {hour} " + "-" * (109 - len(hour)))
         for race in hourly[hour]:
             res = evaluate_rules(race, rules)
             p_time = race['PostTime']
@@ -304,20 +307,15 @@ def main():
             rnum = race['RaceNum']
             fs = race['FieldSize']
             dist = race['Distance']
-            line = f"  {p_time} | {loc:<20} | R{rnum:<2} | F:{fs:<2} | D:{dist:<5} | P:{race['PurseFormatted']:<5} | SI:{race['SI']:>4.1f} | F2:{race['Fav2Exact']:>4.1f} | G2:{race['1GAP2']:>4.1f} | {race['Discipline']}"
+            line = f"  {p_time} | {loc:<20} | R{rnum:<2} | F:{fs:<2} | D:{dist:<5} | P:{race['PurseFormatted']:<5} | SI:{race['SI']:>4.1f} | F1:{race['FavExact']:>4.1f} | F2:{race['Fav2Exact']:>4.1f} | G2:{race['1GAP2']:>4.1f} | {race['Discipline']}"
             print(line)
 
             if res['abort_reason']: print(f"    !!! {res['abort_reason']}")
             elif res['skip_reason']: print(f"    >>> {res['skip_reason']}")
             elif res['approved_strategies']:
-                by_family = defaultdict(list)
-                for s in res['approved_strategies']: by_family[s['family']].append(s)
-                for fam in sorted(by_family.keys()):
-                    mult = by_family[fam][0]['multiplier']
-                    eng = by_family[fam][0]['engine']
-                    print(f"    >> {fam} ({eng}) | Mult: {mult}x")
-                    for strat in by_family[fam]:
-                        print(f"      [ ] {strat['name']:<25} (${strat['cost']:<2}) [ ] Chalk={strat['chalk']} [ ] Juv={strat['juv']}")
+                s = res['approved_strategies'][0]
+                print(f"    >> {s['family']} ({s['engine']}) | Mult: {s['multiplier']}x")
+                print(f"      [ ] {s['name']:<40} (${s['cost']:<3}) [ ] Chalk={s['chalk']} [ ] Juv={s['juv']}")
             else: print("    (No matching strategies)")
             print()
 
