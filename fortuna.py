@@ -45,7 +45,6 @@ from various racing websites. It serves as a high-reliability fallback system.
 """
 import argparse
 import asyncio
-import functools
 from functools import lru_cache
 import html
 import json
@@ -58,7 +57,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from io import StringIO
@@ -91,7 +90,6 @@ import structlog
 import subprocess
 import sys
 import threading
-import webbrowser
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -121,7 +119,7 @@ except ImportError:
     HAS_TOML = False
 
 try:
-    from scrapling import AsyncFetcher, Fetcher
+    from scrapling import AsyncFetcher
     from scrapling.parser import Selector
     ASYNC_SESSIONS_AVAILABLE = True
 except Exception:
@@ -234,8 +232,8 @@ def print_status_card(config: Dict[str, Any]):
     print_func("🌟 " + "═" * 54 + " 🌟")
 
     # Friendly Greeting
-    print_func(f"\n [bold yellow]Hello JB![/] 🚀")
-    print_func(f" Ready to discover some incredible racing opportunities today!\n")
+    print_func("\n [bold yellow]Hello JB![/] 🚀")
+    print_func(" Ready to discover some incredible racing opportunities today!\n")
 
     # Region and active mode
     region = config.get("region", {}).get("default", "GLOBAL")
@@ -420,14 +418,9 @@ RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
 from fortuna_utils import (
-    EASTERN, DATE_FORMAT, DATE_FORMAT_OLD, MAX_VALID_ODDS, MIN_VALID_ODDS,
-    DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
-    VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
-    clean_text, node_text, get_canonical_venue, normalize_venue_name,
-    parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
-    is_valid_odds, scrape_available_bets, detect_discipline,
-    now_eastern, to_eastern, ensure_eastern, get_places_paid,
-    parse_date_string, to_storage_format, from_storage_format, STORAGE_FORMAT,
+    EASTERN, DATE_FORMAT, DEFAULT_ODDS_FALLBACK, VENUE_MAP, clean_text, node_text, get_canonical_venue, normalize_venue_name,
+    parse_odds_to_decimal, SmartOddsExtractor, is_valid_odds, scrape_available_bets, detect_discipline,
+    now_eastern, to_eastern, ensure_eastern, parse_date_string, to_storage_format, from_storage_format, STORAGE_FORMAT,
     DayPart, resolve_daypart, resolve_daypart_from_dt, get_daypart_tag
 )
 DEFAULT_REGION: Final[str] = "GLOBAL"
@@ -477,7 +470,7 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports", "HKJC", "JRA", "DRF",
-    "TwinSpires", "NYRABets", "RacingPostB2B",
+    "TwinSpires", "NYRABets", "RacingPostB2B", "StandardbredCanada",
     "SportingLifeGreyhound" # Global multi-discipline expansion
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
@@ -1579,7 +1572,7 @@ class SmartFetcher:
         self.logger.error("all_engines_failed", url=url, error=err_msg)
         raise last_error or FetchError("All fetch engines failed")
 
-    
+
     async def _fetch_with_engine(self, engine: BrowserEngine, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
         # Generate browserforge headers if available
@@ -1628,11 +1621,11 @@ class SmartFetcher:
             req_kwargs["follow_redirects"] = allow_redirects
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
-        
+
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
                 raise ImportError("curl_cffi is not available")
-            
+
             self.logger.debug(f"Using curl_cffi for {url}")
             timeout = kwargs.get("timeout", strategy.timeout)
 
@@ -1644,14 +1637,14 @@ class SmartFetcher:
             impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
-            
+
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
                 k: v for k, v in kwargs.items()
                 if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
             }
             clean_kwargs["allow_redirects"] = allow_redirects
-            
+
             last_err = None
             session = await self._get_curl_session()
             for imp_version in impersonate_chain:
@@ -4675,6 +4668,17 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         try: st = from_storage_format(dts.replace("Z", "+00:00"))
         except Exception: return None
 
+        # P0 USA Discipline Detection
+        discipline = "Thoroughbred"
+        v_upper = vn.upper()
+        harness_venues = ["CAL EXPO", "MEADOWLANDS", "YONKERS", "POCONO", "NORTHFIELD", "HOOSIER", "SCIOTO", "MOHAWK", "WOODBINE"]
+        greyhound_venues = ["WHEELING", "SOUTHLAND", "DERBY LANE", "PALM BEACH"]
+
+        if any(hv in v_upper for hv in harness_venues):
+            discipline = "Harness"
+        elif any(gv in v_upper for gv in greyhound_venues):
+            discipline = "Greyhound"
+
         # Map RPB2B detailed fields
         dist = rd.get("distance") or rd.get("distanceYard")
         if dist and str(dist).isdigit():
@@ -4706,7 +4710,7 @@ class RacingPostB2BAdapter(BaseAdapterV3):
             return None
 
         return Race(
-            discipline="Thoroughbred",
+            discipline=discipline,
             id=f"rpb2b_{rid.replace('-', '')[:16]}",
             venue=normalize_venue_name(vn),
             race_number=rnum,
@@ -5284,8 +5288,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         # Try different possible index URLs
         index_urls = [
-            f"/static/entry/index.html?SAP=TN",
-            f"/static/entry/index.html",
+            "/static/entry/index.html?SAP=TN",
+            "/static/entry/index.html",
             f"/entries/{date}",
             f"/entries/index.cfm?date={dt.strftime('%m/%d/%Y')}",
         ]
@@ -5521,8 +5525,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Success Strategy: Switch TwinSpires to browser-free API strategy for robustness (P1-Audit)
-        return api_fetch_strategy(timeout=40)
+        # P0-FIX-B3: Switch TwinSpires back to scraping strategy.
+        # The /bet/ index requires full DOM rendering and selector waiting for reliable discovery.
+        return scraping_fetch_strategy(timeout=60, network_idle=True)
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome124 for TwinSpires to bypass basic bot checks
@@ -11214,7 +11219,7 @@ async def main_all_in_one():
 
                 await adapter.close()
             except Exception as e:
-                print(f"  STATUS:  ❌ FAILED")
+                print("  STATUS:  ❌ FAILED")
                 print(f"  ERROR:   {str(e)}")
             print(f"\n{'-'*60}\n")
         return
@@ -11367,7 +11372,7 @@ async def main_all_in_one():
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
         os.makedirs("debug_snapshots", exist_ok=True)
-    
+
     # Windows Event Loop Policy Fix (Project Hardening)
     if sys.platform == 'win32' and not getattr(sys, 'frozen', False):
         try:
