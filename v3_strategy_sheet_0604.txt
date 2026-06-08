@@ -1,0 +1,169 @@
+
+===============================================================================================
+========================== STRATEGY-FIRST TRIGGER SHEET - 2026-06-04 ==========================
+============ (V3 Portfolio Grinder | V3 Portfolio Grinder — Post Deep Dive Edition) ===========
+===============================================================================================
+
+
+>>> STRATEGY: Sup2143 (Group C) | Multiplier: 0.25x | Base Cost: $16
+-----------------------------------------------------------------------------------------------
+  [ ] 14:05 | Belterra Park        | R4  | Field:9  | Dist:1.000 | Purse:9K    | Chalk=N   | SI >= 2.5
+  [ ] 14:50 | Turffontein          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:30 | Uttoxeter            | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:43 | Hawthorne            | R3  | Field:6  | Dist:1.040 | Purse:10K   | Chalk=N   | SI >= 2.5
+  [ ] 17:17 | Hawthorne            | R4  | Field:6  | Dist:0.938 | Purse:30K   | Chalk=N   | SI >= 2.5
+  [ ] 17:40 | Mauquenchy           | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:15 | Mauquenchy           | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:33 | Parislongchamp       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:40 | Lingfield Park       | R4  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:10 | Lingfield Park       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:30 | Leopardstown         | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:40 | Canterbury           | R4  | Field:6  | Dist:1.000 | Purse:12K   | Chalk=N   | SI >= 2.5
+  [ ] 19:50 | Ffos Las             | R4  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 20:50 | Ffos Las             | R6  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 21:49 | Charles Town         | R7  | Field:9  | Dist:0.875 | Purse:24K   | Chalk=N   | SI >= 2.5
+  [ ] 22:06 | Sam Houston          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 22:58 | Sam Houston          | R9  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup2143_R8 (Group C) | Multiplier: 0.25x | Base Cost: $16
+-----------------------------------------------------------------------------------------------
+  [ ] 14:05 | Belterra Park        | R4  | Field:9  | Dist:1.000 | Purse:9K    | Chalk=N   | SI >= 2.5
+  [ ] 14:50 | Turffontein          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:30 | Uttoxeter            | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:43 | Hawthorne            | R3  | Field:6  | Dist:1.040 | Purse:10K   | Chalk=N   | SI >= 2.5
+  [ ] 17:17 | Hawthorne            | R4  | Field:6  | Dist:0.938 | Purse:30K   | Chalk=N   | SI >= 2.5
+  [ ] 17:40 | Mauquenchy           | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:15 | Mauquenchy           | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:33 | Parislongchamp       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:40 | Lingfield Park       | R4  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:10 | Lingfield Park       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:30 | Leopardstown         | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:40 | Canterbury           | R4  | Field:6  | Dist:1.000 | Purse:12K   | Chalk=N   | SI >= 2.5
+  [ ] 19:50 | Ffos Las             | R4  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 20:50 | Ffos Las             | R6  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 21:49 | Charles Town         | R7  | Field:9  | Dist:0.875 | Purse:24K   | Chalk=N   | SI >= 2.5
+  [ ] 22:06 | Sam Houston          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 22:58 | Sam Houston          | R9  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup223A (Group B) | Multiplier: 0.5x | Base Cost: $12
+-----------------------------------------------------------------------------------------------
+  [ ] 15:09 | Horseshoe Indianapol | R3  | Field:7  | Dist:0.750 | Purse:49K   | Chalk=N   | SI >= 2.5
+  [ ] 15:41 | Horseshoe Indianapol | R4  | Field:8  | Dist:0.750 | Purse:46K   | Chalk=N   | SI >= 2.5
+  [ ] 16:04 | Delaware             | R8  | Field:7  | Dist:0.750 | Purse:16K   | Chalk=N   | SI >= 2.5
+  [ ] 17:47 | Hawthorne            | R5  | Field:8  | Dist:0.688 | Purse:13K   | Chalk=N   | SI >= 2.5
+  [ ] 18:13 | Hawthorne            | R6  | Field:7  | Dist:0.750 | Purse:11K   | Chalk=N   | SI >= 2.5
+  [ ] 19:57 | Charles Town         | R3  | Field:8  | Dist:0.562 | Purse:32K   | Chalk=N   | SI >= 2.5
+  [ ] 20:05 | Delta Downs          | R3  | Field:8  | Dist:0.142 | Purse:8K    | Chalk=N   | SI >= 2.5
+  [ ] 20:25 | Charles Town         | R4  | Field:7  | Dist:0.562 | Purse:23K   | Chalk=N   | SI >= 2.5
+  [ ] 22:44 | Fair Meadows         | R9  | Field:8  | Dist:0.688 | Purse:8K    | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup223A_R8 (Group B) | Multiplier: 0.5x | Base Cost: $12
+-----------------------------------------------------------------------------------------------
+  [ ] 15:09 | Horseshoe Indianapol | R3  | Field:7  | Dist:0.750 | Purse:49K   | Chalk=N   | SI >= 2.5
+  [ ] 15:41 | Horseshoe Indianapol | R4  | Field:8  | Dist:0.750 | Purse:46K   | Chalk=N   | SI >= 2.5
+  [ ] 16:04 | Delaware             | R8  | Field:7  | Dist:0.750 | Purse:16K   | Chalk=N   | SI >= 2.5
+  [ ] 17:47 | Hawthorne            | R5  | Field:8  | Dist:0.688 | Purse:13K   | Chalk=N   | SI >= 2.5
+  [ ] 18:13 | Hawthorne            | R6  | Field:7  | Dist:0.750 | Purse:11K   | Chalk=N   | SI >= 2.5
+  [ ] 19:57 | Charles Town         | R3  | Field:8  | Dist:0.562 | Purse:32K   | Chalk=N   | SI >= 2.5
+  [ ] 20:05 | Delta Downs          | R3  | Field:8  | Dist:0.142 | Purse:8K    | Chalk=N   | SI >= 2.5
+  [ ] 20:25 | Charles Town         | R4  | Field:7  | Dist:0.562 | Purse:23K   | Chalk=N   | SI >= 2.5
+  [ ] 22:44 | Fair Meadows         | R9  | Field:8  | Dist:0.688 | Purse:8K    | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup2245 (Group B) | Multiplier: 0.5x | Base Cost: $8
+-----------------------------------------------------------------------------------------------
+  [ ] 15:09 | Horseshoe Indianapol | R3  | Field:7  | Dist:0.750 | Purse:49K   | Chalk=N   | SI >= 2.5
+  [ ] 15:41 | Horseshoe Indianapol | R4  | Field:8  | Dist:0.750 | Purse:46K   | Chalk=N   | SI >= 2.5
+  [ ] 16:04 | Delaware             | R8  | Field:7  | Dist:0.750 | Purse:16K   | Chalk=N   | SI >= 2.5
+  [ ] 17:47 | Hawthorne            | R5  | Field:8  | Dist:0.688 | Purse:13K   | Chalk=N   | SI >= 2.5
+  [ ] 18:13 | Hawthorne            | R6  | Field:7  | Dist:0.750 | Purse:11K   | Chalk=N   | SI >= 2.5
+  [ ] 19:57 | Charles Town         | R3  | Field:8  | Dist:0.562 | Purse:32K   | Chalk=N   | SI >= 2.5
+  [ ] 20:05 | Delta Downs          | R3  | Field:8  | Dist:0.142 | Purse:8K    | Chalk=N   | SI >= 2.5
+  [ ] 20:25 | Charles Town         | R4  | Field:7  | Dist:0.562 | Purse:23K   | Chalk=N   | SI >= 2.5
+  [ ] 22:44 | Fair Meadows         | R9  | Field:8  | Dist:0.688 | Purse:8K    | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup224A (Group B) | Multiplier: 0.5x | Base Cost: $12
+-----------------------------------------------------------------------------------------------
+  [ ] 15:09 | Horseshoe Indianapol | R3  | Field:7  | Dist:0.750 | Purse:49K   | Chalk=N   | SI >= 2.5
+  [ ] 15:41 | Horseshoe Indianapol | R4  | Field:8  | Dist:0.750 | Purse:46K   | Chalk=N   | SI >= 2.5
+  [ ] 16:04 | Delaware             | R8  | Field:7  | Dist:0.750 | Purse:16K   | Chalk=N   | SI >= 2.5
+  [ ] 17:47 | Hawthorne            | R5  | Field:8  | Dist:0.688 | Purse:13K   | Chalk=N   | SI >= 2.5
+  [ ] 18:13 | Hawthorne            | R6  | Field:7  | Dist:0.750 | Purse:11K   | Chalk=N   | SI >= 2.5
+  [ ] 19:57 | Charles Town         | R3  | Field:8  | Dist:0.562 | Purse:32K   | Chalk=N   | SI >= 2.5
+  [ ] 20:05 | Delta Downs          | R3  | Field:8  | Dist:0.142 | Purse:8K    | Chalk=N   | SI >= 2.5
+  [ ] 20:25 | Charles Town         | R4  | Field:7  | Dist:0.562 | Purse:23K   | Chalk=N   | SI >= 2.5
+  [ ] 22:44 | Fair Meadows         | R9  | Field:8  | Dist:0.688 | Purse:8K    | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup2255 (Group B) | Multiplier: 0.5x | Base Cost: $8
+-----------------------------------------------------------------------------------------------
+  [ ] 15:09 | Horseshoe Indianapol | R3  | Field:7  | Dist:0.750 | Purse:49K   | Chalk=N   | SI >= 2.5
+  [ ] 15:41 | Horseshoe Indianapol | R4  | Field:8  | Dist:0.750 | Purse:46K   | Chalk=N   | SI >= 2.5
+  [ ] 16:04 | Delaware             | R8  | Field:7  | Dist:0.750 | Purse:16K   | Chalk=N   | SI >= 2.5
+  [ ] 17:47 | Hawthorne            | R5  | Field:8  | Dist:0.688 | Purse:13K   | Chalk=N   | SI >= 2.5
+  [ ] 18:13 | Hawthorne            | R6  | Field:7  | Dist:0.750 | Purse:11K   | Chalk=N   | SI >= 2.5
+  [ ] 19:57 | Charles Town         | R3  | Field:8  | Dist:0.562 | Purse:32K   | Chalk=N   | SI >= 2.5
+  [ ] 20:05 | Delta Downs          | R3  | Field:8  | Dist:0.142 | Purse:8K    | Chalk=N   | SI >= 2.5
+  [ ] 20:25 | Charles Town         | R4  | Field:7  | Dist:0.562 | Purse:23K   | Chalk=N   | SI >= 2.5
+  [ ] 22:44 | Fair Meadows         | R9  | Field:8  | Dist:0.688 | Purse:8K    | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup2444 (Group A) | Multiplier: 1.0x | Base Cost: $48
+-----------------------------------------------------------------------------------------------
+  [ ] 15:30 | Uttoxeter            | R4  | Field:4  | Dist:?     | Purse:?     | Chalk=N   | SI >= 3.0
+
+
+>>> STRATEGY: Sup3214 (Group C) | Multiplier: 0.25x | Base Cost: $2
+-----------------------------------------------------------------------------------------------
+  [ ] 14:05 | Belterra Park        | R4  | Field:9  | Dist:1.000 | Purse:9K    | Chalk=N   | SI >= 2.5
+  [ ] 14:50 | Turffontein          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:30 | Uttoxeter            | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:43 | Hawthorne            | R3  | Field:6  | Dist:1.040 | Purse:10K   | Chalk=N   | SI >= 2.5
+  [ ] 17:17 | Hawthorne            | R4  | Field:6  | Dist:0.938 | Purse:30K   | Chalk=N   | SI >= 2.5
+  [ ] 17:40 | Mauquenchy           | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:15 | Mauquenchy           | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:33 | Parislongchamp       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:40 | Lingfield Park       | R4  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:10 | Lingfield Park       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:30 | Leopardstown         | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:40 | Canterbury           | R4  | Field:6  | Dist:1.000 | Purse:12K   | Chalk=N   | SI >= 2.5
+  [ ] 19:50 | Ffos Las             | R4  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 20:50 | Ffos Las             | R6  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 21:49 | Charles Town         | R7  | Field:9  | Dist:0.875 | Purse:24K   | Chalk=N   | SI >= 2.5
+  [ ] 22:06 | Sam Houston          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 22:58 | Sam Houston          | R9  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup3214_R6 (Group C) | Multiplier: 0.25x | Base Cost: $2
+-----------------------------------------------------------------------------------------------
+  [ ] 14:05 | Belterra Park        | R4  | Field:9  | Dist:1.000 | Purse:9K    | Chalk=N   | SI >= 2.5
+  [ ] 14:50 | Turffontein          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:30 | Uttoxeter            | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 16:43 | Hawthorne            | R3  | Field:6  | Dist:1.040 | Purse:10K   | Chalk=N   | SI >= 2.5
+  [ ] 17:17 | Hawthorne            | R4  | Field:6  | Dist:0.938 | Purse:30K   | Chalk=N   | SI >= 2.5
+  [ ] 17:40 | Mauquenchy           | R6  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:15 | Mauquenchy           | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:33 | Parislongchamp       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 18:40 | Lingfield Park       | R4  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:10 | Lingfield Park       | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:30 | Leopardstown         | R5  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 19:40 | Canterbury           | R4  | Field:6  | Dist:1.000 | Purse:12K   | Chalk=N   | SI >= 2.5
+  [ ] 19:50 | Ffos Las             | R4  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 20:50 | Ffos Las             | R6  | Field:6  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 21:49 | Charles Town         | R7  | Field:9  | Dist:0.875 | Purse:24K   | Chalk=N   | SI >= 2.5
+  [ ] 22:06 | Sam Houston          | R7  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+  [ ] 22:58 | Sam Houston          | R9  | Field:9  | Dist:?     | Purse:?     | Chalk=N   | SI >= 2.5
+
+
+>>> STRATEGY: Sup3444 (Group A) | Multiplier: 1.0x | Base Cost: $36
+-----------------------------------------------------------------------------------------------
+  [ ] 15:30 | Uttoxeter            | R4  | Field:4  | Dist:?     | Purse:?     | Chalk=N   | SI >= 3.0
+
+
+>>> STRATEGY: Supr4444 (Group A) | Multiplier: 1.0x | Base Cost: $48
+-----------------------------------------------------------------------------------------------
+  [ ] 15:30 | Uttoxeter            | R4  | Field:4  | Dist:?     | Purse:?     | Chalk=N   | SI >= 3.0

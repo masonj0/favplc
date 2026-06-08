@@ -45,7 +45,6 @@ from various racing websites. It serves as a high-reliability fallback system.
 """
 import argparse
 import asyncio
-import functools
 from functools import lru_cache
 import html
 import json
@@ -58,7 +57,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict, Counter
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from enum import Enum
 from io import StringIO
@@ -91,7 +90,6 @@ import structlog
 import subprocess
 import sys
 import threading
-import webbrowser
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -121,7 +119,7 @@ except ImportError:
     HAS_TOML = False
 
 try:
-    from scrapling import AsyncFetcher, Fetcher
+    from scrapling import AsyncFetcher
     from scrapling.parser import Selector
     ASYNC_SESSIONS_AVAILABLE = True
 except Exception:
@@ -234,8 +232,8 @@ def print_status_card(config: Dict[str, Any]):
     print_func("🌟 " + "═" * 54 + " 🌟")
 
     # Friendly Greeting
-    print_func(f"\n [bold yellow]Hello JB![/] 🚀")
-    print_func(f" Ready to discover some incredible racing opportunities today!\n")
+    print_func("\n [bold yellow]Hello JB![/] 🚀")
+    print_func(" Ready to discover some incredible racing opportunities today!\n")
 
     # Region and active mode
     region = config.get("region", {}).get("default", "GLOBAL")
@@ -420,14 +418,9 @@ RaceT = TypeVar("RaceT", bound="Race")
 
 # --- CONSTANTS ---
 from fortuna_utils import (
-    EASTERN, DATE_FORMAT, DATE_FORMAT_OLD, MAX_VALID_ODDS, MIN_VALID_ODDS,
-    DEFAULT_ODDS_FALLBACK, COMMON_PLACEHOLDERS,
-    VENUE_MAP, RACING_KEYWORDS, BET_TYPE_KEYWORDS, DISCIPLINE_KEYWORDS,
-    clean_text, node_text, get_canonical_venue, normalize_venue_name,
-    parse_odds_to_decimal, SmartOddsExtractor, is_placeholder_odds,
-    is_valid_odds, scrape_available_bets, detect_discipline,
-    now_eastern, to_eastern, ensure_eastern, get_places_paid,
-    parse_date_string, to_storage_format, from_storage_format, STORAGE_FORMAT,
+    EASTERN, DATE_FORMAT, DEFAULT_ODDS_FALLBACK, VENUE_MAP, clean_text, node_text, get_canonical_venue, normalize_venue_name,
+    parse_odds_to_decimal, SmartOddsExtractor, is_valid_odds, scrape_available_bets, detect_discipline,
+    now_eastern, to_eastern, ensure_eastern, parse_date_string, to_storage_format, from_storage_format, STORAGE_FORMAT,
     DayPart, resolve_daypart, resolve_daypart_from_dt, get_daypart_tag
 )
 DEFAULT_REGION: Final[str] = "GLOBAL"
@@ -477,7 +470,7 @@ GLOBAL_DISCOVERY_ADAPTERS: Final[set] = {
     "SkyRacingWorld", "AtTheRaces", "AtTheRacesGreyhound", "RacingPost",
     "Oddschecker", "Timeform", "SportingLife", "SkySports",
     "RacingAndSports", "HKJC", "JRA", "DRF",
-    "TwinSpires", "NYRABets", "RacingPostB2B",
+    "TwinSpires", "NYRABets", "RacingPostB2B", "StandardbredCanada",
     "SportingLifeGreyhound" # Global multi-discipline expansion
 } | OFFICIAL_DISCOVERY_ADAPTERS
 
@@ -1479,7 +1472,8 @@ class SmartFetcher:
             "skyracingworld.com", "cnty.com", "hollywoodmahoningvalley.com",
             "hastingsracecourse.com", "mgmresorts.com", "saratogacasino.com",
             "britishhorseracing.com", "clonmelraces.ie", "ajaxdowns.com",
-            "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com"
+            "batavia-downs.com", "standardbredcanada.ca", "fanduel.com", "twinspires.com",
+            "racingandsports.com.au"
         ]
         if any(d in url for d in protected_domains):
             self.logger.debug("Prioritizing browser engines for protected domain", url=url)
@@ -1578,7 +1572,7 @@ class SmartFetcher:
         self.logger.error("all_engines_failed", url=url, error=err_msg)
         raise last_error or FetchError("All fetch engines failed")
 
-    
+
     async def _fetch_with_engine(self, engine: BrowserEngine, url: str, **kwargs: Any) -> Any:
         method = kwargs.pop("method", "GET").upper()
         # Generate browserforge headers if available
@@ -1627,11 +1621,11 @@ class SmartFetcher:
             req_kwargs["follow_redirects"] = allow_redirects
             resp = await client.request(method, url, timeout=timeout, **req_kwargs)
             return UnifiedResponse(resp.text, resp.status_code, resp.status_code, str(resp.url), resp.headers)
-        
+
         if engine == BrowserEngine.CURL_CFFI:
             if not curl_requests:
                 raise ImportError("curl_cffi is not available")
-            
+
             self.logger.debug(f"Using curl_cffi for {url}")
             timeout = kwargs.get("timeout", strategy.timeout)
 
@@ -1643,14 +1637,14 @@ class SmartFetcher:
             impersonate_chain = [requested_impersonate, "chrome124", "chrome120", "chrome110"]
             # Filter out duplicates while preserving order
             impersonate_chain = list(dict.fromkeys(impersonate_chain))
-            
+
             # Remove keys that curl_requests.AsyncSession.request doesn't like
             clean_kwargs = {
                 k: v for k, v in kwargs.items()
                 if k not in ["timeout", "headers", "impersonate"] + BROWSER_SPECIFIC_KWARGS
             }
             clean_kwargs["allow_redirects"] = allow_redirects
-            
+
             last_err = None
             session = await self._get_curl_session()
             for imp_version in impersonate_chain:
@@ -3034,20 +3028,20 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
 
         self.logger.info("parsing_ras_json", meeting_count=len(meetings))
         for m in meetings:
-            venue_raw = m.get('venueName') or m.get('venue') or m.get('Course')
+            venue_raw = m.get('venueName') or m.get('venue') or m.get('Course') or m.get('Venue')
             if not venue_raw: continue
             venue = normalize_venue_name(venue_raw)
 
             # Filter by region if set in config
             target_region = self.config.get('region')
             # Normalize country name for filtering (Standardize to ISO-ish or common names)
-            country = (m.get('country') or m.get('countryCode') or '').upper()
+            country = (m.get('country') or m.get('countryCode') or m.get('CountryCode') or '').upper()
             if target_region == 'USA' and country not in ['US', 'USA', 'CAN']: continue
             if target_region == 'INT' and country in ['US', 'USA', 'CAN']: continue
 
             # If JSON provides race list, parse them directly
-            ras_races = m.get('races', [])
-            if not ras_races and m.get('RaceNumber'):
+            ras_races = m.get('races') or m.get('Races') or []
+            if not ras_races and (m.get('RaceNumber') or m.get('raceNumber')):
                 # Single race summary, often with links
                 ras_races = [m]
 
@@ -3056,18 +3050,24 @@ class RacingAndSportsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMix
                     race_num = int(r.get('raceNumber') or r.get('RaceNumber') or r_idx)
 
                     # Start time
-                    time_str = r.get('raceTime') # e.g. "12:30"
+                    time_str = r.get('raceTime') or r.get('RaceTime') # e.g. "12:30"
                     if time_str:
-                        start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
+                        # Some formats include ' AM' or ' PM'
+                        time_str = time_str.strip()
+                        if ' ' in time_str:
+                            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%I:%M %p").time())
+                        else:
+                            start_time = datetime.combine(race_date, datetime.strptime(time_str, "%H:%M").time())
                     else:
                         start_time = datetime.combine(race_date, datetime.min.time())
 
                     runners = []
-                    for run_data in r.get('runners', []):
-                        name = run_data.get('horseName') or run_data.get('name')
+                    runners_list = r.get('runners') or r.get('Runners') or []
+                    for run_data in runners_list:
+                        name = run_data.get('horseName') or run_data.get('name') or run_data.get('HorseName')
                         if not name: continue
-                        num = int(run_data.get('tabNo') or run_data.get('number') or 0)
-                        win_odds = parse_odds_to_decimal(run_data.get('winOdds') or run_data.get('fixedOdds'))
+                        num = int(run_data.get('tabNo') or run_data.get('number') or run_data.get('TabNo') or 0)
+                        win_odds = parse_odds_to_decimal(run_data.get('winOdds') or run_data.get('fixedOdds') or run_data.get('WinOdds'))
                         odds_data = {}
                         if ov := create_odds_data(self.SOURCE_NAME, win_odds):
                             odds_data[self.SOURCE_NAME] = ov
@@ -4015,6 +4015,10 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             for meeting in data.get("props", {}).get("pageProps", {}).get("meetings", []):
                 # Broaden window to capture multiple races
                 races = meeting.get("races", [])
+                meeting_summary = meeting.get("meeting_summary") or {}
+                course = meeting_summary.get("course") or {}
+                course_slug = course.get("name", "").lower().replace(" ", "-")
+
                 for i, race in enumerate(races):
                     r_time_str = race.get("time") # Usually HH:MM
                     if r_time_str:
@@ -4026,7 +4030,19 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
                             if not (-45 < diff <= 1080):
                                 continue
 
-                            if url := race.get("racecard_url"):
+                            url = race.get("racecard_url")
+                            if not url:
+                                # Construct URL from summary ref and name
+                                ref = race.get("race_summary_reference")
+                                if isinstance(ref, dict):
+                                    rid = ref.get("id")
+                                else:
+                                    rid = ref
+                                name_slug = race.get("name", "").lower().replace(" ", "-")
+                                if rid and course_slug:
+                                    url = f"/racing/racecards/{target_date.strftime('%Y-%m-%d')}/{course_slug}/racecard/{rid}/{name_slug}"
+
+                            if url:
                                 meta.append({"url": url, "race_number": i + 1})
                         except Exception: pass
         if not meta:
@@ -4061,14 +4077,14 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
             if not html_content: continue
             try:
                 parser = HTMLParser(html_content)
-                race = self._parse_from_next_data(parser, race_date, item.get("race_number"), html_content)
+                race = self._parse_from_next_data(parser, race_date, item.get("race_number"), html_content, url_path=item.get("url", ""))
                 if not race:
-                    race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content, item.get("url", ""))
+                    race = self._parse_from_html(parser, race_date, item.get("race_number"), html_content, url=item.get("url", ""))
                 if race: races.append(race)
             except Exception: pass
         return races
 
-    def _parse_from_next_data(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str) -> Optional[Race]:
+    def _parse_from_next_data(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url_path: str = "") -> Optional[Race]:
         data = self._parse_json_from_script(parser, "script#__NEXT_DATA__", context="SportingLife Race")
         if not data: return None
         race_info = data.get("props", {}).get("pageProps", {}).get("race")
@@ -4131,7 +4147,29 @@ class SportingLifeAdapter(JSONParsingMixin, BrowserHeadersMixin, DebugMixin, Rac
         race_type_raw = summary.get("race_title") or summary.get("race_name") or ""
         rt_match = re.search(r'(Maiden\s+\w+|Claiming|Allowance|Graded\s+Stakes|Stakes|Handicap|Novice|Group\s+\d|Grade\s+\d|Listed|Condition)', race_type_raw, re.I)
         race_type = rt_match.group(1) if rt_match else ("Handicap" if is_handicap else None)
-        return Race(id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1), venue=track_name or "Unknown", race_number=race_info.get("race_number") or race_number_fallback or 1, start_time=start_time, runners=runners, distance=summary.get("distance") or race_info.get("distance"), race_type=race_type, is_handicap=is_handicap, source=self.source_name, discipline="Thoroughbred", available_bets=scrape_available_bets(html_content))
+
+        purse = summary.get("purse") or summary.get("prize")
+        if not purse:
+            prizes = race_info.get("prizes", {})
+            if isinstance(prizes, dict):
+                p_list = prizes.get("prize", [])
+                if p_list:
+                    purse = p_list[0].get("prize")
+
+        return Race(
+            id=generate_race_id("sl", track_name or "Unknown", start_time, race_info.get("race_number") or race_number_fallback or 1),
+            venue=track_name or "Unknown",
+            race_number=race_info.get("race_number") or race_number_fallback or 1,
+            start_time=start_time,
+            runners=runners,
+            distance=summary.get("distance") or race_info.get("distance"),
+            race_type=race_type,
+            is_handicap=is_handicap,
+            source=self.source_name,
+            discipline="Thoroughbred",
+            available_bets=scrape_available_bets(html_content),
+            metadata={"purse": purse, "url": url_path}
+        )
 
     def _parse_from_html(self, parser: HTMLParser, race_date: date, race_number_fallback: Optional[int], html_content: str, url: str = "") -> Optional[Race]:
         h1 = parser.css_first('h1[class*="RacingRacecardHeader__Title"]')
@@ -4544,11 +4582,75 @@ class RacingPostB2BAdapter(BaseAdapterV3):
             self.logger.warning("RPB2B returned no venues", data_keys=list(data.keys()) if isinstance(data, dict) else "list")
             return None
 
-        return {"venues": venues, "date": date, "fetched_at": to_storage_format(datetime.now(EASTERN))}
+        # Deep fetch race details to get runners, distance, and purse (Council Requirement)
+        all_races_metadata = []
+        for v in venues:
+            for r in v.get("races", []):
+                all_races_metadata.append({
+                    "race_id": r['id'],
+                    "venue_name": v.get("name"),
+                    "country_code": v.get("countryCode"),
+                    "datetimeUtc": r.get("datetimeUtc"),
+                    "raceNumber": r.get("raceNumber"),
+                    "numberOfRunners": r.get("numberOfRunners")
+                })
+
+        # Concurrency-limited deep fetch (Fix P0 Resilience)
+        sem = asyncio.Semaphore(10)
+        async def fetch_detail(item):
+            async with sem:
+                try:
+                    r_resp = await self.make_request("GET", f"/v2/racecards/{item['race_id']}", raise_for_status=False)
+                    if r_resp and r_resp.status == 200:
+                        detail = r_resp.json()
+                        # Merge metadata back in
+                        detail["id"] = item["race_id"]
+                        detail["venue_name"] = item["venue_name"]
+                        detail["country_code"] = item["country_code"]
+                        detail["datetimeUtc"] = item["datetimeUtc"]
+                        detail["raceNumber"] = item["raceNumber"]
+                        detail["numberOfRunners"] = item["numberOfRunners"]
+                        return detail
+                except Exception as e:
+                    self.logger.warning("RPB2B detail fetch failed", race_id=item["race_id"], error=str(e))
+            return None
+
+        # Fetch up to 100 races, but keep structural metadata as fallback
+        tasks = [fetch_detail(m) for m in all_races_metadata[:100]]
+        detailed_results = await asyncio.gather(*tasks)
+
+        final_detailed = [dr for dr in detailed_results if dr]
+        detailed_ids = {dr['id'] for dr in final_detailed}
+
+        # Fallback Strategy: If deep fetch failed, use structural metadata so race isn't lost (Fix P0 Fallback)
+        for m in all_races_metadata:
+            if m['race_id'] not in detailed_ids:
+                final_detailed.append({
+                    "id": m['race_id'],
+                    "venue_name": m['venue_name'],
+                    "country_code": m['country_code'],
+                    "datetimeUtc": m['datetimeUtc'],
+                    "raceNumber": m['raceNumber'],
+                    "numberOfRunners": m['numberOfRunners']
+                })
+
+        return {
+            "detailed_races": final_detailed,
+            "date": date,
+            "fetched_at": to_storage_format(datetime.now(EASTERN))
+        }
 
     def _parse_races(self, raw_data: Optional[Dict[str, Any]]) -> List[Race]:
-        if not raw_data or not raw_data.get("venues"): return []
+        if not raw_data: return []
         races: List[Race] = []
+
+        if "detailed_races" in raw_data:
+            for dr in raw_data["detailed_races"]:
+                parsed = self._parse_single_race(dr, dr.get("venue_name"), dr.get("country_code"))
+                if parsed: races.append(parsed)
+            return races
+
+        if not raw_data.get("venues"): return []
         target_countries = {"USA", "CAN", "AUS", "NZL", "GBR", "IRL", "ZAF"}
         for vd in raw_data["venues"]:
             if vd.get("isAbandoned"): continue
@@ -4565,13 +4667,39 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         if not all([rid, rnum, dts]): return None
         try: st = from_storage_format(dts.replace("Z", "+00:00"))
         except Exception: return None
+
+        # P0 USA Discipline Detection
+        discipline = "Thoroughbred"
+        v_upper = vn.upper()
+        harness_venues = ["CAL EXPO", "MEADOWLANDS", "YONKERS", "POCONO", "NORTHFIELD", "HOOSIER", "SCIOTO", "MOHAWK", "WOODBINE"]
+        greyhound_venues = ["WHEELING", "SOUTHLAND", "DERBY LANE", "PALM BEACH"]
+
+        if any(hv in v_upper for hv in harness_venues):
+            discipline = "Harness"
+        elif any(gv in v_upper for gv in greyhound_venues):
+            discipline = "Greyhound"
+
+        # Map RPB2B detailed fields
+        dist = rd.get("distance") or rd.get("distanceYard")
+        if dist and str(dist).isdigit():
+            dist = f"{dist}y" # Suffix with 'y' for generate_race_grid parser
+
+        purse = rd.get("purse") or rd.get("stakes")
+
         # Only return race if we have real runners (avoid placeholder generic runners)
         runners = []
         if runners_raw := rd.get("runners"):
             for i, run_data in enumerate(runners_raw):
                 name = run_data.get("name") or f"Runner {i+1}"
                 num = run_data.get("number") or i + 1
-                runners.append(Runner(number=num, name=name))
+
+                # Extract morning line/odds
+                wo = parse_odds_to_decimal(run_data.get("morningLine") or run_data.get("odds"))
+                od = {}
+                if ov := create_odds_data(self.SOURCE_NAME, wo):
+                    od[self.SOURCE_NAME] = ov
+
+                runners.append(Runner(number=num, name=name, win_odds=wo, odds=od))
         elif nr > 0:
             # P0 USA Resilience: If runners list is missing but count is > 0,
             # create placeholder runners so the race is at least discovered.
@@ -4581,7 +4709,22 @@ class RacingPostB2BAdapter(BaseAdapterV3):
         if not runners:
             return None
 
-        return Race(discipline="Thoroughbred", id=f"rpb2b_{rid.replace('-', '')[:16]}", venue=normalize_venue_name(vn), race_number=rnum, start_time=st, runners=runners, source=self.source_name, metadata={"original_race_id": rid, "country_code": cc, "num_runners": nr})
+        return Race(
+            discipline=discipline,
+            id=f"rpb2b_{rid.replace('-', '')[:16]}",
+            venue=normalize_venue_name(vn),
+            race_number=rnum,
+            start_time=st,
+            runners=runners,
+            distance=dist,
+            source=self.source_name,
+            metadata={
+                "original_race_id": rid,
+                "country_code": cc,
+                "num_runners": nr,
+                "purse": purse
+            }
+        )
 
 
 # ----------------------------------------
@@ -5030,8 +5173,8 @@ class NYRABetsAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
             if not resp or not resp.text: return None
             list_races_data = json.loads(resp.text)
             all_races = list_races_data.get("races", [])
-            # Filter US/AU/NZ races for discovery efficiency (Fix: Include AUS/NZ for coverage)
-            target_countries = {"US", "AU", "NZ"}
+            # Filter US/AU/NZ/ZA races for discovery efficiency (Fix: Include ZAF for coverage)
+            target_countries = {"US", "AU", "NZ", "ZA"}
             target_race_ids = [r["raceId"] for r in all_races if r.get("countryCode") in target_countries]
             if not target_race_ids:
                 self.metrics.record_parse_warning()
@@ -5145,8 +5288,8 @@ class EquibaseAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcherMixin, Bas
 
         # Try different possible index URLs
         index_urls = [
-            f"/static/entry/index.html?SAP=TN",
-            f"/static/entry/index.html",
+            "/static/entry/index.html?SAP=TN",
+            "/static/entry/index.html",
             f"/entries/{date}",
             f"/entries/index.cfm?date={dt.strftime('%m/%d/%Y')}",
         ]
@@ -5382,8 +5525,9 @@ class TwinSpiresAdapter(JSONParsingMixin, DebugMixin, BaseAdapterV3):
         super().__init__(source_name=self.SOURCE_NAME, base_url=self.BASE_URL, config=config, enable_cache=True, cache_ttl=180.0, rate_limit=1.5)
 
     def _configure_fetch_strategy(self) -> FetchStrategy:
-        # Success Strategy: Switch TwinSpires to browser-free API strategy for robustness (P1-Audit)
-        return api_fetch_strategy(timeout=40)
+        # P0-FIX-B3: Switch TwinSpires back to scraping strategy.
+        # The /bet/ index requires full DOM rendering and selector waiting for reliable discovery.
+        return scraping_fetch_strategy(timeout=60, network_idle=True)
 
     async def make_request(self, method: str, url: str, **kwargs: Any) -> Any:
         # Force chrome124 for TwinSpires to bypass basic bot checks
@@ -11075,7 +11219,7 @@ async def main_all_in_one():
 
                 await adapter.close()
             except Exception as e:
-                print(f"  STATUS:  ❌ FAILED")
+                print("  STATUS:  ❌ FAILED")
                 print(f"  ERROR:   {str(e)}")
             print(f"\n{'-'*60}\n")
         return
@@ -11228,7 +11372,7 @@ async def main_all_in_one():
 if __name__ == "__main__":
     if os.getenv("DEBUG_SNAPSHOTS"):
         os.makedirs("debug_snapshots", exist_ok=True)
-    
+
     # Windows Event Loop Policy Fix (Project Hardening)
     if sys.platform == 'win32' and not getattr(sys, 'frozen', False):
         try:
