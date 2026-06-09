@@ -1,7 +1,7 @@
 
 ===================================================================================================================
 ======================================== HOURLY TRIGGER SHEET - 2026-06-08 ========================================
-======================== (V3 Portfolio Grinder | V3 Portfolio Grinder — June 05 Fine-Tuned) =======================
+====================== (V3 Portfolio Grinder | V3 Portfolio Grinder — June 08 Fine-Tuned v5) ======================
 ===================================================================================================================
 
 
@@ -108,14 +108,14 @@
     !!! ABORT: Purse 0 < 3000
 
   13:50 | Thistledown          | R3  | F:6  | D:0.750 | P:35K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   13:53 | Angers               | R2  | F:9  | D:?     | P:?     | SI: 2.9 | F1: 1.2 | F2: 1.7 | G2: 0.4 | T
     >>> Skip 2? (Race 2)
 
   13:53 | Finger Lakes         | R3  | F:6  | D:0.688 | P:32K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
 
@@ -160,7 +160,7 @@
     >>> Skip 2? (Race 2)
 
   14:50 | Thistledown          | R5  | F:6  | D:0.688 | P:26K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   14:51 | Finger Lakes         | R5  | F:8  | D:0.688 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
@@ -252,7 +252,7 @@
     (No matching strategies)
 
   16:24 | Presque Isle         | R3  | F:6  | D:0.750 | P:15K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   16:29 | Doncaster            | R11 | F:5  | D:0.171 | P:?     | SI:34.6 | F1:17.3 | F2:17.3 | G2: 0.0 | G
@@ -344,7 +344,7 @@
     !!! ABORT: Purse 0 < 3000
 
   18:22 | Finger Lakes         | R4  | F:6  | D:1.000 | P:20K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   18:24 | Toulouse             | R6  | F:7  | D:?     | P:?     | SI: 3.5 | F1: 1.7 | F2: 1.7 | G2: 0.0 | T
@@ -389,11 +389,11 @@
     !!! ABORT: Purse 0 < 3000
 
   19:20 | Finger Lakes         | R6  | F:6  | D:0.688 | P:20K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   19:20 | Thistledown          | R6  | F:6  | D:0.750 | P:10K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   19:24 | Toulouse             | R8  | F:7  | D:?     | P:?     | SI: 2.9 | F1: 1.2 | F2: 1.7 | G2: 0.5 | T
@@ -415,7 +415,7 @@
     !!! ABORT: Purse 0 < 3000
 
   19:49 | Finger Lakes         | R7  | F:6  | D:0.750 | P:16K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
-    >> Group C (Route Giant Hunters) | Mult: 0.1x
+    >> Group C (Route Giant Hunter) | Mult: 0.1x
       [ ] C2_Sup3214_R6_OpenGates                  ($2  ) [ ] Chalk=N [ ] Juv=N
 
   19:50 | Mountaineer          | R3  | F:13 | D:0.625 | P:16K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
