@@ -1,0 +1,313 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-06-10 ========================================
+======================== (V3 Portfolio Grinder | V3 Portfolio Grinder — June 10 Unified v6) =======================
+===================================================================================================================
+
+
+--- 12 PM --------------------------------------------------------------------------------------------------------
+  12:20 | Delaware             | R1  | F:8  | D:0.750 | P:15K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  12:35 | Belterra Park        | R1  | F:5  | D:0.750 | P:8K    | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  12:40 | Parx                 | R1  | F:5  | D:0.812 | P:28K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  12:45 | Churchill Downs      | R1  | F:7  | D:0.812 | P:33K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  12:50 | Thistledown          | R1  | F:8  | D:0.750 | P:20K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  12:52 | Delaware             | R2  | F:6  | D:1.000 | P:14K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  12:55 | Finger Lakes         | R1  | F:6  | D:0.750 | P:18K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+
+--- 01 PM --------------------------------------------------------------------------------------------------------
+  13:05 | Belterra Park        | R2  | F:4  | D:1.040 | P:9K    | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:07 | Parx                 | R2  | F:5  | D:0.812 | P:40K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:14 | Churchill Downs      | R2  | F:6  | D:0.688 | P:88K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:20 | Thistledown          | R2  | F:5  | D:0.750 | P:16K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:24 | Delaware             | R3  | F:8  | D:0.625 | P:28K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  13:24 | Finger Lakes         | R2  | F:6  | D:1.000 | P:13K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  13:35 | Belterra Park        | R3  | F:4  | D:0.750 | P:7K    | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  13:43 | Churchill Downs      | R3  | F:6  | D:1.062 | P:60K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  13:50 | Thistledown          | R3  | F:5  | D:0.750 | P:34K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  13:56 | Delaware             | R4  | F:5  | D:1.000 | P:15K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+
+--- 02 PM --------------------------------------------------------------------------------------------------------
+  14:01 | Parx                 | R4  | F:4  | D:0.688 | P:21K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:05 | Belterra Park        | R4  | F:3  | D:1.000 | P:8K    | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:10 | Horseshoe Indianapol | R1  | F:8  | D:1.000 | P:18K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  14:13 | Churchill Downs      | R4  | F:4  | D:0.688 | P:116K  | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:22 | Finger Lakes         | R4  | F:7  | D:0.750 | P:27K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:28 | Delaware             | R5  | F:9  | D:1.062 | P:22K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:28 | Parx                 | R5  | F:8  | D:0.812 | P:23K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:35 | Belterra Park        | R5  | F:5  | D:0.750 | P:8K    | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  14:41 | Horseshoe Indianapol | R2  | F:6  | D:1.040 | P:43K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  14:50 | Thistledown          | R5  | F:5  | D:0.688 | P:12K   | SI: 5.5 | F1: 2.0 | F2: 3.5 | G2: 1.5 | T
+    >> Group B (Mid-SI Specialist) | Mult: 0.02x
+      [ ] B_SI_MID_R57_Y_lt2_Supr1445              ($20 ) [ ] Chalk=N [ ] Juv=N
+
+  14:51 | Finger Lakes         | R5  | F:10 | D:0.750 | P:14K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  14:55 | Parx                 | R6  | F:7  | D:0.812 | P:41K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+
+--- 03 PM --------------------------------------------------------------------------------------------------------
+  15:05 | Belterra Park        | R6  | F:7  | D:1.000 | P:11K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  15:12 | Horseshoe Indianapol | R3  | F:10 | D:0.625 | P:23K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  15:18 | Churchill Downs      | R6  | F:15 | D:1.062 | P:78K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  15:20 | Finger Lakes         | R6  | F:7  | D:0.688 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:20 | Thistledown          | R6  | F:7  | D:0.688 | P:20K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:22 | Parx                 | R7  | F:6  | D:0.750 | P:50K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  15:30 | Ajax                 | R1  | F:5  | D:0.188 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  15:30 | Presque Isle         | R1  | F:5  | D:0.750 | P:18K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 1)
+
+  15:32 | Delaware             | R7  | F:8  | D:1.062 | P:22K   | SI: 5.1 | F1: 2.5 | F2: 2.6 | G2: 0.1 | T
+    (No matching strategies)
+
+  15:43 | Horseshoe Indianapol | R4  | F:12 | D:1.062 | P:23K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:49 | Finger Lakes         | R7  | F:8  | D:0.750 | P:29K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:49 | Parx                 | R8  | F:7  | D:1.000 | P:55K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  15:50 | Churchill Downs      | R7  | F:9  | D:0.750 | P:62K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:55 | Ajax                 | R2  | F:6  | D:0.142 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  15:57 | Presque Isle         | R2  | F:8  | D:0.750 | P:14K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 04 PM --------------------------------------------------------------------------------------------------------
+  16:04 | Delaware             | R8  | F:5  | D:0.688 | P:45K   | SI: 5.3 | F1: 2.5 | F2: 2.8 | G2: 0.3 | T
+    (No matching strategies)
+
+  16:05 | Belterra Park        | R8  | F:8  | D:1.000 | P:13K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  16:14 | Horseshoe Indianapol | R5  | F:11 | D:0.750 | P:41K   | SI: 9.0 | F1: 3.5 | F2: 5.5 | G2: 2.0 | T
+    (No matching strategies)
+
+  16:16 | Parx                 | R9  | F:8  | D:1.062 | P:21K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  16:20 | Ajax                 | R3  | F:5  | D:0.142 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  16:20 | Thistledown          | R8  | F:7  | D:0.750 | P:21K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  16:24 | Presque Isle         | R3  | F:8  | D:1.000 | P:15K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  16:45 | Horseshoe Indianapol | R6  | F:10 | D:1.062 | P:38K   | SI: 6.6 | F1: 2.6 | F2: 4.0 | G2: 1.4 | T
+    (No matching strategies)
+
+  16:51 | Presque Isle         | R4  | F:6  | D:0.750 | P:36K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  16:55 | Churchill Downs      | R9  | F:16 | D:0.688 | P:120K  | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+
+--- 05 PM --------------------------------------------------------------------------------------------------------
+  17:16 | Horseshoe Indianapol | R7  | F:13 | D:0.688 | P:100K  | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:18 | Presque Isle         | R5  | F:9  | D:1.040 | P:12K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:45 | Penn National        | R1  | F:6  | D:0.688 | P:41K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  17:47 | Horseshoe Indianapol | R8  | F:13 | D:0.688 | P:100K  | SI: 8.3 | F1: 2.8 | F2: 5.5 | G2: 2.7 | T
+    (No matching strategies)
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:14 | Penn National        | R2  | F:5  | D:1.000 | P:16K   | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    >>> Skip 2? (Race 2)
+
+  18:15 | Horseshoe Indianapol | R9  | F:8  | D:0.199 | P:17K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:25 | Ajax                 | R8  | F:6  | D:0.142 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:39 | Presque Isle         | R8  | F:10 | D:1.040 | P:18K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:43 | Penn National        | R3  | F:10 | D:0.625 | P:17K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:45 | Churchill Downs      | R5  | F:8  | D:0.750 | P:45K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  18:50 | Ajax                 | R9  | F:7  | D:0.170 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  18:50 | Limerick             | R7  | F:14 | D:0.875 | P:6K    | SI:11.0 | F1: 5.0 | F2: 6.0 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:00 | Delaware             | R6  | F:9  | D:1.062 | P:12K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:00 | Hamilton             | R4  | F:7  | D:0.629 | P:4K    | SI: 6.8 | F1: 3.2 | F2: 3.5 | G2: 0.2 | T
+    (No matching strategies)
+
+  19:10 | Kempton Park         | R7  | F:9  | D:1.499 | P:6K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:12 | Penn National        | R4  | F:8  | D:0.750 | P:22K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:15 | Delta Downs          | R1  | F:9  | D:0.125 | P:13K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  19:20 | Limerick             | R8  | F:16 | D:2.125 | P:7K    | SI:11.5 | F1: 5.0 | F2: 6.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  19:30 | Hamilton             | R5  | F:7  | D:0.753 | P:4K    | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  19:40 | Delta Downs          | R2  | F:7  | D:0.188 | P:17K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  19:40 | Kempton Park         | R8  | F:14 | D:1.374 | P:3K    | SI: 9.3 | F1: 4.3 | F2: 5.0 | G2: 0.7 | T
+    (No matching strategies)
+
+  19:41 | Penn National        | R5  | F:6  | D:0.750 | P:36K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:50 | Thistledown          | R7  | F:5  | D:0.750 | P:13K   | SI: 6.2 | F1: 2.2 | F2: 4.0 | G2: 1.8 | T
+    >> Group A (Chaos Capitalizer) | Mult: 0.02x
+      [ ] A_SI_HIGH_R46_Any_Sup2335                ($16 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Hamilton             | R6  | F:11 | D:1.039 | P:3K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:05 | Delta Downs          | R3  | F:9  | D:0.142 | P:7K    | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:10 | Penn National        | R6  | F:7  | D:0.750 | P:17K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:7  | D:0.750 | P:10K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:22 | Churchill Downs      | R8  | F:10 | D:1.000 | P:84K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:30 | Assiniboia           | R1  | F:6  | D:0.750 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 1)
+
+  20:30 | Delta Downs          | R4  | F:8  | D:0.438 | P:14K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:39 | Penn National        | R7  | F:7  | D:0.750 | P:16K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:55 | Delta Downs          | R5  | F:10 | D:0.170 | P:26K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:00 | Assiniboia           | R2  | F:6  | D:0.750 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  21:20 | Delta Downs          | R6  | F:8  | D:0.142 | P:25K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:25 | Assiniboia           | R3  | F:7  | D:0.688 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+  21:45 | Delta Downs          | R7  | F:10 | D:0.188 | P:26K   | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:45 | Presque Isle         | R6  | F:7  | D:0.750 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:50 | Assiniboia           | R4  | F:7  | D:0.688 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:12 | Presque Isle         | R7  | F:7  | D:1.040 | P:15K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:05 | Assiniboia           | R7  | F:8  | D:0.688 | P:?     | SI: 0.0 | F1: 0.0 | F2: 0.0 | G2: 0.0 | T
+    !!! ABORT: Purse 0 < 3000
