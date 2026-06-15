@@ -4799,22 +4799,6 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
         # Fetch all discovered/heuristic pages concurrently
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=3)
         return {"pages": [p for p in pages if p], "date": date}
-        parser = HTMLParser(index_html)
-        metadata = []
-        for container in parser.css("#entries-results-container .racing-results-ex-wrap > div"):
-            tnn = container.css_first("h4.track-name")
-            if not tnn: continue
-            tn = clean_text(node_text(tnn)) or ""
-            isf = "*" in tn or "*" in (clean_text(node_text(container)) or "")
-            for link in container.css('a[href*="/entries/"]'):
-                if u := link.attributes.get("href"):
-                    metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
-        if not metadata:
-            self.logger.warning("No metadata found", context="StandardbredCanada Index Parsing")
-            self.metrics.record_parse_warning()
-            return None
-        pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=3)
-        return {"pages": pages, "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
