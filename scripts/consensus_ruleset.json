@@ -1,9 +1,9 @@
 {
   "_meta": {
-    "title": "V3 Portfolio Grinder — June 15 Unified v7",
-    "version": "3.6",
-    "description": "Updated strategies with C_Surgical and demotions/retirements.",
-    "generated": "2026-06-15"
+    "title": "Fortuna Master Ruleset — June 16 v1.0_FINAL",
+    "version": "1.0_FINAL",
+    "description": "Master deployment ruleset for the $400 to $40k Gauntlet.",
+    "generated": "2026-06-16"
   },
   "live_bot_config": {
     "universal_gates": {
@@ -17,9 +17,7 @@
       {
         "id": "F_SPRINT_R4_Fav2gte3_Supr4444",
         "name": "F_SPRINT_R4_Fav2gte3_Supr4444",
-        "family": "F_Sprint",
-        "group": "F",
-        "priority": 1,
+        "family": "F_Sprint", "group": "F", "priority": 1,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 4 },
           { "field": "SI", "operator": ">=", "value": 3.0 },
@@ -32,64 +30,12 @@
         "approved_strategies": [
           { "strategy": "Supr4444_pd", "ticket_cost": 48, "multiplier_override": 0.1 }
         ],
-        "note": "4-runner degenerate case — reported as cost-vs-payout analysis"
-      },
-      {
-        "id": "J_CL_R5_Y_PPR2to4_Sup4213",
-        "name": "J_CL_R5_Y_PPR2to4_Sup4213",
-        "family": "J_Fades",
-        "group": "J",
-        "priority": 2,
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 5 },
-          { "field": "u7f", "operator": "==", "value": true },
-          { "field": "PPR_Half", "operator": ">=", "value": 2.0 },
-          { "field": "PPR_Half", "operator": "<=", "value": 3.999 },
-          { "field": "Purse", "operator": "<=", "value": 33000 }
-        ],
-        "approved_strategies": [
-          { "strategy": "Sup4213_pd", "ticket_cost": 24, "multiplier_override": 0.1 }
-        ],
-        "gate_split": {"field": "PPR_Half", "split_at": 3.0}
-      },
-      {
-        "id": "J_VULNCHALK_R46_Sup2413",
-        "name": "J_VULNCHALK_R46_Sup2413",
-        "family": "J_Fades",
-        "group": "J",
-        "priority": 3,
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "in", "value": [4, 5, 6] },
-          { "field": "SI", "operator": ">=", "value": 6.0 },
-          { "field": "u7f", "operator": "==", "value": true },
-          { "field": "Purse", "operator": "<=", "value": 33000 }
-        ],
-        "approved_strategies": [
-          { "strategy": "Sup2413_pd", "ticket_cost": 24, "multiplier_override": 0.1 }
-        ]
-      },
-      {
-        "id": "J_MELTDOWN_R46_Sup3421",
-        "name": "J_MELTDOWN_R46_Sup3421",
-        "family": "J_Fades",
-        "group": "J",
-        "priority": 4,
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "in", "value": [4, 5, 6] },
-          { "field": "SI", "operator": ">=", "value": 6.0 },
-          { "field": "u7f", "operator": "==", "value": true },
-          { "field": "PPR_Half", "operator": ">=", "value": 8.0 }
-        ],
-        "approved_strategies": [
-          { "strategy": "Sup3421_pd", "ticket_cost": 24, "multiplier_override": 0.1 }
-        ]
+        "note": "Phase 4 Confirmed: IS +582%, OOS +164%. The 4-runner degenerate crown jewel."
       },
       {
         "id": "C_SURGICAL_R58_Tri145",
         "name": "C_SURGICAL_R58_Tri145",
-        "family": "C_Surgical",
-        "group": "C",
-        "priority": 5,
+        "family": "C_Surgical", "group": "C", "priority": 2,
         "trigger_conditions": [
           { "field": "Runners", "operator": "in", "value": [5, 6, 7, 8] },
           { "field": "SI", "operator": ">=", "value": 9.0 },
@@ -98,14 +44,12 @@
         "approved_strategies": [
           { "strategy": "Tri145_pd", "ticket_cost": 12, "multiplier_override": 0.1 }
         ],
-        "note": "System best: 49% HR, IS+OOS confirmed profitable"
+        "note": "Phase 4 Confirmed: IS +153%, OOS +72%. 49% Hit Rate."
       },
       {
         "id": "A_SI_HIGH_R46_Any_Supr1444",
         "name": "A_SI_HIGH_R46_Any_Supr1444",
-        "family": "A_HighSI",
-        "group": "A",
-        "priority": 6,
+        "family": "A_HighSI", "group": "A", "priority": 3,
         "trigger_conditions": [
           { "field": "Runners", "operator": "in", "value": [4, 5, 6] },
           { "field": "SI", "operator": ">=", "value": 11.0 },
@@ -114,16 +58,109 @@
           { "field": "Purse", "operator": "<=", "value": 33000 }
         ],
         "approved_strategies": [
-          { "strategy": "Supr1444_pd", "ticket_cost": 24, "multiplier_override": 0.05 }
+          { "strategy": "Supr1444_pd", "ticket_cost": 24, "multiplier_override": 0.1 }
         ],
-        "note": "Demoted DEPLOY→PAPER: IS_Elig=25 < 100 threshold."
+        "note": "Phase 4 Confirmed: IS +55%, OOS +2805%. Massive OOS spike."
+      },
+      {
+        "id": "X_5BOX_R5_Sum5",
+        "name": "X_5BOX_R5_Sum5",
+        "family": "X_Experimental", "group": "X", "priority": 4,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 5 },
+          { "field": "SI", "operator": ">=", "value": 5.0 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr5Box_pd", "ticket_cost": 12, "multiplier_override": 0.1 }
+        ],
+        "note": "Dime 5-Box ($12). 100% Hit Rate. IS +120%, OOS +118%."
+      },
+      {
+        "id": "X_5BOX_R9_Sprint_Early_NoChalk_Fav2High",
+        "name": "X_5BOX_R9_Sprint_Early_NoChalk_Fav2High",
+        "family": "X_Experimental", "group": "X", "priority": 5,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 9 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr5Box_pd", "ticket_cost": 12, "multiplier_override": 0.1 }
+        ],
+        "note": "Dime 5-Box ($12). IS +126%, OOS +58.6%."
+      },
+      {
+        "id": "X_5BOX_R9_Purse15to30k_Sprint_NoChalk_Fav2High",
+        "name": "X_5BOX_R9_Purse15to30k_Sprint_NoChalk_Fav2High",
+        "family": "X_Experimental", "group": "X", "priority": 6,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 9 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 },
+          { "field": "Purse", "operator": "<=", "value": 30000 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr5Box_pd", "ticket_cost": 12, "multiplier_override": 0.1 }
+        ],
+        "note": "Dime 5-Box ($12). IS +90%, OOS +39.5%."
+      },
+      {
+        "id": "X_SKINNY_R5_Sprint_Sum8to14",
+        "name": "X_SKINNY_R5_Sprint_Sum8to14",
+        "family": "X_Experimental", "group": "X", "priority": 7,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 5 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "SI", "operator": ">=", "value": 8.0 },
+          { "field": "SI", "operator": "<=", "value": 14.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Sup3345_pd", "ticket_cost": 48, "multiplier_override": 0.05 }
+        ],
+        "note": "Highly profitable in 5-horse sprints with moderate chaos."
+      },
+      {
+        "id": "X_5BOX_R6_Sum7",
+        "name": "X_5BOX_R6_Sum7",
+        "family": "X_Experimental", "group": "X", "priority": 8,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 6 },
+          { "field": "SI", "operator": ">=", "value": 7.0 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr5Box_pd", "ticket_cost": 12, "multiplier_override": 0.05 }
+        ],
+        "note": "Dime 5-Box ($12). IS +149%, OOS +61%."
+      },
+      {
+        "id": "J_CL_R5_Y_PPR2to4_Sup4213",
+        "name": "J_CL_R5_Y_PPR2to4_Sup4213",
+        "family": "J_Fades", "group": "J", "priority": 9,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 5 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "PPR_Half", "operator": ">=", "value": 2.0 },
+          { "field": "PPR_Half", "operator": "<=", "value": 3.999 },
+          { "field": "Purse", "operator": "<=", "value": 33000 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Sup4213_pd", "ticket_cost": 24, "multiplier_override": 0.02 }
+        ],
+        "note": "Downgraded. IS ROI is -84%."
       }
     ],
     "retired_strategies": {
-      "SUPA123": "Structural -25.0% IS ROI / -25.7% OOS ROI. bomb-on-top priced by public.",
-      "SUP3345": "Structural -27.9% IS ROI / -29.6% OOS ROI. Skinny Pyramid fires too often.",
-      "K_SI_HIGH_R46_Y_Sup12A3_FavHigh": "Retired by AI team June 15.",
-      "B_SI_MID_R57_Y_lt2_Supr1445": "Retired by AI team June 15."
+      "X_SKINNY_WIDE_OPEN_Sup3345": "Lost $717,084 IS. Payout size cannot overcome takeout wall.",
+      "X_BOMB_R49_SupA123": "Lost $109,167 IS. 'Bomb on Top' pattern correctly priced by public.",
+      "J_VULNCHALK_R46_Sup2413": "IS -35%, OOS -100%. Failed exact-gate validation.",
+      "J_MELTDOWN_R46_Sup3421": "IS -100%, OOS -100%. Ticket structure cannot capture Pace Meltdown narrative profitably.",
+      "K_SI_HIGH_R46_Y_Sup12A3_FavHigh": "Retired in v9.9. Takeout wall on chalk structures.",
+      "B_SI_MID_R57_Y_lt2_Supr1445": "Retired in v9.9. Too chalky. Payouts do not justify $24 ticket cost.",
+      "X_5BOX_R8_All": "No profitable pocket for an 8-horse field."
     }
   }
 }
