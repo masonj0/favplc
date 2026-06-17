@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "title": "Fortuna Master Ruleset — June 17 v1.0_PROD",
-    "version": "1.0_PROD",
-    "description": "Production ruleset aligned with Gauntlet Simulator v3.3 (39 Validated Instruments).",
+    "title": "Fortuna Master Ruleset — June 17 v1.4_PROD",
+    "version": "1.4_PROD",
+    "description": "Production ruleset refined via v3.7 simulator analysis ($350 to $77k).",
     "generated": "2026-06-17"
   },
   "live_bot_config": {
@@ -26,118 +26,87 @@
         "approved_strategies": [
           { "strategy": "Tri145_pd", "ticket_cost": 18, "multiplier_override": 0.1 }
         ],
-        "note": "Production Baseline: Trifecta [1]x[2-4]×[2-5]. 49% Hit Rate."
+        "note": "Anchor Baseline: Trifecta [1]x[2-4]×[2-5]. EV +$10.89."
       },
       {
         "id": "FB3_FULL_FIELD_BOX",
         "name": "FB3_FULL_FIELD_BOX",
-        "family": "X_Experimental", "group": "X", "priority": 2,
+        "family": "X_FullBox", "group": "X", "priority": 2,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 3 },
-          { "field": "ChalkYN", "operator": "==", "value": "Y" },
-          { "field": "Purse", "operator": "<", "value": 8000 }
+          { "field": "ChalkYN", "operator": "==", "value": "Y" }
         ],
         "approved_strategies": [
-          { "strategy": "Tri3Box_pd", "ticket_cost": 1, "multiplier_override": 0.05 }
+          { "strategy": "Tri3Box_pd", "ticket_cost": 6, "multiplier_override": 0.05 }
         ],
-        "note": "FB3 Validated variant (Box 3). 100% HR."
+        "note": "FB3 v3.7 Refined: $1 base box ($6). Widened gates."
       },
       {
         "id": "FB4_FULL_FIELD_BOX",
         "name": "FB4_FULL_FIELD_BOX",
-        "family": "X_Experimental", "group": "X", "priority": 3,
+        "family": "X_FullBox", "group": "X", "priority": 3,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 4 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+          { "field": "Fav2Exact", "operator": ">=", "value": 2.5 }
         ],
         "approved_strategies": [
-          { "strategy": "Supr4Box_pd", "ticket_cost": 2, "multiplier_override": 0.05 }
+          { "strategy": "Supr4Box_pd", "ticket_cost": 2.4, "multiplier_override": 0.05 }
         ],
-        "note": "FB4 Validated variant (Box 4). 100% HR."
+        "note": "FB4 v3.7 Refined: Dime box ($2.40). EV +$8.66 survivor."
       },
       {
         "id": "FB5_FULL_FIELD_BOX",
         "name": "FB5_FULL_FIELD_BOX",
-        "family": "X_Experimental", "group": "X", "priority": 4,
+        "family": "X_FullBox", "group": "X", "priority": 4,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 5 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+          { "field": "Fav2Exact", "operator": ">=", "value": 2.5 }
         ],
         "approved_strategies": [
           { "strategy": "Supr5Box_pd", "ticket_cost": 12, "multiplier_override": 0.05 }
         ],
-        "note": "FB5 Validated variant (Box 5). 100% HR."
+        "note": "FB5 v3.7 Refined: Dime box ($12). Widened gates."
       },
       {
         "id": "FB6_FULL_FIELD_BOX",
         "name": "FB6_FULL_FIELD_BOX",
-        "family": "X_Experimental", "group": "X", "priority": 5,
+        "family": "X_FullBox", "group": "X", "priority": 5,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 6 },
-          { "field": "u7f", "operator": "==", "value": true },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+          { "field": "Fav2Exact", "operator": ">=", "value": 2.5 }
         ],
         "approved_strategies": [
           { "strategy": "Supr6Box_pd", "ticket_cost": 36, "multiplier_override": 0.05 }
         ],
-        "note": "FB6 Validated variant (Box 6). 100% HR."
+        "note": "FB6 v3.7 Refined: Dime box ($36). Portfolio backbone."
       },
       {
         "id": "FB7_FULL_FIELD_BOX",
         "name": "FB7_FULL_FIELD_BOX",
-        "family": "X_Experimental", "group": "X", "priority": 6,
+        "family": "X_FullBox", "group": "X", "priority": 6,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 7 },
-          { "field": "Purse", "operator": ">=", "value": 8000 },
-          { "field": "Purse", "operator": "<=", "value": 15000 },
+          { "field": "Purse", "operator": ">=", "value": 5000 },
+          { "field": "Purse", "operator": "<=", "value": 25000 },
           { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "SI", "operator": ">=", "value": 6.0 },
-          { "field": "SI", "operator": "<=", "value": 8.0 }
+          { "field": "Fav2Exact", "operator": ">=", "value": 2.5 }
         ],
         "approved_strategies": [
           { "strategy": "Supr7Box_pd", "ticket_cost": 84, "multiplier_override": 0.05 }
         ],
-        "note": "FB7 Validated variant (Box 7). 100% HR."
-      },
-      {
-        "id": "FB8_FULL_FIELD_BOX",
-        "name": "FB8_FULL_FIELD_BOX",
-        "family": "X_Experimental", "group": "X", "priority": 7,
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 8 },
-          { "field": "u7f", "operator": "==", "value": true },
-          { "field": "WhichRace", "operator": ">=", "value": 9 },
-          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
-        ],
-        "approved_strategies": [
-          { "strategy": "Supr8Box_pd", "ticket_cost": 168, "multiplier_override": 0.05 }
-        ],
-        "note": "FB8 Validated variant (Box 8). 100% HR."
-      },
-      {
-        "id": "M_ENGINE_SURVIVAL_FLOOR",
-        "name": "M_ENGINE_SURVIVAL_FLOOR",
-        "family": "M_Engine", "group": "M", "priority": 8,
-        "trigger_conditions": [
-          { "field": "Runners", "operator": ">=", "value": 4 }
-        ],
-        "approved_strategies": [
-          { "strategy": "FvP_pd", "ticket_cost": 2, "multiplier_override": 1.0 },
-          { "strategy": "FvS_pd", "ticket_cost": 2, "multiplier_override": 1.0 }
-        ],
-        "note": "Survival Floor: Favorite Place/Show betting. High reliability."
+        "note": "FB7 v3.7 Refined: Dime box ($84). High-EV growth engine."
       }
     ],
     "retired_strategies": {
-      "F_SPRINT_R4_Fav2gte3_Supr4444": "Replaced by FB4 production build.",
-      "A_SI_HIGH_R46_Any_Supr1444": "Replaced by FB4/5/6 production builds.",
-      "X_5BOX_R5_Sum5": "Consolidated into FB5 production build.",
-      "X_5BOX_R9_Sprint_Early_NoChalk_Fav2High": "Out of field range for FB8 build.",
-      "X_5BOX_R6_Sum7": "Consolidated into FB6 production build.",
-      "J_CL_R5_Y_PPR2to4_Sup4213": "Retired. Negative IS ROI (-84%)."
+      "M_ENGINE": "Dropped. Systematic negative drag confirmed at n=75k.",
+      "FB8_FULL_FIELD_BOX": "Retired in v3.7 ($168/race too expensive for Phase 1).",
+      "FB3_1": "Dropped. MinJK deeply negative (outlier-driven).",
+      "FB3_5": "Dropped. MinJK negative (outlier-driven).",
+      "FB4_2_6": "Dropped. Negative EV/MinJK.",
+      "FB5_2_4_6": "Dropped. MinJK collapse orROI noise."
     }
   }
 }
