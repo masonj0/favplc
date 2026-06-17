@@ -1,11 +1,14 @@
 import os
 import glob
+import zoneinfo
 from datetime import datetime
 
 def cleanup_obsolete_files():
     """Removes tactical reports and grids from previous calendar days."""
-    today_mmdd = datetime.now().strftime("%m%d")
-    today_iso = datetime.now().strftime("%Y-%m-%d")
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    now_et = datetime.now(et_tz)
+    today_mmdd = now_et.strftime("%m%d")
+    today_iso = now_et.strftime("%Y-%m-%d")
 
     patterns = [
         "v3_hourly_sheet_*.txt",
