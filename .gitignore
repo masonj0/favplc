@@ -77,6 +77,15 @@ analytics_report.txt
 discovery_harvest.json
 results_harvest.json
 
+# Tactical reports and grids (Production output)
+race_grid_*.html
+concentrated_grid_*.html
+v3_hourly_sheet_*.txt
+v3_strategy_sheet_*.txt
+v3_trigger_sheet_*.txt
+trigger_sheet_*.txt
+sniper_sheet_*.txt
+
 # Retrieval data files (cached for grid generation)
 rpb2b_*.json
 ras_*.json

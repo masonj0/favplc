@@ -244,7 +244,7 @@ def evaluate_rules(race, rules):
 
     if results["matches"]:
         # Implement Deduplication Logic: Group Priority first, then internal Priority
-        group_rank = {'F': 1, 'C': 2, 'A': 3, 'X': 4, 'J': 5}
+        group_rank = {'C': 1, 'X': 2}
         results["matches"].sort(key=lambda x: (group_rank.get(x['group'], 99), x['priority']))
         # Keep only the best match
         results["approved_strategies"] = [results["matches"][0]]
