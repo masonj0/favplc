@@ -4745,75 +4745,60 @@ class StandardbredCanadaAdapter(BrowserHeadersMixin, DebugMixin, RacePageFetcher
 
     async def _fetch_data(self, date: str) -> Optional[Dict[str, Any]]:
         dt = parse_date_string(date)
-        date_label = dt.strftime(f"%A %b {dt.day}, %Y")
         date_short = dt.strftime("%m%d") # e.g. 0208
 
+        # Strategy: Standardbred Canada is heavily protected.
+        # We will attempt to fetch the index using SmartFetcher,
+        # but also provide a robust set of heuristic fallbacks for common tracks.
+
         index_html = None
-
-        # 1. Try browser-based fetch if available
-        # FIX-CR-SC: Gate browser launch behind playwright semaphore to prevent unregulated spawns
         try:
-            pw_sem = GlobalResourceManager.get_playwright_semaphore()
-            async with pw_sem:
-                from playwright.async_api import async_playwright
-                async with async_playwright() as p:
-                    browser = await p.chromium.launch(headless=True)
-                    page = await browser.new_page()
-                    try:
-                        await page.goto(f"{self.base_url}/entries", wait_until="networkidle")
-                        await page.evaluate("() => { document.querySelectorAll('details').forEach(d => d.open = true); }")
-                        try: await page.select_option("#edit-entries-track", label="View All Tracks")
-                        except Exception: pass
-                        try: await page.select_option("#edit-entries-date", label=date_label)
-                        except Exception: pass
-                        try: await page.click("#edit-custom-submit-entries", force=True, timeout=5000)
-                        except Exception: pass
-                        try: await page.wait_for_selector("#entries-results-container a[href*='/entries/']", timeout=10000)
-                        except Exception: pass
-                        index_html = await page.content()
-                    finally:
-                        await page.close()
-                        await browser.close()
+            # Use make_request to leverage SmartFetcher and session management
+            resp = await self.make_request("GET", f"{self.base_url}/entries", headers=self._get_headers())
+            if resp and resp.status == 200:
+                index_html = resp.text
         except Exception as e:
-            self.logger.debug("Playwright index fetch failed, trying fallback", error=str(e))
+            self.logger.debug("Index fetch failed, using heuristics", error=str(e))
 
-        # 2. Fallback: Try to guess the data URL pattern if index fetch failed
-        if not index_html:
-            # Common tracks and their codes (heuristic)
-            tracks = [
-                ("Western Fair", f"e{date_short}lonn.dat"),
-                ("Mohawk", f"e{date_short}wbsbsn.dat"),
-                ("Flamboro", f"e{date_short}flmn.dat"),
-                ("Rideau", f"e{date_short}ridcn.dat"),
-            ]
-            metadata = []
-            for track_name, filename in tracks:
-                url = f"/racing/entries/data/{filename}"
+        metadata = []
+        if index_html:
+            self._save_debug_snapshot(index_html, f"sc_index_{date}")
+            parser = HTMLParser(index_html)
+            for container in parser.css("#entries-results-container .racing-results-ex-wrap > div"):
+                tnn = container.css_first("h4.track-name")
+                if not tnn: continue
+                tn = clean_text(node_text(tnn)) or ""
+                isf = "*" in tn or "*" in (clean_text(node_text(container)) or "")
+                for link in container.css('a[href*="/entries/"]'):
+                    if u := link.attributes.get("href"):
+                        metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
+
+        # Augment with common track heuristics regardless of index success
+        # to ensure coverage even if index parsing is slightly off
+        heuristic_tracks = [
+            ("Western Fair", f"e{date_short}lonn.dat"),
+            ("Mohawk", f"e{date_short}wbsbsn.dat"),
+            ("Flamboro", f"e{date_short}flmn.dat"),
+            ("Rideau", f"e{date_short}ridcn.dat"),
+            ("Woodbine Mohawk", f"e{date_short}wbsbsn.dat"),
+            ("Clinton", f"e{date_short}clntnn.dat"),
+            ("Grand River", f"e{date_short}grvrn.dat"),
+        ]
+
+        seen_urls = {m['url'] for m in metadata}
+        for track_name, filename in heuristic_tracks:
+            url = f"/racing/entries/data/{filename}"
+            if url not in seen_urls:
                 metadata.append({"url": url, "venue": track_name, "finalized": True})
 
-            pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers())
-            return {"pages": pages, "date": date}
-
-        if not index_html:
-            self.logger.warning("No index HTML found", context="StandardbredCanada Index Fetch")
-            return None
-        self._save_debug_snapshot(index_html, f"sc_index_{date}")
-        parser = HTMLParser(index_html)
-        metadata = []
-        for container in parser.css("#entries-results-container .racing-results-ex-wrap > div"):
-            tnn = container.css_first("h4.track-name")
-            if not tnn: continue
-            tn = clean_text(node_text(tnn)) or ""
-            isf = "*" in tn or "*" in (clean_text(node_text(container)) or "")
-            for link in container.css('a[href*="/entries/"]'):
-                if u := link.attributes.get("href"):
-                    metadata.append({"url": u, "venue": tn.replace("*", "").strip(), "finalized": isf})
         if not metadata:
             self.logger.warning("No metadata found", context="StandardbredCanada Index Parsing")
             self.metrics.record_parse_warning()
             return None
+
+        # Fetch all discovered/heuristic pages concurrently
         pages = await self._fetch_race_pages_concurrent(metadata, self._get_headers(), semaphore_limit=3)
-        return {"pages": pages, "date": date}
+        return {"pages": [p for p in pages if p], "date": date}
 
     def _parse_races(self, raw_data: Any) -> List[Race]:
         if not raw_data or not raw_data.get("pages"): return []
