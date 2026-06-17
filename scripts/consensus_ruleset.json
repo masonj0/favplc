@@ -30,7 +30,7 @@
         "approved_strategies": [
           { "strategy": "Supr4444_pd", "ticket_cost": 48, "multiplier_override": 0.1 }
         ],
-        "note": "Phase 4 Confirmed: IS +582%, OOS +164%. The 4-runner degenerate crown jewel."
+        "note": "Phase 4 Confirmed: IS +582%, OOS +164%. Requires a vulnerable favorite and a weak second choice."
       },
       {
         "id": "C_SURGICAL_R58_Tri145",
@@ -120,7 +120,7 @@
         "approved_strategies": [
           { "strategy": "Sup3345_pd", "ticket_cost": 48, "multiplier_override": 0.05 }
         ],
-        "note": "Highly profitable in 5-horse sprints with moderate chaos."
+        "note": "Rescued from Phase 2 Microscope. Highly profitable in 5-horse sprints with moderate chaos."
       },
       {
         "id": "X_5BOX_R6_Sum7",
@@ -150,7 +150,7 @@
         "approved_strategies": [
           { "strategy": "Sup4213_pd", "ticket_cost": 24, "multiplier_override": 0.02 }
         ],
-        "note": "Downgraded. IS ROI is -84%."
+        "note": "Downgraded. IS ROI is -84%. OOS hit (+453%) is pure variance."
       }
     ],
     "retired_strategies": {
@@ -159,7 +159,7 @@
       "J_VULNCHALK_R46_Sup2413": "IS -35%, OOS -100%. Failed exact-gate validation.",
       "J_MELTDOWN_R46_Sup3421": "IS -100%, OOS -100%. Ticket structure cannot capture Pace Meltdown narrative profitably.",
       "K_SI_HIGH_R46_Y_Sup12A3_FavHigh": "Retired in v9.9. Takeout wall on chalk structures.",
-      "B_SI_MID_R57_Y_lt2_Supr1445": "Retired in v9.9. Too chalky. Payouts do not justify $24 ticket cost.",
+      "B_SI_MID_R57_Y_lt2_Supr1445": "Retired in v9.9. Too chalky.",
       "X_5BOX_R8_All": "No profitable pocket for an 8-horse field."
     }
   }
