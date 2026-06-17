@@ -653,7 +653,8 @@ def main():
     parser.add_argument("--date", help="Race date (YYYY-MM-DD)", default=None)
     args = parser.parse_args()
 
-    target_date = args.date or datetime.now().strftime("%Y-%m-%d")
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    target_date = args.date or datetime.now(et_tz).strftime("%Y-%m-%d")
     date_suffix = target_date.split("-")[-1]
 
     all_raw_races = []
