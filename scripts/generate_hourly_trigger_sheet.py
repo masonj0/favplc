@@ -182,6 +182,7 @@ def evaluate_rules(race, rules):
             val = cond.get('value')
 
             curr_val = race.get(field)
+            if field == "Purse": curr_val = race.get('PurseVal')
 
             if curr_val is None:
                 match = False
@@ -243,7 +244,7 @@ def evaluate_rules(race, rules):
 
     if results["matches"]:
         # Implement Deduplication Logic: Group Priority first, then internal Priority
-        group_rank = {'A': 1, 'B': 2, 'C': 3, 'E': 4, 'F': 5}
+        group_rank = {'C': 1, 'X': 2, 'M': 3}
         results["matches"].sort(key=lambda x: (group_rank.get(x['group'], 99), x['priority']))
         # Keep only the best match
         results["approved_strategies"] = [results["matches"][0]]
@@ -257,7 +258,8 @@ def main():
     parser.add_argument("--date", help="Race date (YYYY-MM-DD)", default=None)
     args = parser.parse_args()
 
-    target_date = args.date or datetime.now().strftime("%Y-%m-%d")
+    et_tz = zoneinfo.ZoneInfo("America/New_York")
+    target_date = args.date or datetime.now(et_tz).strftime("%Y-%m-%d")
     yymmdd = target_date[2:].replace('-', '')
 
     rules_path = os.path.join('scripts', 'consensus_ruleset.json')
@@ -291,15 +293,20 @@ def main():
         else:
             hourly["Unknown Time"].append(r)
 
-    print(f"\n{'='*115}")
-    print(f" HOURLY TRIGGER SHEET - {target_date} ".center(115, '='))
-    print(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(115, '='))
-    print(f"{'='*115}\n")
+    output = []
+    def emit(s=""):
+        print(s)
+        output.append(s)
+
+    emit(f"\n{'='*115}")
+    emit(f" HOURLY TRIGGER SHEET - {target_date} ".center(115, '='))
+    emit(f" (V3 Portfolio Grinder | {rules['_meta']['title']}) ".center(115, '='))
+    emit(f"{'='*115}\n")
 
     sorted_hours = sorted(hourly.keys(), key=lambda x: datetime.strptime(x, "%I %p") if x != "Unknown Time" else datetime.max)
 
     for hour in sorted_hours:
-        print(f"\n--- {hour} " + "-" * (109 - len(hour)))
+        emit(f"\n--- {hour} " + "-" * (109 - len(hour)))
         for race in hourly[hour]:
             res = evaluate_rules(race, rules)
             p_time = race['PostTime']
@@ -308,15 +315,21 @@ def main():
             fs = race['FieldSize']
             dist = race['Distance']
             line = f"  {p_time} | {loc:<20} | R{rnum:<2} | F:{fs:<2} | D:{dist:<5} | P:{race['PurseFormatted']:<5} | SI:{race['SI']:>4.1f} | F1:{race['FavExact']:>4.1f} | F2:{race['Fav2Exact']:>4.1f} | G2:{race['1GAP2']:>4.1f} | {race['Discipline']}"
-            print(line)
+            emit(line)
 
-            if res['abort_reason']: print(f"    !!! {res['abort_reason']}")
-            elif res['skip_reason']: print(f"    >>> {res['skip_reason']}")
+            if res['abort_reason']: emit(f"    !!! {res['abort_reason']}")
+            elif res['skip_reason']: emit(f"    >>> {res['skip_reason']}")
             elif res['approved_strategies']:
                 s = res['approved_strategies'][0]
-                print(f"    >> {s['family']} ({s['engine']}) | Mult: {s['multiplier']}x")
-                print(f"      [ ] {s['name']:<40} (${s['cost']:<3}) [ ] Chalk={s['chalk']} [ ] Juv={s['juv']}")
-            else: print("    (No matching strategies)")
-            print()
+                emit(f"    >> {s['family']} ({s['engine']}) | Mult: {s['multiplier']}x")
+                emit(f"      [ ] {s['name']:<40} (${s['cost']:<3}) [ ] Chalk={s['chalk']} [ ] Juv={s['juv']}")
+            else: emit("    (No matching strategies)")
+            emit()
+
+    mmdd = datetime.strptime(target_date, "%Y-%m-%d").strftime("%m%d")
+    filename = f"v3_hourly_sheet_{mmdd}.txt"
+    with open(filename, 'w') as f:
+        f.write("\n".join(output))
+    print(f"\nTrigger sheet saved to: {filename}")
 
 if __name__ == "__main__": main()

@@ -1,9 +1,9 @@
 {
   "_meta": {
-    "title": "V3 Portfolio Grinder — June 05 Fine-Tuned",
-    "version": "3.2",
-    "description": "Updated strategies with deduplication logic and new gates.",
-    "generated": "2026-06-05"
+    "title": "Fortuna Master Ruleset — June 17 v1.0_PROD",
+    "version": "1.0_PROD",
+    "description": "Production ruleset aligned with Gauntlet Simulator v3.3 (39 Validated Instruments).",
+    "generated": "2026-06-17"
   },
   "live_bot_config": {
     "universal_gates": {
@@ -15,162 +15,129 @@
     },
     "execution_routing": [
       {
-        "id": "A1", "group": "A", "priority": 1, "name": "A1_CORE_Superfectas_R4_Baseline", "family": "Group A", "engine": "R4 Guarantee Family",
+        "id": "TRI145_C_SURGICAL",
+        "name": "TRI145_C_SURGICAL",
+        "family": "C_Surgical", "group": "C", "priority": 1,
         "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 3.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" }
-        ],
-        "approved_strategies": [{ "strategy": "A1_CORE_R4_Baseline", "ticket_cost": 108, "multiplier_override": 0.08 }]
-      },
-      {
-        "id": "A2", "group": "A", "priority": 2, "name": "A2_FAV2_Superfectas_R4_Fav2gte3", "family": "Group A", "engine": "R4 Guarantee Family",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 3.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "Fav2Exact", "operator": ">=", "value": 3.0 }
-        ],
-        "approved_strategies": [{ "strategy": "A2_FAV2_R4_Fav2gte3", "ticket_cost": 108, "multiplier_override": 0.15 }]
-      },
-      {
-        "id": "A3", "group": "A", "priority": 3, "name": "A3_Supr4444_Fav2gte2p5", "family": "Group A", "engine": "R4 Guarantee Family",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 3.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "Runners", "operator": "in", "value": [5, 6, 7, 8, 9] },
+          { "field": "SI", "operator": ">=", "value": 9.0 },
           { "field": "Fav2Exact", "operator": ">=", "value": 2.5 }
         ],
-        "approved_strategies": [{ "strategy": "A3_Supr4444_Fav2gte2p5", "ticket_cost": 48, "multiplier_override": 0.25 }]
-      },
-      {
-        "id": "A4", "group": "A", "priority": 4, "name": "A4_GAP2_Supr4444_R4_Gap2gte1p0", "family": "Group A", "engine": "R4 Guarantee Family",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "1GAP2", "operator": ">=", "value": 1.0 }
+        "approved_strategies": [
+          { "strategy": "Tri145_pd", "ticket_cost": 18, "multiplier_override": 0.1 }
         ],
-        "approved_strategies": [{ "strategy": "A4_GAP2_R4_Gap2gte1p0", "ticket_cost": 48, "multiplier_override": 0.20 }]
+        "note": "Production Baseline: Trifecta [1]x[2-4]×[2-5]. 49% Hit Rate."
       },
       {
-        "id": "A5", "group": "A", "priority": 5, "name": "A5_PPR_TIGHT_Supr4444_R4_PPR4to5", "family": "Group A", "engine": "R4 Guarantee Family",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "PPR_Half", "operator": "<=", "value": 5.5 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" }
-        ],
-        "approved_strategies": [{ "strategy": "A5_PPR_TIGHT_R4_PPR4to5", "ticket_cost": 48, "multiplier_override": 0.15 }]
-      },
-      {
-        "id": "A6", "group": "A", "priority": 6, "name": "A6_FAV_VULN_Supr4444_R4_FavGte1p2", "family": "Group A", "engine": "R4 Guarantee Family",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "FavExact", "operator": ">=", "value": 1.2 }
-        ],
-        "approved_strategies": [{ "strategy": "A6_FAV_VULN_R4_FavGte1p2", "ticket_cost": 48, "multiplier_override": 0.15 }]
-      },
-      {
-        "id": "A7", "group": "A", "priority": 7, "name": "A7_HOTPOCKET_Supr4444_R4_Fav2PPR", "family": "Group A", "engine": "R4 Guarantee Family",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "PPR_Half", "operator": "<=", "value": 6.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" },
-          { "field": "Fav2Exact", "operator": "<=", "value": 2.5 }
-        ],
-        "approved_strategies": [{ "strategy": "A7_HOTPOCKET_R4_Fav2PPR", "ticket_cost": 48, "multiplier_override": 0.15 }]
-      },
-      {
-        "id": "A8", "group": "A", "priority": 8, "name": "A8_ACTION_R5_Baseline", "family": "Group A", "engine": "Action Grinder",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 5 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" }
-        ],
-        "approved_strategies": [{ "strategy": "A8_ACTION_R5_Baseline", "ticket_cost": 48, "multiplier_override": 0.02 }]
-      },
-      {
-        "id": "B1", "group": "B", "priority": 1, "name": "B1_Sup2245_R7_Sprint", "family": "Group B", "engine": "Thin-Pool Grinders",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 7 },
-          { "field": "u7f", "operator": "==", "value": true },
-          { "field": "SI", "operator": ">=", "value": 1.5 },
-          { "field": "SI", "operator": "<=", "value": 4.0 },
-          { "field": "PPR_Half", "operator": "<=", "value": 1.0 }
-        ],
-        "approved_strategies": [{ "strategy": "B1_Sup2245_R7_Sprint", "ticket_cost": 16, "multiplier_override": 0.25 }]
-      },
-      {
-        "id": "C1", "group": "C", "priority": 1, "name": "C1_Sup3214_R6_TightGates", "family": "Group C", "engine": "Route Giant Hunters",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 6 },
-          { "field": "u7f", "operator": "==", "value": false },
-          { "field": "SI", "operator": ">=", "value": 1.5 },
-          { "field": "SI", "operator": "<=", "value": 4.0 },
-          { "field": "PPR_Half", "operator": "<=", "value": 1.0 }
-        ],
-        "approved_strategies": [{ "strategy": "C1_Sup3214_R6_TightGates", "ticket_cost": 2, "multiplier_override": 0.50 }]
-      },
-      {
-        "id": "C2", "group": "C", "priority": 2, "name": "C2_Sup3214_R6_OpenGates", "family": "Group C", "engine": "Route Giant Hunters",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 6 },
-          { "field": "SI", "operator": ">=", "value": 0.3 },
-          { "field": "PPR_Half", "operator": ">=", "value": 0.0 }
-        ],
-        "approved_strategies": [{ "strategy": "C2_Sup3214_R6_OpenGates", "ticket_cost": 2, "multiplier_override": 0.10 }]
-      },
-      {
-        "id": "E1", "group": "E", "priority": 1, "name": "E1_XC22_R4_Canary", "family": "Group E", "engine": "Canaries",
-        "trigger_conditions": [
-          { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" }
-        ],
-        "approved_strategies": [{ "strategy": "E1_XC22_R4_Canary", "ticket_cost": 4, "multiplier_override": 0.05 }]
-      },
-      {
-        "id": "F1", "group": "F", "priority": 1, "name": "F1_Tri123_R3", "family": "Group F", "engine": "R3 Trifecta Family",
+        "id": "FB3_FULL_FIELD_BOX",
+        "name": "FB3_FULL_FIELD_BOX",
+        "family": "X_Experimental", "group": "X", "priority": 2,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 3 },
-          { "field": "SI", "operator": ">=", "value": 0.3 }
+          { "field": "ChalkYN", "operator": "==", "value": "Y" },
+          { "field": "Purse", "operator": "<", "value": 8000 }
         ],
-        "approved_strategies": [{ "strategy": "F1_Tri123_R3", "ticket_cost": 2, "multiplier_override": 0.25 }]
+        "approved_strategies": [
+          { "strategy": "Tri3Box_pd", "ticket_cost": 1, "multiplier_override": 0.05 }
+        ],
+        "note": "FB3 Validated variant (Box 3). 100% HR."
       },
       {
-        "id": "F2", "group": "F", "priority": 2, "name": "F2_SPRINT_Supr4444_R4_SprintOnly", "family": "Group F", "engine": "R4 Guarantee Family",
+        "id": "FB4_FULL_FIELD_BOX",
+        "name": "FB4_FULL_FIELD_BOX",
+        "family": "X_Experimental", "group": "X", "priority": 3,
         "trigger_conditions": [
           { "field": "Runners", "operator": "==", "value": 4 },
-          { "field": "SI", "operator": ">=", "value": 3.0 },
-          { "field": "SI", "operator": "<=", "value": 14.4 },
-          { "field": "u7f", "operator": "==", "value": true },
-          { "field": "PPR_Half", "operator": ">=", "value": 4.0 },
-          { "field": "ChalkYN", "operator": "==", "value": "N" }
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
         ],
-        "approved_strategies": [{ "strategy": "F2_SPRINT_Supr4444_R4_SprintOnly", "ticket_cost": 48, "multiplier_override": 0.10 }]
+        "approved_strategies": [
+          { "strategy": "Supr4Box_pd", "ticket_cost": 2, "multiplier_override": 0.05 }
+        ],
+        "note": "FB4 Validated variant (Box 4). 100% HR."
+      },
+      {
+        "id": "FB5_FULL_FIELD_BOX",
+        "name": "FB5_FULL_FIELD_BOX",
+        "family": "X_Experimental", "group": "X", "priority": 4,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 5 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr5Box_pd", "ticket_cost": 12, "multiplier_override": 0.05 }
+        ],
+        "note": "FB5 Validated variant (Box 5). 100% HR."
+      },
+      {
+        "id": "FB6_FULL_FIELD_BOX",
+        "name": "FB6_FULL_FIELD_BOX",
+        "family": "X_Experimental", "group": "X", "priority": 5,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 6 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr6Box_pd", "ticket_cost": 36, "multiplier_override": 0.05 }
+        ],
+        "note": "FB6 Validated variant (Box 6). 100% HR."
+      },
+      {
+        "id": "FB7_FULL_FIELD_BOX",
+        "name": "FB7_FULL_FIELD_BOX",
+        "family": "X_Experimental", "group": "X", "priority": 6,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 7 },
+          { "field": "Purse", "operator": ">=", "value": 8000 },
+          { "field": "Purse", "operator": "<=", "value": 15000 },
+          { "field": "ChalkYN", "operator": "==", "value": "N" },
+          { "field": "SI", "operator": ">=", "value": 6.0 },
+          { "field": "SI", "operator": "<=", "value": 8.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr7Box_pd", "ticket_cost": 84, "multiplier_override": 0.05 }
+        ],
+        "note": "FB7 Validated variant (Box 7). 100% HR."
+      },
+      {
+        "id": "FB8_FULL_FIELD_BOX",
+        "name": "FB8_FULL_FIELD_BOX",
+        "family": "X_Experimental", "group": "X", "priority": 7,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": "==", "value": 8 },
+          { "field": "u7f", "operator": "==", "value": true },
+          { "field": "WhichRace", "operator": ">=", "value": 9 },
+          { "field": "Fav2Exact", "operator": ">=", "value": 4.0 }
+        ],
+        "approved_strategies": [
+          { "strategy": "Supr8Box_pd", "ticket_cost": 168, "multiplier_override": 0.05 }
+        ],
+        "note": "FB8 Validated variant (Box 8). 100% HR."
+      },
+      {
+        "id": "M_ENGINE_SURVIVAL_FLOOR",
+        "name": "M_ENGINE_SURVIVAL_FLOOR",
+        "family": "M_Engine", "group": "M", "priority": 8,
+        "trigger_conditions": [
+          { "field": "Runners", "operator": ">=", "value": 4 }
+        ],
+        "approved_strategies": [
+          { "strategy": "FvP_pd", "ticket_cost": 2, "multiplier_override": 1.0 },
+          { "strategy": "FvS_pd", "ticket_cost": 2, "multiplier_override": 1.0 }
+        ],
+        "note": "Survival Floor: Favorite Place/Show betting. High reliability."
       }
-    ]
+    ],
+    "retired_strategies": {
+      "F_SPRINT_R4_Fav2gte3_Supr4444": "Replaced by FB4 production build.",
+      "A_SI_HIGH_R46_Any_Supr1444": "Replaced by FB4/5/6 production builds.",
+      "X_5BOX_R5_Sum5": "Consolidated into FB5 production build.",
+      "X_5BOX_R9_Sprint_Early_NoChalk_Fav2High": "Out of field range for FB8 build.",
+      "X_5BOX_R6_Sum7": "Consolidated into FB6 production build.",
+      "J_CL_R5_Y_PPR2to4_Sup4213": "Retired. Negative IS ROI (-84%)."
+    }
   }
 }
