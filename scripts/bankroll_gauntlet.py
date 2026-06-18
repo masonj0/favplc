@@ -209,293 +209,138 @@ def _hit_tri145(pos, n):
         and pos[2] in {2, 3, 4, 5}
     )
 
+def _hit_supr3666(pos, n):
+    return (
+        len(pos) >= 4
+        and pos[0] in {1, 2, 3}
+        and pos[1] in {1, 2, 3, 4, 5, 6}
+        and pos[2] in {1, 2, 3, 4, 5, 6}
+        and pos[3] in {1, 2, 3, 4, 5, 6}
+    )
+
+def _hit_sup4455(pos, n):
+    return (
+        len(pos) >= 4
+        and pos[0] in {1, 2, 3, 4}
+        and pos[1] in {1, 2, 3, 4}
+        and pos[2] in {1, 2, 3, 4, 5}
+        and pos[3] in {1, 2, 3, 4, 5}
+    )
+
+def _hit_sup4456(pos, n):
+    return (
+        len(pos) >= 4
+        and pos[0] in {1, 2, 3, 4}
+        and pos[1] in {1, 2, 3, 4}
+        and pos[2] in {1, 2, 3, 4, 5}
+        and pos[3] in {1, 2, 3, 4, 5, 6}
+    )
+
+def _hit_sup4445(pos, n):
+    return (
+        len(pos) >= 4
+        and pos[0] in {1, 2, 3, 4}
+        and pos[1] in {1, 2, 3, 4}
+        and pos[2] in {1, 2, 3, 4}
+        and pos[3] in {1, 2, 3, 4, 5}
+    )
+
+def _hit_sup2266(pos, n):
+    return (
+        len(pos) >= 4
+        and pos[0] in {1, 2}
+        and pos[1] in {1, 2}
+        and pos[2] in {1, 2, 3, 4, 5, 6}
+        and pos[3] in {1, 2, 3, 4, 5, 6}
+    )
+
 def _hit_always_true(pos, n):
     return True
 
 # ══════════════════════════════════════════════════════════════════════════════
-# INSTRUMENT REGISTRY — v3.7
-#
-# TICKET COST REMINDER:
-#   FB3 : 3! = 6 combos × $1.00 base = $6.00   | payout_mult=0.50 ($1 on $2 base)
-#   FB4 : P(4,4)=24  × $0.10       = $2.40     | payout_mult=0.10 (dime on $1 base)
-#   FB5 : P(5,4)=120 × $0.10       = $12.00    | payout_mult=0.10
-#   FB6 : P(6,4)=360 × $0.10       = $36.00    | payout_mult=0.10
-#   FB7 : P(7,4)=840 × $0.10       = $84.00    | payout_mult=0.10
-#   FB8 : commented out — $168/race too expensive for Phase 1 survival
-#
-# GATE WIDENING vs v3.6:
-#   FB3 : purse_hi removed on FB3_1/3/4; sum_max 4.99→5.99 on FB3_2/5/6
-#   FB4 : fav2_min 3.0→2.5; sum windows ±1 wider; race window 3-9→2-10
-#   FB5 : fav2_min 3.0→2.5; sum windows ±1 wider on FB5_2/4
-#   FB6 : chalk_req removed on FB6_3/6; sum_max raised on FB6_4/6
-#   FB7 : purse_hi 20k→25k on FB7_1/2/3/6; sum_max raised on FB7_1/2/4/5
+# INSTRUMENT REGISTRY — v5.1 (PRUNED)
+# 32 Failed Strategies Extracted. Zero Anger. Maximum Happiness.
 # ══════════════════════════════════════════════════════════════════════════════
 
 INSTRUMENTS = {
 
     # ── ANCHOR ────────────────────────────────────────────────────────────────
-    # TRI145: 9 combos × $2 = $18.00
-    # Trif_paid on $2 base → payout_mult = 1.0
-    # MinJK positive, n=491, EV +$10.89 — keeper
     "TRI145": {
-        "tier":        "T1",
-        "ticket_cost": 18.00,
-        "hit_func":    _hit_tri145,
-        "payout_col":  "Trif_paid",
-        "payout_mult": 1.0,
-        "min_runners": 5,
-        "ewpd":        2.8,
-        "desc":        "Trifecta [1]×[2-4]×[2-5] — 9 combos × $2",
-        "env_filter":  _make_env(sum_min=9.0, fav2_min=2.5),
+        "tier": "T1", "ticket_cost": 18.00, "hit_func": _hit_tri145, "payout_col": "Trif_paid", "payout_mult": 1.0,
+        "min_runners": 5, "ewpd": 2.8, "desc": "Trifecta [1]×[2-4]×[2-5] — 9 combos × $2",
+        "env_filter": _make_env(sum_min=9.0, fav2_min=2.5)
     },
 
-    # ── n=3: Full 3-horse trifecta box ($6.00) ────────────────────────────────
-    # 3! = 6 combos × $1.00 base = $6.00
-    # Trif_paid on $2 base → payout_mult = 0.50
-    #
-    # DROPPED vs v3.7:
-    #   FB3_1  — MinJK deeply negative (outlier-driven, n=238 borderline)
-    #   FB3_5  — MinJK negative, EV +$7.25 but collapses without outliers
-    #
-    # KEPT: FB3_2/3/4/6 — all show solid MinJK retention and positive raw EV
-    "FB3_2": {
-        "tier": "T1", "ticket_cost": 6.00,
-        "hit_func": _hit_always_true, "payout_col": "Trif_paid",
-        "payout_mult": 0.50, "min_runners": 3, "ewpd": 1.5,
-        "desc": "FB3 Sprint + Sum:<6",
-        "env_filter": _make_env(field_min=3, field_max=3,
-                                sprint_req="Y", sum_max=5.99),
-    },
-    "FB3_3": {
-        "tier": "T1", "ticket_cost": 6.00,
-        "hit_func": _hit_always_true, "payout_col": "Trif_paid",
-        "payout_mult": 0.50, "min_runners": 3, "ewpd": 1.5,
-        "desc": "FB3 Sprint — any purse",
-        "env_filter": _make_env(field_min=3, field_max=3, sprint_req="Y"),
-    },
-    "FB3_4": {
-        "tier": "T1", "ticket_cost": 6.00,
-        "hit_func": _hit_always_true, "payout_col": "Trif_paid",
-        "payout_mult": 0.50, "min_runners": 3, "ewpd": 1.5,
-        "desc": "FB3 Early(1-5) + Chalk:Y",
-        "env_filter": _make_env(field_min=3, field_max=3,
-                                race_max=5, chalk_req="Y"),
-    },
-    "FB3_6": {
-        "tier": "T1", "ticket_cost": 6.00,
-        "hit_func": _hit_always_true, "payout_col": "Trif_paid",
-        "payout_mult": 0.50, "min_runners": 3, "ewpd": 1.5,
-        "desc": "FB3 Purse:<12k + Sum:<6",
-        "env_filter": _make_env(field_min=3, field_max=3,
-                                purse_hi=11_999, sum_max=5.99),
-    },
+    # ── FB4 ($2.40) ───────────────────────────────────────────────────────────
+    "FB4_2": {"tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 4, "ewpd": 1.5, "desc": "FB4 Chalk:N + Sum:4-6 + Fav2:2.5-4", "env_filter": _make_env(field_min=4, field_max=4, chalk_req="N", sum_min=4.0, sum_max=6.0, fav2_min=2.5, fav2_max=4.0)},
+    "FB4_3": {"tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 4, "ewpd": 1.5, "desc": "FB4 Chalk:N + First:N + Sum:4-6", "env_filter": _make_env(field_min=4, field_max=4, chalk_req="N", first_req="N", sum_min=4.0, sum_max=6.0)},
+    "FB4_4": {"tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 4, "ewpd": 1.5, "desc": "FB4 Chalk:N + Sum:4-6", "env_filter": _make_env(field_min=4, field_max=4, chalk_req="N", sum_min=4.0, sum_max=6.0)},
+    "FB4_5": {"tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 4, "ewpd": 1.5, "desc": "FB4 Sprint + Chalk:N", "env_filter": _make_env(field_min=4, field_max=4, sprint_req="Y", chalk_req="N", sum_min=4.0, sum_max=6.0)},
+    "FB4_6": {"tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 4, "ewpd": 1.5, "desc": "FB4 Race:4-8 + Sum:4-6 + Fav2:2.5-4", "env_filter": _make_env(field_min=4, field_max=4, race_min=4, race_max=8, sum_min=4.0, sum_max=6.0, fav2_min=2.5, fav2_max=4.0)},
 
-    # ── n=4: Dime superfecta box ($2.40) ──────────────────────────────────────
-    # P(4,4) = 24 combos × $0.10 = $2.40
-    # Superf_paid on $1 base → payout_mult = 0.10
-    #
-    # DROPPED vs v3.7:
-    #   FB4_2  EV -$0.51, MinJK negative → DROP
-    #   FB4_3  EV -$0.35, MinJK negative → DROP
-    #   FB4_4  EV -$0.36, MinJK negative → DROP
-    #   FB4_5  EV -$0.14, MinJK negative → DROP
-    #   FB4_6  EV -$0.68, MinJK negative → DROP (worst in family)
-    #
-    # KEPT: FB4_1 only — EV +$8.66, n=119, HR 38.7%
-    # FB4_1 has real signal: Chalk:N + Fav2:2.5+ selects upset-prone races
-    "FB4_1": {
-        "tier": "T1", "ticket_cost": 2.40,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 4, "ewpd": 1.5,
-        "desc": "FB4 Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=4, field_max=4,
-                                chalk_req="N", fav2_min=2.5),
-    },
+    # ── FB5 ($12.00) ──────────────────────────────────────────────────────────
+    "FB5_2": {"tier": "T1", "ticket_cost": 12.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 5, "ewpd": 1.5, "desc": "FB5 Chalk:N", "env_filter": _make_env(field_min=5, field_max=5, chalk_req="N", fav2_min=4.0)},
 
-    # ── n=5: Dime superfecta box ($12.00) ─────────────────────────────────────
-    # P(5,4) = 120 combos × $0.10 = $12.00
-    # Superf_paid on $1 base → payout_mult = 0.10
-    #
-    # DROPPED vs v3.7:
-    #   FB5_2  EV +$6.68 but MinJK collapses — outlier-sensitive → DROP
-    #   FB5_4  EV +$6.10 similar MinJK collapse pattern → DROP
-    #   FB5_6  EV +$1.33 on $12 ticket — 0.011% ROI, pure noise → DROP
-    #
-    # KEPT: FB5_1/3/5 — all show EV >$7, reasonable MinJK, distinct gates
-    "FB5_1": {
-        "tier": "T1", "ticket_cost": 12.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 5, "ewpd": 1.5,
-        "desc": "FB5 Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=5, field_max=5,
-                                chalk_req="N", fav2_min=2.5),
-    },
-    "FB5_3": {
-        "tier": "T1", "ticket_cost": 12.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 5, "ewpd": 1.5,
-        "desc": "FB5 Sprint + Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=5, field_max=5,
-                                sprint_req="Y", chalk_req="N",
-                                fav2_min=2.5),
-    },
-    "FB5_5": {
-        "tier": "T1", "ticket_cost": 12.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 5, "ewpd": 1.5,
-        "desc": "FB5 First:N + Sum:5-13",
-        "env_filter": _make_env(field_min=5, field_max=5,
-                                first_req="N",
-                                sum_min=5.0, sum_max=13.0),
-    },
+    # ── FB6 ($36.00) ──────────────────────────────────────────────────────────
+    "FB6_1": {"tier": "T1", "ticket_cost": 36.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 6, "ewpd": 1.5, "desc": "FB6 Sprint + Chalk:N + Fav2:4.0+", "env_filter": _make_env(field_min=6, field_max=6, sprint_req="Y", chalk_req="N", first_req="N", fav2_min=4.0)},
+    "FB6_2": {"tier": "T1", "ticket_cost": 36.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 6, "ewpd": 1.5, "desc": "FB6 Race:4-8 + Chalk:N", "env_filter": _make_env(field_min=6, field_max=6, race_min=4, race_max=8, chalk_req="N", first_req="N", fav2_min=4.0)},
+    "FB6_3": {"tier": "T1", "ticket_cost": 36.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 6, "ewpd": 1.5, "desc": "FB6 Race:4-8 + Chalk:N", "env_filter": _make_env(field_min=6, field_max=6, race_min=4, race_max=8, chalk_req="N", fav2_min=4.0)},
+    "FB6_4": {"tier": "T1", "ticket_cost": 36.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 6, "ewpd": 1.5, "desc": "FB6 Sprint + Chalk:N", "env_filter": _make_env(field_min=6, field_max=6, sprint_req="Y", chalk_req="N", fav2_min=4.0)},
+    "FB6_5": {"tier": "T1", "ticket_cost": 36.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 6, "ewpd": 1.5, "desc": "FB6 Chalk:N + First:N", "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", first_req="N", fav2_min=4.0)},
+    "FB6_6": {"tier": "T1", "ticket_cost": 36.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 6, "ewpd": 1.5, "desc": "FB6 Chalk:N", "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", fav2_min=4.0)},
 
-    # ── n=6: Dime superfecta box ($36.00) ─────────────────────────────────────
-    # v3.7 widening: chalk_req removed on FB6_3/6; sum_max raised on FB6_4/6
-    "FB6_1": {
-        "tier": "T1", "ticket_cost": 36.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 6, "ewpd": 1.5,
-        "desc": "FB6 Sprint + Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=6, field_max=6,
-                                sprint_req="Y", chalk_req="N",
-                                fav2_min=2.5),
-    },
-    "FB6_2": {
-        "tier": "T1", "ticket_cost": 36.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 6, "ewpd": 1.5,
-        "desc": "FB6 Race:2-10 + Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=6, field_max=6,
-                                race_min=2, race_max=10,
-                                chalk_req="N", fav2_min=2.5),
-    },
-    "FB6_3": {
-        "tier": "T1", "ticket_cost": 36.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 6, "ewpd": 1.5,
-        "desc": "FB6 Sum:4-11",          # chalk_req removed vs v3.6
-        "env_filter": _make_env(field_min=6, field_max=6,
-                                sum_min=4.0, sum_max=11.0),
-    },
-    "FB6_4": {
-        "tier": "T1", "ticket_cost": 36.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 6, "ewpd": 1.5,
-        "desc": "FB6 Sprint + Chalk:N + Sum:3-11",
-        "env_filter": _make_env(field_min=6, field_max=6,
-                                sprint_req="Y", chalk_req="N",
-                                sum_min=3.0, sum_max=11.0),
-    },
-    "FB6_5": {
-        "tier": "T1", "ticket_cost": 36.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 6, "ewpd": 1.5,
-        "desc": "FB6 Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=6, field_max=6,
-                                chalk_req="N", fav2_min=2.5),
-    },
-    "FB6_6": {
-        "tier": "T1", "ticket_cost": 36.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 6, "ewpd": 1.5,
-        "desc": "FB6 Sum:3-13",          # chalk_req removed vs v3.6
-        "env_filter": _make_env(field_min=6, field_max=6,
-                                sum_min=3.0, sum_max=13.0),
-    },
+    # ── FB7 ($84.00) ──────────────────────────────────────────────────────────
+    "FB7_1": {"tier": "T1", "ticket_cost": 84.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 7, "ewpd": 1.5, "desc": "FB7 Purse:8-15k + Chalk:N + Sum:6-8", "env_filter": _make_env(field_min=7, field_max=7, purse_lo=8000, purse_hi=15000, chalk_req="N", first_req="N", sum_min=6.0, sum_max=8.0)},
+    "FB7_2": {"tier": "T1", "ticket_cost": 84.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 7, "ewpd": 1.5, "desc": "FB7 Purse:8-15k + Chalk:N", "env_filter": _make_env(field_min=7, field_max=7, purse_lo=8000, purse_hi=15000, chalk_req="N", sum_min=6.0, sum_max=8.0)},
+    "FB7_3": {"tier": "T1", "ticket_cost": 84.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 7, "ewpd": 1.5, "desc": "FB7 Purse:8-15k + Sprint + Chalk:N", "env_filter": _make_env(field_min=7, field_max=7, purse_lo=8000, purse_hi=15000, sprint_req="Y", chalk_req="N", fav2_min=4.0)},
+    "FB7_4": {"tier": "T1", "ticket_cost": 84.00, "hit_func": _hit_always_true, "payout_col": "Superf_paid", "payout_mult": 0.05, "min_runners": 7, "ewpd": 1.5, "desc": "FB7 Chalk:N + Sum:6-8", "env_filter": _make_env(field_min=7, field_max=7, chalk_req="N", sum_min=6.0, sum_max=8.0, fav2_min=4.0)},
 
-    # ── n=7: Dime superfecta box ($84.00) ─────────────────────────────────────
-    # v3.7 widening: purse_hi 20k→25k on FB7_1/2/3/6;
-    #                sum_max raised on FB7_1/2/4/5
-    "FB7_1": {
-        "tier": "T1", "ticket_cost": 84.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 7, "ewpd": 1.5,
-        "desc": "FB7 Purse:5-25k + Chalk:N + Sum:4-10",
-        "env_filter": _make_env(field_min=7, field_max=7,
-                                purse_lo=5_000, purse_hi=25_000,
-                                chalk_req="N",
-                                sum_min=4.0, sum_max=10.0),
+    # ── NON-MONOTONIC STRUCTURED EXOTICS (THE SURVIVORS) ──────────────────────
+    "NM_Supr3666_N6_D": {
+        "tier": "T2", "ticket_cost": 18.00, "hit_func": _hit_supr3666, "payout_col": "Supr3666_pd", "payout_mult": 0.05,
+        "min_runners": 6, "ewpd": 1.5, "desc": "Supr3666 n=6 Chalk:N Fav2>=4.0 Sum:6-8.5",
+        "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", fav2_min=4.0, sum_min=6.0, sum_max=8.5),
     },
-    "FB7_2": {
-        "tier": "T1", "ticket_cost": 84.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 7, "ewpd": 1.5,
-        "desc": "FB7 Purse:5-25k + Chalk:N + Sum:4-11",
-        "env_filter": _make_env(field_min=7, field_max=7,
-                                purse_lo=5_000, purse_hi=25_000,
-                                chalk_req="N",
-                                sum_min=4.0, sum_max=11.0),
+    "NM_Sup4455_N6_C": {
+        "tier": "T1", "ticket_cost": 7.20, "hit_func": _hit_sup4455, "payout_col": "Sup4455_pd", "payout_mult": 0.05,
+        "min_runners": 6, "ewpd": 1.5, "desc": "Sup4455 n=6 Chalk:N Fav2>=4.0",
+        "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", fav2_min=4.0),
     },
-    "FB7_3": {
-        "tier": "T1", "ticket_cost": 84.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 7, "ewpd": 1.5,
-        "desc": "FB7 Purse:5-25k + Sprint + Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=7, field_max=7,
-                                purse_lo=5_000, purse_hi=25_000,
-                                sprint_req="Y", chalk_req="N",
-                                fav2_min=2.5),
+    "NM_Sup4455_N6_D": {
+        "tier": "T2", "ticket_cost": 7.20, "hit_func": _hit_sup4455, "payout_col": "Sup4455_pd", "payout_mult": 0.05,
+        "min_runners": 6, "ewpd": 1.5, "desc": "Sup4455 n=6 Chalk:N Fav2>=4.0 Sum:6-8.5",
+        "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", fav2_min=4.0, sum_min=6.0, sum_max=8.5),
     },
-    "FB7_4": {
-        "tier": "T1", "ticket_cost": 84.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 7, "ewpd": 1.5,
-        "desc": "FB7 Chalk:N + Sum:4-11 + Fav2:2.5+",
-        "env_filter": _make_env(field_min=7, field_max=7,
-                                chalk_req="N",
-                                sum_min=4.0, sum_max=11.0,
-                                fav2_min=2.5),
+    "NM_Sup4456_N6_D": {
+        "tier": "T2", "ticket_cost": 10.80, "hit_func": _hit_sup4456, "payout_col": "Sup4456_pd", "payout_mult": 0.05,
+        "min_runners": 6, "ewpd": 1.5, "desc": "Sup4456 n=6 Chalk:N Fav2>=4.0 Sum:6-8.5",
+        "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", fav2_min=4.0, sum_min=6.0, sum_max=8.5),
     },
-    "FB7_5": {
-        "tier": "T1", "ticket_cost": 84.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 7, "ewpd": 1.5,
-        "desc": "FB7 Sprint + Race:2-10 + Chalk:N + Sum:4-11",
-        "env_filter": _make_env(field_min=7, field_max=7,
-                                sprint_req="Y",
-                                race_min=2, race_max=10,
-                                chalk_req="N",
-                                sum_min=4.0, sum_max=11.0),
+    "NM_Sup4445_N6_C": {
+        "tier": "T1", "ticket_cost": 4.80, "hit_func": _hit_sup4445, "payout_col": "Sup4445_pd", "payout_mult": 0.05,
+        "min_runners": 6, "ewpd": 1.5, "desc": "Sup4445 n=6 Chalk:N Fav2>=4.0",
+        "env_filter": _make_env(field_min=6, field_max=6, chalk_req="N", fav2_min=4.0),
     },
-    "FB7_6": {
-        "tier": "T1", "ticket_cost": 84.00,
-        "hit_func": _hit_always_true, "payout_col": "Superf_paid",
-        "payout_mult": 0.10, "min_runners": 7, "ewpd": 1.5,
-        "desc": "FB7 Purse:5-25k + Chalk:N + Fav2:2.5+",
-        "env_filter": _make_env(field_min=7, field_max=7,
-                                purse_lo=5_000, purse_hi=25_000,
-                                chalk_req="N", fav2_min=2.5),
+    "NM_Sup4445_N7_D": {
+        "tier": "T1", "ticket_cost": 4.80, "hit_func": _hit_sup4445, "payout_col": "Sup4445_pd", "payout_mult": 0.05,
+        "min_runners": 7, "ewpd": 1.5, "desc": "Sup4445 n=7 Chalk:N Fav2>=4.0 Sum:6-8.5",
+        "env_filter": _make_env(field_min=7, field_max=7, chalk_req="N", fav2_min=4.0, sum_min=6.0, sum_max=8.5),
     },
-
-    # ── n=8: SUP8888 — COMMENTED OUT ($168/race; too expensive for Phase 1) ───
-    # "FB8_1": { ... },
-    # "FB8_2": { ... },
-    # "FB8_3": { ... },
-    # "FB8_4": { ... },
-    # "FB8_5": { ... },
-    # "FB8_6": { ... },
-
-    # ── n=8: COMMENTED OUT — $168/race; too expensive for Phase 1 ─────────────
-    # "FB8_1": { ... },
-    # "FB8_2": { ... },
-    # "FB8_3": { ... },
-    # "FB8_4": { ... },
-    # "FB8_5": { ... },
-    # "FB8_6": { ... },
-
-    # ── M_ENGINE — DROPPED ────────────────────────────────────────────────────
-    # M_ENGINE_FvP: EV -$0.15, n=75,020 → systematic negative drag
-    # M_ENGINE_FvS: EV -$0.17, n=75,020 → systematic negative drag
-    #
-    # The "survival floor" hypothesis is rejected by the data.
-    # At 75,020 observations the signal is unambiguous: both instruments
-    # destroy capital at every bankroll level. The T4 staking fraction
-    # (0.010 in Phase 1) means they fire constantly and bleed steadily.
-    # With the FB6/FB7 portfolio providing positive EV, the M_ENGINE
-    # instruments are net harmful. DROPPED.
-    #
-    # "M_ENGINE_FvP": { ... },
-    # "M_ENGINE_FvS": { ... },
+    "NM_Sup2266_N10_D": {
+        "tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_sup2266, "payout_col": "Sup2266_pd", "payout_mult": 0.05,
+        "min_runners": 10, "ewpd": 1.5, "desc": "Sup2266 n=10 Chalk:N Fav2>=4.0 Sum:6-8.5",
+        "env_filter": _make_env(field_min=10, field_max=10, chalk_req="N", fav2_min=4.0, sum_min=6.0, sum_max=8.5),
+    },
+    "NM_Sup2266_N11_C": {
+        "tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_sup2266, "payout_col": "Sup2266_pd", "payout_mult": 0.05,
+        "min_runners": 11, "ewpd": 1.5, "desc": "Sup2266 n=11 Chalk:N Fav2>=4.0",
+        "env_filter": _make_env(field_min=11, field_max=11, chalk_req="N", fav2_min=4.0),
+    },
+    "NM_Sup2266_N11_D": {
+        "tier": "T1", "ticket_cost": 2.40, "hit_func": _hit_sup2266, "payout_col": "Sup2266_pd", "payout_mult": 0.05,
+        "min_runners": 11, "ewpd": 1.5, "desc": "Sup2266 n=11 Chalk:N Fav2>=4.0 Sum:6-8.5",
+        "env_filter": _make_env(field_min=11, field_max=11, chalk_req="N", fav2_min=4.0, sum_min=6.0, sum_max=8.5),
+    },
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
