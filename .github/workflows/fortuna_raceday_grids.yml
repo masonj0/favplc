@@ -59,6 +59,7 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add *.html v3_*_sheet_*.txt
+          # Use -f because tactical reports are usually in .gitignore
+          git add -f *.html v3_*_sheet_*.txt
           git diff --quiet && git diff --staged --quiet || git commit -m "Automated Raceday Grid Update - $(date +'%Y-%m-%d')"
           git push
