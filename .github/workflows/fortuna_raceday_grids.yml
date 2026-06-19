@@ -55,10 +55,15 @@ jobs:
           python scripts/generate_hourly_trigger_sheet.py
           python scripts/generate_strategy_trigger_sheet.py
 
+      - name: Generate GHA Summary
+        run: |
+          python scripts/generate_gha_summary.py
+
       - name: Commit & Push Artifacts
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add *.html v3_*_sheet_*.txt
+          # Force add ignored tactical files for publication
+          git add -f *.html v3_*_sheet_*.txt 2>/dev/null || true
           git diff --quiet && git diff --staged --quiet || git commit -m "Automated Raceday Grid Update - $(date +'%Y-%m-%d')"
           git push

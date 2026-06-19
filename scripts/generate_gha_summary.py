@@ -262,6 +262,28 @@ async def main():
 
         f.write("\n---\n")
 
+        # --- Tactical Reports Section ---
+        f.write("## 📋 Tactical Reports\n\n")
+
+        yymmdd = now_eastern().strftime("%m%d")
+        reports = {
+            "Hourly Trigger Sheet": f"v3_hourly_sheet_{yymmdd}.txt",
+            "Strategy Trigger Sheet": f"v3_strategy_sheet_{yymmdd}.txt"
+        }
+
+        for title, fname in reports.items():
+            if os.path.exists(fname):
+                f.write(f"### {title}\n")
+                f.write("<details>\n<summary>Click to view report</summary>\n\n")
+                f.write("```text\n")
+                f.write(Path(fname).read_text(encoding="utf-8"))
+                f.write("\n```\n")
+                f.write("</details>\n\n")
+            else:
+                f.write(f"### {title}\n_Report not generated for {yymmdd}_\n\n")
+
+        f.write("\n---\n")
+
         # --- FortunaDB Snapshot Section (Moved to Bottom) ---
         f.write("## 🐎 FortunaDB Snapshot\n\n")
         if not db_path.exists():
