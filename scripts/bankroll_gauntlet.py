@@ -733,8 +733,7 @@ def _extract_empirical_pnl_fast(df, name, inst):
             p2 = pd.to_numeric(split.iloc[:, 1], errors="coerce").values
             p3 = pd.to_numeric(split.iloc[:, 2], errors="coerce").values
             p4 = pd.to_numeric(split.iloc[:, 3], errors="coerce").values
-            parseable = ~(np.isnan(p1) | np.isnan(p2)
-                          | np.isnan(p3) | np.isnan(p4))
+            parseable = ~(np.isnan(p1) | np.isnan(p2) | np.isnan(p3))
             hit = vec_fn(p1, p2, p3, p4) & parseable
             return np.where(
                 valid & hit,
@@ -743,6 +742,9 @@ def _extract_empirical_pnl_fast(df, name, inst):
             ).astype(np.float64)
         except Exception:
             pass
+
+    if "RANKED_RESULTS" not in df.columns:
+        return np.full(n_q, -ticket_cost, dtype=np.float64)
 
     raw_results = df["RANKED_RESULTS"].values
     runners_arr = df["Runners"].values
