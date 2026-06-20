@@ -1,23 +1,6 @@
 #!/usr/bin/env python3
 """
 THE 100x GAUNTLET — v6.3.4 CRYSTAL OMNI EDITION (PATCHED)
-===========================================================
-Fixes applied:
-  1. STS_PRE → STRESS_PRESETS in main()
-  2. TKT_TBL unpack in seasonal sweep (8-col explicit unpack)
-  3. TKT_TBL unpack in main() tt= line (same fix)
-  4. Stress dict key "e"/"l" unified — stress accesses "emo"/"lbl"
-  5. _stat stress_label reads so["lbl"] not so.get("l","")
-  6. Ladder TXT export upgraded to full per-rung detail
-  7. "emo" and "lbl" keys used consistently throughout
-"""
-import warnings, datetime, json, os
-import numpy as np, pandas as pd
-import matplotlib; matplotlib.use("Agg")
-import matplotlib.pyplot as plt, matplotlib.gridspec as gridspec
-from matplotlib.lines import Line2D
-from numba import njit, prange; from numba.typed import List
-from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -161,6 +144,55 @@ _VH = {
     _h_s2255:lambda a,b,c,d:(a<=2)&(b<=2)&(c<=5)&(d<=5),
     _h_s2345:lambda a,b,c,d:(a<=2)&(b<=3)&(c<=4)&(d<=5),
     _h_s2266:lambda a,b,c,d:(a<=2)&(b<=2)&(c<=6)&(d<=6),
+}
+
+def _hit_supr3666(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 3 and pos[1] <= 6 and pos[2] <= 6 and pos[3] <= 6
+
+def _hit_sup4455(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 4 and pos[1] <= 4 and pos[2] <= 5 and pos[3] <= 5
+
+def _hit_sup4456(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 4 and pos[1] <= 4 and pos[2] <= 5 and pos[3] <= 6
+
+def _hit_sup4445(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 4 and pos[1] <= 4 and pos[2] <= 4 and pos[3] <= 5
+
+def _hit_sup2266(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 2 and pos[1] <= 2 and pos[2] <= 6 and pos[3] <= 6
+
+# v5.4 NEW
+def _hit_sup5556(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 5 and pos[1] <= 5 and pos[2] <= 5 and pos[3] <= 6
+
+def _hit_sup6666(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 6 and pos[1] <= 6 and pos[2] <= 6 and pos[3] <= 6
+
+def _hit_sup6667(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 6 and pos[1] <= 6 and pos[2] <= 6 and pos[3] <= 7
+
+def _hit_sup6678(pos, n):
+    if pos is None or len(pos) < 4: return False
+    return pos[0] <= 6 and pos[1] <= 6 and pos[2] <= 7 and pos[3] <= 8
+
+_VEC_HIT = {
+    _hit_supr3666: lambda a,b,c,d: (a<=3)&(b<=6)&(c<=6)&(d<=6),
+    _hit_sup4455:  lambda a,b,c,d: (a<=4)&(b<=4)&(c<=5)&(d<=5),
+    _hit_sup4456:  lambda a,b,c,d: (a<=4)&(b<=4)&(c<=5)&(d<=6),
+    _hit_sup4445:  lambda a,b,c,d: (a<=4)&(b<=4)&(c<=4)&(d<=5),
+    _hit_sup2266:  lambda a,b,c,d: (a<=2)&(b<=2)&(c<=6)&(d<=6),
+    _hit_sup5556:  lambda a,b,c,d: (a<=5)&(b<=5)&(c<=5)&(d<=6),
+    _hit_sup6666:  lambda a,b,c,d: (a<=6)&(b<=6)&(c<=6)&(d<=6),
+    _hit_sup6667:  lambda a,b,c,d: (a<=6)&(b<=6)&(c<=6)&(d<=7),
+    _hit_sup6678:  lambda a,b,c,d: (a<=6)&(b<=6)&(c<=7)&(d<=8),
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -560,6 +592,43 @@ def charts(paths, outcomes, fbr, st, pmap, plg, slbl, so):
     ax.legend(facecolor=BG,edgecolor=GRD,labelcolor=TXT,loc="upper right",fontsize=9)
     plt.tight_layout(); plt.savefig("Gauntlet_Phases.png",dpi=150,facecolor=BG,bbox_inches="tight"); plt.close()
     print("  📊 4 Charts saved: Gauntlet_Paths / Dist / Comfort / Phases")
+
+def chart_comfort_score(empirical_pnl_map):
+    """Visualizes instrument stability (Sharpe-like) vs performance (EV)."""
+    names = sorted(
+        [n for n in INSTRUMENTS
+         if n in empirical_pnl_map and len(empirical_pnl_map[n]) > 0],
+        key=lambda n: (INSTRUMENTS[n]["tier"], n)
+    )
+    if not names: return
+
+    evs = []
+    stds = []
+    colors = []
+
+    for name in names:
+        arr = empirical_pnl_map[name]
+        ev = float(arr.mean())
+        std = float(arr.std())
+        evs.append(ev)
+        stds.append(std)
+        colors.append(TIER_COLORS.get(INSTRUMENTS[name]["tier"], MUT))
+
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor=BG)
+    _style_ax(ax, title="Instrument Comfort Score: Stability vs Performance",
+              xlabel="Volatility (Std Dev of P&L)", ylabel="Performance (Mean EV)")
+
+    ax.scatter(stds, evs, c=colors, s=100, alpha=0.7, edgecolors=GRID)
+
+    for i, name in enumerate(names):
+        ax.annotate(name, (stds[i], evs[i]), color=TEXT, fontsize=8, xytext=(5, 5), textcoords='offset points')
+
+    ax.axhline(0, color=MUT, lw=1, linestyle='--')
+
+    plt.tight_layout()
+    plt.savefig("Gauntlet_Comfort.png", dpi=150, facecolor=BG, bbox_inches="tight")
+    plt.close()
+    print("  📊 Gauntlet_Comfort.png")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONSOLE REPORT
