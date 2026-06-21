@@ -12,7 +12,7 @@ def test_instrument_registry_integrity():
     except ImportError as e:
         pytest.fail(f"Could not import INS from scripts.bankroll_gauntlet: {e}")
 
-    # v6.3.4 internal keys: t, tc, hf, pc, mn, ew, ef
+    # v6.6.0 internal keys: t, tc, hf, pc, mn, ew, ef
     required_keys = {"t", "tc", "hf", "pc", "mn", "ew", "ef"}
 
     for name, inst in INS.items():
@@ -21,12 +21,12 @@ def test_instrument_registry_integrity():
             assert key in inst, f"Instrument '{name}' is missing required key: {key}"
 
         # Check types/validity
-        assert inst["t"] in {"T1", "T2", "T3", "T4", "BNS", "APX"}, f"Invalid tier for '{name}': {inst['t']}"
+        assert inst["t"] in {"T1", "T2", "T3", "T4", "BONUS", "APEX"}, f"Invalid tier for '{name}': {inst['t']}"
         assert inst["tc"] > 0, f"Non-positive ticket cost for '{name}'"
         assert callable(inst["hf"]), f"hf for '{name}' is not callable"
         assert isinstance(inst["mn"], int), f"mn for '{name}' must be an integer"
 
-        # Verify specific fields for SB instruments (v6.3.4 uses mx)
+        # Verify specific fields for SB instruments (v6.6.0 uses mx)
         if name.startswith("SB"):
             assert "mx" in inst, f"SB instrument '{name}' must have 'mx' field"
             assert inst["mx"] >= inst["mn"], f"SB instrument '{name}' has mx < mn"
