@@ -2,43 +2,6 @@
 """
 THE 100x GAUNTLET — v6.6.0 DIAMOND APEX REFINED
 BATCH RUNNER EDITION
-=================================================
-New in Batch Runner:
-  - One-time data load + PnL extraction for all windows
-  - Automated loop over all Window × Strategy × Stress × Mode combos
-  - Mega-JSON output: Gauntlet_MegaResults.json
-  - Cross-run leaderboard CSV: Gauntlet_Leaderboard.csv
-  - Ladder results embedded in mega-JSON
-  - Zero manual prompts during batch run
-  - Progress bar across all runs
-  - Summary leaderboard printed to console at end
-  - Per-run charts saved as: Gauntlet_Paths_{key}.png etc.
-  - APEX confirmation gate auto-skipped in batch (safety)
-
-v6.5.1 → v6.6.0 changes also retained:
-  1.  APX_Supr3666 promoted APEX→T3, v=1
-  2.  APX_Supr2555 promoted APEX→T3, v=1
-  3.  FB7_3 promoted to v=1 validated
-  4.  HARD DELETE: BNS_Sup3335/BNS_Sup2266/BNS_NM_4455_Fav3/BNS_SB10_6667
-  5.  BNS_SB12_R9 demoted→BONUS
-  6.  BNS_FB5_Route gate tightened
-  7.  SB12_S6667_A watch_list=True
-  8.  Early-ruin annotation in charts + stats
-  9.  Tier-aware prune thresholds
-  10. All v6.5.1 fixes retained
-"""
-import warnings, datetime, json, os, sys, time, itertools
-import numpy as np, pandas as pd
-import matplotlib; matplotlib.use("Agg")
-import matplotlib.pyplot as plt, matplotlib.gridspec as gridspec
-from matplotlib.lines import Line2D
-from numba import njit, prange
-from numba.typed import List
-from tqdm import tqdm
-
-if sys.stdout.encoding.lower() != 'utf-8':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 warnings.filterwarnings("ignore")
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -55,6 +55,10 @@ jobs:
           python scripts/generate_hourly_trigger_sheet.py
           python scripts/generate_strategy_trigger_sheet.py
 
+      - name: Generate GHA Summary
+        run: |
+          python scripts/generate_gha_summary.py
+
       - name: Commit & Push Artifacts
         run: |
           git config --local user.email "action@github.com"
