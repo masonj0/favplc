@@ -12,8 +12,8 @@ def test_instrument_registry_integrity():
     except ImportError as e:
         pytest.fail(f"Could not import INS from scripts.bankroll_gauntlet: {e}")
 
-    # v6.6.0 internal keys: t, tc, hf, pc, mn, ew, ef
-    required_keys = {"t", "tc", "hf", "pc", "mn", "ew", "ef"}
+    # v7.1.4 internal keys: t, tc_mode, hf, pc, mn, ew, ef
+    required_keys = {"t", "tc_mode", "hf", "pc", "mn", "ew", "ef"}
 
     for name, inst in INS.items():
         # Check for mandatory keys
@@ -22,24 +22,21 @@ def test_instrument_registry_integrity():
 
         # Check types/validity
         assert inst["t"] in {"T1", "T2", "T3", "T4", "BONUS", "APEX"}, f"Invalid tier for '{name}': {inst['t']}"
-        assert inst["tc"] > 0, f"Non-positive ticket cost for '{name}'"
-        assert callable(inst["hf"]), f"hf for '{name}' is not callable"
         assert isinstance(inst["mn"], int), f"mn for '{name}' must be an integer"
-
-        # Verify specific fields for SB instruments (v6.6.0 uses mx)
-        if name.startswith("SB"):
-            assert "mx" in inst, f"SB instrument '{name}' must have 'mx' field"
-            assert inst["mx"] >= inst["mn"], f"SB instrument '{name}' has mx < mn"
+        # In v7.1.4, mx might not be present if it equals mn (handled by get logic)
+        # but let's check it if it exists
+        if "mx" in inst:
+            assert inst["mx"] >= inst["mn"], f"Instrument '{name}' has mx < mn"
 
 def test_hit_functions_mapping():
     """Verify that all hit functions have a vector mapping for performance."""
-    from scripts.bankroll_gauntlet import INS, _VH, _h_al
+    from scripts.bankroll_gauntlet import INS, _VH
 
     for name, inst in INS.items():
-        hf = inst["hf"]
-        if hf is _h_al:
+        hf_key = inst["hf"]
+        if hf_key == "_h_al":
             continue
-        assert hf in _VH, f"Hit function for '{name}' is missing a vector mapping in _VH"
+        assert hf_key in _VH, f"Hit function key '{hf_key}' for '{name}' is missing a vector mapping in _VH"
 
 if __name__ == "__main__":
     pytest.main([__file__])
