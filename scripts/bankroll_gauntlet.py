@@ -1,27 +1,6 @@
 #!/usr/bin/env python3
 """
 THE 100x GAUNTLET — v7.1.5 "OMNI RESTORE"
-==================================================
-v7.1.5 changes:
-  1.  Restored full Hit Logic in _x_pnl (hit_func validation).
-  2.  Restored RANKED_RESULTS parsing for structured exotics.
-  3.  Restored Charting (matplotlib) and Reporting.
-  4.  Restored Interactive Menu and Batch Mode.
-  5.  Fixed NameError: defined _mk_env and hit helpers before INS registry.
-  6.  Integrated v5.1 PRUNED strategy list as requested.
-  7.  Aligned key names (t/tier, tc/ticket_cost) for test compatibility.
-"""
-import warnings, datetime, json, os, sys, time, itertools
-import numpy as np, pandas as pd
-import matplotlib; matplotlib.use("Agg")
-import matplotlib.pyplot as plt, matplotlib.gridspec as gridspec
-from numba import njit, prange
-from numba.typed import List
-from tqdm import tqdm
-
-if sys.stdout.encoding is None or sys.stdout.encoding.lower() != 'utf-8':
-    import io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 warnings.filterwarnings("ignore")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -324,7 +303,7 @@ def run_gauntlet_core(npth, mxr, sbr, tgt, rfl, mb, c, fm, ls, m_on, mt, ms, t_o
     return ap, aph, oc, ra
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CHARTING
+# INSTRUMENT SNAPSHOT  (stored in mega-JSON per run)
 # ══════════════════════════════════════════════════════════════════════════════
 def _sax(a, t=None, x=None, y=None):
     a.set_facecolor(BG); a.tick_params(colors=MUT, labelsize=8)
