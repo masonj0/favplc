@@ -21,7 +21,7 @@ def test_instrument_registry_integrity():
             assert key in inst, f"Instrument '{name}' is missing required key: {key}"
 
         # Check types/validity
-        assert inst["t"] in {"T1", "T2", "T3", "T4", "BONUS", "APEX"}, f"Invalid tier for '{name}': {inst['t']}"
+        assert inst["t"] in {"T1A", "T1B", "T1", "T2", "T3", "T4", "BONUS", "APEX"}, f"Invalid tier for '{name}': {inst['t']}"
         assert isinstance(inst["mn"], int), f"mn for '{name}' must be an integer"
         # In v7.1.4, mx might not be present if it equals mn (handled by get logic)
         # but let's check it if it exists
