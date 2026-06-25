@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-THE 100x GAUNTLET — v7.5.2 "OMNI RESTORE"
+THE 100x GAUNTLET — v8.0.2 "GOLD MASTER"
 warnings.filterwarnings("ignore")
 """
 
@@ -75,39 +75,32 @@ def _mk_env(field_min=0, field_max=99, chalk_req=None, first_req=None, sprint_re
 # ══════════════════════════════════════════════════════════════════════════════
 # HIT FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════
-_h_al = lambda a,b,c,d: True
-_h_t145 = lambda a,b,c,d: (a==1)&(b>=2)&(b<=4)&(c>=2)&(c<=5)
-_h_s5556 = lambda a,b,c,d: (a<=5)&(b<=5)&(c<=5)&(d<=6)
-_h_s4455 = lambda a,b,c,d: (a<=4)&(b<=4)&(c<=5)&(d<=5)
-_h_s4456 = lambda a,b,c,d: (a<=4)&(b<=4)&(c<=5)&(d<=6)
-_h_s3666 = lambda a,b,c,d: (a<=3)&(b<=6)&(c<=6)&(d<=6)
-_h_s6667 = lambda a,b,c,d: (a<=6)&(b<=6)&(c<=6)&(d<=7)
-_h_s4466 = lambda a,b,c,d: (a<=4)&(b<=4)&(c<=6)&(d<=6)
-_h_s5567 = lambda a,b,c,d: (a<=5)&(b<=5)&(c<=6)&(d<=7)
-_h_s2355 = lambda a,b,c,d: (a<=2)&(b<=3)&(c<=5)&(d<=5)
-_h_tri2l1 = lambda a,b,c,d: (a<=2)&(b<=6)&(c<=2)
-_h_tria22 = lambda a,b,c,d: (b<=2)&(c<=2)
-_h_s2555 = lambda a,b,c,d: (a<=2)&(b<=5)&(c<=5)&(d<=5)
-_h_s2444 = lambda a,b,c,d: (a<=2)&(b<=4)&(c<=4)&(d<=4)
-_h_s4444 = lambda a,b,c,d: (a<=4)&(b<=4)&(c<=4)&(d<=4)
-_h_s1445 = lambda a,b,c,d: (a==1)&(b<=4)&(c<=4)&(d<=5)
-_h_s1234 = lambda a,b,c,d: (a==1)&(b==2)&(c==3)&(d==4)
-_h_s3444 = lambda a,b,c,d: (a<=3)&(b<=4)&(c<=4)&(d<=4)
-_h_s2266 = lambda a,b,c,d: (a<=2)&(b<=2)&(c<=6)&(d<=6)
-_h_s1555 = lambda a,b,c,d: (a==1)&(b<=5)&(c<=5)&(d<=5)
-_h_s4144 = lambda a,b,c,d: (a<=4)&(b==1)&(c<=4)&(d<=4)
-_h_t123 = lambda a,b,c,d: (a==1)&(b==2)&(c==3)
-_h_s6678 = lambda a,b,c,d: (a<=6)&(b<=6)&(c<=7)&(d<=8)
+def _h_al(p, n=None):    return True
+def _h_t145(p, n=None):  return (len(p) > 2 and p[0] == 1 and p[1] in {2,3,4} and p[2] in {2,3,4,5})
+def _h_t245(p, n=None):  return (len(p) > 2 and p[0] <= 2 and p[1] <= 4 and p[1] != p[0] and p[2] <= 5 and p[2] != p[0] and p[2] != p[1])
+def _h_s3214(p, n=None): return (len(p) > 3 and p[0] <= 3 and p[1] <= 2 and p[2] <= 1 and p[3] <= 4)
+def _h_s3225(p, n=None): return (len(p) > 3 and p[0] <= 3 and p[1] <= 2 and p[2] <= 2 and p[3] <= 5)
+def _h_s4455(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and max(p[2:4]) <= 5)
+def _h_s4456(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and p[2] <= 5 and p[3] <= 6)
+def _h_s4466(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and max(p[2:4]) <= 6)
+def _h_s4444(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and p[2] <= 4 and p[3] <= 4)
+def _h_s5556(p, n=None): return (len(p) > 3 and max(p[:3]) <= 5 and p[3] <= 6)
+def _h_s5567(p, n=None): return (len(p) > 3 and p[0] <= 5 and p[1] <= 5 and p[2] <= 6 and p[3] <= 7)
+def _h_s2444(p, n=None): return (len(p) > 3 and p[0] <= 2 and p[1] <= 4 and p[2] <= 4 and p[3] <= 4)
+def _h_s2555(p, n=None): return (len(p) > 3 and p[0] <= 2 and p[1] <= 5 and p[2] <= 5 and p[3] <= 5)
+def _h_s3666(p, n=None): return (len(p) > 3 and p[0] <= 3 and max(p[1:4]) <= 6)
+def _h_s6667(p, n=None): return (len(p) > 3 and max(p[:3]) <= 6 and p[3] <= 7)
+def _h_s1234(p, n=None): return (len(p) > 3 and p[0] == 1 and p[1] == 2 and p[2] == 3 and p[3] == 4)
+def _h_t135(p, n=None):  return (len(p) > 2 and p[0] == 1 and p[1] <= 3 and p[2] <= 5)
+def _h_tria22(p, n=None): return (len(p) > 2 and p[0] >= 3 and p[1] <= 2 and p[2] <= 2 and p[1] != p[2])
 
 _VH = {
-    "_h_al": _h_al, "_h_t145": _h_t145, "_h_s5556": _h_s5556,
-    "_h_s4455": _h_s4455, "_h_s4456": _h_s4456, "_h_s3666": _h_s3666,
-    "_h_s6667": _h_s6667, "_h_s4466": _h_s4466, "_h_s5567": _h_s5567,
-    "_h_s2355": _h_s2355, "_h_tri2l1": _h_tri2l1, "_h_tria22": _h_tria22,
-    "_h_s2555": _h_s2555, "_h_s2444": _h_s2444, "_h_s4444": _h_s4444,
-    "_h_s1445": _h_s1445, "_h_s1234": _h_s1234, "_h_s3444": _h_s3444,
-    "_h_s2266": _h_s2266, "_h_s1555": _h_s1555, "_h_s4144": _h_s4144,
-    "_h_t123": _h_t123, "_h_s6678": _h_s6678
+    "_h_al": _h_al, "_h_t145": _h_t145, "_h_t245": _h_t245,
+    "_h_s3214": _h_s3214, "_h_s3225": _h_s3225, "_h_s4455": _h_s4455,
+    "_h_s4456": _h_s4456, "_h_s4466": _h_s4466, "_h_s4444": _h_s4444,
+    "_h_s5556": _h_s5556, "_h_s5567": _h_s5567, "_h_s2444": _h_s2444,
+    "_h_s2555": _h_s2555, "_h_s3666": _h_s3666, "_h_s6667": _h_s6667,
+    "_h_s1234": _h_s1234, "_h_t135": _h_t135, "_h_tria22": _h_tria22
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -128,417 +121,202 @@ UNIT_SUPERF = 2.00
 UNIT_TRI    = 2.00
 
 # ══════════════════════════════════════════════════════════════════════════════
-# INSTRUMENT REGISTRY — v7.5.2
+# INSTRUMENT REGISTRY — v8.0.2 GOLD MASTER
 # ══════════════════════════════════════════════════════════════════════════════
 INS = {
-    # ── TIER 1A — active from $0 ──────────────────────────────────────────────
+    # ── T1A ──────────────────────────────────────────────────────────────────
     "FB4_2": {
-        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
-        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=4,smax=7.5,f2min=2.5,f2max=4)},
+        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=4, c="N", smin=4.0, smax=7.5, f2min=2.5, f2max=4.0), "mn": 4},
     "FB4_3": {
-        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
-        "ef":_mk_env(fmin=4,fmax=4,c="N",fr="N",smin=4,smax=6)},
+        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=4, c="N", fr="N", smin=4.0, smax=6.0), "mn": 4},
     "FB4_4": {
-        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
-        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=4,smax=6)},
+        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=4, c="N", smin=4.0, smax=6.0), "mn": 4},
     "FB4_5": {
-        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
-        "ef":_mk_env(fmin=4,fmax=4,c="N",spr="Y",smin=4,smax=6)},
-
-    # ── TIER 1B — active from $3,000 ─────────────────────────────────────────
-    "SB6_S5556_A": {
-        "t":"T1B","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=8.5,plo=8000,phi=30000)}, # W8
-    "SB6_S5556_B": {
-        "t":"T1B","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",smin=6,smax=8.5,plo=8000,phi=30000)}, # W9
-    "NM_Sup4455_N6_C": {
-        "t":"T1B","tc_mode":"pattern_superf","pat":[4,4,5,5],
-        "unit_price":UNIT_SUPERF,"_old_tc":144,
-        "hf":"_h_s4455","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
-    "FB5_2": {
-        "t":"T1B","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":240,"hf":"_h_al","pc":"Superf_paid","mn":5,"mx":5,"ew":2.5,"v":1,
-        "ef":_mk_env(fmin=5,fmax=5,c="N",f2min=3)}, # W5
-
-    # ── TIER 2 — active from $5,000 ──────────────────────────────────────────
-    "TRI145": {
-        "t":"T2","tc_mode":"pattern_tri","pat":[1,4,5],
-        "unit_price":UNIT_TRI,"_old_tc":18,
-        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":2.8,"v":1,
-        "ef":_mk_env(smin=8,f2min=2.5)}, # W1
-    "SB6_S5556_C": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":2.5,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",spr="Y",smin=6,smax=8.5,plo=8000,phi=35000)},
-    "SB6_S5556_SumWide": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=10.5,plo=8000,phi=25000)}, # W4
-    "SB6_S5556_A_P35": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=8.5,plo=8000,phi=40000)}, # W7
-    "NM_Sup4455_N6_D": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[4,4,5,5],
-        "unit_price":UNIT_SUPERF,"_old_tc":144,
-        "hf":"_h_s4455","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4,smin=6,smax=9.5)},
-    "NM_Sup4456_N6_D": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[4,4,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":216,
-        "hf":"_h_s4456","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4,smin=6,smax=9.5)},
-    "NM_Supr3666_N6_D": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[3,6,6,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s3666","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4,smin=6,smax=10.0)}, # W6
-    "FB6_HighPurse": {
-        "t":"T2","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,
-        "watch_reason":"EV/tc=+0.335 confirmed. plo=25000 is differentiator.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=3,plo=25000)}, # W3
-
-    # ── TIER 2 WATCH — v=0, not in active strategies ─────────────────────────
-    "SB6_S5556_E": {
-        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":0,
-        "watch_list":True,
-        "watch_reason":"EV=+300 N=90. v=0 policy. Needs OOS confirm before v=1.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=9.5,plo=8000,phi=35000)},
-
-    # ── TIER 3 — active from $10,000 ─────────────────────────────────────────
+        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=4, c="N", spr="Y", smin=4.0, smax=6.0), "mn": 4},
     "FB4_6": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.0,"v":1,
-        "ef":_mk_env(fmin=4,fmax=4,rmin=4,rmax=8,smin=4,smax=6,f2min=2.5,f2max=4)},
-    "FB7_1": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.5,"v":1,
-        "ef":_mk_env(fmin=7,fmax=7,c="N",fr="N",spr="Y",plo=8000,phi=15000,smin=6,smax=8)},
-    "FB7_2": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.5,"v":1,
-        "ef":_mk_env(fmin=7,fmax=7,c="N",plo=8000,phi=15000,smin=6,smax=8)},
-    "FB7_3": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.75,"v":1,
-        "watch_list":True,"watch_reason":"EV=+574 EV/tc=+0.342 — highest absolute EV in T3.",
-        "ef":_mk_env(fmin=7,fmax=7,c="N",spr="Y",plo=8000,phi=20000,f2min=4,smin=6)},
-    "FB7_4": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.5,"v":1,
-        "ef":_mk_env(fmin=7,fmax=7,c="N",smin=6,smax=8,f2min=4)},
-    "SB12_S6667_A": {
-        "t":"T3","tc_mode":"pattern_superf","pat":[6,6,6,7],
-        "unit_price":UNIT_SUPERF,"_old_tc":960,
-        "hf":"_h_s6667","pc":"Superf_paid","mn":12,"mx":12,"ew":1.5,"v":1,
-        "watch_list":True,
-        "watch_reason":"36mo EV=+292 N=44. Negative 18mo. Hold T3, monitor.",
-        "ef":_mk_env(fmin=12,fmax=12,c="N",spr="N",rmin=4,rmax=9,
-                     smin=4,smax=8.5,f2min=4,plo=8000,phi=25000)},
-    "FB6_First": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":0,
-        "watch_list":True,"watch_reason":"QUARANTINED: EV/tc=-0.183 all windows.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="Y",f2min=4)},
-    "FB6_1": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,"watch_reason":"DEMOTED T2→T3 v7.1.8. EV/tc=+0.239 overall.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",spr="Y",f2min=4)},
-    "FB6_2": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,"watch_reason":"DEMOTED T2→T3 v7.1.8. EV/tc=+0.328 overall.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",rmin=4,rmax=8,f2min=4)},
-    "FB6_3": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,"watch_reason":"DEMOTED T2→T3 v7.1.8. EV/tc=+0.323 overall.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",rmin=4,rmax=8,f2min=4)},
-    "FB6_4": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,"watch_reason":"DEMOTED T2→T3 v7.1.8. EV/tc=+0.201 overall.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",spr="Y",f2min=4)},
-    "FB6_5": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,"watch_reason":"DEMOTED T2→T3 v7.1.8. EV/tc=+0.202 overall.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",f2min=4)},
-    "FB6_6": {
-        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
-        "watch_list":True,"watch_reason":"DEMOTED T2→T3 v7.1.8. EV/tc=+0.149 overall.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
-    "NM_Sup4466": {
-        "t":"T3","tc_mode":"pattern_superf","pat":[4,4,6,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":288,
-        "hf":"_h_s4466","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
-    "NM_Sup5567": {
-        "t":"T3","tc_mode":"pattern_superf","pat":[5,5,6,7],
-        "unit_price":UNIT_SUPERF,"_old_tc":480,
-        "hf":"_h_s5567","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
+        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=4, smin=4.0, smax=6.0, f2min=2.5, f2max=4.0), "mn": 4},
+    "Sup3214_R5": {
+        "t": "T1A", "tc": 2.0, "hf": "_h_s3214", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=5, fmax=5, c="N", smin=3.0), "mn": 5},
+    "Sup3214_R6": {
+        "t": "T1A", "tc": 2.0, "hf": "_h_s3214", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, smin=3.0), "mn": 6},
+    "TRI145": {
+        "t": "T1A", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, smin=9.0, f2min=2.5), "mn": 5, "mx": 13},
+    "TRI245": {
+        "t": "T1A", "tc": 36.0, "hf": "_h_t245", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, smin=9.0, f2min=2.5), "mn": 5, "mx": 13},
+
+    # ── T1B ──────────────────────────────────────────────────────────────────
+    "SB6_S5556_A": {
+        "t": "T1B", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", smin=6.0, smax=8.5, plo=8000, phi=25000), "mn": 6},
+    "SB6_S5556_B": {
+        "t": "T1B", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", fr="N", smin=6.0, smax=8.5, plo=8000, phi=25000), "mn": 6},
+    "NM_Sup4455_N6_C": {
+        "t": "T1B", "tc": 144.0, "hf": "_h_s4455", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+    "FB5_2": {
+        "t": "T1B", "tc": 240.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=5, fmax=5, c="N", f2min=4.0, smin=6.0), "mn": 5},
+    "NM_Sup4455_N6_D": {
+        "t": "T1B", "tc": 144.0, "hf": "_h_s4455", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, smin=6.0, smax=8.5), "mn": 6},
+    "TRI_Sum8": {
+        "t": "T1B", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, smin=8.0, f2min=2.5), "mn": 5, "mx": 13},
+    "FB5_Fav3": {
+        "t": "T1B", "tc": 240.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=5, fmax=5, c="N", f2min=3.0), "mn": 5},
+    "Supr4444_High": {
+        "t": "T1B", "tc": 48.0, "hf": "_h_s4444", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=6, smin=7.5), "mn": 4, "mx": 6},
+    "Sup2444_High": {
+        "t": "T1B", "tc": 24.0, "hf": "_h_s2444", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=4, fmax=6, smin=7.5), "mn": 4, "mx": 6},
+    "SB6_S5556_SumWide": {
+        "t": "T1B", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", smin=6.0, smax=9.5, plo=8000, phi=25000), "mn": 6},
+    "NM_Sup4456_N6_D": {
+        "t": "T1B", "tc": 216.0, "hf": "_h_s4456", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, smin=6.0, smax=9.5), "mn": 6},
+    "NM_Supr3666_N6_D": {
+        "t": "T1B", "tc": 360.0, "hf": "_h_s3666", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, smin=6.0, smax=9.5), "mn": 6},
+
+    # ── T2 ───────────────────────────────────────────────────────────────────
+    "SB6_S5556_C": {
+        "t": "T2", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="Y", smin=6.0, smax=8.5, plo=8000, phi=35000), "mn": 6},
+    "SB6_S5556_A_P35": {
+        "t": "T2", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", smin=6.0, smax=8.5, plo=8000, phi=35000), "mn": 6},
     "TRI_First": {
-        "t":"T3","tc_mode":"pattern_tri","pat":[1,4,5],
-        "unit_price":UNIT_TRI,"_old_tc":18,
-        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":2.0,"v":1,
-        "ef":_mk_env(fr="Y",smin=9,f2min=2.0)}, # W2
+        "t": "T2", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, fr="Y", smin=9.0, f2min=2.5), "mn": 5, "mx": 13},
+    "FB6_2": {
+        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+    "FB6_3": {
+        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+    "FB6_5": {
+        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+    "FB6_6": {
+        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+    "NM_Sup4466": {
+        "t": "T2", "tc": 288.0, "hf": "_h_s4466", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+    "NM_Sup5567": {
+        "t": "T2", "tc": 480.0, "hf": "_h_s5567", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
 
-    # ── BONUS — discovery, v=0, excluded from active strategies ──────────────
-    "BNS_SB6_RouteOnly": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[5,5,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":2.5,"v":0,
-        "watch_list":True,"watch_reason":"EV=-46 N=11. Thin and negative. Monitor.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",spr="N",smin=6,smax=8.5,plo=8000,phi=25000)},
-    "BNS_SB12_R9": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[6,6,6,7],
-        "unit_price":UNIT_SUPERF,"_old_tc":960,
-        "hf":"_h_s6667","pc":"Superf_paid","mn":12,"mx":12,"ew":1.5,"v":0,
-        "watch_list":True,"watch_reason":"EV=-28 18mo N=23. Inconsistent. Monitor.",
-        "ef":_mk_env(fmin=12,fmax=12,c="N",spr="N",rmin=4,rmax=9,
-                     smin=4,smax=8.5,f2min=4,plo=8000,phi=25000)},
+    # ── T3 ───────────────────────────────────────────────────────────────────
+    "FB7_1": {
+        "t": "T3", "tc": 1680.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=7, fmax=7, c="N", fr="N", spr="Y", plo=8000, phi=15000, smin=6.0, smax=8.0), "mn": 7},
+    "FB7_3": {
+        "t": "T3", "tc": 1680.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=7, fmax=7, c="N", spr="Y", plo=8000, phi=20000, f2min=4.0, smin=6.0), "mn": 7},
+    "FB7_4": {
+        "t": "T3", "tc": 1680.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=7, fmax=7, c="N", smin=6.0, smax=8.0, f2min=4.0, plo=10000), "mn": 7},
+    "FB6_1": {
+        "t": "T3", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="Y", f2min=4.0), "mn": 6},
+    "FB6_4": {
+        "t": "T3", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="Y", f2min=4.0), "mn": 6},
+
+    # ── BONUS ─────────────────────────────────────────────────────────────────
     "BNS_TRI_HighPurse": {
-        "t":"BONUS","tc_mode":"pattern_tri","pat":[1,4,5],
-        "unit_price":UNIT_TRI,"_old_tc":18,
-        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":2.0,"v":0,
-        "ef":_mk_env(smin=9,f2min=2.5,plo=25000)},
-    "BNS_TRI_Sum8": {
-        "t":"BONUS","tc_mode":"pattern_tri","pat":[1,4,5],
-        "unit_price":UNIT_TRI,"_old_tc":18,
-        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":3.0,"v":0,
-        "ef":_mk_env(smin=8,f2min=2.5)},
-    "BNS_FB5_Fav3": {
-        "t":"BONUS","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
-        "_old_tc":240,"hf":"_h_al","pc":"Superf_paid","mn":5,"mx":5,"ew":2.0,"v":0,
-        "ef":_mk_env(fmin=5,fmax=5,c="N",f2min=3)},
-    "BNS_Sup2355": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,3,5,5],
-        "unit_price":UNIT_SUPERF,"_old_tc":48,
-        "hf":"_h_s2355","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":0,
-        "watch_list":True,"watch_reason":"Gates tightened plo=10000 smin=6. Monitor HR.",
-        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=3,smin=6,smax=9,plo=10000)},
-    "BNS_Tri2L1": {
-        "t":"BONUS","tc_mode":"pattern_tri","pat":[2,6,2],
-        "unit_price":UNIT_TRI,"_old_tc":18,
-        "hf":"_h_tri2l1","pc":"Trif_paid","mn":6,"mx":13,"ew":3.0,"v":0,
-        "watch_list":True,"watch_reason":"QUARANTINE: TC drift -11.1%. HR=4% N=3139.",
-        "ef":_mk_env(c="N",smin=9,f2min=4)},
-    "BNS_TriA22": {
-        "t":"BONUS","tc_mode":"all_over_top2_top2_tri",
-        "unit_price":UNIT_TRI,"_old_tc":None,
-        "hf":"_h_tria22","pc":"Trif_paid","mn":5,"mx":13,"ew":2.5,"v":0,
-        "watch_list":True,
-        "watch_reason":"CORRECTED v7.1.10: ANY winner/Top2/Top2. TC=(n-2)*2. "
-                       "_old_tc=None — revalidate from scratch.",
-        "ef":_mk_env(c="N",smin=7,f2min=3)},
-
-    # ── SNIPER DISCOVERIES ────────────────────────────────────────────────────
+        "t": "BONUS", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, smin=9.0, f2min=2.5, plo=25000), "mn": 5, "mx": 13},
+    "BNS_Sup3225_R56": {
+        "t": "BONUS", "tc": 24.0, "hf": "_h_s3225", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=5, fmax=6, smin=4.0), "mn": 5, "mx": 6},
     "BNS_Supr2555_Sniper": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,5,5,5],
-        "unit_price":UNIT_SUPERF,"_old_tc":96,
-        "hf":"_h_s2555","pc":"Superf_paid","mn":5,"mx":7,"ew":1.5,"v":0,
-        "watch_list":True,
-        "watch_reason":"SNIPER: N=141 AvgP=30.06 Smth=0.212. Validate N>=200.",
-        "ef":_mk_env(fmin=5,fmax=7,c="Y",smin=4.0,smax=7.5,f2max=2.0)},
-    "BNS_Sup2444_High": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,4,4,4],
-        "unit_price":UNIT_SUPERF,"_old_tc":24,
-        "hf":"_h_s2444","pc":"Superf_paid","mn":4,"mx":6,"ew":1.0,"v":0,
-        "watch_list":True,
-        "watch_reason":"SNIPER: N=73 AvgP=29.68 Smth=0.174. SI_HIGH gate.",
-        "ef":_mk_env(fmin=4,fmax=6,smin=7.5)},
-    "BNS_Supr4444_High": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[4,4,4,4],
-        "unit_price":UNIT_SUPERF,"_old_tc":48,
-        "hf":"_h_s4444","pc":"Superf_paid","mn":4,"mx":6,"ew":1.0,"v":0,
-        "watch_list":True,
-        "watch_reason":"SNIPER: N=73 AvgP=26.95 Smth=0.143. SI_HIGH gate.",
-        "ef":_mk_env(fmin=4,fmax=6,smin=7.5)},
-    "BNS_Supr1445_R7_Mid": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[1,4,4,5],
-        "unit_price":UNIT_SUPERF,"_old_tc":24,
-        "hf":"_h_s1445","pc":"Superf_paid","mn":7,"mx":7,"ew":1.5,"v":0,
-        "watch_list":True,
-        "watch_reason":"SNIPER: N=94 AvgP=20.07 Smth=0.217 HIGHEST. SI_MID R7.",
-        "ef":_mk_env(fmin=7,fmax=7,c="Y",smin=4.0,smax=7.5,f2max=2.0)},
-    "BNS_Sup1234_Sniper": {
-        "t":"BONUS","tc_mode":"straight_superf",
-        "unit_price":UNIT_SUPERF,"_old_tc":2,"tc":2.0,
-        "hf":"_h_s1234","pc":"Superf_paid","mn":7,"mx":7,"ew":1.0,"v":0,
-        "watch_list":True,
-        "watch_reason":"SNIPER: N=94 AvgP=11.01 Smth=0.184. Straight 1-2-3-4. "
-                       "tc=$2 at $2 base. SI_MID R7 chalk gate.",
-        "ef":_mk_env(fmin=7,fmax=7,c="Y",smin=4.0,smax=7.5,f2max=2.0)},
+        "t": "BONUS", "tc": 96.0, "hf": "_h_s2555", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=5, fmax=8, smin=7.0), "mn": 5, "mx": 8},
+    "BNS_Tri135": {
+        "t": "BONUS", "tc": 12.0, "hf": "_h_t135", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, smin=7.0, f2min=2.5), "mn": 5, "mx": 13},
+    "BNS_SB6_RouteOnly": {
+        "t": "BONUS", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="N", smin=6.0, smax=8.5, plo=8000, phi=25000), "mn": 6},
+    "SB12_S6667_A": {
+        "t": "BONUS", "tc": 960.0, "hf": "_h_s6667", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=12, fmax=12, c="N", spr="N", smin=4.0, smax=8.5, f2min=4.0, plo=8000, phi=25000), "mn": 12},
+    "FB6_First": {
+        "t": "BONUS", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", fr="Y", f2min=4.0), "mn": 6},
+    "FB6_HighPurse": {
+        "t": "BONUS", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, plo=25000), "mn": 6},
+    "BNS_TriA22": {
+        "t": "BONUS", "tc": 12.0, "hf": "_h_tria22", "pc": "Trif_paid",
+        "ef": _mk_env(fmin=5, fmax=13, smin=6.0, f2min=2.5), "mn": 5, "mx": 13},
 
-    # ── HISTORICAL CONSENSUS ROUTES & BEST BETS ───────────────────────────────
-    "BNS_Sup3444_R4": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[3,4,4,4],
-        "unit_price":UNIT_SUPERF,"_old_tc":36,
-        "hf":"_h_s3444","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":0,
-        "watch_list":True,"watch_reason":"ROUTE-01 Primary. 45.1% hit rate in R4.",
-        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=3.0,smax=7.0)},
-    "BNS_Supr4444_R4": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[4,4,4,4],
-        "unit_price":UNIT_SUPERF,"_old_tc":48,
-        "hf":"_h_s4444","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":0,
-        "watch_list":True,"watch_reason":"ROUTE-01 Secondary. 41.2% hit rate in R4.",
-        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=3.0,smax=7.0)},
-    "BNS_Sup2266_Large": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,2,6,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":48,
-        "hf":"_h_s2266","pc":"Superf_paid","mn":10,"mx":12,"ew":2.0,"v":0,
-        "watch_list":True,"watch_reason":"ROUTE-04. Highest absolute payout pocket.",
-        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=5.0,smax=7.0)},
-    "BNS_Supr1555_Large": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[1,5,5,5],
-        "unit_price":UNIT_SUPERF,"_old_tc":48,
-        "hf":"_h_s1555","pc":"Superf_paid","mn":10,"mx":12,"ew":2.0,"v":0,
-        "watch_list":True,"watch_reason":"ROUTE-04. Strong large-field player.",
-        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=5.0,smax=7.0)},
-    "BNS_Supr4144_R8": {
-        "t":"BONUS","tc_mode":"pattern_superf","pat":[4,1,4,4],
-        "unit_price":UNIT_SUPERF,"_old_tc":16,
-        "hf":"_h_s4144","pc":"Superf_paid","mn":8,"mx":8,"ew":1.5,"v":0,
-        "watch_list":True,"watch_reason":"ROUTE-05. GUM Tier 1 validated anchor.",
-        "ef":_mk_env(fmin=8,fmax=8,c="N",smin=2.0,smax=7.0,phi=18000)},
-    "BNS_Tri123_Large": {
-        "t":"BONUS","tc_mode":"straight_superf",
-        "unit_price":UNIT_TRI,"_old_tc":2,"tc":2.0,
-        "hf":"_h_t123","pc":"Trif_paid","mn":10,"mx":12,"ew":1.0,"v":0,
-        "watch_list":True,"watch_reason":"BestBets: NoChalk x 10-12 runners.",
-        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=2.0,smax=7.0)},
-    "BNS_Sup1234_Large": {
-        "t":"BONUS","tc_mode":"straight_superf",
-        "unit_price":UNIT_SUPERF,"_old_tc":2,"tc":2.0,
-        "hf":"_h_s1234","pc":"Superf_paid","mn":10,"mx":12,"ew":1.0,"v":0,
-        "watch_list":True,"watch_reason":"BestBets: Top JK2 priority for large fields.",
-        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=2.0,smax=7.0)},
-
-    # ── APEX — inactive, audit visibility only ────────────────────────────────
-    "APX_Supr3666_Wide": {
-        "t":"APEX","tc_mode":"pattern_superf","pat":[3,6,6,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s3666","pc":"Superf_paid","mn":5,"mx":12,"ew":1.5,"v":1,
-        "watch_list":True,
-        "watch_reason":"INACTIVE: EV=-0.319/tc N=50228. Gates too wide. "
-                       "Sniper version: BNS_Supr2555_Sniper.",
-        "ef":_mk_env(fmin=5,fmax=12,plo=1000,phi=32500)},
-    "APX_Supr3666": {
-        "t":"APEX","tc_mode":"pattern_superf","pat":[3,6,6,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":360,
-        "hf":"_h_s3666","pc":"Superf_paid","mn":6,"mx":12,"ew":1.5,"v":1,
-        "watch_list":True,
-        "watch_reason":"INACTIVE: EV=-0.313/tc N=46238. Gates too wide.",
-        "ef":_mk_env(fmin=6,fmax=12,plo=500,phi=34500)},
-    "SB12_S6678_A": {
-        "t":"APEX","tc_mode":"pattern_superf","pat":[6,6,7,8],
-        "unit_price":UNIT_SUPERF,"_old_tc":1500,
-        "hf":"_h_s6678","pc":"Superf_paid","mn":12,"mx":12,"ew":1.5,"v":1,
-        "watch_list":True,
-        "watch_reason":"INACTIVE: Both windows negative EV. tc=$1500 ruin machine.",
-        "ef":_mk_env(fmin=12,fmax=12,c="N")},
-    "APX_Sup4456": {
-        "t":"APEX","tc_mode":"pattern_superf","pat":[4,4,5,6],
-        "unit_price":UNIT_SUPERF,"_old_tc":216,
-        "hf":"_h_s4456","pc":"Superf_paid","mn":8,"mx":12,"ew":1.5,"q":1,
-        "watch_list":True,
-        "watch_reason":"score=0.410. Promote T3 if score>=0.45 OOS confirmed.",
-        "ef":_mk_env(fmin=8,fmax=12,plo=500,phi=34500)},
+    # ── APEX ─────────────────────────────────────────────────────────────────
     "APX_Sup1234": {
-        "t":"APEX","tc_mode":"straight_superf",
-        "unit_price":UNIT_SUPERF,"_old_tc":2,"tc":2.0,
-        "hf":"_h_s1234","pc":"Superf_paid","mn":4,"mx":13,"ew":1.5,"v":0,
-        "watch_list":True,
-        "watch_reason":"RETIRED: HR=1% EV=0 N=16627. Wide gate noise. "
-                       "Sniper version: BNS_Sup1234_Sniper.",
-        "ef":_mk_env(c="N",smin=4,smax=9)},
+        "t": "APEX", "tc": 2.0, "hf": "_h_s1234", "pc": "Superf_paid",
+        "ef": _mk_env(fmin=5, fmax=12, smin=6.0), "mn": 5, "mx": 12},
 }
 
 # ── Strategy sets ─────────────────────────────────────────────────────────────
-_T1A = {"FB4_2","FB4_3","FB4_4","FB4_5"}
-_T1B = {"SB6_S5556_A","SB6_S5556_B","NM_Sup4455_N6_C","FB5_2"}
+_T1A = {"FB4_2","FB4_3","FB4_4","FB4_5","FB4_6",
+        "Sup3214_R5","Sup3214_R6","TRI145","TRI245"}
+_T1B = {"SB6_S5556_A","SB6_S5556_B","NM_Sup4455_N6_C","FB5_2",
+        "NM_Sup4455_N6_D","TRI_Sum8","FB5_Fav3","Supr4444_High",
+        "Sup2444_High","SB6_S5556_SumWide","NM_Sup4456_N6_D","NM_Supr3666_N6_D"}
 _T1  = _T1A | _T1B
-_T2  = {
-    "TRI145",
-    "SB6_S5556_C","SB6_S5556_SumWide","SB6_S5556_A_P35",
-    "NM_Sup4455_N6_D","NM_Sup4456_N6_D","NM_Supr3666_N6_D",
-    "FB6_HighPurse",
-}
-_T3_VALIDATED = {
-    "FB4_6",
-    "FB7_1","FB7_2","FB7_3","FB7_4",
-    "SB12_S6667_A",
-    "NM_Sup4466","NM_Sup5567",
-    "TRI_First",
-    "FB6_1","FB6_2","FB6_3","FB6_4","FB6_5","FB6_6",
-}
-_T3_ALL = {k for k,v in INS.items() if v["t"]=="T3"}
-BONUS = {k for k,v in INS.items() if v["t"]=="BONUS"}
-APX   = {k for k,v in INS.items() if v["t"]=="APEX"}
+_T2  = {"SB6_S5556_C","SB6_S5556_A_P35","TRI_First","FB6_2","FB6_3",
+        "FB6_5","FB6_6","NM_Sup4466","NM_Sup5567"}
+_T3  = {"FB7_1","FB7_3","FB7_4","FB6_1","FB6_4"}
+_BONUS = {"BNS_TRI_HighPurse","BNS_Sup3225_R56","BNS_Supr2555_Sniper",
+          "BNS_Tri135","BNS_SB6_RouteOnly","SB12_S6667_A",
+          "FB6_First","FB6_HighPurse","BNS_TriA22"}
+_APEX = {"APX_Sup1234"}
 
 STRATEGY_SETS = {
-    "SAFEST":   _T1,
-    "STANDARD": _T1 | _T2,
-    "FULL":     _T1 | _T2 | _T3_VALIDATED,
-    "TURBO":    _T1 | _T2 | _T3_ALL,
+    "SANITY":    {"TRI145","TRI245","TRI_Sum8","FB5_2","FB5_Fav3",
+                  "NM_Sup4455_N6_C","Supr4444_High","TRI_First",
+                  "Sup3214_R6","Sup3214_R5","BNS_Sup3225_R56"},
+    "SAFEST":    _T1,
+    "STANDARD":  _T1 | _T2,
+    "ALL_TIERS": _T1 | _T2 | _T3,
+    "TURBO":     _T1 | _T2 | _T3 | _BONUS | _APEX,
 }
 
 # Add test compatibility keys
-def get_tc(inst):
-    mode = inst.get("tc_mode", "fixed")
-    if mode == "fixed": return inst.get("tc", inst.get("_old_tc", 0))
-    if mode == "full_box_superf":
-        n = inst["mn"]
-        return math.perm(n, 4) * (inst["unit_price"] / 10.0) # $2 unit / 10 = $0.20 base
-    if mode == "pattern_superf":
-        pat = inst["pat"]
-        return math.prod(pat) * (inst["unit_price"] / 10.0)
-    if mode == "pattern_tri":
-        pat = inst["pat"]
-        return math.prod(pat) * (inst["unit_price"] / 2.0) # $2 unit / 2 = $1 base
-    if mode == "straight_superf":
-        return inst.get("tc", 2.0)
-    if mode == "all_over_top2_top2_tri":
-        n = inst["mn"]
-        return (n - 2) * 2 * (inst["unit_price"] / 2.0)
-    return inst.get("_old_tc", 0)
-
 for k in list(INS.keys()):
-    INS[k]["tier"] = INS[k]["t"]
-    INS[k]["tc"] = get_tc(INS[k])
-    INS[k]["ticket_cost"] = INS[k]["tc"]
-    INS[k]["hit_func"] = INS[k]["hf"]
-    INS[k]["payout_col"] = INS[k]["pc"]
+    inst = INS[k]
+    # Set canonical keys for tests and simulation logic
+    inst["tier"] = inst["t"]
+    inst["ticket_cost"] = inst["tc"]
+    inst["hit_func"] = inst["hf"]
+    inst["payout_col"] = inst["pc"]
+    inst["min_runners"] = inst["mn"]
+    inst["env_filter"] = inst["ef"]
 
-    # Default pm to 0.05 (dime) for superf, 1.0 for tri unless specified
-    if "pm" not in INS[k]:
-        if "Superf" in INS[k]["pc"]: INS[k]["pm"] = 0.05
-        else: INS[k]["pm"] = 1.0
+    # Defaults for v8 logic
+    if "tc_mode" not in inst: inst["tc_mode"] = "fixed"
+    if "ew" not in inst: inst["ew"] = 1.5
+    if "pm" not in inst:
+        if "Superf" in inst["pc"]: inst["pm"] = 0.05
+        else: inst["pm"] = 1.0
 
-    INS[k]["payout_mult"] = INS[k]["pm"]
-    INS[k]["min_runners"] = INS[k]["mn"]
-    INS[k]["ewpd"] = INS[k]["ew"]
-    INS[k]["env_filter"] = INS[k]["ef"]
+    inst["ewpd"] = inst["ew"]
+    inst["payout_mult"] = inst["pm"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STRESS PRESETS
