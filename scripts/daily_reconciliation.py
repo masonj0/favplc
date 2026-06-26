@@ -1,13 +1,26 @@
 #!/usr/bin/env python3
 """
-DAILY RACE RECONCILIATION REPORT — v8.0.3
+DAILY RACE RECONCILIATION REPORT — v8.0.4
 ==================================================================
 Companion to THE 100x GAUNTLET v8.0.2 GOLD MASTER
 
-Changes from v8.0.2:
-  - Removed CSV/JSON export (unused)
-  - Added TXT file export: captures full console output
-  - Added full RANKED_RESULTS detail block for every fired match
+Changes from v8.0.3:
+  - SANITY strategy corrected: now contains the top-11 comfort score
+    instruments (all solid-bar, non-Discovery, CS >= 0.42) per the
+    Comfort Score chart at $1.00 base:
+      FB4_3=0.602, FB4_2=0.597, FB4_4=0.586, FB4_5=0.577,
+      FB5_2=0.574, FB4_6=0.517, SB6_S5556_B=0.438,
+      SB6_S5556_SumWide=0.435, SB6_S5556_A=0.422,
+      NM_Sup4456_N6_D=0.420, NM_Supr3666_N6_D=0.420
+    Removed from SANITY (were near bottom of comfort rankings):
+      Sup3214_R6=0.229, Sup3214_R5=0.249, BNS_Sup3225_R56=0.242,
+      TRI245=0.284, Supr4444_High=0.269, NM_Sup4455_N6_C=0.328,
+      TRI145=0.347, TRI_First=0.393, FB5_Fav3=0.378, TRI_Sum8=0.291
+    Discovery/hatched instruments excluded from SANITY regardless
+    of comfort score (insufficient sample history).
+  - P&L integrity: all results recorded as-is, no minimum payout
+    filtering (a hit that pays less than cost is still a hit and
+    still recorded accurately).
 """
 
 import sys, os, argparse, datetime, json, csv, io
@@ -15,7 +28,7 @@ import pandas as pd
 import numpy as np
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SCALING CONSTANTS — must match Gauntlet selections
+# SCALING CONSTANTS
 # ══════════════════════════════════════════════════════════════════════════════
 WOW_ABS = 25000.0
 WOW_RAT = 200.0
@@ -24,16 +37,65 @@ UNIVERSAL_MAX_SUM     = 12.0
 SPRINT_THRESHOLD_MILES = 0.875
 
 # ══════════════════════════════════════════════════════════════════════════════
-# OUTPUT TEES — writes to both console AND a buffer for TXT export
+# COMFORT SCORES — reference only, not used in gate logic
+# Source: Comfort Score chart @ $1.00 base, solid-bar instruments only
+# ══════════════════════════════════════════════════════════════════════════════
+COMFORT_SCORES = {
+    "FB4_3":              0.602,
+    "FB4_2":              0.597,
+    "FB4_4":              0.586,
+    "FB4_5":              0.577,
+    "FB5_2":              0.574,
+    "FB4_6":              0.517,
+    "SB6_S5556_B":        0.438,
+    "SB6_S5556_SumWide":  0.435,
+    "SB6_S5556_A":        0.422,
+    "NM_Sup4456_N6_D":    0.420,
+    "NM_Supr3666_N6_D":   0.420,
+    "NM_Sup4455_N6_D":    0.401,
+    "TRI_First":          0.393,
+    "SB6_S5556_C":        0.393,
+    "FB6_1":              0.381,
+    "FB6_4":              0.380,
+    "SB6_S5556_A_P35":    0.380,
+    "FB5_Fav3":           0.378,
+    "NM_Sup4466":         0.370,
+    "FB7_4":              0.366,
+    "NM_Sup5567":         0.361,
+    "FB6_6":              0.360,
+    "FB6_5":              0.358,
+    "FB6_3":              0.358,
+    "FB7_3":              0.358,
+    "FB6_2":              0.357,
+    "TRI145":             0.347,
+    "FB7_1":              0.346,
+    "NM_Sup4455_N6_C":    0.328,
+    "TRI_Sum8":           0.291,
+    "Sup2444_High":       0.284,
+    "TRI245":             0.284,
+    "Supr4444_High":      0.269,
+    "Sup3214_R5":         0.249,
+    "Sup3214_R6":         0.229,
+    # Discovery instruments (hatched) — excluded from SANITY
+    "BNS_SB6_RouteOnly":      0.407,  # [B] Discovery
+    "FB6_HighPurse":          0.359,  # [B] Discovery
+    "FB6_First":              0.354,  # [B] Discovery
+    "SB12_S6667_A":           0.334,  # [B] Discovery
+    "BNS_TRI_HighPurse":      0.293,  # [B] Discovery
+    "BNS_Supr2555_Sniper":    0.292,  # [B] Discovery
+    "BNS_TriA22":             0.267,  # [B] Discovery
+    "BNS_Tri135":             0.264,  # [B] Discovery
+    "BNS_Sup3225_R56":        0.242,  # [B] Discovery
+    "APX_Sup1234":            0.222,  # [A] Discovery
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OUTPUT TEE — writes to console AND buffer for TXT export
 # ══════════════════════════════════════════════════════════════════════════════
 _output_buffer = io.StringIO()
 
 def _safe_print(text="", **kwargs):
-    """Print to console (safe encoding) AND capture to buffer."""
-    # Write to buffer first (always UTF-8 safe)
     _output_buffer.write(str(text) + "\n")
-
-    # Console: handle encoding issues
     try:
         print(text, **kwargs)
     except UnicodeEncodeError:
@@ -43,17 +105,14 @@ def _safe_print(text="", **kwargs):
         print(safe, **kwargs)
 
 def _reset_buffer():
-    """Clear the output buffer (call at start of each run)."""
     global _output_buffer
     _output_buffer = io.StringIO()
 
 def _flush_to_txt(filename):
-    """Write the captured buffer to a TXT file."""
     try:
         content = _output_buffer.getvalue()
         with open(filename, "w", encoding="utf-8") as f:
             f.write(content)
-        # Print this directly (not via _safe_print to avoid recursion)
         print(f"  [TXT] Report saved => {filename} "
               f"({len(content.splitlines())} lines)")
     except Exception as e:
@@ -104,7 +163,7 @@ INSTRUMENTS = {
 
     # ── T1A ──────────────────────────────────────────────────────────────────
     "FB4_2": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.597,
         "description": "Full-Box Superfecta 4-runner (Non-chalk, Sum 4-7.5, Fav2 2.5-4)",
         "canonical_cost": 48.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -115,7 +174,7 @@ INSTRUMENTS = {
         },
     },
     "FB4_3": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.602,
         "description": "Full-Box Superfecta 4-runner (Non-chalk, Non-first, Sum 4-6)",
         "canonical_cost": 48.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -125,7 +184,7 @@ INSTRUMENTS = {
         },
     },
     "FB4_4": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.586,
         "description": "Full-Box Superfecta 4-runner (Non-chalk, Sum 4-6)",
         "canonical_cost": 48.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -135,7 +194,7 @@ INSTRUMENTS = {
         },
     },
     "FB4_5": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.577,
         "description": "Full-Box Superfecta 4-runner (Non-chalk, Sprint, Sum 4-6)",
         "canonical_cost": 48.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -145,7 +204,7 @@ INSTRUMENTS = {
         },
     },
     "FB4_6": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.517,
         "description": "Full-Box Superfecta 4-runner (Sum 4-6, Fav2 2.5-4)",
         "canonical_cost": 48.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -155,7 +214,7 @@ INSTRUMENTS = {
         },
     },
     "Sup3214_R5": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.249,
         "description": "Pattern Superfecta 3-2-1-4 (5-runner, Non-chalk, Sum>=3)",
         "canonical_cost": 2.0, "pool": "Superf_paid", "hf": _h_s3214,
         "gates": {
@@ -165,7 +224,7 @@ INSTRUMENTS = {
         },
     },
     "Sup3214_R6": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.229,
         "description": "Pattern Superfecta 3-2-1-4 (6-runner, Sum>=3)",
         "canonical_cost": 2.0, "pool": "Superf_paid", "hf": _h_s3214,
         "gates": {
@@ -174,7 +233,7 @@ INSTRUMENTS = {
         },
     },
     "TRI145": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.347,
         "description": "Pattern Trifecta 1-4-5 (Sum>=9, Fav2>=2.5)",
         "canonical_cost": 18.0, "pool": "Trif_paid", "hf": _h_t145,
         "gates": {
@@ -184,7 +243,7 @@ INSTRUMENTS = {
         },
     },
     "TRI245": {
-        "tier": "T1A",
+        "tier": "T1A", "cs": 0.284,
         "description": "Pattern Trifecta 2-4-5 Top-2-Fav win (Sum>=9, Fav2>=2.5)",
         "canonical_cost": 36.0, "pool": "Trif_paid", "hf": _h_t245,
         "gates": {
@@ -196,7 +255,7 @@ INSTRUMENTS = {
 
     # ── T1B ──────────────────────────────────────────────────────────────────
     "SB6_S5556_A": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.422,
         "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Sum 6-8.5, Purse 8k-25k)",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s5556,
         "gates": {
@@ -207,7 +266,7 @@ INSTRUMENTS = {
         },
     },
     "SB6_S5556_B": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.438,
         "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Non-first, Sum 6-8.5, Purse 8k-25k)",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s5556,
         "gates": {
@@ -218,7 +277,7 @@ INSTRUMENTS = {
         },
     },
     "NM_Sup4455_N6_C": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.328,
         "description": "Pattern 4-4-5-5 (6-runner, Non-chalk, Fav2>=4)",
         "canonical_cost": 144.0, "pool": "Superf_paid", "hf": _h_s4455,
         "gates": {
@@ -228,7 +287,7 @@ INSTRUMENTS = {
         },
     },
     "FB5_2": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.574,
         "description": "Full-Box Superfecta 5-runner (Non-chalk, Fav2>=4, Sum>=6)",
         "canonical_cost": 240.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -239,7 +298,7 @@ INSTRUMENTS = {
         },
     },
     "NM_Sup4455_N6_D": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.401,
         "description": "Pattern 4-4-5-5 (6-runner, Non-chalk, Fav2>=4, Sum 6-8.5)",
         "canonical_cost": 144.0, "pool": "Superf_paid", "hf": _h_s4455,
         "gates": {
@@ -251,7 +310,7 @@ INSTRUMENTS = {
         },
     },
     "TRI_Sum8": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.291,
         "description": "Pattern Trifecta 1-4-5 (Sum>=8, Fav2>=2.5)",
         "canonical_cost": 18.0, "pool": "Trif_paid", "hf": _h_t145,
         "gates": {
@@ -261,7 +320,7 @@ INSTRUMENTS = {
         },
     },
     "FB5_Fav3": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.378,
         "description": "Full-Box Superfecta 5-runner (Non-chalk, Fav2>=3)",
         "canonical_cost": 240.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -271,7 +330,7 @@ INSTRUMENTS = {
         },
     },
     "Supr4444_High": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.269,
         "description": "Pattern 4-4-4-4 (4-6 runners, Sum>=7.5)",
         "canonical_cost": 48.0, "pool": "Superf_paid", "hf": _h_s4444,
         "gates": {
@@ -280,7 +339,7 @@ INSTRUMENTS = {
         },
     },
     "Sup2444_High": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.284,
         "description": "Pattern 2-4-4-4 (4-6 runners, Sum>=7.5)",
         "canonical_cost": 24.0, "pool": "Superf_paid", "hf": _h_s2444,
         "gates": {
@@ -289,7 +348,7 @@ INSTRUMENTS = {
         },
     },
     "SB6_S5556_SumWide": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.435,
         "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Sum 6-9.5, Purse 8k-25k)",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s5556,
         "gates": {
@@ -300,7 +359,7 @@ INSTRUMENTS = {
         },
     },
     "NM_Sup4456_N6_D": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.420,
         "description": "Pattern 4-4-5-6 (6-runner, Non-chalk, Fav2>=4, Sum 6-9.5)",
         "canonical_cost": 216.0, "pool": "Superf_paid", "hf": _h_s4456,
         "gates": {
@@ -312,7 +371,7 @@ INSTRUMENTS = {
         },
     },
     "NM_Supr3666_N6_D": {
-        "tier": "T1B",
+        "tier": "T1B", "cs": 0.420,
         "description": "Pattern 3-6-6-6 (6-runner, Non-chalk, Fav2>=4, Sum 6-9.5)",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s3666,
         "gates": {
@@ -326,7 +385,7 @@ INSTRUMENTS = {
 
     # ── T2 ───────────────────────────────────────────────────────────────────
     "SB6_S5556_C": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.393,
         "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Sprint, Sum 6-8.5, Purse 8k-35k)",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s5556,
         "gates": {
@@ -337,7 +396,7 @@ INSTRUMENTS = {
         },
     },
     "SB6_S5556_A_P35": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.380,
         "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Sum 6-8.5, Purse 8k-35k)",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s5556,
         "gates": {
@@ -348,7 +407,7 @@ INSTRUMENTS = {
         },
     },
     "TRI_First": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.393,
         "description": "Pattern Trifecta 1-4-5 (First race, Sum>=9, Fav2>=2.5)",
         "canonical_cost": 18.0, "pool": "Trif_paid", "hf": _h_t145,
         "gates": {
@@ -359,7 +418,7 @@ INSTRUMENTS = {
         },
     },
     "FB6_2": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.357,
         "description": "Full-Box Superfecta 6-runner (Non-chalk, Fav2>=4)",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -369,7 +428,7 @@ INSTRUMENTS = {
         },
     },
     "FB6_3": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.358,
         "description": "Full-Box Superfecta 6-runner (Non-chalk, Fav2>=4)",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -379,7 +438,7 @@ INSTRUMENTS = {
         },
     },
     "FB6_5": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.358,
         "description": "Full-Box Superfecta 6-runner (Non-chalk, Fav2>=4)",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -389,7 +448,7 @@ INSTRUMENTS = {
         },
     },
     "FB6_6": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.360,
         "description": "Full-Box Superfecta 6-runner (Non-chalk, Fav2>=4)",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -399,7 +458,7 @@ INSTRUMENTS = {
         },
     },
     "NM_Sup4466": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.370,
         "description": "Pattern 4-4-6-6 (6-runner, Non-chalk, Fav2>=4)",
         "canonical_cost": 288.0, "pool": "Superf_paid", "hf": _h_s4466,
         "gates": {
@@ -409,7 +468,7 @@ INSTRUMENTS = {
         },
     },
     "NM_Sup5567": {
-        "tier": "T2",
+        "tier": "T2", "cs": 0.361,
         "description": "Pattern 5-5-6-7 (6-runner, Non-chalk, Fav2>=4)",
         "canonical_cost": 480.0, "pool": "Superf_paid", "hf": _h_s5567,
         "gates": {
@@ -421,7 +480,7 @@ INSTRUMENTS = {
 
     # ── T3 ───────────────────────────────────────────────────────────────────
     "FB7_1": {
-        "tier": "T3",
+        "tier": "T3", "cs": 0.346,
         "description": "Full-Box Superfecta 7-runner (Non-chalk, Non-first, Sprint, Purse 8k-15k, Sum 6-8)",
         "canonical_cost": 1680.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -432,7 +491,7 @@ INSTRUMENTS = {
         },
     },
     "FB7_3": {
-        "tier": "T3",
+        "tier": "T3", "cs": 0.358,
         "description": "Full-Box Superfecta 7-runner (Non-chalk, Sprint, Purse 8k-20k, Fav2>=4, Sum>=6)",
         "canonical_cost": 1680.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -444,7 +503,7 @@ INSTRUMENTS = {
         },
     },
     "FB7_4": {
-        "tier": "T3",
+        "tier": "T3", "cs": 0.366,
         "description": "Full-Box Superfecta 7-runner (Non-chalk, Sum 6-8, Fav2>=4, Purse>=10k)",
         "canonical_cost": 1680.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -456,7 +515,7 @@ INSTRUMENTS = {
         },
     },
     "FB6_1": {
-        "tier": "T3",
+        "tier": "T3", "cs": 0.381,
         "description": "Full-Box Superfecta 6-runner (Non-chalk, Sprint, Fav2>=4)",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -466,7 +525,7 @@ INSTRUMENTS = {
         },
     },
     "FB6_4": {
-        "tier": "T3",
+        "tier": "T3", "cs": 0.380,
         "description": "Full-Box Superfecta 6-runner (Non-chalk, Sprint, Fav2>=4)",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
@@ -478,7 +537,7 @@ INSTRUMENTS = {
 
     # ── BONUS ─────────────────────────────────────────────────────────────────
     "BNS_TRI_HighPurse": {
-        "tier": "BONUS",
+        "tier": "BONUS", "cs": 0.293,
         "description": "Pattern Trifecta 1-4-5 (Sum>=9, Fav2>=2.5, Purse>=25k)",
         "canonical_cost": 18.0, "pool": "Trif_paid", "hf": _h_t145,
         "gates": {
@@ -489,7 +548,7 @@ INSTRUMENTS = {
         },
     },
     "BNS_Sup3225_R56": {
-        "tier": "BONUS",
+        "tier": "BONUS", "cs": 0.242,
         "description": "Pattern 3-2-2-5 (5-6 runners, Sum>=4)",
         "canonical_cost": 24.0, "pool": "Superf_paid", "hf": _h_s3225,
         "gates": {
@@ -498,7 +557,7 @@ INSTRUMENTS = {
         },
     },
     "BNS_Supr2555_Sniper": {
-        "tier": "BONUS",
+        "tier": "BONUS", "cs": 0.292,
         "description": "Pattern 2-5-5-5 (5-8 runners, Sum>=7)",
         "canonical_cost": 96.0, "pool": "Superf_paid", "hf": _h_s2555,
         "gates": {
@@ -507,7 +566,7 @@ INSTRUMENTS = {
         },
     },
     "BNS_Tri135": {
-        "tier": "BONUS",
+        "tier": "BONUS", "cs": 0.264,
         "description": "Pattern Trifecta 1-3-5 (Sum>=7, Fav2>=2.5)",
         "canonical_cost": 12.0, "pool": "Trif_paid", "hf": _h_t135,
         "gates": {
@@ -517,8 +576,8 @@ INSTRUMENTS = {
         },
     },
     "BNS_SB6_RouteOnly": {
-        "tier": "BONUS",
-        "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Route, Sum 6-8.5, Purse 8k-25k)",
+        "tier": "BONUS", "cs": 0.407,
+        "description": "Pattern 5-5-5-6 (6-runner, Non-chalk, Route, Sum 6-8.5, Purse 8k-25k) [Discovery]",
         "canonical_cost": 360.0, "pool": "Superf_paid", "hf": _h_s5556,
         "gates": {
             "runners_min": 6, "runners_max": 6,
@@ -528,8 +587,8 @@ INSTRUMENTS = {
         },
     },
     "SB12_S6667_A": {
-        "tier": "BONUS",
-        "description": "Pattern 6-6-6-7 (12-runner, Non-chalk, Route, Sum 4-8.5, Fav2>=4, Purse 8k-25k)",
+        "tier": "BONUS", "cs": 0.334,
+        "description": "Pattern 6-6-6-7 (12-runner, Non-chalk, Route, Sum 4-8.5, Fav2>=4, Purse 8k-25k) [Discovery]",
         "canonical_cost": 960.0, "pool": "Superf_paid", "hf": _h_s6667,
         "gates": {
             "runners_min": 12, "runners_max": 12,
@@ -540,8 +599,8 @@ INSTRUMENTS = {
         },
     },
     "FB6_First": {
-        "tier": "BONUS",
-        "description": "Full-Box Superfecta 6-runner (Non-chalk, First race, Fav2>=4)",
+        "tier": "BONUS", "cs": 0.354,
+        "description": "Full-Box Superfecta 6-runner (Non-chalk, First race, Fav2>=4) [Discovery]",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
             "runners_min": 6, "runners_max": 6,
@@ -550,8 +609,8 @@ INSTRUMENTS = {
         },
     },
     "FB6_HighPurse": {
-        "tier": "BONUS",
-        "description": "Full-Box Superfecta 6-runner (Non-chalk, Fav2>=4, Purse>=25k)",
+        "tier": "BONUS", "cs": 0.359,
+        "description": "Full-Box Superfecta 6-runner (Non-chalk, Fav2>=4, Purse>=25k) [Discovery]",
         "canonical_cost": 720.0, "pool": "Superf_paid", "hf": _h_al,
         "gates": {
             "runners_min": 6, "runners_max": 6,
@@ -561,8 +620,8 @@ INSTRUMENTS = {
         },
     },
     "BNS_TriA22": {
-        "tier": "BONUS",
-        "description": "Trifecta ALL/Top2/Top2 — upset winner, top-2 favs fill/show (Sum>=6, Fav2>=2.5)",
+        "tier": "BONUS", "cs": 0.267,
+        "description": "Trifecta ALL/Top2/Top2 — upset winner, top-2 favs fill/show [Discovery]",
         "canonical_cost": 12.0, "pool": "Trif_paid", "hf": _h_tria22,
         "gates": {
             "runners_min": 5, "runners_max": 13,
@@ -573,8 +632,8 @@ INSTRUMENTS = {
 
     # ── APEX ─────────────────────────────────────────────────────────────────
     "APX_Sup1234": {
-        "tier": "APEX",
-        "description": "Straight Superfecta 1-2-3-4 (5-12 runners, Sum>=6)",
+        "tier": "APEX", "cs": 0.222,
+        "description": "Straight Superfecta 1-2-3-4 (5-12 runners, Sum>=6) [Discovery]",
         "canonical_cost": 2.0, "pool": "Superf_paid", "hf": _h_s1234,
         "gates": {
             "runners_min": 5, "runners_max": 12,
@@ -583,7 +642,9 @@ INSTRUMENTS = {
     },
 }
 
-# ── Strategy sets ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# STRATEGY SETS
+# ══════════════════════════════════════════════════════════════════════════════
 _T1A = {"FB4_2","FB4_3","FB4_4","FB4_5","FB4_6",
         "Sup3214_R5","Sup3214_R6","TRI145","TRI245"}
 _T1B = {"SB6_S5556_A","SB6_S5556_B","NM_Sup4455_N6_C","FB5_2",
@@ -598,13 +659,29 @@ _BONUS = {"BNS_TRI_HighPurse","BNS_Sup3225_R56","BNS_Supr2555_Sniper",
           "FB6_First","FB6_HighPurse","BNS_TriA22"}
 _APEX = {"APX_Sup1234"}
 
+# ── SANITY: top-11 comfort score, solid-bar (non-Discovery) instruments only
+# All CS >= 0.420, all have substantial sample history
+# Sorted by CS descending for reference:
+#   FB4_3=0.602, FB4_2=0.597, FB4_4=0.586, FB4_5=0.577, FB5_2=0.574,
+#   FB4_6=0.517, SB6_S5556_B=0.438, SB6_S5556_SumWide=0.435,
+#   SB6_S5556_A=0.422, NM_Sup4456_N6_D=0.420, NM_Supr3666_N6_D=0.420
+_SANITY = {
+    "FB4_3", "FB4_2", "FB4_4", "FB4_5", "FB5_2",
+    "FB4_6",
+    "SB6_S5556_B", "SB6_S5556_SumWide", "SB6_S5556_A",
+    "NM_Sup4456_N6_D", "NM_Supr3666_N6_D",
+}
+
 STRATEGY_SETS = {
-    "SANITY":    {"TRI145","TRI245","TRI_Sum8","FB5_2","FB5_Fav3",
-                  "NM_Sup4455_N6_C","Supr4444_High","TRI_First",
-                  "Sup3214_R6","Sup3214_R5","BNS_Sup3225_R56"},
+    # Battle-tested comfort superstars only — CS >= 0.420, no Discovery
+    "SANITY":    _SANITY,
+    # Full T1A + T1B
     "SAFEST":    _T1,
+    # T1 + T2
     "STANDARD":  _T1 | _T2,
+    # T1 + T2 + T3
     "ALL_TIERS": _T1 | _T2 | _T3,
+    # Everything
     "TURBO":     _T1 | _T2 | _T3 | _BONUS | _APEX,
 }
 
@@ -808,16 +885,13 @@ def _extract_payout(row, pool_col):
 # ══════════════════════════════════════════════════════════════════════════════
 # RANKED RESULTS DETAIL BLOCK
 # ══════════════════════════════════════════════════════════════════════════════
-
-# All columns we try to show in the detail block, in display order.
-# Each entry: (label, column_name_or_list_of_candidates)
 _DETAIL_FIELDS = [
     ("Track",           ["Track", "TrackCode", "Track Name"]),
     ("Race #",          ["WhichRace"]),
     ("Date",            ["RaceDate", "Date", "race_date", "Race_Date", "RACEDATE"]),
     ("Runners",         ["Runners"]),
     ("Miles",           ["Miles", "Distance"]),
-    ("Sprint/Route",    None),   # computed
+    ("Sprint/Route",    None),
     ("Purse",           ["Purse"]),
     ("ChalkYN",         ["ChalkYN"]),
     ("FirstRaceYN",     ["FirstRaceYN"]),
@@ -836,51 +910,39 @@ _DETAIL_FIELDS = [
 
 def _build_detail_block(row, inst_name, inst, ticket_cost, raw_payout,
                         net_payout, pnl, is_hit, ranks):
-    """
-    Build a multi-line detail string for one fired match.
-    Shows every available RANKED_RESULTS-related field.
-    """
     lines = []
     inst_def = INSTRUMENTS.get(inst_name, {})
     mark = "HIT " if is_hit else "MISS"
+    cs   = inst_def.get("cs", 0.0)
 
-    lines.append(f"    ┌─ [{mark}] {inst_name}  [{inst_def.get('tier','')}]")
+    lines.append(f"    ┌─ [{mark}] {inst_name}  [{inst_def.get('tier','')}]"
+                 f"  CS={cs:.3f}")
     lines.append(f"    │  {inst_def.get('description','')}")
     lines.append(f"    │")
 
-    # Gate values
     for label, candidates in _DETAIL_FIELDS:
         if candidates is None:
-            # Computed field: Sprint/Route
             is_spr = _is_sprint(row)
-            if is_spr is None:
-                val = "unknown (no Miles/Distance col)"
-            else:
-                val = "SPRINT" if is_spr else "ROUTE"
+            val = ("unknown (no Miles/Distance col)" if is_spr is None
+                   else ("SPRINT" if is_spr else "ROUTE"))
             lines.append(f"    │  {label:<22}: {val}")
             continue
 
-        found = False
         for col in candidates:
             if col in row.index:
                 raw = row[col]
-                # Pretty-format numbers
-                if label in ("Purse",):
+                if label == "Purse":
                     n = _parse_number(raw)
                     val = f"${n:,.0f}" if n is not None else str(raw)
                 elif label in ("Exacta paid","Trifecta paid","Superfecta paid"):
                     n = _parse_number(raw)
                     val = f"${n:,.2f}" if n is not None else str(raw)
                 elif label == "RANKED_RESULTS":
-                    val = str(raw)
-                    if ranks:
-                        val += f"  => parsed: {ranks}"
+                    val = f"{raw}  => parsed: {ranks}"
                 else:
                     val = str(raw)
                 lines.append(f"    │  {label:<22}: {val}")
-                found = True
                 break
-        # Skip silently if column not in dataset at all
 
     lines.append(f"    │")
     lines.append(f"    │  Ticket cost   : ${ticket_cost:,.2f}")
@@ -933,7 +995,7 @@ def generate_report(csv_file, target_date, scale=1.0,
                       if c in day_df.columns), None)
 
     _safe_print("\n" + "="*100)
-    _safe_print(f"  DAILY RACE RECONCILIATION REPORT v8.0.3")
+    _safe_print(f"  DAILY RACE RECONCILIATION REPORT v8.0.4")
     _safe_print(f"  Date     : {target_date}")
     _safe_print(f"  Strategy : {strategy.upper()}  "
                 f"({len(active_instruments)} instruments)")
@@ -981,8 +1043,8 @@ def generate_report(csv_file, target_date, scale=1.0,
                 continue
 
             n_runners = int(_parse_number(row.get("Runners")) or 0)
-            hf = inst["hf"]
-            is_hit = hf(ranks, n_runners) if ranks else False
+            hf        = inst["hf"]
+            is_hit    = hf(ranks, n_runners) if ranks else False
 
             ticket_cost = inst["canonical_cost"] * scale
             net_payout  = raw_payout * (base_bet_factor / 2.0)
@@ -1004,9 +1066,9 @@ def generate_report(csv_file, target_date, scale=1.0,
                 "cost":           ticket_cost,
                 "pnl":            pnl,
                 "tier":           inst["tier"],
+                "cs":             inst.get("cs", 0.0),
                 "ranked_results": str(row.get("RANKED_RESULTS","?")),
                 "ranks_parsed":   ranks,
-                # Store the full row for detail block
                 "_row":           row,
             })
 
@@ -1025,19 +1087,21 @@ def generate_report(csv_file, target_date, scale=1.0,
     # ── Print results ────────────────────────────────────────────────────────
     total_pnl = 0.0
     _safe_print(f"\n  {'─'*98}")
-    _safe_print(f"  {'INSTRUMENT':<30} {'TIER':<8} {'R#':<5} "
+    _safe_print(f"  {'INSTRUMENT':<30} {'TIER':<8} {'CS':>6} {'R#':<5} "
                 f"{'TRACK':<10} {'COST':>8} {'PAYOUT':>10} "
                 f"{'P&L':>10}  RESULT")
     _safe_print(f"  {'─'*98}")
 
-    for inst_name in sorted(fired_gates.keys()):
+    for inst_name in sorted(fired_gates.keys(),
+                            key=lambda x: -INSTRUMENTS[x].get("cs", 0)):
         races    = fired_gates[inst_name]
         inst     = INSTRUMENTS[inst_name]
         hits     = sum(1 for r in races if r["is_hit"])
         inst_pnl = sum(r["pnl"] for r in races)
         total_pnl += inst_pnl
+        cs       = inst.get("cs", 0.0)
 
-        _safe_print(f"\n  {inst_name}  [{inst['tier']}]  "
+        _safe_print(f"\n  {inst_name}  [{inst['tier']}]  CS={cs:.3f}  "
                     f"— {inst['description']}")
         _safe_print(f"  Fired: {len(races)}  Hits: {hits}  "
                     f"Inst P&L: {'+'if inst_pnl>=0 else ''}${inst_pnl:,.2f}")
@@ -1047,7 +1111,6 @@ def generate_report(csv_file, target_date, scale=1.0,
             pnl_str = (f"+${r['pnl']:,.2f}" if r["pnl"] >= 0
                        else f"(${abs(r['pnl']):,.2f})")
 
-            # ── Summary line (same as before) ──────────────────────────────
             _safe_print(
                 f"    {mark}  R{r['race_num']:<3} @ {r['track']:<10}  "
                 f"Cost=${r['cost']:>8,.2f}  "
@@ -1056,7 +1119,6 @@ def generate_report(csv_file, target_date, scale=1.0,
                 f"P&L={pnl_str:>10}  "
                 f"Pos:{r['ranked_results']}")
 
-            # ── Full detail block ───────────────────────────────────────────
             detail = _build_detail_block(
                 row         = r["_row"],
                 inst_name   = inst_name,
@@ -1084,11 +1146,7 @@ def generate_report(csv_file, target_date, scale=1.0,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _make_txt_filename(dates, strategy):
-    """Generate a descriptive TXT filename."""
-    if len(dates) == 1:
-        date_part = dates[0]
-    else:
-        date_part = f"{dates[0]}_to_{dates[-1]}"
+    date_part = dates[0] if len(dates) == 1 else f"{dates[0]}_to_{dates[-1]}"
     return f"Reconciliation_{date_part}_{strategy}.txt"
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1107,21 +1165,26 @@ def print_period_summary(all_fired, all_pnl_by_date, dates, scale, strategy):
 
     grand_total   = sum(all_pnl_by_date.values())
     total_tickets = sum(len(v) for v in all_fired.values())
-    total_hits    = sum(sum(1 for r in v if r["is_hit"]) for v in all_fired.values())
+    total_hits    = sum(sum(1 for r in v if r["is_hit"])
+                        for v in all_fired.values())
 
-    _safe_print(f"\n  {'Instrument':<30} {'Tier':<8} {'Fires':>7} "
-                f"{'Hits':>6} {'HR%':>6}  P&L")
-    _safe_print(f"  {'─'*30} {'─'*8} {'─'*7} {'─'*6} {'─'*6}  {'─'*20}")
+    _safe_print(f"\n  {'Instrument':<30} {'Tier':<8} {'CS':>6} "
+                f"{'Fires':>7} {'Hits':>6} {'HR%':>6}  P&L")
+    _safe_print(f"  {'─'*30} {'─'*8} {'─'*6} {'─'*7} "
+                f"{'─'*6} {'─'*6}  {'─'*20}")
 
-    for inst_name in sorted(all_fired.keys()):
+    # Sort by comfort score descending
+    for inst_name in sorted(all_fired.keys(),
+                            key=lambda x: -INSTRUMENTS.get(x,{}).get("cs",0)):
         races = all_fired[inst_name]
         hits  = sum(1 for r in races if r["is_hit"])
         pnl   = sum(r["pnl"] for r in races)
         hr    = hits / len(races) * 100 if races else 0.0
         tier  = INSTRUMENTS.get(inst_name, {}).get("tier","")
+        cs    = INSTRUMENTS.get(inst_name, {}).get("cs", 0.0)
         pnl_str = f"+${pnl:,.2f}" if pnl >= 0 else f"(${abs(pnl):,.2f})"
-        _safe_print(f"  {inst_name:<30} {tier:<8} {len(races):>7} "
-                    f"{hits:>6} {hr:>5.1f}%  {pnl_str}")
+        _safe_print(f"  {inst_name:<30} {tier:<8} {cs:>6.3f} "
+                    f"{len(races):>7} {hits:>6} {hr:>5.1f}%  {pnl_str}")
 
     _safe_print(f"\n  {'─'*100}")
     grand_str = (f"✓ PERIOD PROFIT: +${grand_total:,.2f}"
@@ -1147,7 +1210,7 @@ def print_period_summary(all_fired, all_pnl_by_date, dates, scale, strategy):
 
 def _show_menu():
     _safe_print("\n" + "="*100)
-    _safe_print("  DAILY RACE RECONCILIATION REPORT v8.0.3 — DATE SELECTOR")
+    _safe_print("  DAILY RACE RECONCILIATION REPORT v8.0.4 — DATE SELECTOR")
     _safe_print("="*100)
     today     = datetime.date.today()
     yesterday = today - datetime.timedelta(days=1)
@@ -1182,8 +1245,7 @@ def _show_menu():
             end   = datetime.datetime.strptime(e, "%Y-%m-%d").date()
             if start > end:
                 _safe_print("  ERROR: Start after end."); sys.exit(1)
-            dates = []
-            cur = start
+            dates, cur = [], start
             while cur <= end:
                 dates.append(cur.strftime("%Y-%m-%d"))
                 cur += datetime.timedelta(days=1)
@@ -1199,14 +1261,14 @@ def _select_strategy():
     for i, s in enumerate(opts):
         n = len(STRATEGY_SETS[s])
         _safe_print(f"    [{i+1}] {s:<12} ({n} instruments)")
-    choice = input("  Choice [5=TURBO]: ").strip() or "5"
+    choice = input("  Choice [1=SANITY]: ").strip() or "1"
     try:
         idx = int(choice) - 1
         if 0 <= idx < len(opts):
             return opts[idx]
     except ValueError:
         pass
-    return "TURBO"
+    return "SANITY"
 
 def _select_scale():
     _safe_print("\n  SELECT BASE BET (must match Gauntlet setting):")
@@ -1228,7 +1290,7 @@ def _select_scale():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Daily race reconciliation — v8.0.3 companion to Gauntlet",
+        description="Daily race reconciliation — v8.0.4",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Scale mapping (must match Gauntlet base-bet selection):
@@ -1238,6 +1300,7 @@ Scale mapping (must match Gauntlet base-bet selection):
   --scale 1.50  =>  $3.00 base
 
 Strategy choices: SANITY  SAFEST  STANDARD  ALL_TIERS  TURBO
+  SANITY = top-11 comfort score, battle-tested, non-Discovery only
         """
     )
     parser.add_argument("--csv",       default="RaceRecords_Output_2026.csv")
@@ -1251,7 +1314,6 @@ Strategy choices: SANITY  SAFEST  STANDARD  ALL_TIERS  TURBO
                         help="Suppress TXT file output")
     args = parser.parse_args()
 
-    # ── Reset output buffer ───────────────────────────────────────────────────
     _reset_buffer()
 
     # ── Resolve dates ─────────────────────────────────────────────────────────
@@ -1282,7 +1344,6 @@ Strategy choices: SANITY  SAFEST  STANDARD  ALL_TIERS  TURBO
     else:
         dates = _show_menu()
 
-    # ── Resolve scale and strategy ────────────────────────────────────────────
     scale    = args.scale    if args.scale    is not None else _select_scale()
     strategy = args.strategy if args.strategy is not None else _select_strategy()
 
@@ -1291,7 +1352,6 @@ Strategy choices: SANITY  SAFEST  STANDARD  ALL_TIERS  TURBO
     _safe_print(f"  Strategy : {strategy}")
     _safe_print(f"  Scale    : {scale:.2f}x  (${2.0*scale:.2f} base bet)")
 
-    # ── Run ───────────────────────────────────────────────────────────────────
     all_fired:       dict = {}
     all_pnl_by_date: dict = {}
 
@@ -1304,7 +1364,6 @@ Strategy choices: SANITY  SAFEST  STANDARD  ALL_TIERS  TURBO
 
     print_period_summary(all_fired, all_pnl_by_date, dates, scale, strategy)
 
-    # ── TXT export ────────────────────────────────────────────────────────────
     if not args.no_txt:
         txt_file = _make_txt_filename(dates, strategy)
         _flush_to_txt(txt_file)

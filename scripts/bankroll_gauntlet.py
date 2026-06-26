@@ -287,10 +287,21 @@ _BONUS = {"BNS_TRI_HighPurse","BNS_Sup3225_R56","BNS_Supr2555_Sniper",
           "FB6_First","FB6_HighPurse","BNS_TriA22"}
 _APEX = {"APX_Sup1234"}
 
+# ── SANITY: top-11 comfort score, solid-bar (non-Discovery) instruments only
+# All CS >= 0.420, all have substantial sample history
+# Sorted by CS descending for reference:
+#   FB4_3=0.602, FB4_2=0.597, FB4_4=0.586, FB4_5=0.577, FB5_2=0.574,
+#   FB4_6=0.517, SB6_S5556_B=0.438, SB6_S5556_SumWide=0.435,
+#   SB6_S5556_A=0.422, NM_Sup4456_N6_D=0.420, NM_Supr3666_N6_D=0.420
+_SANITY = {
+    "FB4_3", "FB4_2", "FB4_4", "FB4_5", "FB5_2",
+    "FB4_6",
+    "SB6_S5556_B", "SB6_S5556_SumWide", "SB6_S5556_A",
+    "NM_Sup4456_N6_D", "NM_Supr3666_N6_D",
+}
+
 STRATEGY_SETS = {
-    "SANITY":    {"TRI145","TRI245","TRI_Sum8","FB5_2","FB5_Fav3",
-                  "NM_Sup4455_N6_C","Supr4444_High","TRI_First",
-                  "Sup3214_R6","Sup3214_R5","BNS_Sup3225_R56"},
+    "SANITY":    _SANITY,
     "SAFEST":    _T1,
     "STANDARD":  _T1 | _T2,
     "ALL_TIERS": _T1 | _T2 | _T3,
@@ -490,7 +501,7 @@ def _stat(paths, outcomes, races, fbr, slbl, so, window, mode):
     return {"window":window,"strategy":slbl,"stress":so["lbl"],"mode":mode,"n":n,"ns":ns,"nr":nr,"sr":round(ns/n*100,2),"rr":round(nr/n*100,2),"mbr":round(mb,2),"midx":mi}
 
 def main():
-    _safe_print("="*72); _safe_print("  THE 100x GAUNTLET v7.5.2 OMNI RESTORE"); _safe_print("="*72)
+    _safe_print("="*72); _safe_print("  THE 100x GAUNTLET v8.0.2 GOLD MASTER"); _safe_print("="*72)
     tdy = datetime.date.today(); cuts = {"18mo":(tdy-datetime.timedelta(days=548)).strftime("%Y-%m-%d"), "36mo":(tdy-datetime.timedelta(days=1096)).strftime("%Y-%m-%d")}
 
     ql = (input("\n Quick Launch? [1] Yes (36mo FULL HALF Gauntlet $2)  [2] Customize\n Choice [1]: ").strip() or "1")
