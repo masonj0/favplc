@@ -1,0 +1,156 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-06-24 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:45 | Churchill Downs      | R5  | F:8  | D:0.875 | P:52K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  18:50 | Clairefontaine       | R8  | F:7  | D:2.236 | P:16K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:50 | Thistledown          | R5  | F:10 | D:0.750 | P:7K    | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:51 | Finger Lakes         | R5  | F:11 | D:0.688 | P:11K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:55 | Horseshoe Indianapol | R2  | F:6  | D:1.000 | P:19K   | SI: 5.8 | F1: 1.8 | F2: 4.0 | G2: 2.2 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:00 | Delaware             | R6  | F:9  | D:1.040 | P:18K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  19:05 | Cherbourg            | R8  | F:12 | D:1.631 | P:12K   | SI: 8.0 | F1: 4.0 | F2: 4.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:10 | Naas                 | R7  | F:20 | D:1.000 | P:9K    | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:18 | Churchill Downs      | R6  | F:16 | D:1.000 | P:75K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:20 | Clairefontaine       | R9  | F:11 | D:2.112 | P:21K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:20 | Finger Lakes         | R6  | F:9  | D:0.750 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:20 | Thistledown          | R6  | F:7  | D:0.750 | P:8K    | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:27 | Horseshoe Indianapol | R3  | F:13 | D:1.000 | P:14K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:30 | Presque Isle         | R1  | F:6  | D:0.688 | P:8K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  19:32 | Delaware             | R7  | F:7  | D:1.040 | P:12K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:49 | Finger Lakes         | R7  | F:7  | D:0.750 | P:18K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:50 | Churchill Downs      | R7  | F:9  | D:0.750 | P:52K   | SI: 7.8 | F1: 2.8 | F2: 5.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  19:50 | Clairefontaine       | R10 | F:7  | D:2.423 | P:20K   | SI: 8.0 | F1: 4.0 | F2: 4.0 | G2: 0.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:50 | Thistledown          | R7  | F:6  | D:1.000 | P:13K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:57 | Presque Isle         | R2  | F:6  | D:0.812 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  19:59 | Horseshoe Indianapol | R4  | F:6  | D:0.750 | P:25K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:04 | Delaware             | R8  | F:12 | D:1.000 | P:28K   | SI: 5.2 | F1: 2.4 | F2: 2.8 | G2: 0.4 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:8  | D:0.750 | P:8K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:20 | Thistledown          | R8  | F:8  | D:0.750 | P:16K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:22 | Churchill Downs      | R8  | F:7  | D:0.812 | P:80K   | SI: 5.2 | F1: 2.4 | F2: 2.8 | G2: 0.4 | T
+    (No matching strategies)
+
+  20:24 | Presque Isle         | R3  | F:7  | D:0.750 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:31 | Horseshoe Indianapol | R5  | F:10 | D:0.625 | P:27K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  20:36 | Delaware             | R9  | F:6  | D:0.750 | P:28K   | SI: 7.0 | F1: 2.5 | F2: 4.5 | G2: 2.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  20:51 | Presque Isle         | R4  | F:8  | D:0.750 | P:19K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:55 | Churchill Downs      | R9  | F:10 | D:1.000 | P:84K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:03 | Horseshoe Indianapol | R6  | F:14 | D:1.000 | P:24K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:18 | Presque Isle         | R5  | F:8  | D:0.750 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:36 | Horseshoe Indianapol | R7  | F:11 | D:0.750 | P:63K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:45 | Penn National        | R1  | F:7  | D:0.625 | P:10K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  21:45 | Presque Isle         | R6  | F:10 | D:1.040 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:09 | Horseshoe Indianapol | R8  | F:10 | D:0.750 | P:63K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    (No matching strategies)
+
+  22:12 | Presque Isle         | R7  | F:8  | D:0.812 | P:15K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:14 | Penn National        | R2  | F:7  | D:1.062 | P:25K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+  22:36 | Horseshoe Indianapol | R9  | F:9  | D:0.199 | P:12K   | SI: 7.8 | F1: 2.8 | F2: 5.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  22:39 | Presque Isle         | R8  | F:9  | D:0.750 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:43 | Penn National        | R3  | F:12 | D:1.000 | P:10K   | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:12 | Penn National        | R4  | F:6  | D:0.750 | P:20K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  23:41 | Penn National        | R5  | F:8  | D:0.750 | P:17K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
