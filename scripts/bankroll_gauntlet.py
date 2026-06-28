@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 """
-THE 100x GAUNTLET — v8.0.2 "GOLD MASTER"
+THE 100x GAUNTLET — v1.1.0 GOLD MASTER
+"If the math don't work, we don't bet."
+"""
+
+import os
+import sys
+import datetime
+import math
+import warnings
+import numpy as np
+import pandas as pd
+from numba import njit, prange
+from numba.typed import List
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 warnings.filterwarnings("ignore")
 """
 
@@ -20,292 +36,409 @@ import matplotlib.pyplot as plt
 BG, MUT, GRD, TXT = "#0f172a", "#64748b", "#1e293b", "#f1f5f9"
 ACC, RED, GLD = "#10b981", "#f43f5e", "#f59e0b"
 
-def _safe_print(m):
-    try: print(m)
-    except: pass
+# Global Sim Constants
+S_BR    = 2000.0   # Starting Bankroll
+R_FLR   = 200.0    # Ruin Floor
+TGT     = 200000.0 # Target/Retirement
+MAX_BET = 5000.0   # Max wager per race
+N_PTH   = 1000     # Number of paths to simulate
+M_RCS   = 10000    # Max races per path
+RPD     = 25       # Average races per day
+SEED    = 42
+JITTER  = 0.05     # Randomized payout noise
+UNIT_SUPERF = 2.00
+UNIT_TRI    = 2.00
+BASE_BET_FACTOR = 2.00
 
-def _inst_snapshot(pmap):
-    return {k: {"n": len(v), "ev": float(v.mean()) if len(v) else 0.0}
-            for k, v in pmap.items()}
+TRAIN_FILE, TEST_FILE = "RaceRecords_Output_2025.csv", "RaceRecords_Output_2026.csv"
 
-def _mk_env(field_min=0, field_max=99, chalk_req=None, first_req=None, sprint_req=None,
-            race_min=1, race_max=99, sum_min=0.0, sum_max=99.0,
-            fav2_min=0.0, fav2_max=99.0, purse_lo=0, purse_hi=1_000_000,
-            fmin=None, fmax=None, c=None, fr=None, spr=None, rmin=None, rmax=None,
-            smin=None, smax=None, f2min=None, f2max=None, plo=None, phi=None):
-    # Map short names to long names if provided
-    field_min = fmin if fmin is not None else field_min
-    field_max = fmax if fmax is not None else field_max
-    chalk_req = c if c is not None else chalk_req
-    first_req = fr if fr is not None else first_req
-    sprint_req = spr if spr is not None else sprint_req
-    race_min = rmin if rmin is not None else race_min
-    race_max = rmax if rmax is not None else race_max
-    sum_min = smin if smin is not None else sum_min
-    sum_max = smax if smax is not None else sum_max
-    fav2_min = f2min if f2min is not None else fav2_min
-    fav2_max = f2max if f2max is not None else fav2_max
-    purse_lo = plo if plo is not None else purse_lo
-    purse_hi = phi if phi is not None else purse_hi
-
+# ══════════════════════════════════════════════════════════════════════════════
+# ENVIRONMENT FILTERS
+# ══════════════════════════════════════════════════════════════════════════════
+def _mk_env(fmin=0, fmax=99, c=None, fr=None, spr=None, rmin=1, rmax=99,
+            smin=0.0, smax=99.0, f2min=0.0, f2max=99.0, plo=0, phi=1000000):
     def env_filter(df):
-        m = (df["Runners"].between(field_min, field_max)) & \
-            (df["WhichRace"].between(race_min, race_max)) & \
-            (df["SumOf1st2Odds"].between(sum_min, sum_max)) & \
-            (df["Purse"].between(purse_lo, purse_hi))
-
-        if chalk_req is not None:
-            c_col = "Chalk" if "Chalk" in df else "ChalkStatus" if "ChalkStatus" in df else None
-            if c_col: m &= (df[c_col] == chalk_req)
-
-        if first_req is not None:
-            f_col = "First" if "First" in df else "FirstStatus" if "FirstStatus" in df else None
-            if f_col: m &= (df[f_col] == first_req)
-
-        if sprint_req is not None and "Sprint" in df:
-            m &= (df["Sprint"] == sprint_req)
-
-        if fav2_min > 0.0 or fav2_max < 99.0:
-            f2 = df["Fav2Odds"] if "Fav2Odds" in df else (
-                df["SumOf1st2Odds"] - df["1stOdds"] if "1stOdds" in df else pd.Series(0, index=df.index))
-            m &= f2.between(fav2_min, fav2_max)
+        m = (df["Runners"].between(fmin, fmax)) & \
+            (df["WhichRace"].between(rmin, rmax)) & \
+            (df["SumOf1st2Odds"].between(smin, smax)) & \
+            (df["Purse"].between(plo, phi))
+        if c is not None:
+            c_col = "ChalkStatus" if "ChalkStatus" in df else "Chalk"
+            if c_col in df: m &= (df[c_col] == c)
+        if fr is not None:
+            f_col = "FirstStatus" if "FirstStatus" in df else "First"
+            if f_col in df: m &= (df[f_col] == fr)
+        if spr is not None and "Sprint" in df:
+            m &= (df["Sprint"] == spr)
+        if "Fav2Odds" in df:
+            m &= df["Fav2Odds"].between(f2min, f2max)
+        elif f2min > 0.0 or f2max < 99.0:
+            f2 = df["SumOf1st2Odds"] - df["1stOdds"] if "1stOdds" in df else pd.Series(0, index=df.index)
+            m &= f2.between(f2min, f2max)
         return m
     return env_filter
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HIT FUNCTIONS
+# HIT FUNCTIONS (VECTORIZED)
 # ══════════════════════════════════════════════════════════════════════════════
-def _h_al(p, n=None):    return True
-def _h_t145(p, n=None):  return (len(p) > 2 and p[0] == 1 and p[1] in {2,3,4} and p[2] in {2,3,4,5})
-def _h_t245(p, n=None):  return (len(p) > 2 and p[0] <= 2 and p[1] <= 4 and p[1] != p[0] and p[2] <= 5 and p[2] != p[0] and p[2] != p[1])
-def _h_s3214(p, n=None): return (len(p) > 3 and p[0] <= 3 and p[1] <= 2 and p[2] <= 1 and p[3] <= 4)
-def _h_s3225(p, n=None): return (len(p) > 3 and p[0] <= 3 and p[1] <= 2 and p[2] <= 2 and p[3] <= 5)
-def _h_s4455(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and max(p[2:4]) <= 5)
-def _h_s4456(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and p[2] <= 5 and p[3] <= 6)
-def _h_s4466(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and max(p[2:4]) <= 6)
-def _h_s4444(p, n=None): return (len(p) > 3 and p[0] <= 4 and p[1] <= 4 and p[2] <= 4 and p[3] <= 4)
-def _h_s5556(p, n=None): return (len(p) > 3 and max(p[:3]) <= 5 and p[3] <= 6)
-def _h_s5567(p, n=None): return (len(p) > 3 and p[0] <= 5 and p[1] <= 5 and p[2] <= 6 and p[3] <= 7)
-def _h_s2444(p, n=None): return (len(p) > 3 and p[0] <= 2 and p[1] <= 4 and p[2] <= 4 and p[3] <= 4)
-def _h_s2555(p, n=None): return (len(p) > 3 and p[0] <= 2 and p[1] <= 5 and p[2] <= 5 and p[3] <= 5)
-def _h_s3666(p, n=None): return (len(p) > 3 and p[0] <= 3 and max(p[1:4]) <= 6)
-def _h_s6667(p, n=None): return (len(p) > 3 and max(p[:3]) <= 6 and p[3] <= 7)
-def _h_s1234(p, n=None): return (len(p) > 3 and p[0] == 1 and p[1] == 2 and p[2] == 3 and p[3] == 4)
-def _h_t135(p, n=None):  return (len(p) > 2 and p[0] == 1 and p[1] <= 3 and p[2] <= 5)
-def _h_tria22(p, n=None): return (len(p) > 2 and p[0] >= 3 and p[1] <= 2 and p[2] <= 2 and p[1] != p[2])
+def _h_al(p1, p2, p3, p4):    return np.ones_like(p1, dtype=bool)
+def _h_t145(p1, p2, p3, p4):  return (p1 == 1) & (p2 <= 4) & (p3 <= 5)
+def _h_s4455(p1, p2, p3, p4): return (p1 <= 4) & (p2 <= 4) & (p3 <= 5) & (p4 <= 5)
+def _h_s5556(p1, p2, p3, p4): return (p1 <= 5) & (p2 <= 5) & (p3 <= 5) & (p4 <= 6)
+def _h_s4456(p1, p2, p3, p4): return (p1 <= 4) & (p2 <= 4) & (p3 <= 5) & (p4 <= 6)
+def _h_s3666(p1, p2, p3, p4): return (p1 <= 3) & (p2 <= 6) & (p3 <= 6) & (p4 <= 6)
+def _h_s6667(p1, p2, p3, p4): return (p1 <= 6) & (p2 <= 6) & (p3 <= 6) & (p4 <= 7)
+def _h_s4466(p1, p2, p3, p4): return (p1 <= 4) & (p2 <= 4) & (p3 <= 6) & (p4 <= 6)
+def _h_s4444(p1, p2, p3, p4): return (p1 <= 4) & (p2 <= 4) & (p3 <= 4) & (p4 <= 4)
+def _h_s5567(p1, p2, p3, p4): return (p1 <= 5) & (p2 <= 5) & (p3 <= 6) & (p4 <= 7)
+def _h_s2444(p1, p2, p3, p4): return (p1 <= 2) & (p2 <= 4) & (p3 <= 4) & (p4 <= 4)
+def _h_s2555(p1, p2, p3, p4): return (p1 <= 2) & (p2 <= 5) & (p3 <= 5) & (p4 <= 5)
+def _h_s1234(p1, p2, p3, p4): return (p1 == 1) & (p2 == 2) & (p3 == 3) & (p4 == 4)
+def _h_s2355(p1, p2, p3, p4): return (p1 <= 2) & (p2 <= 3) & (p3 <= 5) & (p4 <= 5)
+def _h_tri2l1(p1, p2, p3, p4): return (p1 <= 2) & (p2 <= 6) & (p3 <= 2)
+def _h_tria22(p1, p2, p3, p4): return (p1 >= 3) & (p2 <= 2) & (p3 <= 2) & (p2 != p3)
+def _h_s1445(p1, p2, p3, p4): return (p1 == 1) & (p2 <= 4) & (p3 <= 4) & (p4 <= 5)
+def _h_s3444(p1, p2, p3, p4): return (p1 <= 3) & (p2 <= 4) & (p3 <= 4) & (p4 <= 4)
+def _h_s2266(p1, p2, p3, p4): return (p1 <= 2) & (p2 <= 2) & (p3 <= 6) & (p4 <= 6)
+def _h_s1555(p1, p2, p3, p4): return (p1 == 1) & (p2 <= 5) & (p3 <= 5) & (p4 <= 5)
+def _h_s4144(p1, p2, p3, p4): return (p1 <= 4) & (p2 == 1) & (p3 <= 4) & (p4 <= 4)
+def _h_t123(p1, p2, p3, p4): return (p1 == 1) & (p2 == 2) & (p3 == 3)
+def _h_s6678(p1, p2, p3, p4): return (p1 <= 6) & (p2 <= 6) & (p3 <= 7) & (p4 <= 8)
 
 _VH = {
-    "_h_al": _h_al, "_h_t145": _h_t145, "_h_t245": _h_t245,
-    "_h_s3214": _h_s3214, "_h_s3225": _h_s3225, "_h_s4455": _h_s4455,
-    "_h_s4456": _h_s4456, "_h_s4466": _h_s4466, "_h_s4444": _h_s4444,
-    "_h_s5556": _h_s5556, "_h_s5567": _h_s5567, "_h_s2444": _h_s2444,
-    "_h_s2555": _h_s2555, "_h_s3666": _h_s3666, "_h_s6667": _h_s6667,
-    "_h_s1234": _h_s1234, "_h_t135": _h_t135, "_h_tria22": _h_tria22
+    "_h_al": _h_al, "_h_t145": _h_t145, "_h_s4455": _h_s4455,
+    "_h_s5556": _h_s5556, "_h_s4456": _h_s4456, "_h_s3666": _h_s3666,
+    "_h_s6667": _h_s6667, "_h_s4466": _h_s4466, "_h_s4444": _h_s4444,
+    "_h_s5567": _h_s5567, "_h_s2444": _h_s2444, "_h_s2555": _h_s2555,
+    "_h_s1234": _h_s1234, "_h_s2355": _h_s2355, "_h_tri2l1": _h_tri2l1,
+    "_h_tria22": _h_tria22, "_h_s1445": _h_s1445, "_h_s3444": _h_s3444,
+    "_h_s2266": _h_s2266, "_h_s1555": _h_s1555, "_h_s4144": _h_s4144,
+    "_h_t123": _h_t123, "_h_s6678": _h_s6678
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION
-# ══════════════════════════════════════════════════════════════════════════════
-TRAIN_FILE, TEST_FILE = "RaceRecords_Output_2025.csv", "RaceRecords_Output_2026.csv"
-
-S_BR    = 2_000.0
-R_FLR   = 200.0
-TGT     = 200_000.0
-MAX_BET = 5_000.0
-
-N_PTH, M_RCS, RPD, SEED = 1000, 10000, 25, 42
-JITTER, HR_MIN, WOW_ABS, WOW_RAT = 0.05, 2, 25000.0, 200.0
-
-BASE_BET_FACTOR = 2.00
-UNIT_SUPERF = 2.00
-UNIT_TRI    = 2.00
-
-# ══════════════════════════════════════════════════════════════════════════════
-# INSTRUMENT REGISTRY — v8.0.2 GOLD MASTER
+# INSTRUMENT REGISTRY — v7.5.2
 # ══════════════════════════════════════════════════════════════════════════════
 INS = {
-    # ── T1A ──────────────────────────────────────────────────────────────────
+    # ── TIER 1A — active from $0 ──────────────────────────────────────────────
     "FB4_2": {
-        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=4, c="N", smin=4.0, smax=7.5, f2min=2.5, f2max=4.0), "mn": 4},
+        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=4,smax=7.5,f2min=2.5,f2max=4)},
     "FB4_3": {
-        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=4, c="N", fr="N", smin=4.0, smax=6.0), "mn": 4},
+        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=4,fmax=4,c="N",fr="N",smin=4,smax=6)},
     "FB4_4": {
-        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=4, c="N", smin=4.0, smax=6.0), "mn": 4},
+        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=4,smax=6)},
     "FB4_5": {
-        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=4, c="N", spr="Y", smin=4.0, smax=6.0), "mn": 4},
-    "FB4_6": {
-        "t": "T1A", "tc": 48.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=4, smin=4.0, smax=6.0, f2min=2.5, f2max=4.0), "mn": 4},
-    "Sup3214_R5": {
-        "t": "T1A", "tc": 2.0, "hf": "_h_s3214", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=5, fmax=5, c="N", smin=3.0), "mn": 5},
-    "Sup3214_R6": {
-        "t": "T1A", "tc": 2.0, "hf": "_h_s3214", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, smin=3.0), "mn": 6},
-    "TRI145": {
-        "t": "T1A", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, smin=9.0, f2min=2.5), "mn": 5, "mx": 13},
-    "TRI245": {
-        "t": "T1A", "tc": 36.0, "hf": "_h_t245", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, smin=9.0, f2min=2.5), "mn": 5, "mx": 13},
+        "t":"T1A","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=4,fmax=4,c="N",spr="Y",smin=4,smax=6)},
 
-    # ── T1B ──────────────────────────────────────────────────────────────────
+    # ── TIER 1B — active from $3,000 ─────────────────────────────────────────
     "SB6_S5556_A": {
-        "t": "T1B", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", smin=6.0, smax=8.5, plo=8000, phi=25000), "mn": 6},
+        "t":"T1B","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=8.5,plo=8000,phi=30000)}, # W8
     "SB6_S5556_B": {
-        "t": "T1B", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", fr="N", smin=6.0, smax=8.5, plo=8000, phi=25000), "mn": 6},
+        "t":"T1B","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",smin=6,smax=8.5,plo=8000,phi=30000)}, # W9
     "NM_Sup4455_N6_C": {
-        "t": "T1B", "tc": 144.0, "hf": "_h_s4455", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
+        "t":"T1B","tc_mode":"pattern_superf","pat":[4,4,5,5],
+        "unit_price":UNIT_SUPERF,"_old_tc":144,
+        "hf":"_h_s4455","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
     "FB5_2": {
-        "t": "T1B", "tc": 240.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=5, fmax=5, c="N", f2min=4.0, smin=6.0), "mn": 5},
-    "NM_Sup4455_N6_D": {
-        "t": "T1B", "tc": 144.0, "hf": "_h_s4455", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, smin=6.0, smax=8.5), "mn": 6},
-    "TRI_Sum8": {
-        "t": "T1B", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, smin=8.0, f2min=2.5), "mn": 5, "mx": 13},
-    "FB5_Fav3": {
-        "t": "T1B", "tc": 240.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=5, fmax=5, c="N", f2min=3.0), "mn": 5},
-    "Supr4444_High": {
-        "t": "T1B", "tc": 48.0, "hf": "_h_s4444", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=6, smin=7.5), "mn": 4, "mx": 6},
-    "Sup2444_High": {
-        "t": "T1B", "tc": 24.0, "hf": "_h_s2444", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=4, fmax=6, smin=7.5), "mn": 4, "mx": 6},
-    "SB6_S5556_SumWide": {
-        "t": "T1B", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", smin=6.0, smax=9.5, plo=8000, phi=25000), "mn": 6},
-    "NM_Sup4456_N6_D": {
-        "t": "T1B", "tc": 216.0, "hf": "_h_s4456", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, smin=6.0, smax=9.5), "mn": 6},
-    "NM_Supr3666_N6_D": {
-        "t": "T1B", "tc": 360.0, "hf": "_h_s3666", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, smin=6.0, smax=9.5), "mn": 6},
+        "t":"T1B","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":240,"hf":"_h_al","pc":"Superf_paid","mn":5,"mx":5,"ew":2.5,"v":1,
+        "ef":_mk_env(fmin=5,fmax=5,c="N",f2min=3)}, # W5
 
-    # ── T2 ───────────────────────────────────────────────────────────────────
+    # ── TIER 2 — active from $5,000 ──────────────────────────────────────────
+    "TRI145": {
+        "t":"T2","tc_mode":"pattern_tri","pat":[1,4,5],
+        "unit_price":UNIT_TRI,"_old_tc":18,
+        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":2.8,"v":1,
+        "ef":_mk_env(smin=8,f2min=2.5)}, # W1
     "SB6_S5556_C": {
-        "t": "T2", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="Y", smin=6.0, smax=8.5, plo=8000, phi=35000), "mn": 6},
+        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":2.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",spr="Y",smin=6,smax=8.5,plo=8000,phi=35000)},
+    "SB6_S5556_SumWide": {
+        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=10.5,plo=8000,phi=25000)}, # W4
     "SB6_S5556_A_P35": {
-        "t": "T2", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", smin=6.0, smax=8.5, plo=8000, phi=35000), "mn": 6},
-    "TRI_First": {
-        "t": "T2", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, fr="Y", smin=9.0, f2min=2.5), "mn": 5, "mx": 13},
-    "FB6_2": {
-        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
-    "FB6_3": {
-        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
-    "FB6_5": {
-        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
-    "FB6_6": {
-        "t": "T2", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
-    "NM_Sup4466": {
-        "t": "T2", "tc": 288.0, "hf": "_h_s4466", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
-    "NM_Sup5567": {
-        "t": "T2", "tc": 480.0, "hf": "_h_s5567", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0), "mn": 6},
-
-    # ── T3 ───────────────────────────────────────────────────────────────────
-    "FB7_1": {
-        "t": "T3", "tc": 1680.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=7, fmax=7, c="N", fr="N", spr="Y", plo=8000, phi=15000, smin=6.0, smax=8.0), "mn": 7},
-    "FB7_3": {
-        "t": "T3", "tc": 1680.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=7, fmax=7, c="N", spr="Y", plo=8000, phi=20000, f2min=4.0, smin=6.0), "mn": 7},
-    "FB7_4": {
-        "t": "T3", "tc": 1680.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=7, fmax=7, c="N", smin=6.0, smax=8.0, f2min=4.0, plo=10000), "mn": 7},
-    "FB6_1": {
-        "t": "T3", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="Y", f2min=4.0), "mn": 6},
-    "FB6_4": {
-        "t": "T3", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="Y", f2min=4.0), "mn": 6},
-
-    # ── BONUS ─────────────────────────────────────────────────────────────────
-    "BNS_TRI_HighPurse": {
-        "t": "BONUS", "tc": 18.0, "hf": "_h_t145", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, smin=9.0, f2min=2.5, plo=25000), "mn": 5, "mx": 13},
-    "BNS_Sup3225_R56": {
-        "t": "BONUS", "tc": 24.0, "hf": "_h_s3225", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=5, fmax=6, smin=4.0), "mn": 5, "mx": 6},
-    "BNS_Supr2555_Sniper": {
-        "t": "BONUS", "tc": 96.0, "hf": "_h_s2555", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=5, fmax=8, smin=7.0), "mn": 5, "mx": 8},
-    "BNS_Tri135": {
-        "t": "BONUS", "tc": 12.0, "hf": "_h_t135", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, smin=7.0, f2min=2.5), "mn": 5, "mx": 13},
-    "BNS_SB6_RouteOnly": {
-        "t": "BONUS", "tc": 360.0, "hf": "_h_s5556", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", spr="N", smin=6.0, smax=8.5, plo=8000, phi=25000), "mn": 6},
-    "SB12_S6667_A": {
-        "t": "BONUS", "tc": 960.0, "hf": "_h_s6667", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=12, fmax=12, c="N", spr="N", smin=4.0, smax=8.5, f2min=4.0, plo=8000, phi=25000), "mn": 12},
-    "FB6_First": {
-        "t": "BONUS", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", fr="Y", f2min=4.0), "mn": 6},
+        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=8.5,plo=8000,phi=40000)}, # W7
+    "NM_Sup4455_N6_D": {
+        "t":"T2","tc_mode":"pattern_superf","pat":[4,4,5,5],
+        "unit_price":UNIT_SUPERF,"_old_tc":144,
+        "hf":"_h_s4455","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4,smin=6,smax=9.5)},
+    "NM_Sup4456_N6_D": {
+        "t":"T2","tc_mode":"pattern_superf","pat":[4,4,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":216,
+        "hf":"_h_s4456","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4,smin=6,smax=9.5)},
+    "NM_Supr3666_N6_D": {
+        "t":"T2","tc_mode":"pattern_superf","pat":[3,6,6,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s3666","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4,smin=6,smax=10.0)}, # W6
     "FB6_HighPurse": {
-        "t": "BONUS", "tc": 720.0, "hf": "_h_al", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=6, fmax=6, c="N", f2min=4.0, plo=25000), "mn": 6},
-    "BNS_TriA22": {
-        "t": "BONUS", "tc": 12.0, "hf": "_h_tria22", "pc": "Trif_paid",
-        "ef": _mk_env(fmin=5, fmax=13, smin=6.0, f2min=2.5), "mn": 5, "mx": 13},
+        "t":"T2","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=3,plo=25000)}, # W3
 
-    # ── APEX ─────────────────────────────────────────────────────────────────
+    # ── TIER 2 WATCH — v=0, not in active strategies ─────────────────────────
+    "SB6_S5556_E": {
+        "t":"T2","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":3.0,"v":0,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",smin=6,smax=9.5,plo=8000,phi=35000)},
+
+    # ── TIER 3 — active from $10,000 ─────────────────────────────────────────
+    "FB4_6": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":48,"hf":"_h_al","pc":"Superf_paid","mn":4,"mx":4,"ew":1.0,"v":1,
+        "ef":_mk_env(fmin=4,fmax=4,rmin=4,rmax=8,smin=4,smax=6,f2min=2.5,f2max=4)},
+    "FB7_1": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.5,"v":1,
+        "ef":_mk_env(fmin=7,fmax=7,c="N",fr="N",spr="Y",plo=8000,phi=15000,smin=6,smax=8)},
+    "FB7_2": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.5,"v":1,
+        "ef":_mk_env(fmin=7,fmax=7,c="N",plo=8000,phi=15000,smin=6,smax=8)},
+    "FB7_3": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.75,"v":1,
+        "ef":_mk_env(fmin=7,fmax=7,c="N",spr="Y",plo=8000,phi=20000,f2min=4,smin=6)},
+    "FB7_4": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":1680,"hf":"_h_al","pc":"Superf_paid","mn":7,"mx":7,"ew":0.5,"v":1,
+        "ef":_mk_env(fmin=7,fmax=7,c="N",smin=6,smax=8,f2min=4)},
+    "SB12_S6667_A": {
+        "t":"T3","tc_mode":"pattern_superf","pat":[6,6,6,7],
+        "unit_price":UNIT_SUPERF,"_old_tc":960,
+        "hf":"_h_s6667","pc":"Superf_paid","mn":12,"mx":12,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=12,fmax=12,c="N",spr="N",rmin=4,rmax=9,
+                     smin=4,smax=8.5,f2min=4,plo=8000,phi=25000)},
+    "FB6_First": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="Y",f2min=4)},
+    "FB6_1": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",spr="Y",f2min=4)},
+    "FB6_2": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",rmin=4,rmax=8,f2min=4)},
+    "FB6_3": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",rmin=4,rmax=8,f2min=4)},
+    "FB6_4": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",spr="Y",f2min=4)},
+    "FB6_5": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",fr="N",f2min=4)},
+    "FB6_6": {
+        "t":"T3","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":720,"hf":"_h_al","pc":"Superf_paid","mn":6,"mx":6,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
+    "NM_Sup4466": {
+        "t":"T3","tc_mode":"pattern_superf","pat":[4,4,6,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":288,
+        "hf":"_h_s4466","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
+    "NM_Sup5567": {
+        "t":"T3","tc_mode":"pattern_superf","pat":[5,5,6,7],
+        "unit_price":UNIT_SUPERF,"_old_tc":480,
+        "hf":"_h_s5567","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":1,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=4)},
+    "TRI_First": {
+        "t":"T3","tc_mode":"pattern_tri","pat":[1,4,5],
+        "unit_price":UNIT_TRI,"_old_tc":18,
+        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":2.0,"v":1,
+        "ef":_mk_env(fr="Y",smin=9,f2min=2.0)}, # W2
+
+    # ── BONUS — discovery, v=0, excluded from active strategies ──────────────
+    "BNS_SB6_RouteOnly": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[5,5,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s5556","pc":"Superf_paid","mn":6,"mx":6,"ew":2.5,"v":0,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",spr="N",smin=6,smax=8.5,plo=8000,phi=25000)},
+    "BNS_SB12_R9": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[6,6,6,7],
+        "unit_price":UNIT_SUPERF,"_old_tc":960,
+        "hf":"_h_s6667","pc":"Superf_paid","mn":12,"mx":12,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=12,fmax=12,c="N",spr="N",rmin=4,rmax=9,
+                     smin=4,smax=8.5,f2min=4,plo=8000,phi=25000)},
+    "BNS_TRI_HighPurse": {
+        "t":"BONUS","tc_mode":"pattern_tri","pat":[1,4,5],
+        "unit_price":UNIT_TRI,"_old_tc":18,
+        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":2.0,"v":0,
+        "ef":_mk_env(smin=9,f2min=2.5,plo=25000)},
+    "BNS_TRI_Sum8": {
+        "t":"BONUS","tc_mode":"pattern_tri","pat":[1,4,5],
+        "unit_price":UNIT_TRI,"_old_tc":18,
+        "hf":"_h_t145","pc":"Trif_paid","mn":5,"mx":13,"ew":3.0,"v":0,
+        "ef":_mk_env(smin=8,f2min=2.5)},
+    "BNS_FB5_Fav3": {
+        "t":"BONUS","tc_mode":"full_box_superf","unit_price":UNIT_SUPERF,
+        "_old_tc":240,"hf":"_h_al","pc":"Superf_paid","mn":5,"mx":5,"ew":2.0,"v":0,
+        "ef":_mk_env(fmin=5,fmax=5,c="N",f2min=3)},
+    "BNS_Sup2355": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,3,5,5],
+        "unit_price":UNIT_SUPERF,"_old_tc":48,
+        "hf":"_h_s2355","pc":"Superf_paid","mn":6,"mx":6,"ew":2.0,"v":0,
+        "ef":_mk_env(fmin=6,fmax=6,c="N",f2min=3,smin=6,smax=9,plo=10000)},
+    "BNS_Tri2L1": {
+        "t":"BONUS","tc_mode":"pattern_tri","pat":[2,6,2],
+        "unit_price":UNIT_TRI,"_old_tc":18,
+        "hf":"_h_tri2l1","pc":"Trif_paid","mn":6,"mx":13,"ew":3.0,"v":0,
+        "ef":_mk_env(c="N",smin=9,f2min=4)},
+    "BNS_TriA22": {
+        "t":"BONUS","tc_mode":"all_over_top2_top2_tri",
+        "unit_price":UNIT_TRI,"_old_tc":None,
+        "hf":"_h_tria22","pc":"Trif_paid","mn":5,"mx":13,"ew":2.5,"v":0,
+        "ef":_mk_env(c="N",smin=7,f2min=3)},
+
+    # ── SNIPER DISCOVERIES ────────────────────────────────────────────────────
+    "BNS_Supr2555_Sniper": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,5,5,5],
+        "unit_price":UNIT_SUPERF,"_old_tc":96,
+        "hf":"_h_s2555","pc":"Superf_paid","mn":5,"mx":7,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=5,fmax=7,c="Y",smin=4.0,smax=7.5,f2max=2.0)},
+    "BNS_Sup2444_High": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,4,4,4],
+        "unit_price":UNIT_SUPERF,"_old_tc":24,
+        "hf":"_h_s2444","pc":"Superf_paid","mn":4,"mx":6,"ew":1.0,"v":0,
+        "ef":_mk_env(fmin=4,fmax=6,smin=7.5)},
+    "BNS_Supr4444_High": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[4,4,4,4],
+        "unit_price":UNIT_SUPERF,"_old_tc":48,
+        "hf":"_h_s4444","pc":"Superf_paid","mn":4,"mx":6,"ew":1.0,"v":0,
+        "ef":_mk_env(fmin=4,fmax=6,smin=7.5)},
+    "BNS_Supr1445_R7_Mid": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[1,4,4,5],
+        "unit_price":UNIT_SUPERF,"_old_tc":24,
+        "hf":"_h_s1445","pc":"Superf_paid","mn":7,"mx":7,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=7,fmax=7,c="Y",smin=4.0,smax=7.5,f2max=2.0)},
+    "BNS_Sup1234_Sniper": {
+        "t":"BONUS","tc_mode":"straight_superf",
+        "unit_price":UNIT_SUPERF,"_old_tc":2,"tc":2.0,
+        "hf":"_h_s1234","pc":"Superf_paid","mn":7,"mx":7,"ew":1.0,"v":0,
+        "ef":_mk_env(fmin=7,fmax=7,c="Y",smin=4.0,smax=7.5,f2max=2.0)},
+
+    # ── HISTORICAL CONSENSUS ROUTES & BEST BETS ───────────────────────────────
+    "BNS_Sup3444_R4": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[3,4,4,4],
+        "unit_price":UNIT_SUPERF,"_old_tc":36,
+        "hf":"_h_s3444","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=3.0,smax=7.0)},
+    "BNS_Supr4444_R4": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[4,4,4,4],
+        "unit_price":UNIT_SUPERF,"_old_tc":48,
+        "hf":"_h_s4444","pc":"Superf_paid","mn":4,"mx":4,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=4,fmax=4,c="N",smin=3.0,smax=7.0)},
+    "BNS_Sup2266_Large": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[2,2,6,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":48,
+        "hf":"_h_s2266","pc":"Superf_paid","mn":10,"mx":12,"ew":2.0,"v":0,
+        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=5.0,smax=7.0)},
+    "BNS_Supr1555_Large": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[1,5,5,5],
+        "unit_price":UNIT_SUPERF,"_old_tc":48,
+        "hf":"_h_s1555","pc":"Superf_paid","mn":10,"mx":12,"ew":2.0,"v":0,
+        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=5.0,smax=7.0)},
+    "BNS_Supr4144_R8": {
+        "t":"BONUS","tc_mode":"pattern_superf","pat":[4,1,4,4],
+        "unit_price":UNIT_SUPERF,"_old_tc":16,
+        "hf":"_h_s4144","pc":"Superf_paid","mn":8,"mx":8,"ew":1.5,"v":0,
+        "ef":_mk_env(fmin=8,fmax=8,c="N",smin=2.0,smax=7.0,phi=18000)},
+    "BNS_Tri123_Large": {
+        "t":"BONUS","tc_mode":"straight_superf",
+        "unit_price":UNIT_TRI,"_old_tc":2,"tc":2.0,
+        "hf":"_h_t123","pc":"Trif_paid","mn":10,"mx":12,"ew":1.0,"v":0,
+        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=2.0,smax=7.0)},
+    "BNS_Sup1234_Large": {
+        "t":"BONUS","tc_mode":"straight_superf",
+        "unit_price":UNIT_SUPERF,"_old_tc":2,"tc":2.0,
+        "hf":"_h_s1234","pc":"Superf_paid","mn":10,"mx":12,"ew":1.0,"v":0,
+        "ef":_mk_env(fmin=10,fmax=12,c="N",smin=2.0,smax=7.0)},
+
+    # ── APEX — inactive, audit visibility only ────────────────────────────────
+    "APX_Supr3666_Wide": {
+        "t":"APEX","tc_mode":"pattern_superf","pat":[3,6,6,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s3666","pc":"Superf_paid","mn":5,"mx":12,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=5,fmax=12,plo=1000,phi=32500)},
+    "APX_Supr3666": {
+        "t":"APEX","tc_mode":"pattern_superf","pat":[3,6,6,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":360,
+        "hf":"_h_s3666","pc":"Superf_paid","mn":6,"mx":12,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=6,fmax=12,plo=500,phi=34500)},
+    "SB12_S6678_A": {
+        "t":"APEX","tc_mode":"pattern_superf","pat":[6,6,7,8],
+        "unit_price":UNIT_SUPERF,"_old_tc":1500,
+        "hf":"_h_s6678","pc":"Superf_paid","mn":12,"mx":12,"ew":1.5,"v":1,
+        "ef":_mk_env(fmin=12,fmax=12,c="N")},
+    "APX_Sup4456": {
+        "t":"APEX","tc_mode":"pattern_superf","pat":[4,4,5,6],
+        "unit_price":UNIT_SUPERF,"_old_tc":216,
+        "hf":"_h_s4456","pc":"Superf_paid","mn":8,"mx":12,"ew":1.5,"q":1,
+        "ef":_mk_env(fmin=8,fmax=12,plo=500,phi=34500)},
     "APX_Sup1234": {
-        "t": "APEX", "tc": 2.0, "hf": "_h_s1234", "pc": "Superf_paid",
-        "ef": _mk_env(fmin=5, fmax=12, smin=6.0), "mn": 5, "mx": 12},
+        "t":"APEX","tc_mode":"straight_superf",
+        "unit_price":UNIT_SUPERF,"_old_tc":2,"tc":2.0,
+        "hf":"_h_s1234","pc":"Superf_paid","mn":4,"mx":13,"ew":1.5,"v":0,
+        "ef":_mk_env(c="N",smin=4,smax=9)},
 }
 
 # ── Strategy sets ─────────────────────────────────────────────────────────────
-_T1A = {"FB4_2","FB4_3","FB4_4","FB4_5","FB4_6",
-        "Sup3214_R5","Sup3214_R6","TRI145","TRI245"}
-_T1B = {"SB6_S5556_A","SB6_S5556_B","NM_Sup4455_N6_C","FB5_2",
-        "NM_Sup4455_N6_D","TRI_Sum8","FB5_Fav3","Supr4444_High",
-        "Sup2444_High","SB6_S5556_SumWide","NM_Sup4456_N6_D","NM_Supr3666_N6_D"}
+_T1A = {"FB4_2","FB4_3","FB4_4","FB4_5"}
+_T1B = {"SB6_S5556_A","SB6_S5556_B","NM_Sup4455_N6_C","FB5_2"}
 _T1  = _T1A | _T1B
-_T2  = {"SB6_S5556_C","SB6_S5556_A_P35","TRI_First","FB6_2","FB6_3",
-        "FB6_5","FB6_6","NM_Sup4466","NM_Sup5567"}
-_T3  = {"FB7_1","FB7_3","FB7_4","FB6_1","FB6_4"}
-_BONUS = {"BNS_TRI_HighPurse","BNS_Sup3225_R56","BNS_Supr2555_Sniper",
-          "BNS_Tri135","BNS_SB6_RouteOnly","SB12_S6667_A",
-          "FB6_First","FB6_HighPurse","BNS_TriA22"}
-_APEX = {"APX_Sup1234"}
-
-# ── SANITY: top-11 comfort score, solid-bar (non-Discovery) instruments only
-# All CS >= 0.420, all have substantial sample history
-# Sorted by CS descending for reference:
-#   FB4_3=0.602, FB4_2=0.597, FB4_4=0.586, FB4_5=0.577, FB5_2=0.574,
-#   FB4_6=0.517, SB6_S5556_B=0.438, SB6_S5556_SumWide=0.435,
-#   SB6_S5556_A=0.422, NM_Sup4456_N6_D=0.420, NM_Supr3666_N6_D=0.420
-_SANITY = {
-    "FB4_3", "FB4_2", "FB4_4", "FB4_5", "FB5_2",
-    "FB4_6",
-    "SB6_S5556_B", "SB6_S5556_SumWide", "SB6_S5556_A",
-    "NM_Sup4456_N6_D", "NM_Supr3666_N6_D",
+_T2  = {
+    "TRI145",
+    "SB6_S5556_C","SB6_S5556_SumWide","SB6_S5556_A_P35",
+    "NM_Sup4455_N6_D","NM_Sup4456_N6_D","NM_Supr3666_N6_D",
+    "FB6_HighPurse",
 }
+_T3_VALIDATED = {
+    "FB4_6",
+    "FB7_1","FB7_2","FB7_3","FB7_4",
+    "SB12_S6667_A",
+    "NM_Sup4466","NM_Sup5567",
+    "TRI_First",
+    "FB6_1","FB6_2","FB6_3","FB6_4","FB6_5","FB6_6",
+}
+_T3_ALL = {k for k,v in INS.items() if v["t"]=="T3"}
+BONUS = {k for k,v in INS.items() if v["t"]=="BONUS"}
+APX   = {k for k,v in INS.items() if v["t"]=="APEX"}
 
 STRATEGY_SETS = {
-    "SANITY":    _SANITY,
-    "SAFEST":    _T1,
-    "STANDARD":  _T1 | _T2,
-    "ALL_TIERS": _T1 | _T2 | _T3,
-    "TURBO":     _T1 | _T2 | _T3 | _BONUS | _APEX,
+    "SAFEST":   _T1,
+    "STANDARD": _T1 | _T2,
+    "FULL":     _T1 | _T2 | _T3_VALIDATED,
+    "TURBO":    _T1 | _T2 | _T3_ALL,
 }
 
 # Add test compatibility keys
@@ -333,198 +466,204 @@ for k in list(INS.keys()):
 # STRESS PRESETS
 # ══════════════════════════════════════════════════════════════════════════════
 STRESS_PRESETS = {
-    "VANILLA":   {"lbl":"VANILLA",   "emo":"🌤",
-                  "f":0.00,"s":0.00,"mi":False,"mt":2000,"ms":0.00004,
-                  "ti":False,"td":0.3,"tdu":20,"c":0.03,"fm":0.08},
-    "HALF":      {"lbl":"HALF",      "emo":"🌦",
-                  "f":0.01,"s":0.05,"mi":False,"mt":2000,"ms":0.00004,
-                  "ti":False,"td":0.3,"tdu":20,"c":0.05,"fm":0.12},
-    "FULL":      {"lbl":"FULL",      "emo":"⛈",
-                  "f":0.01,"s":0.07,"mi":True, "mt":2000,"ms":0.00004,
-                  "ti":True, "td":0.3,"tdu":20,"c":0.05,"fm":0.12},
-    "NIGHTMARE": {"lbl":"NIGHTMARE", "emo":"💀",
-                  "f":0.02,"s":0.12,"mi":True, "mt":1000,"ms":0.0008,
-                  "ti":True, "td":0.2,"tdu":30,"c":0.08,"fm":0.15},
-}
-
-STRESS_PAIRS = {
-    "VANILLA":   ("VANILLA",   "HALF"),
-    "HALF":      ("HALF",      "FULL"),
-    "FULL":      ("FULL",      "NIGHTMARE"),
-    "NIGHTMARE": ("NIGHTMARE", "NIGHTMARE"),
+    "VANILLA": {"lbl":"VANILLA", "c":0.03, "fm":0.08, "s":0.00, "mt":2000, "ms":0.00004, "td":0.3, "tdu":20},
+    "HALF":    {"lbl":"HALF",    "c":0.05, "fm":0.12, "s":0.05, "mt":2000, "ms":0.00004, "td":0.3, "tdu":20},
+    "FULL":    {"lbl":"FULL",    "c":0.05, "fm":0.12, "s":0.07, "mt":2000, "ms":0.00004, "td":0.3, "tdu":20},
+    "NIGHTMARE":{"lbl":"NIGHTMARE", "c":0.08, "fm":0.15, "s":0.12, "mt":1000, "ms":0.0008, "td":0.2, "tdu":30},
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DATA LOADING
-# ══════════════════════════════════════════════════════════════════════════════
-def _get_df(f1, f2, cut):
-    def _read(f):
-        try: return pd.read_csv(f, low_memory=False)
-        except Exception: return pd.DataFrame()
-    frames = [fr for fr in [_read(f1), _read(f2)] if not fr.empty]
-    if not frames: return pd.DataFrame()
-    df = pd.concat(frames, ignore_index=True)
-    dc = next((c for c in df if "Date" in c or "date" in c), None)
-    if dc:
-        df = df[pd.to_datetime(df[dc], errors="coerce").dt.date >= pd.Timestamp(cut).date()]
-    for c in ["Runners","Purse","WhichRace","SumOf1st2Odds","Superf_paid","Trif_paid","Exacta_paid","Superfecta_paid","Trifecta_paid"]:
-        if c in df: df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-    if "Superfecta_paid" in df and "Superf_paid" not in df: df["Superf_paid"] = df["Superfecta_paid"]
-    if "Trifecta_paid" in df and "Trif_paid" not in df: df["Trif_paid"] = df["Trifecta_paid"]
-    return df
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PnL EXTRACTION
-# ══════════════════════════════════════════════════════════════════════════════
-def _x_pnl(df, k, i, ft):
-    if df.empty: return np.array([], dtype=np.float64)
-    m = df["Runners"].between(i["mn"], i.get("mx",999))
-    if "WhichRace" in df: m &= df["WhichRace"].between(1, 11)
-    ef = i["ef"]; m &= ef(df)
-    if not m.any(): return np.array([], dtype=np.float64)
-    q = np.where(m)[0]; tc = i["tc"]; pc = i["pc"]
-    if pc not in df: return np.full(len(q), -tc, dtype=np.float64)
-    pf = df[pc].values[q].astype(float) * (BASE_BET_FACTOR / 2.0)
-    v = ~(np.isnan(pf) | (pf == 0))
-    rng = np.random.default_rng(SEED + abs(hash(k)) % 1_000_000)
-    j = rng.uniform(1 - JITTER, 1 + JITTER, len(q))
-
-    hf_key = i["hf"]
-    if hf_key == "_hit_always_true":
-        pnl = np.where(v, pf * j - tc, -tc).astype(np.float64)
-    elif (fn := _VH.get(hf_key)) and "RANKED_RESULTS" in df:
-        try:
-            s = df["RANKED_RESULTS"].iloc[q].str.split(expand=True).iloc[:, :4]
-            while s.shape[1] < 4: s[s.shape[1]] = np.nan
-            p = [pd.to_numeric(s.iloc[:,x], errors="coerce").values for x in range(4)]
-            h = fn(*p) & ~(np.isnan(p[0])|np.isnan(p[1])|np.isnan(p[2])|np.isnan(p[3]))
-            pnl = np.where(v & h, pf * j - tc, -tc).astype(np.float64)
-        except Exception: pnl = np.full(len(q), -tc, dtype=np.float64)
-    else: pnl = np.full(len(q), -tc, dtype=np.float64)
-    return pnl
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NUMBA KERNEL
+# NUMBA CORE ENGINE
 # ══════════════════════════════════════════════════════════════════════════════
 @njit(parallel=True)
-def run_gauntlet_core(npth, mxr, sbr, tgt, rfl, mb, c, fm, ls, m_on, mt, ms, t_on, t_dd, t_du, p_pls, p_sts, t_tbl, pb):
+def run_gauntlet_core(npth, mxr, sbr, tgt, rfl, mb, p_pls, p_sts, t_tbl, c, fm, s, mt, ms, td, tdu):
     ap  = np.zeros((npth, mxr+1), dtype=np.float64)
-    aph = np.zeros((npth, mxr+1), dtype=np.int8)
     oc  = np.zeros(npth, dtype=np.int8)
     ra  = np.zeros(npth, dtype=np.int32)
-    n_in, n_ph = len(p_pls), len(pb)
+    n_in = len(p_pls)
+
     for p in prange(npth):
         br, pk, tr = sbr, sbr, 0; ap[p,0] = br
-        cph = n_ph - 1
-        for i in range(n_ph):
-            if pb[i,0] <= br < pb[i,1]: cph = int(pb[i,2]); break
-        aph[p,0] = cph
-        tx = np.zeros(6, dtype=np.float64)
         for r in range(1, mxr+1):
-            for t in range(6): tx[t] = 0.0
+            tx0, tx1, tx2 = 0.0, 0.0, 0.0
+            found = False
             for i in range(len(t_tbl)):
                 if t_tbl[i,0] <= br < t_tbl[i,1]:
-                    for t in range(6): tx[t] = t_tbl[i,2+t]
-                    break
-            tot = 0.0
+                    tx0, tx1, tx2 = t_tbl[i,2], t_tbl[i,3], t_tbl[i,4]
+                    found = True; break
+            if not found: tx0, tx1, tx2 = 10.0, 8.0, 6.0
+
+            tot_w = 0.0
             for i in range(n_in):
-                if tx[int(p_sts[i,4])] > 0: tot += p_sts[i,3]
-            if tot == 0.0: ap[p,r], aph[p,r] = br, cph; continue
-            pv = np.random.random() * tot; cs = 0.0; idx = 0; le = 0
+                t_idx = int(p_sts[i,4]) # 1=T1, 2=T2, 3=T3
+                if (t_idx == 1 and tx0 > 0) or (t_idx == 2 and tx1 > 0) or (t_idx == 3 and tx2 > 0):
+                    tot_w += p_sts[i,3]
+            if tot_w == 0.0: ap[p,r]=br; continue
+
+            pv = np.random.random() * tot_w
+            cs_sum, idx = 0.0, -1
             for i in range(n_in):
-                if tx[int(p_sts[i,4])] > 0:
-                    le = i; cs += p_sts[i,3]
-                    if pv <= cs: idx = i; break
-            else: idx = le
-            tc = p_sts[idx,2]; nt = min(int(tx[int(p_sts[idx,4])]), int(mb/tc))
-            if nt <= 0: ap[p,r], aph[p,r] = br, cph; continue
-            st = min(float(nt)*tc, br)
-            if br > pk: pk, tr = br, 0
-            if t_on > 0.5 and pk > 0.0 and (pk-br)/pk >= t_dd:
-                if tr <= 0: tr = int(t_du)
-            if tr > 0: st = min(float(min(nt+1, int(mb/tc)))*tc, br); tr -= 1
-            pool = p_pls[idx]; pnl = pool[np.random.randint(0, len(pool))]
-            if (np.random.random()<c or np.random.random()<fm or np.random.random()<ls): pnl = -tc
-            elif pnl>0 and m_on>0.5 and st>mt: pnl = (pnl+tc)*(1.0-min(0.5,(st-mt)*ms))-tc
-            br += pnl*(st/tc); ap[p,r] = br
-            cph = n_ph-1
-            for i in range(n_ph):
-                if pb[i,0] <= br < pb[i,1]: cph = int(pb[i,2]); break
-            aph[p,r] = cph
+                t_idx = int(p_sts[i,4])
+                if (t_idx == 1 and tx0 > 0) or (t_idx == 2 and tx1 > 0) or (t_idx == 3 and tx2 > 0):
+                    cs_sum += p_sts[i,3]
+                    if pv <= cs_sum: idx=i; break
+            if idx == -1: idx = 0
+
+            tc = p_sts[idx,2]
+            t_idx = int(p_sts[idx,4])
+            nt = tx0 if t_idx==1 else tx1 if t_idx==2 else tx2
+            nt = min(nt, mb/tc)
+            if nt < 1.0: nt = 1.0
+
+            if np.random.random() < 0.02: # Simulated cold cycle
+                ap[p,r]=br; continue
+
+            pool = p_pls[idx]
+            pnl = pool[np.random.randint(0, len(pool))]
+
+            if np.random.random()<c or np.random.random()<fm or np.random.random() < 0.12:
+                pnl = -tc
+            elif pnl>0 and (nt*tc)>mt: # Market Impact
+                pnl = (pnl+tc)*(1.0-min(0.5, (nt*tc-mt)*ms))-tc
+
+            br += pnl * nt
+            ap[p,r] = br
+
             if br >= tgt or br <= rfl:
-                oc[p] = 1 if br>=tgt else 2; ra[p] = r
-                for x in range(r+1, mxr + 1): ap[p,x], aph[p,x] = br, cph
+                oc[p] = 1 if br >= tgt else 2
+                ra[p] = r
+                for x in range(r+1, mxr+1): ap[p,x] = br
                 break
         else: ra[p] = mxr
-    return ap, aph, oc, ra
+    return ap, oc, ra
 
 # ══════════════════════════════════════════════════════════════════════════════
-# INSTRUMENT SNAPSHOT  (stored in mega-JSON per run)
+# TICKET COST ENGINE (v7.5.2)
 # ══════════════════════════════════════════════════════════════════════════════
-def _sax(a, t=None, x=None, y=None):
-    a.set_facecolor(BG); a.tick_params(colors=MUT, labelsize=8)
-    for sp in a.spines.values(): sp.set_color(GRD)
-    a.grid(color=GRD, ls=":", alpha=0.4)
-    if t: a.set_title(t, color=TXT, fontsize=10, fontweight="bold", pad=10)
-    if x: a.set_xlabel(x, color=MUT, fontsize=8)
-    if y: a.set_ylabel(y, color=MUT, fontsize=8)
+def get_ticket_cost(inst, n_runners):
+    mode = inst.get("tc_mode")
+    unit = inst.get("unit_price", 1.0)
 
-def _save_charts(paths, outcomes, fbr, st_o, key):
-    sub = f"{st_o['strategy']} | {st_o['stress']} | {st_o['window']}"
-    fig, ax = plt.subplots(figsize=(13,6), facecolor=BG)
-    _sax(ax, f"GAUNTLET v7.5.2 | ${S_BR:,.0f}->${TGT:,.0f} | {sub}", "Races", "Bankroll ($)")
-    ax.set_yscale("symlog", linthresh=1000)
-    rng = np.random.default_rng(SEED)
-    for i in rng.choice(len(paths), min(300,len(paths)), replace=False):
-        c = ACC if outcomes[i]=="success" else RED if outcomes[i]=="ruin" else MUT
-        ax.plot(paths[i], color=c, alpha=0.1, lw=0.5)
-    med = paths[st_o["midx"]]
-    ax.plot(med, color=GLD, lw=2, label=f"Median (${med[-1]:,.0f})")
-    plt.savefig(f"Gauntlet_Paths_{key}.png", dpi=120, facecolor=BG); plt.close()
+    if mode == "full_box_superf":
+        # P(n, 4) = n * (n-1) * (n-2) * (n-3)
+        if n_runners < 4: return 0.0
+        perms = n_runners * (n_runners - 1) * (n_runners - 2) * (n_runners - 3)
+        return perms * unit
+    elif mode == "pattern_superf":
+        # Product of wheel sizes
+        pat = inst.get("pat", [1,1,1,1])
+        return math.prod(pat) * unit
+    elif mode == "pattern_tri":
+        pat = inst.get("pat", [1,1,1])
+        return math.prod(pat) * unit
+    elif mode == "all_over_top2_top2_tri":
+        # (n-2) * 2
+        if n_runners < 3: return 0.0
+        return (n_runners - 2) * 2 * unit
+    elif mode == "straight_superf":
+        return inst.get("tc", unit)
+
+    return inst.get("_old_tc", 1.0)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RUNNERS
+# DATA LOADING & PNL EXTRACTION
 # ══════════════════════════════════════════════════════════════════════════════
-def _prep(pmap):
-    tp, sl = List(), []; tm = {"T1A":0,"T1B":0,"T1":0,"T2":1,"T3":2,"T4":3,"BONUS":4,"APEX":5}
-    for k, v in pmap.items():
-        inst = INS[k]; tc = inst["tc"]; tp.append(v.astype(np.float64))
-        ew = max(float(inst.get("ew", 0.1)), 0.01)
-        sl.append([float((v>-tc).mean()), float((v[v>-tc]+tc).mean()) if (v>-tc).any() else 0.0, tc, ew, float(tm.get(inst.get("t","T1"),0))])
-    tkt_tbl = np.array([[0,2000,1,0,0,0,0,0],[2000,5000,1,1,0,0,1,0],[5000,10000,2,2,1,0,1,0],[10000,20000,3,3,1,0,1,0],[20000,40000,3,3,2,0,2,1],[40000,80000,5,5,3,0,3,1],[80000,120000,8,8,5,0,5,2],[120000,999999,10,10,0,0,0,0]], dtype=np.float64)
-    pb = np.array([[0,5000,0],[5000,20000,1],[20000,999999,2]], dtype=np.float64)
-    return tp, np.array(sl, dtype=np.float64), tkt_tbl, pb
+def extract_pnl(df, k, i):
+    if df.empty: return np.array([], dtype=np.float64)
+    m = df["Runners"].between(i["mn"], i.get("mx", 99))
+    ef = i["ef"]; m &= ef(df)
+    if not m.any(): return np.array([], dtype=np.float64)
 
-def _stat(paths, outcomes, races, fbr, slbl, so, window, mode):
-    n = len(paths); ns = outcomes.count("success"); nr = outcomes.count("ruin")
-    mb = float(np.median(fbr)); mi = int(np.argmin(np.abs(np.array(fbr)-mb)))
-    return {"window":window,"strategy":slbl,"stress":so["lbl"],"mode":mode,"n":n,"ns":ns,"nr":nr,"sr":round(ns/n*100,2),"rr":round(nr/n*100,2),"mbr":round(mb,2),"midx":mi}
+    q = np.where(m)[0]; pc = i["pc"]
+    if pc not in df: return np.array([], dtype=np.float64)
+
+    # Dynamic TC extraction per race based on runner count
+    runner_counts = df["Runners"].values[q].astype(int)
+    tcs = np.array([get_ticket_cost(i, n) for n in runner_counts])
+
+    payouts = df[pc].values[q].astype(float) * (BASE_BET_FACTOR / 2.0)
+    valid_payouts = (payouts > 0) & (~np.isnan(payouts))
+
+    rng = np.random.default_rng(SEED + abs(hash(k)) % 1000000)
+    jitter = rng.uniform(1 - JITTER, 1 + JITTER, len(q))
+
+    hf_key = i["hf"]
+    if hf_key == "_h_al":
+        return np.where(valid_payouts, payouts * jitter - tcs, -tcs).astype(np.float64)
+    elif (fn := _VH.get(hf_key)) and "RANKED_RESULTS" in df:
+        try:
+            s = df["RANKED_RESULTS"].iloc[q].str.split(expand=True)
+            req_ranks = 3 if "Trif" in pc else 4
+            p = []
+            mask = np.ones(len(q), dtype=bool)
+            for x in range(4):
+                arr = pd.to_numeric(s.iloc[:,x] if x < s.shape[1] else np.nan, errors="coerce").values
+                p.append(arr)
+                if x < req_ranks: mask &= ~np.isnan(arr)
+
+            hits = mask & fn(*p)
+            return np.where(valid_payouts & hits, payouts * jitter - tcs, -tcs).astype(np.float64)
+        except Exception: return np.full(len(q), -tcs.mean(), dtype=np.float64)
+    return np.full(len(q), -tcs.mean(), dtype=np.float64)
+
+def load_data(f1, f2):
+    dfs = []
+    for f in [f1, f2]:
+        if os.path.exists(f):
+            raw = pd.read_csv(f)
+            for c in ["Superf_paid", "Trif_paid", "Purse", "Exacta_paid", "Superfecta_paid", "Trifecta_paid"]:
+                if c in raw:
+                    raw[c] = raw[c].astype(str).str.replace("$", "", regex=False).str.replace(",", "", regex=False)
+                    raw[c] = pd.to_numeric(raw[c], errors="coerce").fillna(0)
+            if "Superfecta_paid" in raw and "Superf_paid" not in raw: raw["Superf_paid"] = raw["Superfecta_paid"]
+            if "Trifecta_paid" in raw and "Trif_paid" not in raw: raw["Trif_paid"] = raw["Trifecta_paid"]
+            dfs.append(raw)
+    return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
 def main():
-    _safe_print("="*72); _safe_print("  THE 100x GAUNTLET v8.0.2 GOLD MASTER"); _safe_print("="*72)
-    tdy = datetime.date.today(); cuts = {"18mo":(tdy-datetime.timedelta(days=548)).strftime("%Y-%m-%d"), "36mo":(tdy-datetime.timedelta(days=1096)).strftime("%Y-%m-%d")}
+    print("="*72); print("  THE 100x GAUNTLET — v1.1.0 GOLD MASTER"); print("="*72)
+    df = load_data(TRAIN_FILE, TEST_FILE)
+    if df.empty: print("❌ Error: No race records found."); return
+    print(f"✅ Loaded {len(df):,} historical races.")
 
-    ql = (input("\n Quick Launch? [1] Yes (36mo FULL HALF Gauntlet $2)  [2] Customize\n Choice [1]: ").strip() or "1")
-    if ql == "1":
-        window, slbl, stress_choice = "36mo", "FULL", "HALF"
+    ql = (input("\n Quick Launch? [1] Yes (FULL HALF Gauntlet) [2] Customize\n Choice [1]: ").strip() or "1")
+    if ql=="1": slbl, stress = "FULL", "HALF"
     else:
-        window = "18mo" if (input("\n Window: [1] 18mo  [2] 36mo [2]: ").strip() or "2")=="1" else "36mo"
-        slbl = {"1":"SAFEST","2":"STANDARD","3":"FULL"}.get(input("\n Strategy: [1] SAFEST [2] STANDARD [3] FULL [3]: ").strip() or "3", "FULL")
-        stress_choice = {"1":"VANILLA","2":"HALF","3":"FULL","4":"NIGHTMARE"}.get(input("\n Stress: [1] VANILLA [2] HALF [3] FULL [4] NIGHTMARE [2]: ").strip() or "2", "HALF")
+        slbl = {"1":"SAFEST","2":"STANDARD","3":"FULL","4":"TURBO"}.get(input("\n Strat: [1] SAFEST [2] STANDARD [3] FULL [4] TURBO [3]: ").strip() or "3", "FULL")
+        stress = {"1":"VANILLA","2":"HALF","3":"FULL","4":"NIGHTMARE"}.get(input("\n Stress: [1] VANILLA [2] HALF [3] FULL [4] NIGHTMARE [2]: ").strip() or "2", "HALF")
 
-    df = _get_df(TRAIN_FILE, TEST_FILE, cuts[window])
-    s1, s2 = STRESS_PAIRS[stress_choice]
-    for s in [s1, s2]:
-        so = STRESS_PRESETS[s]
-        pmap = {k:pnl for k in sorted(STRATEGY_SETS[slbl]) if len(pnl := _x_pnl(df, k, INS[k], so["f"])) > 0}
-        if not pmap: print(f" ❌ No instruments passed for {s}"); continue
-        tp, sl, tt, pb = _prep(pmap)
-        ap, aph, oc, ra = run_gauntlet_core(N_PTH, M_RCS, S_BR, TGT, R_FLR, MAX_BET, float(so["c"]),float(so["fm"]),float(so["s"]), 0.0, float(so["mt"]), float(so["ms"]), 0.0, float(so["td"]), float(so["tdu"]), tp, sl, tt, pb)
-        oc_ = ["timeout" if c==0 else "success" if c==1 else "ruin" for c in oc]
-        fbr_ = [float(ap[i,ra[i]]) for i in range(N_PTH)]
-        paths_ = [ap[i,:ra[i]+1] for i in range(N_PTH)]
-        st = _stat(paths_, oc_, ra.tolist(), fbr_, slbl, so, window, "gauntlet")
-        _save_charts(paths_, oc_, fbr_, st, f"{window}_{slbl}_{s}")
-        print(f" ✅ {s}: SR={st['sr']}% MedianBR=${st['mbr']:,.0f}")
+    so = STRESS_PRESETS[stress]
+    tkt_table = np.array([[0,2000,1,0,0],[2000,3000,1,1,0],[3000,5000,2,1,0],[5000,7500,2,2,0],[7500,10000,3,2,1],[10000,15000,3,3,1],[15000,25000,4,3,2],[25000,40000,5,4,2],[40000,70000,6,5,3],[70000,120000,8,6,4],[120000,999999,10,8,6]], dtype=np.float64)
+
+    pnl_pools, stats_matrix = List(), []
+    tmap = {"T1A":1,"T1B":1,"T1":1,"T2":2,"T3":3,"BONUS":3,"APEX":3}
+    for k in sorted(STRATEGY_SETS[slbl]):
+        inst = INS[k]
+        pnl = extract_pnl(df, k, inst)
+        if len(pnl)==0: continue
+        pnl_pools.append(pnl)
+        # Using inst["ew"] (Edge Weight) as replacement for comfort score
+        avg_tc = np.mean([get_ticket_cost(inst, n) for n in [inst["mn"], inst.get("mx", inst["mn"])]])
+        stats_matrix.append([(pnl>0).mean(), pnl[pnl>0].mean() if (pnl>0).any() else 0, avg_tc, inst["ew"], tmap.get(inst["t"],3)])
+
+    if not stats_matrix: print("❌ No valid data for strategy."); return
+    stats_matrix = np.array(stats_matrix, dtype=np.float64)
+    print(f"🚀 Running {N_PTH} paths with {slbl} strategy...");
+    ap, oc, ra = run_gauntlet_core(N_PTH, M_RCS, S_BR, TGT, R_FLR, MAX_BET, pnl_pools, stats_matrix, tkt_table, so["c"], so["fm"], so["s"], so["mt"], so["ms"], so["td"], so["tdu"])
+
+    success, ruin = (oc==1).sum(), (oc==2).sum()
+    print("-" * 30); print(f" SUCCESS: {success/N_PTH*100:>.1f}% ({success})"); print(f" RUIN:    {ruin/N_PTH*100:>.1f}% ({ruin})"); print("-" * 30)
+
+    fig, ax = plt.subplots(figsize=(12, 6), facecolor=BG); ax.set_facecolor(BG); ax.set_yscale("log")
+    for i in range(min(300, N_PTH)):
+        c = ACC if oc[i]==1 else RED if oc[i]==2 else MUT
+        ax.plot(ap[i, :ra[i]], color=c, alpha=0.1, lw=0.5)
+
+    final_brs = np.array([ap[i, ra[i]] for i in range(N_PTH)])
+    med_idx = np.argsort(final_brs)[len(final_brs)//2]
+    ax.plot(ap[med_idx, :ra[med_idx]], color=GLD, lw=2, label="Median Path")
+    ax.set_title(f"GAUNTLET v1.1.0 — {slbl} | {stress}", color=TXT, fontsize=14)
+    plt.savefig(f"Gauntlet_Results_{slbl}_{stress}.png", facecolor=BG)
+    print(f"📈 Chart saved to 'Gauntlet_Results_{slbl}_{stress}.png'")
 
 if __name__ == "__main__": main()
