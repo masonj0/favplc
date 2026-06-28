@@ -1,0 +1,71 @@
+{
+  "_meta": {
+    "title": "The 100x Gauntlet: Definitive Ruleset v7.7.3",
+    "version": "7.7.3",
+    "description": "The fully pruned, mathematically validated deployment ruleset. All negative EV/tc bleeders and unstable OOS instruments have been quarantined. Relies on dynamic environment filters (ef) and hit functions (hf).",
+    "generated": "2026-06-23"
+  },
+
+  "DEPLOYMENT_TIERS": {
+
+    "TIER_1A_CORE_FOUNDATION": {
+      "description": "Cheap $48 tickets. High frequency, stable EV/tc (+43 to +72). The bedrock of the bankroll.",
+      "instruments": [
+        { "id": "FB4_2", "type": "Full Box 4", "cost": 48, "gates": "SumOdds 4.0-7.5, Fav2Odds 2.5-4.0, No Chalk" },
+        { "id": "FB4_3", "type": "Full Box 4", "cost": 48, "gates": "SumOdds 4.0-6.0, Not 1st Race, No Chalk" },
+        { "id": "FB4_4", "type": "Full Box 4", "cost": 48, "gates": "SumOdds 4.0-6.0, No Chalk" },
+        { "id": "FB4_5", "type": "Full Box 4", "cost": 48, "gates": "SumOdds 4.0-6.0, Sprints Only, No Chalk" }
+      ]
+    },
+
+    "TIER_1B_MID_FIELD_STRIKERS": {
+      "description": "Higher cost ($144-$360), but massive EV generators. Requires strict gating.",
+      "instruments": [
+        { "id": "SB6_S5556_A", "type": "Pattern 5556", "cost": 360, "gates": "R6, SumOdds 6.0-8.5, Purse 8k-25k, No Chalk" },
+        { "id": "SB6_S5556_B", "type": "Pattern 5556", "cost": 360, "gates": "R6, SumOdds 6.0-8.5, Purse 8k-25k, Not 1st Race, No Chalk" },
+        { "id": "NM_Sup4455_N6_C", "type": "Pattern 4455", "cost": 144, "gates": "R6, Fav2Odds >= 4.0, No Chalk" },
+        { "id": "FB5_2", "type": "Full Box 5", "cost": 240, "gates": "R5, SumOdds >= 6.0, Fav2Odds >= 4.0, No Chalk", "note": "Gate tightened v7.7.3 to protect against low-odds bleed." }
+      ]
+    },
+
+    "TIER_2_HIGH_YIELD_ANCHORS": {
+      "description": "The undisputed champions of EV/tc, led by TRI145.",
+      "instruments": [
+        { "id": "TRI145", "type": "Trifecta 1-4-5", "cost": 18, "gates": "R5-R13, SumOdds >= 9.0, Fav2Odds >= 2.5", "note": "The #1 overall instrument. EV/tc > +200." },
+        { "id": "SB6_S5556_SumWide", "type": "Pattern 5556", "cost": 360, "gates": "R6, SumOdds 6.0-9.5, Purse 8k-25k, No Chalk" },
+        { "id": "SB6_S5556_A_P35", "type": "Pattern 5556", "cost": 360, "gates": "R6, SumOdds 6.0-8.5, Purse 8k-35k, No Chalk" },
+        { "id": "SB6_S5556_C", "type": "Pattern 5556", "cost": 360, "gates": "R6, SumOdds 6.0-8.5, Purse 8k-35k, Sprints Only, No Chalk" },
+        { "id": "NM_Sup4455_N6_D", "type": "Pattern 4455", "cost": 144, "gates": "R6, SumOdds 6.0-8.5, Fav2Odds >= 4.0, No Chalk", "note": "SumOdds max tightened to 8.5 in v7.7.3." },
+        { "id": "NM_Sup4456_N6_D", "type": "Pattern 4456", "cost": 216, "gates": "R6, SumOdds 6.0-9.5, Fav2Odds >= 4.0, No Chalk" },
+        { "id": "NM_Supr3666_N6_D", "type": "Pattern 3666", "cost": 360, "gates": "R6, SumOdds 6.0-9.5, Fav2Odds >= 4.0, No Chalk" }
+      ]
+    },
+
+    "TIER_3_SITUATIONAL_SUPPORT": {
+      "description": "Lower EV/tc, but mathematically sound. Heavily pruned in v7.7.3 to remove expensive bleeders.",
+      "instruments": [
+        { "id": "TRI_First", "type": "Trifecta 1-4-5", "cost": 18, "gates": "R5-R13, 1st Race Only, SumOdds >= 9.0, Fav2Odds >= 2.5" },
+        { "id": "FB4_6", "type": "Full Box 4", "cost": 48, "gates": "R4, Races 4-8, SumOdds 4.0-6.0, Fav2Odds 2.5-4.0" },
+        { "id": "FB6_2", "type": "Full Box 6", "cost": 720, "gates": "R6, Races 4-8, Fav2Odds >= 4.0, Not 1st Race, No Chalk" },
+        { "id": "FB6_3", "type": "Full Box 6", "cost": 720, "gates": "R6, Races 4-8, Fav2Odds >= 4.0, No Chalk" },
+        { "id": "FB6_5", "type": "Full Box 6", "cost": 720, "gates": "R6, Fav2Odds >= 4.0, Not 1st Race, No Chalk" },
+        { "id": "FB6_6", "type": "Full Box 6", "cost": 720, "gates": "R6, Fav2Odds >= 4.0, No Chalk" },
+        { "id": "FB7_1", "type": "Full Box 7", "cost": 1680, "gates": "R7, SumOdds 6.0-8.0, Purse 8k-15k, Sprints Only, Not 1st Race, No Chalk" },
+        { "id": "FB7_3", "type": "Full Box 7", "cost": 1680, "gates": "R7, SumOdds >= 6.0, Fav2Odds >= 4.0, Purse 8k-20k, Sprints Only, No Chalk" },
+        { "id": "NM_Sup4466", "type": "Pattern 4466", "cost": 288, "gates": "R6, Fav2Odds >= 4.0, No Chalk" },
+        { "id": "NM_Sup5567", "type": "Pattern 5567", "cost": 480, "gates": "R6, Fav2Odds >= 4.0, No Chalk" }
+      ]
+    }
+  },
+
+  "QUARANTINED_V7_7_3": {
+    "description": "Instruments removed from active deployment due to negative EV, extreme ticket cost, or OOS failure.",
+    "instruments": [
+      { "id": "SB12_S6667_A", "reason": "Demoted v7.7.3. $960 ticket cost with only +8.2 EV/tc. Failed OOS 2025/2026." },
+      { "id": "FB7_2", "reason": "Demoted v7.7.3. $1680 ticket cost. EV/tc dropped to negative (-4.9) in latest audit." },
+      { "id": "FB7_4", "reason": "Demoted v7.7.3. $1680 ticket cost. EV/tc too low to justify drawdown risk." },
+      { "id": "FB6_First", "reason": "Confirmed negative EV/tc (-0.183) across all windows." },
+      { "id": "FB6_HighPurse", "reason": "Confirmed negative EV/tc (-0.213) across all windows." }
+    ]
+  }
+}

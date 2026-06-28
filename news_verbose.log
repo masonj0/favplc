@@ -1,0 +1,871 @@
+2026-06-28 12:20:00 [info     ] Using default region           region=GLOBAL
+2026-06-28 12:20:00 [info     ] Starting analytics audit       dates=['260623'] region=GLOBAL
+2026-06-28 12:20:00 [info     ] Database initialized           path=fortuna.db schema_version=9
+2026-06-28 12:20:00 [info     ] Tips to audit                  count=37
+2026-06-28 12:20:00 [info     ] Targeting venues               venues=['bangorondee', 'belmontpark', 'churchilldowns', 'delaware', 'enghien', 'hamilton', 'hawthorne', 'horseshoeindianapolis', 'hove', 'kinsley', 'laval', 'leicester', 'newcastle', 'nottingham', 'sunderland', 'woodbine']
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=RacingPostUSAResults method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:00 [info     ] Fetching result pages          adapter_name=StandardbredCanadaResults count=19 source=StandardbredCanadaResults
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url='https://www1.drf.com/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE=20260623'
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www1.drf.com/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE=20260623
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=SkySportsResults method=GET url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:00 [warning  ] Browser support (scrapling/patchright) not available, skipping browser-based adapter adapter_name=EquibaseResults source=EquibaseResults
+2026-06-28 12:20:00 [warning  ] Browser support (scrapling/patchright) not available, skipping browser-based adapter adapter_name=AtTheRacesResults source=AtTheRacesResults
+2026-06-28 12:20:00 [warning  ] Browser support (scrapling/patchright) not available, skipping browser-based adapter adapter_name=AtTheRacesGreyhoundResults source=AtTheRacesGreyhoundResults
+2026-06-28 12:20:00 [debug    ] Fetched results                adapter=EquibaseResults count=0 date=260623
+2026-06-28 12:20:00 [debug    ] Fetched results                adapter=AtTheRacesResults count=0 date=260623
+2026-06-28 12:20:00 [debug    ] Fetched results                adapter=AtTheRacesGreyhoundResults count=0 date=260623
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=SportingLifeResults method=GET url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [warning  ] Browser support (scrapling/patchright) not available, skipping browser-based adapter adapter_name=TimeformResults source=TimeformResults
+2026-06-28 12:20:00 [debug    ] Fetched results                adapter=TimeformResults count=0 date=260623
+2026-06-28 12:20:00 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=captcha url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (captcha)'
+2026-06-28 12:20:00 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (captcha)')" url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] NYRABets bootstrap failed, attempting API anyway adapter_name=NYRABetsResults error='Bot challenge detected (captcha)'
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [warning  ] http_block_status              engine=curl_cffi status=403 url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [warning  ] bot_challenge_detected         engine=curl_cffi keyword='access denied' url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (access denied)'
+2026-06-28 12:20:00 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (access denied)')" url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [error    ] NYRABetsResults fetch failed   adapter_name=NYRABetsResults error='Bot challenge detected (access denied)'
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.nyrabets.com/
+2026-06-28 12:20:00 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=captcha url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (captcha)'
+2026-06-28 12:20:00 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (captcha)')" url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] NYRABets bootstrap failed, attempting API anyway adapter_name=NYRABetsResults error='Bot challenge detected (captcha)'
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [warning  ] http_block_status              engine=curl_cffi status=403 url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [warning  ] bot_challenge_detected         engine=curl_cffi keyword='access denied' url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (access denied)'
+2026-06-28 12:20:00 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (access denied)')" url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [error    ] NYRABetsResults fetch failed   adapter_name=NYRABetsResults error='Bot challenge detected (access denied)'
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://www.nyrabets.com/
+2026-06-28 12:20:00 [debug    ] NYRABets bootstrap failed, attempting API anyway adapter_name=NYRABetsResults error='No viable engines for https://www.nyrabets.com/'
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://api.nyrabets.com/ListCards.ashx
+2026-06-28 12:20:00 [error    ] NYRABetsResults fetch failed   adapter_name=NYRABetsResults error='No viable engines for https://api.nyrabets.com/ListCards.ashx'
+2026-06-28 12:20:00 [debug    ] Fetched results                adapter=NYRABetsResults count=0 date=260623
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=RacingPostTote method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=httpx
+2026-06-28 12:20:00 [warning  ] DRF login wall detected — skipping adapter_name=DRFResults
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url='https://www1.drf.com/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE=20260623'
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www1.drf.com/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE=20260623
+2026-06-28 12:20:00 [debug    ] Response received              adapter_name=SportingLifeResults method=GET status=200 url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [warning  ] No result links found          adapter_name=SportingLifeResults date=260623 source=SportingLifeResults
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=SportingLifeResults method=GET url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Response received              adapter_name=SportingLifeResults method=GET status=200 url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [warning  ] No result links found          adapter_name=SportingLifeResults date=260623 source=SportingLifeResults
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=SportingLifeResults method=GET url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:00 [warning  ] DRF login wall detected — skipping adapter_name=DRFResults
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url='https://www1.drf.com/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE=20260623'
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://www1.drf.com/drfTextChartDownload.do?TRK=ALL&CY=USA&DATE=20260623
+2026-06-28 12:20:00 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:00 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:00 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:00 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:00 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:00 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:00 [debug    ] Response received              adapter_name=SportingLifeResults method=GET status=200 url=https://www.sportinglife.com/racing/results/2026-06-23
+2026-06-28 12:20:00 [warning  ] No result links found          adapter_name=SportingLifeResults date=260623 source=SportingLifeResults
+2026-06-28 12:20:00 [debug    ] Fetched results                adapter=SportingLifeResults count=0 date=260623
+2026-06-28 12:20:01 [warning  ] DRF login wall detected — skipping adapter_name=DRFResults
+2026-06-28 12:20:01 [debug    ] Fetched results                adapter=DRFResults count=0 date=260623
+2026-06-28 12:20:01 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:01 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:01 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:01 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:01 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623flmdn.dat
+2026-06-28 12:20:01 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:01 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:01 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:01 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:01 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623rid.dat
+2026-06-28 12:20:01 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623kaww.dat
+2026-06-28 12:20:01 [debug    ] Requesting                     adapter_name=RacingPostResults method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:01 [debug    ] Fetch engines ordered          engines=['httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:01 [debug    ] Applied browserforge headers   engine=httpx
+2026-06-28 12:20:01 [debug    ] Engine httpx failed            error=
+2026-06-28 12:20:01 [error    ] all_engines_failed             error="ReadError('')" url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:01 [error    ] Request failed                 adapter_name=RacingPostTote error= method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:01 [warning  ] Fetch attempt failed, retrying adapter_name=RacingPostTote attempt=1 error=
+2026-06-28 12:20:01 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623kaww.dat
+2026-06-28 12:20:01 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623kaww.dat
+2026-06-28 12:20:01 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623kaww.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623kaww.dat
+2026-06-28 12:20:01 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623kaww.dat' url=https://standardbredcanada.ca/racing/results/data/r0623kaww.dat
+2026-06-28 12:20:01 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623grvr.dat
+2026-06-28 12:20:01 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623lon.dat
+2026-06-28 12:20:01 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623lon.dat
+2026-06-28 12:20:01 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623lon.dat
+2026-06-28 12:20:01 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623lon.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623lon.dat
+2026-06-28 12:20:01 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623lon.dat' url=https://standardbredcanada.ca/racing/results/data/r0623lon.dat
+2026-06-28 12:20:02 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623flmn.dat
+2026-06-28 12:20:02 [debug    ] Requesting                     adapter_name=RacingPostTote method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:02 [debug    ] Fetch engines ordered          engines=['httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:02 [debug    ] Applied browserforge headers   engine=httpx
+2026-06-28 12:20:02 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:02 [debug    ] Engine httpx failed            error=
+2026-06-28 12:20:02 [error    ] all_engines_failed             error="ReadError('')" url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:02 [error    ] Request failed                 adapter_name=RacingPostResults error= method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:02 [warning  ] Fetch attempt failed, retrying adapter_name=RacingPostResults attempt=1 error=
+2026-06-28 12:20:02 [debug    ] Requesting                     adapter_name=RacingAndSportsResults method=GET url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:02 [debug    ] Prioritizing browser engines for protected domain url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:02 [error    ] Request failed                 adapter_name=RacingAndSportsResults error='No viable engines for https://www.racingandsports.com.au/racing-results/2026-06-23' method=GET url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:02 [warning  ] Fetch attempt failed, retrying adapter_name=RacingAndSportsResults attempt=1 error='No viable engines for https://www.racingandsports.com.au/racing-results/2026-06-23'
+2026-06-28 12:20:02 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623flmn.dat
+2026-06-28 12:20:02 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623flmn.dat
+2026-06-28 12:20:02 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623flmn.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623flmn.dat
+2026-06-28 12:20:02 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623flmn.dat' url=https://standardbredcanada.ca/racing/results/data/r0623flmn.dat
+2026-06-28 12:20:02 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623lonn.dat
+2026-06-28 12:20:02 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623grvr.dat
+2026-06-28 12:20:02 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623grvr.dat
+2026-06-28 12:20:02 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623grvr.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623grvr.dat
+2026-06-28 12:20:02 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623grvr.dat' url=https://standardbredcanada.ca/racing/results/data/r0623grvr.dat
+2026-06-28 12:20:03 [debug    ] Response received              adapter_name=RacingPostTote method=GET status=406 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:03 [error    ] adapter_http_error             adapter=RacingPostTote adapter_name=RacingPostTote status=406 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:03 [error    ] Request failed                 adapter_name=RacingPostTote error='HTTP 406' method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:03 [warning  ] Fetch attempt failed, retrying adapter_name=RacingPostTote attempt=2 error='HTTP 406'
+2026-06-28 12:20:03 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:03 [debug    ] Response received              adapter_name=SkySportsResults method=GET status=404 url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:03 [error    ] adapter_http_error             adapter=SkySportsResults adapter_name=SkySportsResults status=404 url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:03 [error    ] Request failed                 adapter_name=SkySportsResults error='HTTP 404' method=GET url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:03 [debug    ] Sky index fetch failed         adapter_name=SkySportsResults
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /app/fortuna_analytics.py:3831 in _discover_result_links                     │
+│                                                                              │
+│   3828 │   │   │   url_date = date_str                                       │
+│   3829 │   │                                                                 │
+│   3830 │   │   try:                                                          │
+│ ❱ 3831 │   │   │   resp = await self.make_request(                           │
+│   3832 │   │   │   │   "GET", f"/racing/results/{url_date}", headers=self._g │
+│   3833 │   │   │   )                                                         │
+│   3834 │   │   │   if not resp or not resp.text:                             │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ date_str = '260623'                                                      │ │
+│ │       dt = datetime.datetime(2026, 6, 23, 0, 0,                          │ │
+│ │            tzinfo=zoneinfo.ZoneInfo(key='America/New_York'))             │ │
+│ │     self = <__main__.SkySportsResultsAdapter object at 0x7f288691fe20>   │ │
+│ │ url_date = '23-06-2026'                                                  │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /app/fortuna_analytics.py:1137 in make_request                               │
+│                                                                              │
+│   1134 │   ) -> Any:                                                         │
+│   1135 │   │   if self.IMPERSONATE:                                          │
+│   1136 │   │   │   kwargs.setdefault("impersonate", self.IMPERSONATE)        │
+│ ❱ 1137 │   │   return await super().make_request(method, url, **kwargs)      │
+│   1138 │                                                                     │
+│   1139 │   def _get_headers(self) -> dict:                                   │
+│   1140 │   │   return self._get_browser_headers(host=self.HOST)              │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ kwargs = {                                                               │ │
+│ │          │   'headers': {                                                │ │
+│ │          │   │   'Accept':                                               │ │
+│ │          'text/html,application/xhtml+xml,application/xml;q=0.9,image/a… │ │
+│ │          │   │   'Accept-Language': 'en-US,en;q=0.9',                    │ │
+│ │          │   │   'Cache-Control': 'no-cache',                            │ │
+│ │          │   │   'Connection': 'keep-alive',                             │ │
+│ │          │   │   'Pragma': 'no-cache',                                   │ │
+│ │          │   │   'Sec-Fetch-Dest': 'document',                           │ │
+│ │          │   │   'Sec-Fetch-Mode': 'navigate',                           │ │
+│ │          │   │   'Sec-Fetch-Site': 'none',                               │ │
+│ │          │   │   'Sec-Fetch-User': '?1',                                 │ │
+│ │          │   │   'Upgrade-Insecure-Requests': '1',                       │ │
+│ │          │   │   ... +5                                                  │ │
+│ │          │   },                                                          │ │
+│ │          │   'impersonate': 'chrome124'                                  │ │
+│ │          }                                                               │ │
+│ │ method = 'GET'                                                           │ │
+│ │   self = <__main__.SkySportsResultsAdapter object at 0x7f288691fe20>     │ │
+│ │    url = '/racing/results/23-06-2026'                                    │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /app/fortuna.py:2296 in make_request                                         │
+│                                                                              │
+│    2293 │   │   │   │   │   │   except Exception:                            │
+│    2294 │   │   │   │   │   │   │   raise httpx.HTTPStatusError(f"HTTP {stat │
+│         response=resp)                                                       │
+│    2295 │   │   │   │   │   else:                                            │
+│ ❱  2296 │   │   │   │   │   │   raise Exception(f"HTTP {status}")            │
+│    2297 │   │   │   │                                                        │
+│    2298 │   │   │   │   return resp                                          │
+│    2299 │   │   │   except Exception as e:                                   │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │           domain = 'www.skysports.com'                                   │ │
+│ │         filepath = PosixPath('manual_fetch/www_skysports_com_racing_res… │ │
+│ │         full_url = 'https://www.skysports.com/racing/results/23-06-2026' │ │
+│ │             host = 'www.skysports.com'                                   │ │
+│ │           kwargs = {                                                     │ │
+│ │                    │   'headers': {                                      │ │
+│ │                    │   │   'Accept':                                     │ │
+│ │                    'text/html,application/xhtml+xml,application/xml;q=0… │ │
+│ │                    │   │   'Accept-Language': 'en-US,en;q=0.9',          │ │
+│ │                    │   │   'Cache-Control': 'no-cache',                  │ │
+│ │                    │   │   'Connection': 'keep-alive',                   │ │
+│ │                    │   │   'Pragma': 'no-cache',                         │ │
+│ │                    │   │   'Sec-Fetch-Dest': 'document',                 │ │
+│ │                    │   │   'Sec-Fetch-Mode': 'navigate',                 │ │
+│ │                    │   │   'Sec-Fetch-Site': 'none',                     │ │
+│ │                    │   │   'Sec-Fetch-User': '?1',                       │ │
+│ │                    │   │   'Upgrade-Insecure-Requests': '1',             │ │
+│ │                    │   │   ... +5                                        │ │
+│ │                    │   },                                                │ │
+│ │                    │   'impersonate': 'chrome124',                       │ │
+│ │                    │   'strategy': FetchStrategy(                        │ │
+│ │                    │   │   primary_engine=<BrowserEngine.CURL_CFFI:      │ │
+│ │                    'curl_cffi'>,                                         │ │
+│ │                    │   │   allowed_engines=[                             │ │
+│ │                    │   │   │   <BrowserEngine.CAMOUFOX: 'camoufox'>,     │ │
+│ │                    │   │   │   <BrowserEngine.CURL_CFFI: 'curl_cffi'>,   │ │
+│ │                    │   │   │   <BrowserEngine.PLAYWRIGHT: 'playwright'>, │ │
+│ │                    │   │   │   <BrowserEngine.HTTPX: 'httpx'>            │ │
+│ │                    │   │   ],                                            │ │
+│ │                    │   │   max_engine_attempts=3,                        │ │
+│ │                    │   │   enable_js=True,                               │ │
+│ │                    │   │   stealth_mode='camouflage',                    │ │
+│ │                    │   │   block_resources=False,                        │ │
+│ │                    │   │   max_retries=3,                                │ │
+│ │                    │   │   timeout=45,                                   │ │
+│ │                    │   │   page_load_strategy='domcontentloaded',        │ │
+│ │                    │   │   wait_until=None,                              │ │
+│ │                    │   │   network_idle=True,                            │ │
+│ │                    │   │   wait_for_selector=None,                       │ │
+│ │                    │   │   impersonate='chrome124'                       │ │
+│ │                    │   )                                                 │ │
+│ │                    }                                                     │ │
+│ │          limiter = RateLimiter(                                          │ │
+│ │                    │   requests_per_second=2.0,                          │ │
+│ │                    │   _tokens=1.0,                                      │ │
+│ │                    │   _last_update=1782649200.3182883,                  │ │
+│ │                    │   _locks=<WeakKeyDictionary at 0x7f2885f89ba0>      │ │
+│ │                    )                                                     │ │
+│ │           method = 'GET'                                                 │ │
+│ │                p = ParseResult(                                          │ │
+│ │                    │   scheme='https',                                   │ │
+│ │                    │   netloc='www.skysports.com',                       │ │
+│ │                    │   path='/racing/results/23-06-2026',                │ │
+│ │                    │   params='',                                        │ │
+│ │                    │   query='',                                         │ │
+│ │                    │   fragment=''                                       │ │
+│ │                    )                                                     │ │
+│ │ raise_for_status = True                                                  │ │
+│ │         raw_slug = 'www.skysports.com/racing/results/23-06-2026'         │ │
+│ │             resp = UnifiedResponse(                                      │ │
+│ │                    │   text='<!DOCTYPE html>\n<html lang="en"            │ │
+│ │                    data-territory="en" class="no-js">\n<head>\n    \n    │ │
+│ │                    '+177253,                                             │ │
+│ │                    │   status=404,                                       │ │
+│ │                    │   status_code=404,                                  │ │
+│ │                    │                                                     │ │
+│ │                    url='https://www.skysports.com/racing/results/23-06-… │ │
+│ │                    │   headers=Headers([('content-type', 'text/html;     │ │
+│ │                    charset=UTF-8'), ('x-generated-at', '1782649202'),    │ │
+│ │                    ('strict-transport-security', 'max-age=31536000;      │ │
+│ │                    includeSubDomains'), ('x-akamai-transformed', '0 - 0  │ │
+│ │                    -'), ('cache-control', 'public, max-age=59,           │ │
+│ │                    s-maxage=60'), ('expires', 'Sun, 28 Jun 2026 12:21:02 │ │
+│ │                    GMT'), ('date', 'Sun, 28 Jun 2026 12:20:03 GMT'),     │ │
+│ │                    ('x-content-type-options', 'nosniff'),                │ │
+│ │                    ('content-security-policy', 'frame-ancestors          │ │
+│ │                    https://*.skysports.com http://*.skysports.com        │ │
+│ │                    *.norkon.net *.google.com *.google.co.uk              │ │
+│ │                    *.ampproject.org;'), ('set-cookie',                   │ │
+│ │                    'bm_ss=ab8e18ef4e; Secure; SameSite=None;             │ │
+│ │                    Domain=.skysports.com; Path=/; HttpOnly;              │ │
+│ │                    Max-Age=3600'), ('set-cookie',                        │ │
+│ │                    'bm_s=YAAQEhkhF8tBgOCeAQAAzSksDgXqzXuafbFqKibGgWfN+j… │ │
+│ │                    Domain=.skysports.com; Path=/; Expires=Wed, 29 Jul    │ │
+│ │                    2026 12:20:03 GMT; Max-Age=2678400; Secure;           │ │
+│ │                    HttpOnly'), ('set-cookie',                            │ │
+│ │                    'bm_so=4B26F7892DC75329A06C18B71C230403127E52884DB20… │ │
+│ │                    Domain=.skysports.com; Path=/; Expires=Mon, 29 Jun    │ │
+│ │                    2026 12:20:03 GMT; Max-Age=86400; Secure')])          │ │
+│ │                    )                                                     │ │
+│ │             self = <__main__.SkySportsResultsAdapter object at           │ │
+│ │                    0x7f288691fe20>                                       │ │
+│ │             slug = 'www_skysports_com_racing_results_23_06_2026'         │ │
+│ │           status = 404                                                   │ │
+│ │    update_status = True                                                  │ │
+│ │              url = '/racing/results/23-06-2026'                          │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Exception: HTTP 404
+
+2026-06-28 12:20:04 [warning  ] No result links found          adapter_name=SkySportsResults date=260623 source=SkySportsResults
+2026-06-28 12:20:04 [debug    ] Requesting                     adapter_name=SkySportsResults method=GET url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:04 [debug    ] Fetch engines ordered          engines=['httpx'] primary=curl_cffi url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:04 [debug    ] Applied browserforge headers   engine=httpx
+2026-06-28 12:20:04 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623leam.dat
+2026-06-28 12:20:04 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623leam.dat
+2026-06-28 12:20:04 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623leam.dat
+2026-06-28 12:20:04 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623leam.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623leam.dat
+2026-06-28 12:20:04 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623leam.dat' url=https://standardbredcanada.ca/racing/results/data/r0623leam.dat
+2026-06-28 12:20:04 [debug    ] Requesting                     adapter_name=RacingPostResults method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [debug    ] Fetch engines ordered          engines=['httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [debug    ] Applied browserforge headers   engine=httpx
+2026-06-28 12:20:04 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623lonn.dat
+2026-06-28 12:20:04 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623lonn.dat
+2026-06-28 12:20:04 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623lonn.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623lonn.dat
+2026-06-28 12:20:04 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623lonn.dat' url=https://standardbredcanada.ca/racing/results/data/r0623lonn.dat
+2026-06-28 12:20:04 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:04 [debug    ] Response received              adapter_name=RacingPostUSAResults method=GET status=200 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [info     ] RacingPostUSA: filtered links  adapter_name=RacingPostUSAResults date=260623 total=60 usa=0
+2026-06-28 12:20:04 [warning  ] No result links found          adapter_name=RacingPostUSAResults date=260623 source=RacingPostUSAResults
+2026-06-28 12:20:04 [debug    ] Response received              adapter_name=RacingPostResults method=GET status=406 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [error    ] adapter_http_error             adapter=RacingPostResults adapter_name=RacingPostResults status=406 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [error    ] Request failed                 adapter_name=RacingPostResults error='HTTP 406' method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [warning  ] Fetch attempt failed, retrying adapter_name=RacingPostResults attempt=2 error='HTTP 406'
+2026-06-28 12:20:04 [debug    ] Requesting                     adapter_name=RacingPostTote method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:04 [debug    ] Using curl_cffi for https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:04 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:04 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:04 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:04 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:04 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:04 [debug    ] Response received              adapter_name=SkySportsResults method=GET status=404 url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:04 [error    ] adapter_http_error             adapter=SkySportsResults adapter_name=SkySportsResults status=404 url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:04 [error    ] Request failed                 adapter_name=SkySportsResults error='HTTP 404' method=GET url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:04 [debug    ] Sky index fetch failed         adapter_name=SkySportsResults
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /app/fortuna_analytics.py:3831 in _discover_result_links                     │
+│                                                                              │
+│   3828 │   │   │   url_date = date_str                                       │
+│   3829 │   │                                                                 │
+│   3830 │   │   try:                                                          │
+│ ❱ 3831 │   │   │   resp = await self.make_request(                           │
+│   3832 │   │   │   │   "GET", f"/racing/results/{url_date}", headers=self._g │
+│   3833 │   │   │   )                                                         │
+│   3834 │   │   │   if not resp or not resp.text:                             │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ date_str = '260623'                                                      │ │
+│ │       dt = datetime.datetime(2026, 6, 23, 0, 0,                          │ │
+│ │            tzinfo=zoneinfo.ZoneInfo(key='America/New_York'))             │ │
+│ │     self = <__main__.SkySportsResultsAdapter object at 0x7f288691fe20>   │ │
+│ │ url_date = '23-06-2026'                                                  │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /app/fortuna_analytics.py:1137 in make_request                               │
+│                                                                              │
+│   1134 │   ) -> Any:                                                         │
+│   1135 │   │   if self.IMPERSONATE:                                          │
+│   1136 │   │   │   kwargs.setdefault("impersonate", self.IMPERSONATE)        │
+│ ❱ 1137 │   │   return await super().make_request(method, url, **kwargs)      │
+│   1138 │                                                                     │
+│   1139 │   def _get_headers(self) -> dict:                                   │
+│   1140 │   │   return self._get_browser_headers(host=self.HOST)              │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ kwargs = {                                                               │ │
+│ │          │   'headers': {                                                │ │
+│ │          │   │   'Accept':                                               │ │
+│ │          'text/html,application/xhtml+xml,application/xml;q=0.9,image/a… │ │
+│ │          │   │   'Accept-Language': 'en-US,en;q=0.9',                    │ │
+│ │          │   │   'Cache-Control': 'no-cache',                            │ │
+│ │          │   │   'Connection': 'keep-alive',                             │ │
+│ │          │   │   'Pragma': 'no-cache',                                   │ │
+│ │          │   │   'Sec-Fetch-Dest': 'document',                           │ │
+│ │          │   │   'Sec-Fetch-Mode': 'navigate',                           │ │
+│ │          │   │   'Sec-Fetch-Site': 'none',                               │ │
+│ │          │   │   'Sec-Fetch-User': '?1',                                 │ │
+│ │          │   │   'Upgrade-Insecure-Requests': '1',                       │ │
+│ │          │   │   ... +5                                                  │ │
+│ │          │   },                                                          │ │
+│ │          │   'impersonate': 'chrome124'                                  │ │
+│ │          }                                                               │ │
+│ │ method = 'GET'                                                           │ │
+│ │   self = <__main__.SkySportsResultsAdapter object at 0x7f288691fe20>     │ │
+│ │    url = '/racing/results/23-06-2026'                                    │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /app/fortuna.py:2296 in make_request                                         │
+│                                                                              │
+│    2293 │   │   │   │   │   │   except Exception:                            │
+│    2294 │   │   │   │   │   │   │   raise httpx.HTTPStatusError(f"HTTP {stat │
+│         response=resp)                                                       │
+│    2295 │   │   │   │   │   else:                                            │
+│ ❱  2296 │   │   │   │   │   │   raise Exception(f"HTTP {status}")            │
+│    2297 │   │   │   │                                                        │
+│    2298 │   │   │   │   return resp                                          │
+│    2299 │   │   │   except Exception as e:                                   │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │           domain = 'www.skysports.com'                                   │ │
+│ │         filepath = PosixPath('manual_fetch/www_skysports_com_racing_res… │ │
+│ │         full_url = 'https://www.skysports.com/racing/results/23-06-2026' │ │
+│ │             host = 'www.skysports.com'                                   │ │
+│ │           kwargs = {                                                     │ │
+│ │                    │   'headers': {                                      │ │
+│ │                    │   │   'Accept':                                     │ │
+│ │                    'text/html,application/xhtml+xml,application/xml;q=0… │ │
+│ │                    │   │   'Accept-Language': 'en-US,en;q=0.9',          │ │
+│ │                    │   │   'Cache-Control': 'no-cache',                  │ │
+│ │                    │   │   'Connection': 'keep-alive',                   │ │
+│ │                    │   │   'Pragma': 'no-cache',                         │ │
+│ │                    │   │   'Sec-Fetch-Dest': 'document',                 │ │
+│ │                    │   │   'Sec-Fetch-Mode': 'navigate',                 │ │
+│ │                    │   │   'Sec-Fetch-Site': 'none',                     │ │
+│ │                    │   │   'Sec-Fetch-User': '?1',                       │ │
+│ │                    │   │   'Upgrade-Insecure-Requests': '1',             │ │
+│ │                    │   │   ... +5                                        │ │
+│ │                    │   },                                                │ │
+│ │                    │   'impersonate': 'chrome124',                       │ │
+│ │                    │   'strategy': FetchStrategy(                        │ │
+│ │                    │   │   primary_engine=<BrowserEngine.CURL_CFFI:      │ │
+│ │                    'curl_cffi'>,                                         │ │
+│ │                    │   │   allowed_engines=[                             │ │
+│ │                    │   │   │   <BrowserEngine.CAMOUFOX: 'camoufox'>,     │ │
+│ │                    │   │   │   <BrowserEngine.CURL_CFFI: 'curl_cffi'>,   │ │
+│ │                    │   │   │   <BrowserEngine.PLAYWRIGHT: 'playwright'>, │ │
+│ │                    │   │   │   <BrowserEngine.HTTPX: 'httpx'>            │ │
+│ │                    │   │   ],                                            │ │
+│ │                    │   │   max_engine_attempts=3,                        │ │
+│ │                    │   │   enable_js=True,                               │ │
+│ │                    │   │   stealth_mode='camouflage',                    │ │
+│ │                    │   │   block_resources=False,                        │ │
+│ │                    │   │   max_retries=3,                                │ │
+│ │                    │   │   timeout=45,                                   │ │
+│ │                    │   │   page_load_strategy='domcontentloaded',        │ │
+│ │                    │   │   wait_until=None,                              │ │
+│ │                    │   │   network_idle=True,                            │ │
+│ │                    │   │   wait_for_selector=None,                       │ │
+│ │                    │   │   impersonate='chrome124'                       │ │
+│ │                    │   )                                                 │ │
+│ │                    }                                                     │ │
+│ │          limiter = RateLimiter(                                          │ │
+│ │                    │   requests_per_second=2.0,                          │ │
+│ │                    │   _tokens=1.0,                                      │ │
+│ │                    │   _last_update=1782649204.3849034,                  │ │
+│ │                    │   _locks=<WeakKeyDictionary at 0x7f2885f89ba0>      │ │
+│ │                    )                                                     │ │
+│ │           method = 'GET'                                                 │ │
+│ │                p = ParseResult(                                          │ │
+│ │                    │   scheme='https',                                   │ │
+│ │                    │   netloc='www.skysports.com',                       │ │
+│ │                    │   path='/racing/results/23-06-2026',                │ │
+│ │                    │   params='',                                        │ │
+│ │                    │   query='',                                         │ │
+│ │                    │   fragment=''                                       │ │
+│ │                    )                                                     │ │
+│ │ raise_for_status = True                                                  │ │
+│ │         raw_slug = 'www.skysports.com/racing/results/23-06-2026'         │ │
+│ │             resp = UnifiedResponse(                                      │ │
+│ │                    │   text='<!DOCTYPE html>\n<html lang="en"            │ │
+│ │                    data-territory="en" class="no-js">\n<head>\n    \n    │ │
+│ │                    '+177253,                                             │ │
+│ │                    │   status=404,                                       │ │
+│ │                    │   status_code=404,                                  │ │
+│ │                    │                                                     │ │
+│ │                    url='https://www.skysports.com/racing/results/23-06-… │ │
+│ │                    │   headers=Headers([('content-type', 'text/html;     │ │
+│ │                    charset=UTF-8'), ('x-generated-at', '1782649205'),    │ │
+│ │                    ('strict-transport-security', 'max-age=31536000;      │ │
+│ │                    includeSubDomains'), ('x-akamai-transformed', '0 - 0  │ │
+│ │                    -'), ('cache-control', 'public, max-age=60,           │ │
+│ │                    s-maxage=60'), ('expires', 'Sun, 28 Jun 2026 12:21:05 │ │
+│ │                    GMT'), ('date', 'Sun, 28 Jun 2026 12:20:05 GMT'),     │ │
+│ │                    ('transfer-encoding', 'chunked'), ('connection',      │ │
+│ │                    'keep-alive'), ('connection', 'Transfer-Encoding'),   │ │
+│ │                    ('x-content-type-options', 'nosniff'),                │ │
+│ │                    ('content-security-policy', 'frame-ancestors          │ │
+│ │                    https://*.skysports.com http://*.skysports.com        │ │
+│ │                    *.norkon.net *.google.com *.google.co.uk              │ │
+│ │                    *.ampproject.org;'), ('set-cookie',                   │ │
+│ │                    'bm_ss=ab8e18ef4e; Secure; SameSite=None;             │ │
+│ │                    Domain=.skysports.com; Path=/; HttpOnly;              │ │
+│ │                    Max-Age=3600'), ('set-cookie',                        │ │
+│ │                    'bm_s=YAAQEhkhF0JFgOCeAQAA6zEsDgUGftyph/jO+rvd8tG3qo… │ │
+│ │                    Domain=.skysports.com; Path=/; Expires=Wed, 29 Jul    │ │
+│ │                    2026 12:20:05 GMT; Max-Age=2678400; Secure;           │ │
+│ │                    HttpOnly'), ('set-cookie',                            │ │
+│ │                    'bm_so=170059BC49288265B52865EE334BF2A21F364BC55CCD7… │ │
+│ │                    Domain=.skysports.com; Path=/; Expires=Mon, 29 Jun    │ │
+│ │                    2026 12:20:05 GMT; Max-Age=86400; Secure')])          │ │
+│ │                    )                                                     │ │
+│ │             self = <__main__.SkySportsResultsAdapter object at           │ │
+│ │                    0x7f288691fe20>                                       │ │
+│ │             slug = 'www_skysports_com_racing_results_23_06_2026'         │ │
+│ │           status = 404                                                   │ │
+│ │    update_status = True                                                  │ │
+│ │              url = '/racing/results/23-06-2026'                          │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Exception: HTTP 404
+
+2026-06-28 12:20:05 [warning  ] No result links found          adapter_name=SkySportsResults date=260623 source=SkySportsResults
+2026-06-28 12:20:05 [debug    ] Requesting                     adapter_name=SkySportsResults method=GET url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:05 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:05 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:05 [debug    ] Using curl_cffi for https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:05 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:05 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:05 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:05 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:05 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:05 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:05 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:05 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:05 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:05 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:05 [debug    ] Requesting                     adapter_name=RacingPostUSAResults method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:05 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:05 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:05 [debug    ] Using curl_cffi for https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:05 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623hanon.dat
+2026-06-28 12:20:05 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623clntn.dat
+2026-06-28 12:20:06 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:06 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:06 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:06 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623flm.dat
+2026-06-28 12:20:06 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:06 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:06 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:06 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623wbsbsn.dat
+2026-06-28 12:20:06 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:06 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:06 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:06 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623ridcn.dat
+2026-06-28 12:20:06 [debug    ] Requesting                     adapter_name=RacingPostResults method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:06 [debug    ] Fetch engines ordered          engines=['httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:06 [debug    ] Applied browserforge headers   engine=httpx
+2026-06-28 12:20:06 [debug    ] Response received              adapter_name=RacingPostResults method=GET status=406 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:06 [error    ] adapter_http_error             adapter=RacingPostResults adapter_name=RacingPostResults status=406 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=RacingPostResults error='HTTP 406' method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:06 [error    ] Adapter failed                 adapter_name=RacingPostResults error='HTTP 406'
+2026-06-28 12:20:06 [debug    ] Fetched results                adapter=RacingPostResults count=0 date=260623
+2026-06-28 12:20:06 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623clntn.dat
+2026-06-28 12:20:06 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623clntn.dat
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623clntn.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623clntn.dat
+2026-06-28 12:20:06 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623clntn.dat' url=https://standardbredcanada.ca/racing/results/data/r0623clntn.dat
+2026-06-28 12:20:06 [debug    ] Requesting                     adapter_name=RacingAndSportsResults method=GET url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:06 [debug    ] Prioritizing browser engines for protected domain url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=RacingAndSportsResults error='No viable engines for https://www.racingandsports.com.au/racing-results/2026-06-23' method=GET url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:06 [warning  ] Fetch attempt failed, retrying adapter_name=RacingAndSportsResults attempt=2 error='No viable engines for https://www.racingandsports.com.au/racing-results/2026-06-23'
+2026-06-28 12:20:06 [debug    ] Response received              adapter_name=RacingPostTote method=GET status=200 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:06 [debug    ] Fetched results                adapter=RacingPostTote count=0 date=260623
+2026-06-28 12:20:06 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:06 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623hanon.dat
+2026-06-28 12:20:06 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623hanon.dat
+2026-06-28 12:20:06 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623hanon.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623hanon.dat
+2026-06-28 12:20:06 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623hanon.dat' url=https://standardbredcanada.ca/racing/results/data/r0623hanon.dat
+2026-06-28 12:20:07 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:07 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623dresn.dat
+2026-06-28 12:20:07 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623dresn.dat
+2026-06-28 12:20:07 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623dresn.dat
+2026-06-28 12:20:07 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623dresn.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623dresn.dat
+2026-06-28 12:20:07 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623dresn.dat' url=https://standardbredcanada.ca/racing/results/data/r0623dresn.dat
+2026-06-28 12:20:07 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623geodn.dat
+2026-06-28 12:20:07 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623trrn.dat
+2026-06-28 12:20:07 [debug    ] Response received              adapter_name=RacingPostUSAResults method=GET status=200 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:08 [info     ] RacingPostUSA: filtered links  adapter_name=RacingPostUSAResults date=260623 total=60 usa=0
+2026-06-28 12:20:08 [warning  ] No result links found          adapter_name=RacingPostUSAResults date=260623 source=RacingPostUSAResults
+2026-06-28 12:20:08 [debug    ] Requesting                     adapter_name=RacingPostUSAResults method=GET url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:08 [debug    ] Fetch engines ordered          engines=['curl_cffi', 'httpx'] primary=curl_cffi url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:08 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:08 [debug    ] Using curl_cffi for https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:08 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:08 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:08 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623wood.dat
+2026-06-28 12:20:08 [debug    ] fetching_race_page             adapter_name=StandardbredCanadaResults url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:08 [debug    ] Response received              adapter_name=RacingPostUSAResults method=GET status=200 url=https://www.racingpost.com/results/2026-06-23
+2026-06-28 12:20:08 [info     ] RacingPostUSA: filtered links  adapter_name=RacingPostUSAResults date=260623 total=60 usa=0
+2026-06-28 12:20:08 [warning  ] No result links found          adapter_name=RacingPostUSAResults date=260623 source=RacingPostUSAResults
+2026-06-28 12:20:08 [debug    ] Fetched results                adapter=RacingPostUSAResults count=0 date=260623
+2026-06-28 12:20:08 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623geodn.dat
+2026-06-28 12:20:08 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623geodn.dat
+2026-06-28 12:20:08 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623geodn.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623geodn.dat
+2026-06-28 12:20:08 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623geodn.dat' url=https://standardbredcanada.ca/racing/results/data/r0623geodn.dat
+2026-06-28 12:20:08 [debug    ] Response received              adapter_name=SkySportsResults method=GET status=404 url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:08 [error    ] adapter_http_error             adapter=SkySportsResults adapter_name=SkySportsResults status=404 url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:08 [error    ] Request failed                 adapter_name=SkySportsResults error='HTTP 404' method=GET url=https://www.skysports.com/racing/results/23-06-2026
+2026-06-28 12:20:08 [debug    ] Sky index fetch failed         adapter_name=SkySportsResults
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /app/fortuna_analytics.py:3831 in _discover_result_links                     │
+│                                                                              │
+│   3828 │   │   │   url_date = date_str                                       │
+│   3829 │   │                                                                 │
+│   3830 │   │   try:                                                          │
+│ ❱ 3831 │   │   │   resp = await self.make_request(                           │
+│   3832 │   │   │   │   "GET", f"/racing/results/{url_date}", headers=self._g │
+│   3833 │   │   │   )                                                         │
+│   3834 │   │   │   if not resp or not resp.text:                             │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ date_str = '260623'                                                      │ │
+│ │       dt = datetime.datetime(2026, 6, 23, 0, 0,                          │ │
+│ │            tzinfo=zoneinfo.ZoneInfo(key='America/New_York'))             │ │
+│ │     self = <__main__.SkySportsResultsAdapter object at 0x7f288691fe20>   │ │
+│ │ url_date = '23-06-2026'                                                  │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /app/fortuna_analytics.py:1137 in make_request                               │
+│                                                                              │
+│   1134 │   ) -> Any:                                                         │
+│   1135 │   │   if self.IMPERSONATE:                                          │
+│   1136 │   │   │   kwargs.setdefault("impersonate", self.IMPERSONATE)        │
+│ ❱ 1137 │   │   return await super().make_request(method, url, **kwargs)      │
+│   1138 │                                                                     │
+│   1139 │   def _get_headers(self) -> dict:                                   │
+│   1140 │   │   return self._get_browser_headers(host=self.HOST)              │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │ kwargs = {                                                               │ │
+│ │          │   'headers': {                                                │ │
+│ │          │   │   'Accept':                                               │ │
+│ │          'text/html,application/xhtml+xml,application/xml;q=0.9,image/a… │ │
+│ │          │   │   'Accept-Language': 'en-US,en;q=0.9',                    │ │
+│ │          │   │   'Cache-Control': 'no-cache',                            │ │
+│ │          │   │   'Connection': 'keep-alive',                             │ │
+│ │          │   │   'Pragma': 'no-cache',                                   │ │
+│ │          │   │   'Sec-Fetch-Dest': 'document',                           │ │
+│ │          │   │   'Sec-Fetch-Mode': 'navigate',                           │ │
+│ │          │   │   'Sec-Fetch-Site': 'none',                               │ │
+│ │          │   │   'Sec-Fetch-User': '?1',                                 │ │
+│ │          │   │   'Upgrade-Insecure-Requests': '1',                       │ │
+│ │          │   │   ... +5                                                  │ │
+│ │          │   },                                                          │ │
+│ │          │   'impersonate': 'chrome124'                                  │ │
+│ │          }                                                               │ │
+│ │ method = 'GET'                                                           │ │
+│ │   self = <__main__.SkySportsResultsAdapter object at 0x7f288691fe20>     │ │
+│ │    url = '/racing/results/23-06-2026'                                    │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+│                                                                              │
+│ /app/fortuna.py:2296 in make_request                                         │
+│                                                                              │
+│    2293 │   │   │   │   │   │   except Exception:                            │
+│    2294 │   │   │   │   │   │   │   raise httpx.HTTPStatusError(f"HTTP {stat │
+│         response=resp)                                                       │
+│    2295 │   │   │   │   │   else:                                            │
+│ ❱  2296 │   │   │   │   │   │   raise Exception(f"HTTP {status}")            │
+│    2297 │   │   │   │                                                        │
+│    2298 │   │   │   │   return resp                                          │
+│    2299 │   │   │   except Exception as e:                                   │
+│                                                                              │
+│ ╭───────────────────────────────── locals ─────────────────────────────────╮ │
+│ │           domain = 'www.skysports.com'                                   │ │
+│ │         filepath = PosixPath('manual_fetch/www_skysports_com_racing_res… │ │
+│ │         full_url = 'https://www.skysports.com/racing/results/23-06-2026' │ │
+│ │             host = 'www.skysports.com'                                   │ │
+│ │           kwargs = {                                                     │ │
+│ │                    │   'headers': {                                      │ │
+│ │                    │   │   'Accept':                                     │ │
+│ │                    'text/html,application/xhtml+xml,application/xml;q=0… │ │
+│ │                    │   │   'Accept-Language': 'en-US,en;q=0.9',          │ │
+│ │                    │   │   'Cache-Control': 'no-cache',                  │ │
+│ │                    │   │   'Connection': 'keep-alive',                   │ │
+│ │                    │   │   'Pragma': 'no-cache',                         │ │
+│ │                    │   │   'Sec-Fetch-Dest': 'document',                 │ │
+│ │                    │   │   'Sec-Fetch-Mode': 'navigate',                 │ │
+│ │                    │   │   'Sec-Fetch-Site': 'none',                     │ │
+│ │                    │   │   'Sec-Fetch-User': '?1',                       │ │
+│ │                    │   │   'Upgrade-Insecure-Requests': '1',             │ │
+│ │                    │   │   ... +5                                        │ │
+│ │                    │   },                                                │ │
+│ │                    │   'impersonate': 'chrome124',                       │ │
+│ │                    │   'strategy': FetchStrategy(                        │ │
+│ │                    │   │   primary_engine=<BrowserEngine.CURL_CFFI:      │ │
+│ │                    'curl_cffi'>,                                         │ │
+│ │                    │   │   allowed_engines=[                             │ │
+│ │                    │   │   │   <BrowserEngine.CAMOUFOX: 'camoufox'>,     │ │
+│ │                    │   │   │   <BrowserEngine.CURL_CFFI: 'curl_cffi'>,   │ │
+│ │                    │   │   │   <BrowserEngine.PLAYWRIGHT: 'playwright'>, │ │
+│ │                    │   │   │   <BrowserEngine.HTTPX: 'httpx'>            │ │
+│ │                    │   │   ],                                            │ │
+│ │                    │   │   max_engine_attempts=3,                        │ │
+│ │                    │   │   enable_js=True,                               │ │
+│ │                    │   │   stealth_mode='camouflage',                    │ │
+│ │                    │   │   block_resources=False,                        │ │
+│ │                    │   │   max_retries=3,                                │ │
+│ │                    │   │   timeout=45,                                   │ │
+│ │                    │   │   page_load_strategy='domcontentloaded',        │ │
+│ │                    │   │   wait_until=None,                              │ │
+│ │                    │   │   network_idle=True,                            │ │
+│ │                    │   │   wait_for_selector=None,                       │ │
+│ │                    │   │   impersonate='chrome124'                       │ │
+│ │                    │   )                                                 │ │
+│ │                    }                                                     │ │
+│ │          limiter = RateLimiter(                                          │ │
+│ │                    │   requests_per_second=2.0,                          │ │
+│ │                    │   _tokens=1.0,                                      │ │
+│ │                    │   _last_update=1782649205.9731646,                  │ │
+│ │                    │   _locks=<WeakKeyDictionary at 0x7f2885f89ba0>      │ │
+│ │                    )                                                     │ │
+│ │           method = 'GET'                                                 │ │
+│ │                p = ParseResult(                                          │ │
+│ │                    │   scheme='https',                                   │ │
+│ │                    │   netloc='www.skysports.com',                       │ │
+│ │                    │   path='/racing/results/23-06-2026',                │ │
+│ │                    │   params='',                                        │ │
+│ │                    │   query='',                                         │ │
+│ │                    │   fragment=''                                       │ │
+│ │                    )                                                     │ │
+│ │ raise_for_status = True                                                  │ │
+│ │         raw_slug = 'www.skysports.com/racing/results/23-06-2026'         │ │
+│ │             resp = UnifiedResponse(                                      │ │
+│ │                    │   text='<!DOCTYPE html>\n<html lang="en"            │ │
+│ │                    data-territory="en" class="no-js">\n<head>\n    \n    │ │
+│ │                    '+177253,                                             │ │
+│ │                    │   status=404,                                       │ │
+│ │                    │   status_code=404,                                  │ │
+│ │                    │                                                     │ │
+│ │                    url='https://www.skysports.com/racing/results/23-06-… │ │
+│ │                    │   headers=Headers({'content-type': 'text/html;      │ │
+│ │                    charset=UTF-8', 'x-generated-at': '1782649208',       │ │
+│ │                    'strict-transport-security': 'max-age=31536000;       │ │
+│ │                    includeSubDomains', 'x-akamai-transformed': '0 - 0    │ │
+│ │                    -', 'cache-control': 'public, max-age=60,             │ │
+│ │                    s-maxage=60', 'expires': 'Sun, 28 Jun 2026 12:21:08   │ │
+│ │                    GMT', 'date': 'Sun, 28 Jun 2026 12:20:08 GMT',        │ │
+│ │                    'x-content-type-options': 'nosniff',                  │ │
+│ │                    'content-security-policy': 'frame-ancestors           │ │
+│ │                    https://*.skysports.com http://*.skysports.com        │ │
+│ │                    *.norkon.net *.google.com *.google.co.uk              │ │
+│ │                    *.ampproject.org;', 'set-cookie':                     │ │
+│ │                    'bm_s=YAAQEhkhF5tHgOCeAQAAGkAsDgV0J0546VOiXaU3jjCmi7… │ │
+│ │                    Domain=.skysports.com; Path=/; Expires=Wed, 29 Jul    │ │
+│ │                    2026 12:20:08 GMT; Max-Age=2678400; Secure;           │ │
+│ │                    HttpOnly'})                                           │ │
+│ │                    )                                                     │ │
+│ │             self = <__main__.SkySportsResultsAdapter object at           │ │
+│ │                    0x7f288691fe20>                                       │ │
+│ │             slug = 'www_skysports_com_racing_results_23_06_2026'         │ │
+│ │           status = 404                                                   │ │
+│ │    update_status = True                                                  │ │
+│ │              url = '/racing/results/23-06-2026'                          │ │
+│ ╰──────────────────────────────────────────────────────────────────────────╯ │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Exception: HTTP 404
+
+2026-06-28 12:20:09 [warning  ] No result links found          adapter_name=SkySportsResults date=260623 source=SkySportsResults
+2026-06-28 12:20:09 [debug    ] Fetched results                adapter=SkySportsResults count=0 date=260623
+2026-06-28 12:20:09 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:09 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [debug    ] Fetch engines ordered          engines=['curl_cffi'] primary=curl_cffi url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [debug    ] Applied browserforge headers   engine=curl_cffi
+2026-06-28 12:20:09 [debug    ] Using curl_cffi for https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:09 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623kdun.dat
+2026-06-28 12:20:09 [warning  ] bot_challenge_detected         engine=curl_cffi keyword=cloudflare url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [debug    ] Engine curl_cffi failed        error='Bot challenge detected (cloudflare)'
+2026-06-28 12:20:09 [error    ] all_engines_failed             error="FetchError('Bot challenge detected (cloudflare)')" url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:09 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='Bot challenge detected (cloudflare)' url=https://standardbredcanada.ca/racing/results/data/r0623wbsb.dat
+2026-06-28 12:20:10 [debug    ] Requesting                     adapter_name=StandardbredCanadaResults method=GET url=https://standardbredcanada.ca/racing/results/data/r0623trrn.dat
+2026-06-28 12:20:10 [debug    ] Prioritizing browser engines for protected domain url=https://standardbredcanada.ca/racing/results/data/r0623trrn.dat
+2026-06-28 12:20:10 [error    ] Request failed                 adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623trrn.dat' method=GET url=https://standardbredcanada.ca/racing/results/data/r0623trrn.dat
+2026-06-28 12:20:10 [error    ] failed_fetching_race_page      adapter_name=StandardbredCanadaResults error='No viable engines for https://standardbredcanada.ca/racing/results/data/r0623trrn.dat' url=https://standardbredcanada.ca/racing/results/data/r0623trrn.dat
+2026-06-28 12:20:10 [debug    ] Fetched results                adapter=StandardbredCanadaResults count=0 date=260623
+2026-06-28 12:20:11 [debug    ] Requesting                     adapter_name=RacingAndSportsResults method=GET url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:11 [debug    ] Prioritizing browser engines for protected domain url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:11 [error    ] Request failed                 adapter_name=RacingAndSportsResults error='No viable engines for https://www.racingandsports.com.au/racing-results/2026-06-23' method=GET url=https://www.racingandsports.com.au/racing-results/2026-06-23
+2026-06-28 12:20:11 [error    ] Adapter failed                 adapter_name=RacingAndSportsResults error='No viable engines for https://www.racingandsports.com.au/racing-results/2026-06-23'
+2026-06-28 12:20:11 [debug    ] Fetched results                adapter=RacingAndSportsResults count=0 date=260623
+2026-06-28 12:20:11 [info     ] Total results harvested        count=0
+2026-06-28 12:20:11 [error    ] ZERO results harvested — audit impossible adapters_tried=['NYRABetsResults', 'RacingPostUSAResults', 'StandardbredCanadaResults', 'DRFResults', 'SkySportsResults', 'EquibaseResults', 'AtTheRacesResults', 'RacingAndSportsResults', 'RacingPostTote', 'AtTheRacesGreyhoundResults', 'RacingPostResults', 'SportingLifeResults', 'TimeformResults'] dates=['260623'] region=GLOBAL
+================================================================================
+           🐎 FORTUNA INTELLIGENCE - PERFORMANCE AUDIT & VERIFICATION
+                           Generated: 260628T08:20 ET
+================================================================================
+
+🔎 LIVE ADAPTER HARVEST PROOF
+----------------------------------------
+NYRABetsResults           | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+RacingPostUSAResults      | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+StandardbredCanadaResults | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+DRFResults                | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+SkySportsResults          | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+EquibaseResults           | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+AtTheRacesResults         | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+RacingAndSportsResults    | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+RacingPostTote            | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+AtTheRacesGreyhoundResults | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+RacingPostResults         | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+SportingLifeResults       | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+TimeformResults           | ⏳ PENDING/NO DATA | Records: 0    | Odds: N/A
+
+⏳ PENDING VERIFICATION - RECENT DISCOVERIES
+----------------------------------------
+RACE TIME          | VENUE                | R#  | GM?  | STATUS
+................................................................................
+260626T10:34 ET    | Hove                 | 3   | ---- | WATCHING
+260626T21:03 ET    | Sunderland           | 12  | GOLD | WATCHING
+260626T20:43 ET    | Sunderland           | 11  | GOLD | WATCHING
+260626T20:23 ET    | Sunderland           | 10  | GOLD | WATCHING
+260626T19:43 ET    | Sunderland           | 8   | GOLD | WATCHING
+260626T19:23 ET    | Sunderland           | 7   | GOLD | WATCHING
+260626T18:43 ET    | Sunderland           | 5   | GOLD | WATCHING
+260626T20:00 ET    | Woodbine             | 7   | ---- | WATCHING
+260626T21:28 ET    | Churchill Downs      | 10  | ---- | WATCHING
+260626T20:11 ET    | Belmont Park         | 7   | GOLD | WATCHING
+260626T20:40 ET    | Enghien              | 8   | GOLD | WATCHING
+260626T20:15 ET    | Enghien              | 7   | ---- | WATCHING
+260626T19:15 ET    | Enghien              | 5   | ---- | WATCHING
+260626T19:38 ET    | Newcastle            | 7   | ---- | WATCHING
+260626T19:03 ET    | Newcastle            | 6   | ---- | WATCHING
+260626T19:53 ET    | Bangor On Dee        | 6   | GOLD | WATCHING
+260625T18:44 ET    | Newcastle            | 5   | ---- | WATCHING
+260625T18:11 ET    | Newcastle            | 3   | GOLD | WATCHING
+260625T11:53 ET    | Kinsley              | 7   | GOLD | WATCHING
+260625T11:03 ET    | Kinsley              | 4   | GOLD | WATCHING
+
+2026-06-28 12:20:12 [info     ] Report saved                   path=analytics_report.txt
+2026-06-28 12:20:12 [info     ] No audited tips found in history
