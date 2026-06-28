@@ -18,6 +18,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 warnings.filterwarnings("ignore")
+"""
+
+import os
+import sys
+import datetime
+import math
+import numpy as np
+import pandas as pd
+from numba import njit, prange
+from numba.typed import List
+import matplotlib.pyplot as plt
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS & HELPERS
@@ -429,6 +440,27 @@ STRATEGY_SETS = {
     "FULL":     _T1 | _T2 | _T3_VALIDATED,
     "TURBO":    _T1 | _T2 | _T3_ALL,
 }
+
+# Add test compatibility keys
+for k in list(INS.keys()):
+    inst = INS[k]
+    # Set canonical keys for tests and simulation logic
+    inst["tier"] = inst["t"]
+    inst["ticket_cost"] = inst["tc"]
+    inst["hit_func"] = inst["hf"]
+    inst["payout_col"] = inst["pc"]
+    inst["min_runners"] = inst["mn"]
+    inst["env_filter"] = inst["ef"]
+
+    # Defaults for v8 logic
+    if "tc_mode" not in inst: inst["tc_mode"] = "fixed"
+    if "ew" not in inst: inst["ew"] = 1.5
+    if "pm" not in inst:
+        if "Superf" in inst["pc"]: inst["pm"] = 0.05
+        else: inst["pm"] = 1.0
+
+    inst["ewpd"] = inst["ew"]
+    inst["payout_mult"] = inst["pm"]
 
 # ══════════════════════════════════════════════════════════════════════════════
 # STRESS PRESETS
