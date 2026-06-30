@@ -1,0 +1,241 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-06-30 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 04 PM --------------------------------------------------------------------------------------------------------
+  16:30 | Roscommon            | R1  | F:18 | D:0.928 | P:15K   | SI: 8.6 | F1: 2.6 | F2: 6.0 | G2: 3.4 | T
+    >>> Skip 2? (Race 1)
+
+  16:30 | Vichy                | R5  | F:13 | D:1.833 | P:75K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  16:47 | Cholet               | R6  | F:11 | D:1.833 | P:8K    | SI:11.0 | F1: 4.0 | F2: 7.0 | G2: 3.0 | T
+    (No matching strategies)
+
+  16:55 | Finger Lakes         | R1  | F:6  | D:0.688 | P:18K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+
+--- 05 PM --------------------------------------------------------------------------------------------------------
+  17:00 | Roscommon            | R2  | F:14 | D:0.928 | P:10K   | SI: 6.2 | F1: 2.8 | F2: 3.5 | G2: 0.8 | T
+    >>> Skip 2? (Race 2)
+
+  17:03 | Vichy                | R6  | F:14 | D:1.833 | P:16K   | SI:10.0 | F1: 5.0 | F2: 5.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  17:09 | Ffos Las             | R1  | F:8  | D:1.250 | P:5K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  17:19 | Cholet               | R7  | F:11 | D:2.299 | P:15K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  17:24 | Finger Lakes         | R2  | F:7  | D:1.000 | P:20K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:30 | Fairmount            | R1  | F:7  | D:0.750 | P:11K   | SI: 5.8 | F1: 1.8 | F2: 4.0 | G2: 2.2 | T
+    >>> Skip 2? (Race 1)
+
+  17:30 | Roscommon            | R3  | F:18 | D:0.928 | P:6K    | SI: 7.8 | F1: 3.2 | F2: 4.5 | G2: 1.2 | T
+    (No matching strategies)
+
+  17:35 | Vichy                | R7  | F:9  | D:1.833 | P:13K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  17:39 | Ffos Las             | R2  | F:8  | D:1.000 | P:5K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  17:48 | Stratford On Avon    | R2  | F:8  | D:2.334 | P:5K    | SI: 5.4 | F1: 1.9 | F2: 3.5 | G2: 1.6 | T
+    >>> Skip 2? (Race 2)
+
+  17:50 | Thistledown          | R3  | F:5  | D:0.625 | P:21K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  17:51 | Cholet               | R8  | F:10 | D:2.299 | P:15K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:53 | Finger Lakes         | R3  | F:6  | D:0.688 | P:8K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  17:55 | Fairmount            | R2  | F:7  | D:0.750 | P:6K    | SI: 5.8 | F1: 1.8 | F2: 4.0 | G2: 2.2 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:00 | Roscommon            | R4  | F:10 | D:1.286 | P:9K    | SI: 7.2 | F1: 3.2 | F2: 4.0 | G2: 0.8 | T
+    (No matching strategies)
+
+  18:07 | Vichy                | R8  | F:16 | D:1.833 | P:15K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:09 | Ffos Las             | R3  | F:9  | D:0.920 | P:3K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:10 | Horseshoe Indianapol | R1  | F:8  | D:0.625 | P:22K   | SI: 8.5 | F1: 3.0 | F2: 5.5 | G2: 2.5 | T
+    >>> Skip 2? (Race 1)
+
+  18:18 | Stratford On Avon    | R3  | F:8  | D:2.754 | P:4K    | SI: 7.2 | F1: 2.8 | F2: 4.5 | G2: 1.8 | T
+    (No matching strategies)
+
+  18:20 | Fairmount            | R3  | F:7  | D:0.625 | P:6K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:20 | Thistledown          | R4  | F:6  | D:0.750 | P:24K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:22 | Finger Lakes         | R4  | F:7  | D:0.688 | P:16K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:23 | Cholet               | R9  | F:7  | D:2.112 | P:13K   | SI: 8.0 | F1: 4.0 | F2: 4.0 | G2: 0.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:30 | Roscommon            | R5  | F:13 | D:1.286 | P:9K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:39 | Ffos Las             | R4  | F:9  | D:0.920 | P:3K    | SI: 6.2 | F1: 2.8 | F2: 3.5 | G2: 0.8 | T
+    (No matching strategies)
+
+  18:41 | Horseshoe Indianapol | R2  | F:7  | D:1.000 | P:19K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  18:45 | Fairmount            | R4  | F:6  | D:0.750 | P:11K   | SI: 4.8 | F1: 1.8 | F2: 3.0 | G2: 1.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:48 | Stratford On Avon    | R4  | F:10 | D:2.334 | P:4K    | SI: 6.9 | F1: 2.9 | F2: 4.0 | G2: 1.1 | T
+    (No matching strategies)
+
+  18:50 | Thistledown          | R5  | F:5  | D:0.750 | P:19K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  18:51 | Finger Lakes         | R5  | F:10 | D:0.688 | P:8K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:00 | Roscommon            | R6  | F:8  | D:1.510 | P:30K   | SI: 6.2 | F1: 2.2 | F2: 4.0 | G2: 1.8 | T
+    (No matching strategies)
+
+  19:09 | Ffos Las             | R5  | F:7  | D:0.625 | P:3K    | SI: 7.8 | F1: 3.5 | F2: 4.3 | G2: 0.8 | T
+    (No matching strategies)
+
+  19:10 | Fairmount            | R5  | F:6  | D:0.688 | P:24K   | SI: 4.4 | F1: 1.4 | F2: 3.0 | G2: 1.6 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:12 | Horseshoe Indianapol | R3  | F:8  | D:0.750 | P:20K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  19:18 | Stratford On Avon    | R5  | F:6  | D:2.431 | P:4K    | SI: 4.9 | F1: 1.6 | F2: 3.2 | G2: 1.6 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:20 | Finger Lakes         | R6  | F:7  | D:0.750 | P:17K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:20 | Thistledown          | R6  | F:6  | D:0.750 | P:16K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:30 | Roscommon            | R7  | F:16 | D:1.510 | P:6K    | SI: 7.2 | F1: 3.2 | F2: 4.0 | G2: 0.8 | T
+    (No matching strategies)
+
+  19:35 | Fairmount            | R6  | F:7  | D:0.750 | P:7K    | SI: 5.1 | F1: 1.6 | F2: 3.5 | G2: 1.9 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:39 | Ffos Las             | R6  | F:11 | D:2.000 | P:3K    | SI: 9.8 | F1: 3.8 | F2: 6.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  19:43 | Horseshoe Indianapol | R4  | F:8  | D:1.000 | P:27K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:49 | Finger Lakes         | R7  | F:7  | D:1.040 | P:16K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:50 | Thistledown          | R7  | F:5  | D:1.000 | P:16K   | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Fairmount            | R7  | F:9  | D:0.750 | P:7K    | SI: 6.5 | F1: 2.5 | F2: 4.0 | G2: 1.5 | T
+    (No matching strategies)
+
+  20:14 | Horseshoe Indianapol | R5  | F:8  | D:1.000 | P:11K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:8  | D:1.040 | P:11K   | SI: 6.6 | F1: 2.6 | F2: 4.0 | G2: 1.4 | T
+    (No matching strategies)
+
+  20:20 | Thistledown          | R8  | F:7  | D:0.688 | P:13K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:25 | Fairmount            | R8  | F:9  | D:0.688 | P:9K    | SI: 7.9 | F1: 2.4 | F2: 5.5 | G2: 3.1 | T
+    (No matching strategies)
+
+  20:30 | Fort Erie            | R1  | F:6  | D:0.812 | P:11K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    >>> Skip 2? (Race 1)
+
+  20:45 | Horseshoe Indianapol | R6  | F:9  | D:0.625 | P:27K   | SI: 8.5 | F1: 3.0 | F2: 5.5 | G2: 2.5 | T
+    (No matching strategies)
+
+  20:58 | Fort Erie            | R2  | F:6  | D:0.688 | P:9K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:16 | Horseshoe Indianapol | R7  | F:8  | D:1.000 | P:25K   | SI: 6.4 | F1: 2.4 | F2: 4.0 | G2: 1.6 | T
+    (No matching strategies)
+
+  21:26 | Fort Erie            | R3  | F:8  | D:0.875 | P:15K   | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    (No matching strategies)
+
+  21:47 | Horseshoe Indianapol | R8  | F:16 | D:1.000 | P:22K   | SI: 8.6 | F1: 2.6 | F2: 6.0 | G2: 3.4 | T
+    (No matching strategies)
+
+  21:54 | Fort Erie            | R4  | F:6  | D:0.625 | P:13K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:14 | Horseshoe Indianapol | R9  | F:9  | D:0.227 | P:9K    | SI: 6.4 | F1: 2.4 | F2: 4.0 | G2: 1.6 | T
+    (No matching strategies)
+
+  22:22 | Fort Erie            | R5  | F:7  | D:0.750 | P:15K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  22:41 | Horseshoe Indianapol | R10 | F:8  | D:0.227 | P:9K    | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  22:50 | Fort Erie            | R6  | F:10 | D:0.875 | P:15K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Mountaineer          | R1  | F:11 | D:0.625 | P:7K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  23:08 | Horseshoe Indianapol | R11 | F:8  | D:0.227 | P:9K    | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  23:25 | Mountaineer          | R2  | F:12 | D:0.625 | P:8K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  23:50 | Mountaineer          | R3  | F:6  | D:0.750 | P:5K    | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
