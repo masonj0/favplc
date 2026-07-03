@@ -1,0 +1,254 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-07-03 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 04 PM --------------------------------------------------------------------------------------------------------
+  16:05 | Newton Abbot         | R6  | F:8  | D:3.222 | P:5K    | SI: 8.2 | F1: 3.8 | F2: 4.5 | G2: 0.8 | T
+    (No matching strategies)
+
+  16:05 | Tarbes               | R4  | F:12 | D:1.305 | P:7K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  16:10 | Chepstow             | R2  | F:6  | D:1.500 | P:4K    | SI: 5.8 | F1: 2.2 | F2: 3.5 | G2: 1.2 | T
+    >>> Skip 2? (Race 2)
+
+  16:15 | Sandown Park         | R7  | F:11 | D:1.000 | P:6K    | SI: 8.8 | F1: 3.8 | F2: 5.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  16:20 | Gulfstream Park      | R1  | F:10 | D:1.000 | P:23K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  16:20 | Wexford              | R2  | F:17 | D:2.156 | P:6K    | SI: 9.3 | F1: 4.3 | F2: 5.0 | G2: 0.7 | T
+    >>> Skip 2? (Race 2)
+
+  16:23 | Cabourg              | R1  | F:14 | D:1.693 | P:14K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  16:30 | Presque Isle         | R1  | F:5  | D:0.750 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  16:35 | Bellewstown          | R2  | F:10 | D:0.986 | P:15K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    >>> Skip 2? (Race 2)
+
+  16:43 | Chepstow             | R3  | F:6  | D:0.884 | P:5K    | SI: 5.2 | F1: 2.5 | F2: 2.8 | G2: 0.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  16:50 | Wexford              | R3  | F:17 | D:2.156 | P:6K    | SI: 8.1 | F1: 3.8 | F2: 4.3 | G2: 0.6 | T
+    (No matching strategies)
+
+  16:55 | Gulfstream Park      | R2  | F:6  | D:0.625 | P:44K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 2)
+
+  16:57 | Presque Isle         | R2  | F:6  | D:0.750 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  16:58 | Cabourg              | R2  | F:16 | D:1.709 | P:11K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 05 PM --------------------------------------------------------------------------------------------------------
+  17:00 | Beverley             | R1  | F:5  | D:1.513 | P:4K    | SI: 5.4 | F1: 1.9 | F2: 3.5 | G2: 1.6 | T
+    >>> Skip 2? (Race 1)
+
+  17:07 | Bellewstown          | R3  | F:15 | D:0.986 | P:7K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:10 | Saratoga             | R1  | F:7  | D:1.125 | P:75K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  17:15 | Chepstow             | R4  | F:7  | D:0.884 | P:5K    | SI: 8.6 | F1: 1.6 | F2: 7.0 | G2: 5.4 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  17:15 | Tarbes               | R6  | F:14 | D:0.932 | P:6K    | SI: 7.2 | F1: 3.2 | F2: 4.0 | G2: 0.8 | T
+    (No matching strategies)
+
+  17:20 | Wexford              | R4  | F:14 | D:3.057 | P:7K    | SI: 4.8 | F1: 2.0 | F2: 2.8 | G2: 0.8 | T
+    (No matching strategies)
+
+  17:24 | Presque Isle         | R3  | F:5  | D:0.750 | P:15K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  17:30 | Gulfstream Park      | R3  | F:7  | D:0.625 | P:17K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  17:33 | Cabourg              | R3  | F:14 | D:1.693 | P:12K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:37 | Bellewstown          | R4  | F:8  | D:0.627 | P:13K   | SI: 5.9 | F1: 2.6 | F2: 3.2 | G2: 0.6 | T
+    (No matching strategies)
+
+  17:43 | Saratoga             | R2  | F:9  | D:0.688 | P:72K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:45 | Chepstow             | R5  | F:8  | D:0.634 | P:3K    | SI: 6.8 | F1: 3.2 | F2: 3.5 | G2: 0.2 | T
+    (No matching strategies)
+
+  17:50 | Tarbes               | R7  | F:6  | D:0.932 | P:8K    | SI: 8.0 | F1: 4.0 | F2: 4.0 | G2: 0.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  17:51 | Presque Isle         | R4  | F:8  | D:1.040 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:52 | Wexford              | R5  | F:11 | D:2.438 | P:7K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:02 | Beverley             | R3  | F:9  | D:0.625 | P:6K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:02 | Gulfstream Park      | R4  | F:8  | D:0.938 | P:44K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  18:10 | Bellewstown          | R5  | F:8  | D:0.627 | P:7K    | SI: 7.0 | F1: 2.5 | F2: 4.5 | G2: 2.0 | T
+    (No matching strategies)
+
+  18:15 | Cabourg              | R4  | F:16 | D:1.709 | P:16K   | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  18:17 | Saratoga             | R3  | F:7  | D:0.750 | P:66K   | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    (No matching strategies)
+
+  18:18 | Chepstow             | R6  | F:8  | D:1.008 | P:4K    | SI: 8.2 | F1: 3.2 | F2: 5.0 | G2: 1.8 | T
+    (No matching strategies)
+
+  18:18 | Presque Isle         | R5  | F:9  | D:1.040 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:25 | Wexford              | R6  | F:12 | D:2.438 | P:15K   | SI: 9.5 | F1: 3.0 | F2: 6.5 | G2: 3.5 | T
+    (No matching strategies)
+
+  18:34 | Gulfstream Park      | R5  | F:6  | D:1.040 | P:20K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:35 | Beverley             | R4  | F:4  | D:1.057 | P:3K    | SI: 4.8 | F1: 2.2 | F2: 2.5 | G2: 0.2 | T
+    >> X_FullBox (FB4_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB4_FULL_FIELD_BOX                       ($2.4) [ ] Chalk=N [ ] Juv=N
+
+  18:44 | Bellewstown          | R6  | F:14 | D:0.627 | P:6K    | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:45 | Cabourg              | R5  | F:14 | D:1.693 | P:9K    | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  18:51 | Saratoga             | R4  | F:9  | D:0.875 | P:25K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:53 | Chepstow             | R7  | F:8  | D:0.759 | P:5K    | SI: 8.4 | F1: 2.9 | F2: 5.5 | G2: 2.6 | T
+    (No matching strategies)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:00 | Wexford              | R7  | F:19 | D:2.438 | P:6K    | SI: 9.0 | F1: 4.5 | F2: 4.5 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:06 | Gulfstream Park      | R6  | F:8  | D:0.688 | P:63K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:10 | Beverley             | R5  | F:8  | D:1.057 | P:4K    | SI: 8.5 | F1: 2.5 | F2: 6.0 | G2: 3.5 | T
+    (No matching strategies)
+
+  19:15 | Cabourg              | R6  | F:16 | D:1.709 | P:10K   | SI:11.0 | F1: 5.0 | F2: 6.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:17 | Bellewstown          | R7  | F:19 | D:1.521 | P:6K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:18 | Presque Isle         | R6  | F:7  | D:0.750 | P:22K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:25 | Saratoga             | R5  | F:9  | D:0.688 | P:75K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  19:30 | Wexford              | R8  | F:17 | D:2.111 | P:6K    | SI: 9.2 | F1: 3.2 | F2: 6.0 | G2: 2.8 | T
+    (No matching strategies)
+
+  19:38 | Gulfstream Park      | R7  | F:8  | D:0.625 | P:40K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:40 | Beverley             | R6  | F:11 | D:0.930 | P:4K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:45 | Cabourg              | R7  | F:18 | D:1.709 | P:8K    | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  19:45 | Presque Isle         | R7  | F:8  | D:0.750 | P:63K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:59 | Saratoga             | R6  | F:8  | D:1.125 | P:23K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:10 | Gulfstream Park      | R8  | F:10 | D:1.000 | P:44K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  20:12 | Presque Isle         | R8  | F:9  | D:0.750 | P:20K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:13 | Cabourg              | R8  | F:8  | D:1.273 | P:9K    | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  20:33 | Saratoga             | R7  | F:7  | D:0.875 | P:75K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:42 | Gulfstream Park      | R9  | F:10 | D:1.062 | P:20K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:07 | Saratoga             | R8  | F:11 | D:1.000 | P:94K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:41 | Saratoga             | R9  | F:8  | D:0.750 | P:126K  | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:45 | Lone Star            | R1  | F:7  | D:0.688 | P:17K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:00 | Penn National        | R1  | F:7  | D:0.625 | P:13K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  22:13 | Lone Star            | R2  | F:7  | D:0.750 | P:9K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  22:15 | Saratoga             | R10 | F:13 | D:1.062 | P:94K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:37 | Penn National        | R2  | F:7  | D:1.000 | P:13K   | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    >>> Skip 2? (Race 2)
+
+  22:41 | Lone Star            | R3  | F:8  | D:0.750 | P:9K    | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    (No matching strategies)
+
+  22:49 | Saratoga             | R11 | F:12 | D:1.062 | P:49K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:09 | Lone Star            | R4  | F:9  | D:0.625 | P:22K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:14 | Penn National        | R3  | F:12 | D:1.040 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:37 | Lone Star            | R5  | F:7  | D:0.875 | P:22K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  23:51 | Penn National        | R4  | F:6  | D:1.000 | P:23K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
