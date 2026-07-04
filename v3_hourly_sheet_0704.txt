@@ -1,0 +1,452 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-07-04 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 03 PM --------------------------------------------------------------------------------------------------------
+  15:18 | Naas                 | R6  | F:8  | D:1.000 | P:7K    | SI: 5.7 | F1: 1.7 | F2: 4.0 | G2: 2.3 | T
+    (No matching strategies)
+
+  15:25 | Newmarket            | R6  | F:10 | D:0.875 | P:23K   | SI: 9.8 | F1: 3.8 | F2: 6.0 | G2: 2.2 | T
+    (No matching strategies)
+
+  15:26 | Deauville            | R8  | F:16 | D:1.180 | P:14K   | SI: 9.3 | F1: 4.3 | F2: 5.0 | G2: 0.7 | T
+    (No matching strategies)
+
+  15:30 | Delaware             | R4  | F:10 | D:1.062 | P:18K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  15:30 | Leicester            | R5  | F:7  | D:0.875 | P:5K    | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  15:35 | Beverley             | R5  | F:10 | D:1.057 | P:8K    | SI: 8.2 | F1: 3.8 | F2: 4.5 | G2: 0.8 | T
+    (No matching strategies)
+
+  15:40 | Greyville            | R9  | F:17 | D:0.745 | P:296K  | SI: 8.4 | F1: 2.6 | F2: 5.8 | G2: 3.2 | T
+    (No matching strategies)
+
+  15:44 | Enghien              | R8  | F:12 | D:1.786 | P:40K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  15:47 | Sandown Park         | R6  | F:8  | D:1.244 | P:7K    | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  15:53 | Naas                 | R7  | F:19 | D:1.360 | P:6K    | SI: 7.8 | F1: 3.2 | F2: 4.5 | G2: 1.2 | T
+    (No matching strategies)
+
+
+--- 04 PM --------------------------------------------------------------------------------------------------------
+  16:00 | Horseshoe Indianapol | R1  | F:8  | D:0.688 | P:20K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  16:00 | Newmarket            | R7  | F:7  | D:0.875 | P:8K    | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  16:01 | Deauville            | R9  | F:15 | D:1.180 | P:11K   | SI:13.0 | F1: 6.0 | F2: 7.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  16:05 | Leicester            | R6  | F:9  | D:1.030 | P:3K    | SI: 8.9 | F1: 2.9 | F2: 6.0 | G2: 3.1 | T
+    (No matching strategies)
+
+  16:10 | Beverley             | R6  | F:8  | D:0.930 | P:6K    | SI: 7.8 | F1: 3.8 | F2: 4.0 | G2: 0.2 | T
+    (No matching strategies)
+
+  16:15 | Bellewstown          | R1  | F:8  | D:2.148 | P:7K    | SI: 5.8 | F1: 2.2 | F2: 3.5 | G2: 1.2 | T
+    >>> Skip 2? (Race 1)
+
+  16:19 | Enghien              | R9  | F:13 | D:1.336 | P:18K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  16:20 | Greyville            | R10 | F:17 | D:0.994 | P:118K  | SI:12.0 | F1: 6.0 | F2: 6.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  16:20 | Gulfstream Park      | R1  | F:9  | D:1.000 | P:19K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    >>> Skip 2? (Race 1)
+
+  16:22 | Sandown Park         | R7  | F:10 | D:1.244 | P:23K   | SI: 7.8 | F1: 3.2 | F2: 4.5 | G2: 1.2 | T
+    (No matching strategies)
+
+  16:28 | Horseshoe Indianapol | R2  | F:7  | D:0.688 | P:8K    | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    >>> Skip 2? (Race 2)
+
+  16:30 | Delaware             | R5  | F:12 | D:1.000 | P:15K   | SI: 7.5 | F1: 2.0 | F2: 5.5 | G2: 3.5 | T
+    (No matching strategies)
+
+  16:30 | Naas                 | R8  | F:6  | D:0.875 | P:15K   | SI: 5.6 | F1: 2.8 | F2: 2.9 | G2: 0.1 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  16:35 | Leicester            | R7  | F:7  | D:0.750 | P:3K    | SI: 6.8 | F1: 3.0 | F2: 3.8 | G2: 0.8 | T
+    (No matching strategies)
+
+  16:35 | Saratoga             | R1  | F:5  | D:0.812 | P:75K   | SI: 5.1 | F1: 1.6 | F2: 3.5 | G2: 1.9 | T
+    >>> Skip 2? (Race 1)
+
+  16:37 | Vichy                | R1  | F:8  | D:0.999 | P:11K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    >>> Skip 2? (Race 1)
+
+  16:40 | Beverley             | R7  | F:7  | D:0.930 | P:4K    | SI: 7.2 | F1: 3.5 | F2: 3.8 | G2: 0.2 | T
+    (No matching strategies)
+
+  16:48 | Bellewstown          | R2  | F:19 | D:2.148 | P:7K    | SI: 6.2 | F1: 2.8 | F2: 3.5 | G2: 0.8 | T
+    >>> Skip 2? (Race 2)
+
+  16:50 | Ellis                | R1  | F:7  | D:0.750 | P:63K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  16:55 | Gulfstream Park      | R2  | F:7  | D:0.750 | P:16K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    >>> Skip 2? (Race 2)
+
+  16:59 | Horseshoe Indianapol | R3  | F:7  | D:0.688 | P:24K   | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 05 PM --------------------------------------------------------------------------------------------------------
+  17:00 | Greyville            | R11 | F:15 | D:0.745 | P:118K  | SI: 9.0 | F1: 3.5 | F2: 5.5 | G2: 2.0 | T
+    (No matching strategies)
+
+  17:00 | Nottingham           | R1  | F:5  | D:0.630 | P:5K    | SI: 4.4 | F1: 1.9 | F2: 2.5 | G2: 0.6 | T
+    >>> Skip 2? (Race 1)
+
+  17:00 | Woodbine             | R1  | F:8  | D:1.000 | P:41K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  17:09 | Carlisle             | R1  | F:9  | D:1.125 | P:5K    | SI: 8.2 | F1: 3.8 | F2: 4.5 | G2: 0.8 | T
+    >>> Skip 2? (Race 1)
+
+  17:09 | Saratoga             | R2  | F:12 | D:1.000 | P:75K   | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    >>> Skip 2? (Race 2)
+
+  17:09 | Vichy                | R2  | F:8  | D:0.999 | P:11K   | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+  17:18 | Bellewstown          | R3  | F:19 | D:2.148 | P:36K   | SI:11.5 | F1: 5.5 | F2: 6.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:19 | Ellis                | R2  | F:7  | D:0.750 | P:24K   | SI: 5.4 | F1: 2.4 | F2: 3.0 | G2: 0.6 | T
+    >>> Skip 2? (Race 2)
+
+  17:30 | Delaware             | R6  | F:10 | D:0.625 | P:34K   | SI: 9.0 | F1: 3.5 | F2: 5.5 | G2: 2.0 | T
+    (No matching strategies)
+
+  17:30 | Gulfstream Park      | R3  | F:9  | D:0.688 | P:17K   | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    (No matching strategies)
+
+  17:30 | Horseshoe Indianapol | R4  | F:12 | D:0.625 | P:14K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:30 | Nottingham           | R2  | F:9  | D:0.630 | P:5K    | SI: 8.2 | F1: 3.8 | F2: 4.5 | G2: 0.8 | T
+    >>> Skip 2? (Race 2)
+
+  17:33 | Woodbine             | R2  | F:9  | D:0.750 | P:30K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:39 | Carlisle             | R2  | F:10 | D:0.973 | P:4K    | SI: 7.1 | F1: 2.1 | F2: 5.0 | G2: 2.9 | T
+    >>> Skip 2? (Race 2)
+
+  17:40 | Greyville            | R12 | F:15 | D:0.745 | P:80K   | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    (No matching strategies)
+
+  17:41 | Vichy                | R3  | F:8  | D:1.740 | P:9K    | SI: 9.0 | F1: 3.0 | F2: 6.0 | G2: 3.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  17:44 | Saratoga             | R3  | F:12 | D:1.062 | P:72K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  17:48 | Bellewstown          | R4  | F:19 | D:2.562 | P:7K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:48 | Ellis                | R3  | F:8  | D:0.750 | P:25K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:00 | Nottingham           | R3  | F:8  | D:0.760 | P:4K    | SI: 7.2 | F1: 3.5 | F2: 3.8 | G2: 0.2 | T
+    (No matching strategies)
+
+  18:04 | Horseshoe Indianapol | R5  | F:8  | D:0.688 | P:17K   | SI: 8.4 | F1: 2.4 | F2: 6.0 | G2: 3.6 | T
+    (No matching strategies)
+
+  18:05 | Gulfstream Park      | R4  | F:7  | D:1.000 | P:26K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    (No matching strategies)
+
+  18:09 | Carlisle             | R3  | F:7  | D:0.973 | P:6K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:09 | Woodbine             | R3  | F:6  | D:0.875 | P:72K   | SI: 6.2 | F1: 2.2 | F2: 4.0 | G2: 1.8 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:10 | Canterbury           | R1  | F:5  | D:0.750 | P:14K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 1)
+
+  18:13 | Vichy                | R4  | F:11 | D:1.336 | P:8K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:16 | Ellis                | R4  | F:11 | D:1.000 | P:63K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:18 | Bellewstown          | R5  | F:19 | D:2.562 | P:7K    | SI: 8.8 | F1: 3.8 | F2: 5.0 | G2: 1.2 | T
+    (No matching strategies)
+
+  18:19 | Saratoga             | R4  | F:8  | D:0.812 | P:66K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  18:30 | Fairmount            | R1  | F:6  | D:0.562 | P:11K   | SI: 6.6 | F1: 2.6 | F2: 4.0 | G2: 1.4 | T
+    >>> Skip 2? (Race 1)
+
+  18:30 | Nottingham           | R4  | F:6  | D:1.750 | P:3K    | SI: 8.3 | F1: 1.3 | F2: 7.0 | G2: 5.7 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:38 | Horseshoe Indianapol | R6  | F:9  | D:1.000 | P:25K   | SI: 8.6 | F1: 2.6 | F2: 6.0 | G2: 3.4 | T
+    (No matching strategies)
+
+  18:39 | Carlisle             | R4  | F:5  | D:1.397 | P:5K    | SI: 5.3 | F1: 2.1 | F2: 3.2 | G2: 1.1 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  18:40 | Canterbury           | R2  | F:5  | D:1.000 | P:18K   | SI: 5.2 | F1: 2.4 | F2: 2.8 | G2: 0.4 | T
+    >>> Skip 2? (Race 2)
+
+  18:40 | Gulfstream Park      | R5  | F:10 | D:1.062 | P:17K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:44 | Ellis                | R5  | F:8  | D:0.750 | P:22K   | SI: 8.5 | F1: 3.0 | F2: 5.5 | G2: 2.5 | T
+    (No matching strategies)
+
+  18:44 | Woodbine             | R4  | F:8  | D:1.000 | P:41K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:45 | Vichy                | R5  | F:10 | D:0.999 | P:10K   | SI: 9.0 | F1: 3.0 | F2: 6.0 | G2: 3.0 | T
+    (No matching strategies)
+
+  18:48 | Bellewstown          | R6  | F:17 | D:3.066 | P:9K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:54 | Saratoga             | R5  | F:9  | D:0.750 | P:141K  | SI: 9.5 | F1: 4.0 | F2: 5.5 | G2: 1.5 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  18:55 | Fairmount            | R2  | F:6  | D:0.688 | P:6K    | SI: 5.4 | F1: 2.4 | F2: 3.0 | G2: 0.6 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:00 | Nottingham           | R5  | F:6  | D:1.278 | P:4K    | SI: 8.2 | F1: 3.8 | F2: 4.5 | G2: 0.8 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:09 | Carlisle             | R5  | F:6  | D:2.152 | P:5K    | SI: 5.5 | F1: 2.2 | F2: 3.2 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:10 | Canterbury           | R3  | F:5  | D:0.875 | P:6K    | SI: 6.0 | F1: 2.0 | F2: 4.0 | G2: 2.0 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  19:12 | Ellis                | R6  | F:9  | D:1.062 | P:64K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  19:12 | Gulfstream Park      | R6  | F:8  | D:0.938 | P:44K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:12 | Horseshoe Indianapol | R7  | F:11 | D:0.688 | P:11K   | SI: 6.0 | F1: 2.0 | F2: 4.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  19:15 | Vichy                | R6  | F:11 | D:0.999 | P:10K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:18 | Bellewstown          | R7  | F:16 | D:2.148 | P:7K    | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:19 | Woodbine             | R5  | F:6  | D:1.125 | P:35K   | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:20 | Fairmount            | R3  | F:7  | D:0.750 | P:11K   | SI: 7.3 | F1: 1.8 | F2: 5.5 | G2: 3.7 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:29 | Saratoga             | R6  | F:16 | D:0.688 | P:66K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:30 | Nottingham           | R6  | F:7  | D:1.278 | P:3K    | SI: 6.3 | F1: 1.8 | F2: 4.5 | G2: 2.7 | T
+    (No matching strategies)
+
+  19:39 | Carlisle             | R6  | F:9  | D:0.728 | P:5K    | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  19:42 | Ellis                | R7  | F:9  | D:0.688 | P:63K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  19:44 | Gulfstream Park      | R7  | F:7  | D:1.040 | P:18K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:45 | Fairmount            | R4  | F:7  | D:0.750 | P:24K   | SI: 5.5 | F1: 2.0 | F2: 3.5 | G2: 1.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:45 | Vichy                | R7  | F:12 | D:0.999 | P:22K   | SI:4042.0 | F1:2021.0 | F2:2021.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  19:46 | Horseshoe Indianapol | R8  | F:13 | D:1.000 | P:25K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:52 | Canterbury           | R4  | F:5  | D:1.000 | P:7K    | SI: 5.0 | F1: 2.4 | F2: 2.6 | G2: 0.2 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  19:54 | Woodbine             | R6  | F:11 | D:0.938 | P:40K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Los Alamitos         | R1  | F:6  | D:0.688 | P:8K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  20:00 | Nottingham           | R7  | F:8  | D:1.278 | P:3K    | SI: 8.3 | F1: 4.0 | F2: 4.3 | G2: 0.3 | T
+    (No matching strategies)
+
+  20:06 | Saratoga             | R7  | F:10 | D:1.125 | P:378K  | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    (No matching strategies)
+
+  20:10 | Fairmount            | R5  | F:8  | D:0.750 | P:11K   | SI: 5.4 | F1: 2.4 | F2: 3.0 | G2: 0.6 | T
+    (No matching strategies)
+
+  20:12 | Ellis                | R8  | F:7  | D:0.688 | P:110K  | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:13 | Vichy                | R8  | F:10 | D:0.999 | P:9K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:15 | Gulfstream Park      | R8  | F:10 | D:1.000 | P:17K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:17 | Horseshoe Indianapol | R9  | F:9  | D:0.199 | P:22K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:29 | Woodbine             | R7  | F:6  | D:1.125 | P:72K   | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  20:32 | Canterbury           | R5  | F:6  | D:0.750 | P:15K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  20:33 | Los Alamitos         | R2  | F:7  | D:0.688 | P:14K   | SI: 6.0 | F1: 2.0 | F2: 4.0 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+  20:35 | Fairmount            | R6  | F:7  | D:0.750 | P:7K    | SI: 6.8 | F1: 1.8 | F2: 5.0 | G2: 3.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:42 | Ellis                | R9  | F:13 | D:1.125 | P:65K   | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:42 | Saratoga             | R8  | F:11 | D:1.250 | P:315K  | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:47 | Gulfstream Park      | R9  | F:8  | D:1.062 | P:63K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:00 | Fairmount            | R7  | F:8  | D:0.750 | P:9K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:02 | Canterbury           | R6  | F:7  | D:0.625 | P:15K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  21:02 | Woodbine             | R8  | F:10 | D:1.000 | P:72K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:05 | Los Alamitos         | R3  | F:6  | D:0.625 | P:10K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  21:16 | Gulfstream Park      | R10 | F:8  | D:0.750 | P:63K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:20 | Saratoga             | R9  | F:10 | D:1.125 | P:472K  | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:25 | Fairmount            | R8  | F:10 | D:1.040 | P:8K    | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  21:32 | Los Alamitos         | R4  | F:8  | D:1.000 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:35 | Woodbine             | R9  | F:6  | D:1.125 | P:72K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  21:44 | Canterbury           | R7  | F:8  | D:1.000 | P:6K    | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  21:45 | Gulfstream Park      | R11 | F:10 | D:0.625 | P:40K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  21:45 | Lone Star            | R1  | F:6  | D:0.750 | P:17K   | SI: 5.7 | F1: 2.2 | F2: 3.5 | G2: 1.3 | T
+    >>> Skip 2? (Race 1)
+
+  21:56 | Saratoga             | R10 | F:10 | D:1.000 | P:81K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:03 | Los Alamitos         | R5  | F:12 | D:1.000 | P:9K    | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  22:07 | Woodbine             | R10 | F:9  | D:1.125 | P:74K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:13 | Lone Star            | R2  | F:7  | D:0.812 | P:10K   | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    >>> Skip 2? (Race 2)
+
+  22:31 | Saratoga             | R11 | F:12 | D:1.062 | P:63K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  22:37 | Los Alamitos         | R6  | F:7  | D:0.688 | P:10K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  22:41 | Lone Star            | R3  | F:8  | D:0.688 | P:8K    | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    (No matching strategies)
+
+  22:41 | Woodbine             | R11 | F:12 | D:1.062 | P:72K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Charles Town         | R1  | F:6  | D:0.812 | P:18K   | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    >>> Skip 2? (Race 1)
+
+  23:09 | Lone Star            | R4  | F:11 | D:0.938 | P:30K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:11 | Los Alamitos         | R7  | F:9  | D:0.812 | P:32K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  23:32 | Charles Town         | R2  | F:7  | D:0.812 | P:9K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:37 | Lone Star            | R5  | F:9  | D:0.688 | P:10K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:43 | Los Alamitos         | R8  | F:7  | D:0.812 | P:126K  | SI: 6.1 | F1: 1.6 | F2: 4.5 | G2: 2.9 | T
+    (No matching strategies)
