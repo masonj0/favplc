@@ -5,7 +5,7 @@ import os
 def test_hourly_trigger_sheet_execution():
     """Test that the hourly trigger sheet script runs without error for a known date."""
     result = subprocess.run(
-        ["python3", "scripts/generate_hourly_trigger_sheet.py", "--date", "2026-06-01"],
+        ["python3", "scripts/generate_hourly_trigger_sheet.py", "--date", "2026-08-06"],
         capture_output=True,
         text=True
     )

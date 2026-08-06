@@ -5,11 +5,11 @@ from fortuna import SimplySuccessAnalyzer, Race, Runner, EASTERN
 
 def test_superfecta_key_trigger():
     # Setup a race that should trigger superfecta key
-    # gap_abs >= 1.0 and runners >= 5 (for Thoroughbred)
+    # For v7.5.2+, requires sec_fav >= 6.0
     runners = [
         Runner(number=1, name="Fav", win_odds=1.5),
-        Runner(number=2, name="Sec", win_odds=3.0), # (3.0-1.5)/1.5 = 1.0 >= 1.0
-        Runner(number=3, name="Third", win_odds=5.0),
+        Runner(number=2, name="Sec", win_odds=6.0), # sec_fav_odds >= 6.0
+        Runner(number=3, name="Third", win_odds=7.0),
         Runner(number=4, name="Fourth", win_odds=10.0),
         Runner(number=5, name="Fifth", win_odds=20.0),
     ]
@@ -32,10 +32,12 @@ def test_superfecta_key_trigger():
     assert analyzed_race.metadata.get('superfecta_box_numbers') == ["2", "3", "4"]
 
 def test_superfecta_key_not_triggered_low_gap():
+    # For v7.5.2+, superfecta key is not triggered if sec_fav < 6.0
+    # But it must still be >= 4.5 (second_fav_floor) to be qualified as a race.
     runners = [
         Runner(number=1, name="Fav", win_odds=2.0),
-        Runner(number=2, name="Sec", win_odds=3.0), # (3.0-2.0)/2.0 = 0.5 < 1.0
-        Runner(number=3, name="Third", win_odds=5.0),
+        Runner(number=2, name="Sec", win_odds=5.0), # sec_fav < 6.0, but >= 4.50
+        Runner(number=3, name="Third", win_odds=7.0),
         Runner(number=4, name="Fourth", win_odds=10.0),
         Runner(number=5, name="Fifth", win_odds=20.0),
     ]
@@ -55,8 +57,8 @@ def test_superfecta_key_not_triggered_low_gap():
 def test_superfecta_key_not_triggered_low_runners():
     runners = [
         Runner(number=1, name="Fav", win_odds=1.5),
-        Runner(number=2, name="Sec", win_odds=3.0), # gap 1.0
-        Runner(number=3, name="Third", win_odds=5.0),
+        Runner(number=2, name="Sec", win_odds=6.0), # sec_fav_odds >= 6.0
+        Runner(number=3, name="Third", win_odds=7.0),
         Runner(number=4, name="Fourth", win_odds=10.0),
     ]
     for r in runners:
