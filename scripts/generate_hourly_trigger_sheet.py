@@ -133,6 +133,21 @@ def parse_snapshot_json(filepath):
         return races
     except: return []
 
+def _deduplicate_matches(matches):
+    """
+    Deduplicates betting strategy matches for a single race.
+    Prioritizes the highest-ranking group (C=1, X=2) and then the
+    highest internal priority (lowest numeric rank) within that group.
+    """
+    if not matches:
+        return []
+    group_rank = {'C': 1, 'X': 2}
+    sorted_matches = sorted(
+        matches,
+        key=lambda x: (group_rank.get(x['group'], 99), x['priority'])
+    )
+    return [sorted_matches[0]]
+
 def evaluate_rules(race, rules):
     results = {
         "skip_reason": None,
@@ -242,14 +257,8 @@ def evaluate_rules(race, rules):
                         "juv": race['JuvYN']
                     })
 
-    if results["matches"]:
-        # Implement Deduplication Logic: Group Priority first, then internal Priority
-        group_rank = {'C': 1, 'X': 2}
-        results["matches"].sort(key=lambda x: (group_rank.get(x['group'], 99), x['priority']))
-        # Keep only the best match
-        results["approved_strategies"] = [results["matches"][0]]
-    else:
-        results["approved_strategies"] = []
+    # Implement Deduplication Logic via modular helper
+    results["approved_strategies"] = _deduplicate_matches(results["matches"])
 
     return results
 
