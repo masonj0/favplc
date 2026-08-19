@@ -1,0 +1,336 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-08-19 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 02 PM --------------------------------------------------------------------------------------------------------
+  14:48 | Carlisle             | R4  | F:9  | D:0.861 | P:3K    | SI: 8.8 | F1: 3.2 | F2: 5.5 | G2: 2.2 | T
+    (No matching strategies)
+
+  14:53 | Laval                | R5  | F:16 | D:1.770 | P:20K   | SI: 9.0 | F1: 3.0 | F2: 6.0 | G2: 3.0 | T
+    (No matching strategies)
+
+
+--- 03 PM --------------------------------------------------------------------------------------------------------
+  15:10 | La Teste             | R2  | F:17 | D:1.180 | P:9K    | SI: 9.0 | F1: 3.5 | F2: 5.5 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+  15:10 | York                 | R5  | F:17 | D:2.032 | P:51K   | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  15:20 | Carlisle             | R5  | F:12 | D:0.861 | P:5K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  15:28 | Laval                | R6  | F:12 | D:1.770 | P:27K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  15:45 | La Teste             | R3  | F:9  | D:1.180 | P:25K   | SI: 6.6 | F1: 3.2 | F2: 3.4 | G2: 0.2 | T
+    (No matching strategies)
+
+  15:45 | York                 | R6  | F:19 | D:0.625 | P:51K   | SI:14.0 | F1: 6.0 | F2: 8.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  15:55 | Carlisle             | R6  | F:8  | D:0.728 | P:4K    | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+
+--- 04 PM --------------------------------------------------------------------------------------------------------
+  16:02 | Worcester            | R1  | F:6  | D:2.875 | P:4K    | SI: 6.7 | F1: 2.2 | F2: 4.5 | G2: 2.3 | T
+    >>> Skip 2? (Race 1)
+
+  16:03 | Laval                | R7  | F:12 | D:1.770 | P:26K   | SI:10.0 | F1: 5.0 | F2: 5.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  16:07 | Sligo                | R1  | F:9  | D:2.216 | P:7K    | SI: 5.7 | F1: 1.7 | F2: 4.0 | G2: 2.3 | T
+    >>> Skip 2? (Race 1)
+
+  16:20 | La Teste             | R4  | F:8  | D:1.864 | P:8K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  16:20 | York                 | R7  | F:22 | D:0.750 | P:51K   | SI:13.0 | F1: 6.0 | F2: 7.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  16:25 | Kempton Park         | R1  | F:9  | D:0.875 | P:5K    | SI: 6.8 | F1: 3.2 | F2: 3.5 | G2: 0.2 | T
+    >>> Skip 2? (Race 1)
+
+  16:30 | Carlisle             | R7  | F:11 | D:0.973 | P:4K    | SI: 8.8 | F1: 4.3 | F2: 4.5 | G2: 0.2 | T
+    (No matching strategies)
+
+  16:33 | Worcester            | R2  | F:10 | D:2.062 | P:3K    | SI:10.1 | F1: 2.6 | F2: 7.5 | G2: 4.9 | T
+    >>> Skip 2? (Race 2)
+
+  16:42 | Sligo                | R2  | F:13 | D:2.216 | P:6K    | SI: 6.9 | F1: 2.9 | F2: 4.0 | G2: 1.1 | T
+    >>> Skip 2? (Race 2)
+
+  16:45 | Laval                | R8  | F:15 | D:1.770 | P:30K   | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  16:50 | Thistledown          | R1  | F:8  | D:0.688 | P:10K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    >>> Skip 2? (Race 1)
+
+  16:55 | Finger Lakes         | R1  | F:6  | D:1.040 | P:17K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  16:58 | Kempton Park         | R2  | F:13 | D:0.875 | P:3K    | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 05 PM --------------------------------------------------------------------------------------------------------
+  17:00 | La Teste             | R5  | F:12 | D:1.118 | P:8K    | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  17:03 | Worcester            | R3  | F:15 | D:2.000 | P:5K    | SI: 8.2 | F1: 3.2 | F2: 5.0 | G2: 1.8 | T
+    (No matching strategies)
+
+  17:10 | Saratoga             | R1  | F:6  | D:0.875 | P:37K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >>> Skip 2? (Race 1)
+
+  17:15 | Cagnes Sur Mer       | R1  | F:11 | D:1.336 | P:14K   | SI: 6.2 | F1: 1.9 | F2: 4.3 | G2: 2.4 | T
+    >>> Skip 2? (Race 1)
+
+  17:17 | Sligo                | R3  | F:8  | D:2.584 | P:7K    | SI: 5.2 | F1: 2.2 | F2: 3.0 | G2: 0.8 | T
+    (No matching strategies)
+
+  17:20 | Thistledown          | R2  | F:8  | D:1.000 | P:17K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:24 | Finger Lakes         | R2  | F:6  | D:0.688 | P:10K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:30 | La Teste             | R6  | F:8  | D:1.243 | P:6K    | SI: 8.5 | F1: 2.5 | F2: 6.0 | G2: 3.5 | T
+    (No matching strategies)
+
+  17:38 | Worcester            | R4  | F:12 | D:2.500 | P:5K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:45 | Cagnes Sur Mer       | R2  | F:9  | D:1.677 | P:11K   | SI: 5.6 | F1: 1.8 | F2: 3.8 | G2: 2.0 | T
+    >>> Skip 2? (Race 2)
+
+  17:45 | Saratoga             | R2  | F:7  | D:1.000 | P:78K   | SI: 7.1 | F1: 2.6 | F2: 4.5 | G2: 1.9 | T
+    >>> Skip 2? (Race 2)
+
+  17:48 | Sligo                | R4  | F:18 | D:2.584 | P:6K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  17:50 | Thistledown          | R3  | F:6  | D:0.750 | P:14K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  17:53 | Finger Lakes         | R3  | F:6  | D:0.750 | P:11K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:00 | Kempton Park         | R4  | F:12 | D:1.499 | P:5K    | SI: 6.2 | F1: 3.0 | F2: 3.2 | G2: 0.2 | T
+    (No matching strategies)
+
+  18:00 | La Teste             | R7  | F:7  | D:1.180 | P:12K   | SI: 7.8 | F1: 1.8 | F2: 6.0 | G2: 4.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:08 | Worcester            | R5  | F:10 | D:2.500 | P:3K    | SI: 9.5 | F1: 3.5 | F2: 6.0 | G2: 2.5 | T
+    (No matching strategies)
+
+  18:10 | Horseshoe Indianapol | R1  | F:8  | D:0.750 | P:14K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  18:15 | Cagnes Sur Mer       | R3  | F:11 | D:1.677 | P:11K   | SI: 6.7 | F1: 2.9 | F2: 3.8 | G2: 0.9 | T
+    (No matching strategies)
+
+  18:18 | Sligo                | R5  | F:11 | D:2.584 | P:9K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:20 | Saratoga             | R3  | F:8  | D:0.875 | P:49K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  18:20 | Thistledown          | R4  | F:6  | D:0.688 | P:13K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:22 | Finger Lakes         | R4  | F:6  | D:0.750 | P:18K   | SI: 5.6 | F1: 2.6 | F2: 3.0 | G2: 0.4 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:30 | Kempton Park         | R5  | F:10 | D:1.000 | P:6K    | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:30 | La Teste             | R8  | F:6  | D:1.366 | P:18K   | SI: 6.1 | F1: 2.5 | F2: 3.6 | G2: 1.1 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:38 | Worcester            | R6  | F:10 | D:2.500 | P:3K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  18:41 | Horseshoe Indianapol | R2  | F:9  | D:0.688 | P:23K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  18:45 | Cagnes Sur Mer       | R4  | F:10 | D:1.817 | P:13K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  18:48 | Sligo                | R6  | F:12 | D:3.220 | P:8K    | SI:10.2 | F1: 3.2 | F2: 7.0 | G2: 3.8 | T
+    (No matching strategies)
+
+  18:50 | Thistledown          | R5  | F:6  | D:0.625 | P:14K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:51 | Finger Lakes         | R5  | F:7  | D:1.000 | P:16K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  18:55 | Saratoga             | R4  | F:9  | D:0.750 | P:40K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    (No matching strategies)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:00 | Kempton Park         | R6  | F:10 | D:1.000 | P:6K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:08 | Worcester            | R7  | F:17 | D:2.875 | P:3K    | SI:10.5 | F1: 4.0 | F2: 6.5 | G2: 2.5 | T
+    (No matching strategies)
+
+  19:12 | Horseshoe Indianapol | R3  | F:7  | D:0.750 | P:29K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:15 | Cagnes Sur Mer       | R5  | F:11 | D:1.817 | P:10K   | SI: 5.9 | F1: 2.7 | F2: 3.2 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:18 | Sligo                | R7  | F:8  | D:2.326 | P:6K    | SI: 4.4 | F1: 1.9 | F2: 2.5 | G2: 0.6 | T
+    (No matching strategies)
+
+  19:20 | Finger Lakes         | R6  | F:7  | D:1.062 | P:16K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:20 | Thistledown          | R6  | F:6  | D:0.688 | P:11K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:30 | Kempton Park         | R7  | F:9  | D:1.000 | P:6K    | SI: 8.3 | F1: 4.0 | F2: 4.3 | G2: 0.3 | T
+    (No matching strategies)
+
+  19:30 | Presque Isle         | R1  | F:6  | D:0.750 | P:8K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  19:30 | Saratoga             | R5  | F:10 | D:0.688 | P:63K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:43 | Horseshoe Indianapol | R4  | F:8  | D:1.000 | P:29K   | SI: 7.5 | F1: 2.0 | F2: 5.5 | G2: 3.5 | T
+    (No matching strategies)
+
+  19:45 | Cagnes Sur Mer       | R6  | F:14 | D:1.817 | P:9K    | SI: 5.7 | F1: 1.9 | F2: 3.8 | G2: 1.9 | T
+    (No matching strategies)
+
+  19:49 | Finger Lakes         | R7  | F:7  | D:0.750 | P:15K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:50 | Thistledown          | R7  | F:6  | D:0.750 | P:13K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:57 | Presque Isle         | R2  | F:6  | D:1.000 | P:9K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Kempton Park         | R8  | F:11 | D:0.875 | P:4K    | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:05 | Saratoga             | R6  | F:8  | D:0.875 | P:49K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:14 | Horseshoe Indianapol | R5  | F:12 | D:1.000 | P:23K   | SI: 8.5 | F1: 3.0 | F2: 5.5 | G2: 2.5 | T
+    (No matching strategies)
+
+  20:15 | Cagnes Sur Mer       | R7  | F:9  | D:1.817 | P:9K    | SI: 6.0 | F1: 2.7 | F2: 3.2 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:7  | D:0.688 | P:8K    | SI: 7.1 | F1: 2.6 | F2: 4.5 | G2: 1.9 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:20 | Thistledown          | R8  | F:7  | D:1.000 | P:17K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:24 | Presque Isle         | R3  | F:5  | D:0.750 | P:13K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  20:40 | Saratoga             | R7  | F:9  | D:1.000 | P:94K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:45 | Horseshoe Indianapol | R6  | F:11 | D:0.625 | P:22K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:51 | Presque Isle         | R4  | F:7  | D:0.750 | P:8K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:15 | Saratoga             | R8  | F:12 | D:1.062 | P:35K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:16 | Horseshoe Indianapol | R7  | F:14 | D:0.625 | P:29K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:18 | Presque Isle         | R5  | F:6  | D:0.625 | P:11K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  21:45 | Penn National        | R1  | F:7  | D:0.750 | P:13K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  21:45 | Presque Isle         | R6  | F:6  | D:0.750 | P:20K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  21:47 | Horseshoe Indianapol | R8  | F:10 | D:0.688 | P:23K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:12 | Presque Isle         | R7  | F:7  | D:1.040 | P:22K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  22:14 | Penn National        | R2  | F:7  | D:1.040 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  22:18 | Horseshoe Indianapol | R9  | F:10 | D:1.062 | P:23K   | SI: 8.3 | F1: 2.8 | F2: 5.5 | G2: 2.7 | T
+    (No matching strategies)
+
+  22:39 | Presque Isle         | R8  | F:12 | D:0.688 | P:8K    | SI: 9.5 | F1: 4.0 | F2: 5.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  22:43 | Penn National        | R3  | F:12 | D:1.040 | P:13K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  22:46 | Horseshoe Indianapol | R10 | F:11 | D:0.170 | P:10K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Mountaineer          | R1  | F:7  | D:0.625 | P:6K    | SI: 6.1 | F1: 2.6 | F2: 3.5 | G2: 0.9 | T
+    >>> Skip 2? (Race 1)
+
+  23:12 | Penn National        | R4  | F:6  | D:0.688 | P:7K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  23:25 | Mountaineer          | R2  | F:7  | D:1.000 | P:8K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:41 | Penn National        | R5  | F:8  | D:0.750 | P:11K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  23:50 | Mountaineer          | R3  | F:10 | D:0.875 | P:8K    | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
