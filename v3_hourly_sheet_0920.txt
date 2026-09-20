@@ -1,0 +1,183 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-09-20 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 05 PM --------------------------------------------------------------------------------------------------------
+  17:30 | Gulfstream Park      | R3  | F:6  | D:1.000 | P:21K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  17:32 | Woodbine             | R2  | F:7  | D:1.000 | P:26K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  17:37 | Laurel Park          | R4  | F:7  | D:0.750 | P:11K   | SI: 6.0 | F1: 2.0 | F2: 4.0 | G2: 2.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  17:43 | Churchill Downs      | R3  | F:11 | D:1.062 | P:75K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  17:47 | Belmont Park         | R2  | F:10 | D:1.000 | P:94K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:00 | Gulfstream Park      | R4  | F:8  | D:0.812 | P:31K   | SI: 6.3 | F1: 2.8 | F2: 3.5 | G2: 0.7 | T
+    (No matching strategies)
+
+  18:07 | Woodbine             | R3  | F:6  | D:0.688 | P:79K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:09 | Laurel Park          | R5  | F:12 | D:0.688 | P:30K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    (No matching strategies)
+
+  18:13 | Churchill Downs      | R4  | F:6  | D:1.000 | P:39K   | SI: 6.0 | F1: 2.0 | F2: 4.0 | G2: 2.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:22 | Belmont Park         | R3  | F:9  | D:0.938 | P:40K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:33 | Gulfstream Park      | R5  | F:10 | D:1.000 | P:24K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  18:39 | Woodbine             | R4  | F:6  | D:1.000 | P:43K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  18:41 | Laurel Park          | R6  | F:15 | D:0.688 | P:15K   | SI: 9.0 | F1: 3.5 | F2: 5.5 | G2: 2.0 | T
+    (No matching strategies)
+
+  18:45 | Churchill Downs      | R5  | F:9  | D:1.062 | P:22K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  18:57 | Belmont Park         | R4  | F:11 | D:0.875 | P:32K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:05 | Gulfstream Park      | R6  | F:8  | D:0.750 | P:37K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:11 | Woodbine             | R5  | F:6  | D:0.750 | P:45K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  19:14 | Laurel Park          | R7  | F:8  | D:1.000 | P:18K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:18 | Churchill Downs      | R6  | F:11 | D:0.812 | P:75K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:32 | Belmont Park         | R5  | F:14 | D:0.875 | P:37K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:40 | Gulfstream Park      | R7  | F:8  | D:1.000 | P:15K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  19:43 | Woodbine             | R6  | F:7  | D:1.000 | P:26K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:45 | Laurel Park          | R8  | F:10 | D:1.062 | P:30K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:50 | Churchill Downs      | R7  | F:13 | D:1.062 | P:80K   | SI: 8.4 | F1: 2.4 | F2: 6.0 | G2: 3.6 | T
+    (No matching strategies)
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Los Alamitos         | R1  | F:6  | D:0.625 | P:9K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 1)
+
+  20:07 | Belmont Park         | R6  | F:16 | D:0.750 | P:63K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:13 | Laurel Park          | R9  | F:7  | D:0.750 | P:23K   | SI: 6.6 | F1: 2.6 | F2: 4.0 | G2: 1.4 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:15 | Gulfstream Park      | R8  | F:10 | D:0.625 | P:39K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:16 | Woodbine             | R7  | F:6  | D:0.812 | P:79K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  20:22 | Churchill Downs      | R8  | F:11 | D:0.812 | P:75K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:33 | Los Alamitos         | R2  | F:6  | D:0.688 | P:17K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  20:42 | Belmont Park         | R7  | F:10 | D:1.062 | P:68K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:47 | Laurel Park          | R10 | F:11 | D:1.000 | P:23K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:50 | Woodbine             | R8  | F:6  | D:0.750 | P:43K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  20:54 | Churchill Downs      | R9  | F:10 | D:1.000 | P:84K   | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    (No matching strategies)
+
+  20:56 | Gulfstream Park      | R9  | F:8  | D:1.062 | P:17K   | SI: 6.8 | F1: 2.8 | F2: 4.0 | G2: 1.2 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:05 | Los Alamitos         | R3  | F:7  | D:0.750 | P:12K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  21:17 | Belmont Park         | R8  | F:7  | D:1.062 | P:110K  | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:25 | Churchill Downs      | R10 | F:12 | D:1.000 | P:57K   | SI:10.0 | F1: 4.0 | F2: 6.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  21:27 | Woodbine             | R9  | F:5  | D:1.000 | P:80K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB5_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB5_FULL_FIELD_BOX                       ($12 ) [ ] Chalk=N [ ] Juv=N
+
+  21:40 | Los Alamitos         | R4  | F:6  | D:0.688 | P:14K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  21:52 | Belmont Park         | R9  | F:10 | D:1.125 | P:94K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:02 | Woodbine             | R10 | F:10 | D:0.750 | P:78K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:12 | Los Alamitos         | R5  | F:9  | D:0.625 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:47 | Los Alamitos         | R6  | F:7  | D:0.812 | P:32K   | SI: 5.4 | F1: 2.6 | F2: 2.8 | G2: 0.2 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Mountaineer          | R1  | F:10 | D:1.000 | P:9K    | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    >>> Skip 2? (Race 1)
+
+  23:19 | Los Alamitos         | R7  | F:7  | D:0.750 | P:9K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  23:25 | Mountaineer          | R2  | F:9  | D:0.625 | P:11K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:50 | Los Alamitos         | R8  | F:8  | D:0.750 | P:18K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  23:50 | Mountaineer          | R3  | F:8  | D:0.750 | P:5K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
