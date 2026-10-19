@@ -1,0 +1,74 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-10-19 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:49 | Finger Lakes         | R7  | F:7  | D:1.040 | P:18K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:57 | Presque Isle         | R2  | F:8  | D:1.040 | P:7K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  19:59 | Fort Erie            | R9  | F:7  | D:0.688 | P:15K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:14 | Horseshoe Indianapol | R5  | F:12 | D:1.000 | P:24K   | SI: 9.5 | F1: 4.0 | F2: 5.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:8  | D:1.000 | P:11K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:24 | Presque Isle         | R3  | F:7  | D:1.040 | P:19K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:45 | Horseshoe Indianapol | R6  | F:8  | D:0.688 | P:11K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:51 | Presque Isle         | R4  | F:8  | D:1.040 | P:8K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:16 | Horseshoe Indianapol | R7  | F:13 | D:1.000 | P:23K   | SI: 8.0 | F1: 4.0 | F2: 4.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:18 | Presque Isle         | R5  | F:7  | D:0.750 | P:11K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  21:45 | Presque Isle         | R6  | F:8  | D:0.750 | P:22K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:47 | Horseshoe Indianapol | R8  | F:16 | D:0.625 | P:20K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:12 | Presque Isle         | R7  | F:7  | D:0.750 | P:22K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  22:15 | Horseshoe Indianapol | R9  | F:9  | D:0.227 | P:10K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  22:39 | Presque Isle         | R8  | F:9  | D:1.040 | P:9K    | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Mountaineer          | R1  | F:13 | D:1.000 | P:9K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  23:25 | Mountaineer          | R2  | F:13 | D:0.625 | P:10K   | SI: 6.0 | F1: 3.0 | F2: 3.0 | G2: 0.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:50 | Mountaineer          | R3  | F:8  | D:0.750 | P:5K    | SI: 6.4 | F1: 2.4 | F2: 4.0 | G2: 1.6 | T
+    (No matching strategies)
