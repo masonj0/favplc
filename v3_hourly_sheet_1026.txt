@@ -1,0 +1,72 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-10-26 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:20 | Finger Lakes         | R6  | F:7  | D:0.750 | P:14K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:31 | Mahoning Valley      | R8  | F:10 | D:1.000 | P:21K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:43 | Horseshoe Indianapol | R4  | F:9  | D:0.688 | P:20K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:45 | Kempton Park         | R8  | F:12 | D:0.750 | P:3K    | SI: 9.5 | F1: 3.5 | F2: 6.0 | G2: 2.5 | T
+    (No matching strategies)
+
+  19:47 | Toulouse             | R8  | F:13 | D:1.243 | P:6K    | SI:11.0 | F1: 4.0 | F2: 7.0 | G2: 3.0 | T
+    (No matching strategies)
+
+  19:49 | Finger Lakes         | R7  | F:8  | D:1.000 | P:17K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Southwell            | R8  | F:9  | D:0.759 | P:3K    | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  20:14 | Horseshoe Indianapol | R5  | F:12 | D:1.000 | P:25K   | SI:13.0 | F1: 6.0 | F2: 7.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:15 | Kempton Park         | R9  | F:12 | D:1.999 | P:3K    | SI:10.5 | F1: 5.0 | F2: 5.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:7  | D:0.750 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:30 | Southwell            | R9  | F:6  | D:2.058 | P:4K    | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  20:45 | Horseshoe Indianapol | R6  | F:12 | D:0.750 | P:20K   | SI:11.0 | F1: 5.0 | F2: 6.0 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:16 | Horseshoe Indianapol | R7  | F:14 | D:1.000 | P:14K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:47 | Horseshoe Indianapol | R8  | F:11 | D:1.000 | P:22K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:15 | Horseshoe Indianapol | R9  | F:8  | D:0.227 | P:12K   | SI: 7.4 | F1: 2.4 | F2: 5.0 | G2: 2.6 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Mountaineer          | R1  | F:14 | D:1.000 | P:12K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  23:25 | Mountaineer          | R2  | F:12 | D:1.000 | P:8K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:50 | Mountaineer          | R3  | F:10 | D:0.750 | P:5K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
