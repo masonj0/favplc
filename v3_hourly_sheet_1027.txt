@@ -1,0 +1,103 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-10-27 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 06 PM --------------------------------------------------------------------------------------------------------
+  18:51 | Finger Lakes         | R5  | F:9  | D:0.750 | P:8K    | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 07 PM --------------------------------------------------------------------------------------------------------
+  19:03 | Mahoning Valley      | R7  | F:7  | D:0.750 | P:22K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  19:12 | Horseshoe Indianapol | R3  | F:10 | D:0.750 | P:23K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:20 | Fairmount            | R3  | F:10 | D:0.750 | P:6K    | SI: 8.5 | F1: 2.5 | F2: 6.0 | G2: 3.5 | T
+    (No matching strategies)
+
+  19:20 | Finger Lakes         | R6  | F:8  | D:0.688 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  19:30 | Wolverhampton        | R7  | F:10 | D:1.529 | P:3K    | SI: 9.5 | F1: 3.5 | F2: 6.0 | G2: 2.5 | T
+    (No matching strategies)
+
+  19:31 | Mahoning Valley      | R8  | F:11 | D:0.750 | P:20K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    (No matching strategies)
+
+  19:43 | Horseshoe Indianapol | R4  | F:10 | D:1.000 | P:23K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+  19:45 | Fairmount            | R4  | F:12 | D:0.750 | P:6K    | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  19:49 | Finger Lakes         | R7  | F:8  | D:1.040 | P:16K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:00 | Wolverhampton        | R8  | F:9  | D:1.184 | P:4K    | SI: 9.5 | F1: 3.5 | F2: 6.0 | G2: 2.5 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  20:10 | Fairmount            | R5  | F:7  | D:0.750 | P:24K   | SI: 5.8 | F1: 1.8 | F2: 4.0 | G2: 2.2 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:14 | Horseshoe Indianapol | R5  | F:9  | D:0.688 | P:20K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:18 | Finger Lakes         | R8  | F:7  | D:0.688 | P:8K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:30 | Wolverhampton        | R9  | F:10 | D:0.637 | P:3K    | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:35 | Fairmount            | R6  | F:7  | D:2.062 | P:18K   | SI: 5.2 | F1: 2.2 | F2: 3.0 | G2: 0.8 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:45 | Horseshoe Indianapol | R6  | F:16 | D:1.000 | P:14K   | SI: 9.5 | F1: 3.5 | F2: 6.0 | G2: 2.5 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:00 | Fairmount            | R7  | F:9  | D:0.750 | P:12K   | SI: 7.0 | F1: 2.0 | F2: 5.0 | G2: 3.0 | T
+    (No matching strategies)
+
+  21:16 | Horseshoe Indianapol | R7  | F:16 | D:1.000 | P:29K   | SI: 7.0 | F1: 3.5 | F2: 3.5 | G2: 0.0 | T
+    (No matching strategies)
+
+  21:25 | Fairmount            | R8  | F:11 | D:0.750 | P:7K    | SI: 9.2 | F1: 2.2 | F2: 7.0 | G2: 4.8 | T
+    (No matching strategies)
+
+  21:47 | Horseshoe Indianapol | R8  | F:10 | D:0.750 | P:11K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  21:50 | Fairmount            | R9  | F:12 | D:0.750 | P:6K    | SI:11.5 | F1: 5.5 | F2: 6.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:15 | Fairmount            | R10 | F:12 | D:1.040 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:15 | Horseshoe Indianapol | R9  | F:9  | D:0.142 | P:11K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:00 | Mountaineer          | R1  | F:14 | D:1.000 | P:9K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  23:25 | Mountaineer          | R2  | F:14 | D:1.000 | P:9K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:50 | Mountaineer          | R3  | F:11 | D:0.750 | P:7K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
