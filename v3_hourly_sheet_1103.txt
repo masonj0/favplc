@@ -1,0 +1,68 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-11-03 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:01 | Finger Lakes         | R7  | F:7  | D:0.750 | P:8K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:26 | Zia Park             | R4  | F:7  | D:0.750 | P:48K   | SI: 5.8 | F1: 2.8 | F2: 3.0 | G2: 0.2 | T
+    (No matching strategies)
+
+  20:30 | Finger Lakes         | R8  | F:7  | D:0.750 | P:8K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:30 | Horseshoe Indianapol | R5  | F:8  | D:1.000 | P:23K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
+
+  20:30 | Wolverhampton        | R9  | F:11 | D:1.529 | P:3K    | SI: 7.8 | F1: 3.8 | F2: 4.0 | G2: 0.2 | T
+    (No matching strategies)
+
+  20:31 | Mahoning Valley      | R8  | F:7  | D:0.688 | P:11K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  20:53 | Zia Park             | R5  | F:10 | D:0.812 | P:20K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:00 | Horseshoe Indianapol | R6  | F:10 | D:1.000 | P:31K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:20 | Zia Park             | R6  | F:8  | D:0.812 | P:15K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:30 | Horseshoe Indianapol | R7  | F:14 | D:1.000 | P:15K   | SI:11.5 | F1: 5.5 | F2: 6.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:47 | Zia Park             | R7  | F:8  | D:0.688 | P:37K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:00 | Horseshoe Indianapol | R8  | F:10 | D:0.750 | P:24K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  22:14 | Zia Park             | R8  | F:9  | D:0.750 | P:34K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  22:30 | Horseshoe Indianapol | R9  | F:9  | D:0.750 | P:25K   | SI: 8.5 | F1: 3.0 | F2: 5.5 | G2: 2.5 | T
+    (No matching strategies)
+
+  22:41 | Zia Park             | R9  | F:9  | D:0.750 | P:40K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:57 | Horseshoe Indianapol | R10 | F:11 | D:0.188 | P:12K   | SI: 7.5 | F1: 3.0 | F2: 4.5 | G2: 1.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:08 | Zia Park             | R10 | F:10 | D:0.750 | P:34K   | SI: 8.0 | F1: 2.0 | F2: 6.0 | G2: 4.0 | T
+    (No matching strategies)
