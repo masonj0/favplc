@@ -1,0 +1,66 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-11-04 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 08 PM --------------------------------------------------------------------------------------------------------
+  20:30 | Finger Lakes         | R8  | F:8  | D:1.040 | P:18K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  20:31 | Mahoning Valley      | R8  | F:11 | D:0.750 | P:21K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  20:38 | Horseshoe Indianapol | R5  | F:13 | D:0.625 | P:20K   | SI: 8.0 | F1: 4.0 | F2: 4.0 | G2: 0.0 | T
+    (No matching strategies)
+
+  20:55 | Churchill Downs      | R7  | F:16 | D:1.125 | P:75K   | SI: 7.3 | F1: 2.8 | F2: 4.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  20:59 | Finger Lakes         | R9  | F:7  | D:0.750 | P:8K    | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:10 | Horseshoe Indianapol | R6  | F:8  | D:0.750 | P:9K    | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:25 | Churchill Downs      | R8  | F:8  | D:0.750 | P:47K   | SI: 6.7 | F1: 2.2 | F2: 4.5 | G2: 2.3 | T
+    (No matching strategies)
+
+  21:42 | Horseshoe Indianapol | R7  | F:14 | D:1.000 | P:27K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:55 | Churchill Downs      | R9  | F:10 | D:1.062 | P:84K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:15 | Horseshoe Indianapol | R8  | F:10 | D:1.040 | P:9K    | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    (No matching strategies)
+
+  22:24 | Churchill Downs      | R10 | F:10 | D:1.062 | P:75K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:45 | Penn National        | R1  | F:6  | D:0.688 | P:10K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+  22:47 | Horseshoe Indianapol | R9  | F:9  | D:0.750 | P:25K   | SI: 8.0 | F1: 3.0 | F2: 5.0 | G2: 2.0 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:14 | Penn National        | R2  | F:6  | D:1.040 | P:10K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 2)
+
+  23:15 | Horseshoe Indianapol | R10 | F:12 | D:0.199 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:43 | Horseshoe Indianapol | R11 | F:10 | D:0.170 | P:11K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  23:43 | Penn National        | R3  | F:8  | D:0.688 | P:10K   | SI: 9.5 | F1: 4.0 | F2: 5.5 | G2: 1.5 | T
+    >> C_Surgical (TRI145_C_SURGICAL) | Mult: 0.1x
+      [ ] TRI145_C_SURGICAL                        ($18 ) [ ] Chalk=N [ ] Juv=N
