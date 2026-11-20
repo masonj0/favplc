@@ -1,0 +1,57 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-11-20 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 09 PM --------------------------------------------------------------------------------------------------------
+  21:25 | Fair Grounds         | R6  | F:10 | D:1.000 | P:13K   | SI:10.0 | F1: 4.5 | F2: 5.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:33 | Woodbine             | R8  | F:11 | D:1.062 | P:17K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:36 | Gulfstream Park      | R9  | F:9  | D:0.625 | P:22K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:48 | Tampa Bay Downs      | R9  | F:12 | D:1.000 | P:13K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  21:55 | Churchill Downs      | R9  | F:9  | D:1.062 | P:88K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  21:55 | Fair Grounds         | R7  | F:11 | D:0.750 | P:63K   | SI: 7.6 | F1: 2.6 | F2: 5.0 | G2: 2.4 | T
+    (No matching strategies)
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:04 | Del Mar              | R4  | F:10 | D:0.625 | P:40K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:24 | Churchill Downs      | R10 | F:13 | D:0.875 | P:30K   | SI: 8.0 | F1: 3.5 | F2: 4.5 | G2: 1.0 | T
+    (No matching strategies)
+
+  22:25 | Fair Grounds         | R8  | F:12 | D:0.750 | P:32K   | SI: 9.5 | F1: 4.0 | F2: 5.5 | G2: 1.5 | T
+    (No matching strategies)
+
+  22:35 | Del Mar              | R5  | F:12 | D:0.688 | P:12K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:45 | Penn National        | R1  | F:6  | D:0.688 | P:10K   | SI: 7.0 | F1: 3.0 | F2: 4.0 | G2: 1.0 | T
+    >>> Skip 2? (Race 1)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:05 | Del Mar              | R6  | F:12 | D:0.625 | P:40K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:14 | Penn National        | R2  | F:6  | D:0.750 | P:17K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >>> Skip 2? (Race 2)
+
+  23:35 | Del Mar              | R7  | F:8  | D:0.750 | P:22K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:43 | Penn National        | R3  | F:6  | D:0.750 | P:20K   | SI: 7.5 | F1: 3.5 | F2: 4.0 | G2: 0.5 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
