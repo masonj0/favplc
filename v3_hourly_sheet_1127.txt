@@ -1,0 +1,42 @@
+
+===================================================================================================================
+======================================== HOURLY TRIGGER SHEET - 2026-11-27 ========================================
+======================= (V3 Portfolio Grinder | Fortuna Master Ruleset — June 17 v1.4_PROD) =======================
+===================================================================================================================
+
+
+--- 10 PM --------------------------------------------------------------------------------------------------------
+  22:25 | Churchill Downs      | R10 | F:7  | D:1.062 | P:189K  | SI: 5.3 | F1: 1.8 | F2: 3.5 | G2: 1.7 | T
+    (No matching strategies)
+
+  22:26 | Oaklawn              | R9  | F:9  | D:1.000 | P:94K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:35 | Del Mar              | R5  | F:10 | D:1.000 | P:42K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  22:47 | Turf Paradise        | R7  | F:7  | D:0.812 | P:18K   | SI: 6.5 | F1: 3.0 | F2: 3.5 | G2: 0.5 | T
+    >> X_FullBox (FB7_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB7_FULL_FIELD_BOX                       ($84 ) [ ] Chalk=N [ ] Juv=N
+
+  22:54 | Churchill Downs      | R11 | F:11 | D:1.125 | P:441K  | SI: 8.5 | F1: 3.5 | F2: 5.0 | G2: 1.5 | T
+    (No matching strategies)
+
+  22:54 | Oaklawn              | R10 | F:14 | D:0.688 | P:23K   | SI: 9.5 | F1: 4.5 | F2: 5.0 | G2: 0.5 | T
+    (No matching strategies)
+
+
+--- 11 PM --------------------------------------------------------------------------------------------------------
+  23:05 | Del Mar              | R6  | F:6  | D:0.750 | P:22K   | SI: 5.6 | F1: 2.6 | F2: 3.0 | G2: 0.4 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
+
+  23:15 | Turf Paradise        | R8  | F:8  | D:0.625 | P:11K   | SI: 8.5 | F1: 4.0 | F2: 4.5 | G2: 0.5 | T
+    (No matching strategies)
+
+  23:26 | Churchill Downs      | R12 | F:10 | D:0.812 | P:39K   | SI: 9.0 | F1: 4.0 | F2: 5.0 | G2: 1.0 | T
+    (No matching strategies)
+
+  23:35 | Del Mar              | R7  | F:6  | D:1.500 | P:126K  | SI: 5.4 | F1: 2.4 | F2: 3.0 | G2: 0.6 | T
+    >> X_FullBox (FB6_FULL_FIELD_BOX) | Mult: 0.05x
+      [ ] FB6_FULL_FIELD_BOX                       ($36 ) [ ] Chalk=N [ ] Juv=N
